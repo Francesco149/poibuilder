@@ -42,11 +42,11 @@ Tests: `project/tests/` (GUT framework, headless-capable)
 
 ## Current Status
 
-Phase 0 (Scaffolding) complete:
-- Plugin loads in editor ✓
-- PBLogger + PBTelemetry ✓
-- GUT test framework ✓
-- Debug dock ✓
-- 11/11 headless tests passing ✓
+Phase 0 (Scaffolding) complete ✓
+Phase 1 (Core Data Model) complete ✓
+Phase 2 (Math & Topology) complete:
+- PBMath: normals, area, centroid, ray-triangle, projection, snapping ✓
+- PBTopology: WingedEdge graph, edge loop/ring traversal ✓
+- 166/166 headless tests passing ✓
 
-Next: Phase 1 (Core Data Model)
+Next: Phase 3 (Shape Generators)
