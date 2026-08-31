@@ -7,7 +7,7 @@ class_name PBSharedVertex
 extends Resource
 
 ## The vertex indices belonging to this coincident group.
-var indices: PackedInt32Array = PackedInt32Array()
+@export var indices: PackedInt32Array = PackedInt32Array()
 
 func _init(p_indices: PackedInt32Array = PackedInt32Array()) -> void:
 	indices = p_indices

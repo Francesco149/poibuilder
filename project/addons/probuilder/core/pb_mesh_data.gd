@@ -114,6 +114,80 @@ func invalidate_shared_texture_lookup() -> void:
 func invalidate_caches() -> void:
 	invalidate_shared_vertex_lookup()
 	invalidate_shared_texture_lookup()
+	_normals.clear()
+
+# ==============================================================================
+# Coincident Vertex Queries & Common Index Lookups
+# ==============================================================================
+
+## Given a single vertex index, find its shared vertex group and return all vertex
+## indices in that group (including the input vertex itself).
+## If the vertex is not in any shared group, returns [vertex].
+func get_coincident_vertices(vertex: int) -> PackedInt32Array:
+	var lookup := get_shared_vertex_lookup()
+	if not lookup.has(vertex):
+		return PackedInt32Array([vertex])
+	var group_idx: int = lookup[vertex]
+	if group_idx < 0 or group_idx >= shared_vertices.size():
+		return PackedInt32Array([vertex])
+	return shared_vertices[group_idx].indices
+
+## Given multiple vertex indices, find all coincident vertices across all their
+## shared vertex groups. Deduplicates by group — if two input vertices belong to
+## the same group, the group's indices appear only once.
+func get_coincident_vertices_multi(vertices: PackedInt32Array) -> PackedInt32Array:
+	var result := PackedInt32Array()
+	var seen_groups: Dictionary = {}
+	var lookup := get_shared_vertex_lookup()
+	for v in vertices:
+		if not lookup.has(v):
+			continue
+		var group_idx: int = lookup[v]
+		if seen_groups.has(group_idx):
+			continue
+		seen_groups[group_idx] = true
+		if group_idx >= 0 and group_idx < shared_vertices.size():
+			result.append_array(shared_vertices[group_idx].indices)
+	return result
+
+## Given a set of edges, find all coincident vertices for all edge endpoints.
+func get_coincident_vertices_from_edges(edges: Array[PBEdge]) -> PackedInt32Array:
+	var verts := PackedInt32Array()
+	for edge in edges:
+		if edge == null:
+			continue
+		verts.append(edge.a)
+		verts.append(edge.b)
+	return get_coincident_vertices_multi(verts)
+
+## Given face indices (indices into the faces array), collect all distinct vertex
+## indices from those faces, then return all coincident vertices.
+func get_coincident_vertices_from_faces(face_indices: PackedInt32Array) -> PackedInt32Array:
+	var verts := PackedInt32Array()
+	for fi in face_indices:
+		if fi < 0 or fi >= faces.size():
+			continue
+		var face: PBFace = faces[fi]
+		if face == null:
+			continue
+		verts.append_array(face.get_distinct_indexes())
+	return get_coincident_vertices_multi(verts)
+
+## Returns the shared vertex group index for a given local vertex index.
+## Returns -1 if not found.
+func get_common_vertex(vertex: int) -> int:
+	var lookup := get_shared_vertex_lookup()
+	return lookup.get(vertex, -1)
+
+## Converts a local edge to a "common" edge (both endpoints mapped to their
+## shared vertex group indices). Returns null if edge is null.
+func get_common_edge(edge: PBEdge) -> PBEdge:
+	if edge == null:
+		return null
+	var lookup := get_shared_vertex_lookup()
+	var ca: int = lookup.get(edge.a, -1)
+	var cb: int = lookup.get(edge.b, -1)
+	return PBEdge.new(ca, cb)
 
 # ==============================================================================
 # Data Setters
@@ -170,6 +244,104 @@ func validate() -> String:
 	if not tangents.is_empty() and tangents.size() != vc * 4:
 		return "tangents size %d != vertex count * 4 (%d)" % [tangents.size(), vc * 4]
 	return ""
+
+# ==============================================================================
+# Mesh Compilation & Normals (ToMesh)
+# ==============================================================================
+
+## Calculates flat normals for all vertices across all faces.
+## Returns a PackedVector3Array of the same size as positions.
+func calculate_normals() -> PackedVector3Array:
+	var normals := PackedVector3Array()
+	normals.resize(positions.size())
+	for i in range(normals.size()):
+		normals[i] = Vector3.ZERO
+
+	var pos_count: int = positions.size()
+	for face in faces:
+		if face == null:
+			continue
+		var idxs := face.get_indexes()
+		for tri_i in range(0, idxs.size() - 2, 3):
+			var i0: int = idxs[tri_i]
+			var i1: int = idxs[tri_i + 1]
+			var i2: int = idxs[tri_i + 2]
+			if i0 < 0 or i0 >= pos_count or i1 < 0 or i1 >= pos_count or i2 < 0 or i2 >= pos_count:
+				continue
+			var edge1: Vector3 = positions[i1] - positions[i0]
+			var edge2: Vector3 = positions[i2] - positions[i0]
+			var cross_prod: Vector3 = edge1.cross(edge2)
+			var normal: Vector3 = cross_prod.normalized() if not cross_prod.is_zero_approx() else Vector3.ZERO
+			normals[i0] = normal
+			normals[i1] = normal
+			normals[i2] = normal
+
+	_normals = normals
+	return normals
+
+## Returns cached normals, calculating them on demand if empty or size mismatch.
+func get_normals() -> PackedVector3Array:
+	if _normals.is_empty() or _normals.size() != positions.size():
+		calculate_normals()
+	return _normals
+
+## Compiles this PBMeshData into a Godot ArrayMesh.
+## If existing is provided, clears its surfaces and reuses it; otherwise instantiates a new ArrayMesh.
+## Faces are grouped by submesh_index into distinct surfaces.
+func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
+	var mesh: ArrayMesh = existing if existing != null else ArrayMesh.new()
+	mesh.clear_surfaces()
+
+	if positions.is_empty() or faces.is_empty():
+		return mesh
+
+	var normals: PackedVector3Array = calculate_normals()
+
+	# Group faces by submesh_index
+	var submesh_faces: Dictionary = {}
+	var submesh_indices: Array[int] = []
+
+	for face in faces:
+		if face == null:
+			continue
+		var s_idx: int = face.submesh_index
+		if not submesh_faces.has(s_idx):
+			submesh_faces[s_idx] = [] as Array[PBFace]
+			submesh_indices.append(s_idx)
+		submesh_faces[s_idx].append(face)
+
+	submesh_indices.sort()
+
+	var vc: int = positions.size()
+	for s_idx in submesh_indices:
+		var group_faces: Array = submesh_faces[s_idx]
+		var indices := PackedInt32Array()
+		for face in group_faces:
+			if face != null:
+				indices.append_array(face.get_indexes())
+
+		if indices.is_empty():
+			continue
+
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = positions
+		arrays[Mesh.ARRAY_NORMAL] = normals
+
+		if not textures0.is_empty() and textures0.size() == vc:
+			arrays[Mesh.ARRAY_TEX_UV] = textures0
+
+		if not colors.is_empty() and colors.size() == vc:
+			arrays[Mesh.ARRAY_COLOR] = colors
+
+		if not tangents.is_empty() and tangents.size() == vc * 4:
+			arrays[Mesh.ARRAY_TANGENT] = tangents
+
+		arrays[Mesh.ARRAY_INDEX] = indices
+
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	return mesh
 
 # ==============================================================================
 # Utility: Clear
