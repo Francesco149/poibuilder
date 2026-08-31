@@ -26,6 +26,7 @@ godot-mono --editor project/project.godot
 
 - `../probuilder-ref/` — Unity ProBuilder C# source
 - `../cyclops-ref/` — Cyclops Level Builder Godot plugin (pattern reference)
+- `../godot/` — Godot engine source (4.7.2, for engine internals)
 
 ## Architecture
 

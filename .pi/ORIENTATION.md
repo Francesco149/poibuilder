@@ -38,6 +38,10 @@ You are implementing part of a ProBuilder clone as a Godot 4.3+ editor plugin.
   - `godot/addons/cyclops_level_builder/nodes/cyclops_block.gd` — mesh node
   - `godot/addons/cyclops_level_builder/math/convex_volume.gd` — mesh data
 
+- `../godot/` — Godot engine source code (4.7.2). Use when you need to
+  understand engine internals — e.g. how ArrayMesh surfaces work, how
+  EditorPlugin lifecycle methods are called, or how ImmediateMesh renders.
+
 ## Key Documents to Read
 
 1. **UNITY-GODOT-MAPPING.md** — Read FIRST. Maps every Unity concept to Godot.
