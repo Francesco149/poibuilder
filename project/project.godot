@@ -5,6 +5,7 @@
 [application]
 
 config/name="ProBuilder"
+run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 
 [editor_plugins]

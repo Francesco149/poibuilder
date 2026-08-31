@@ -128,6 +128,11 @@ GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless \
 
 Exit code 0 = all pass. Exit code 1 = failures.
 
+**IMPORTANT:** `project.godot` has `run/main_scene` set to `res://main.tscn`.
+Do NOT remove this — without it Godot pops a modal "no main scene" error
+that blocks headless execution. If you create new scenes, do not change the
+main scene setting.
+
 ### Test Requirements
 - Your test MUST pass headlessly before you declare done
 - Test file goes in `project/tests/`
