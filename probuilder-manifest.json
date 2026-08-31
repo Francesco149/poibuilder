@@ -1,0 +1,2398 @@
+{
+  ".Tools": [
+    {
+      "path": "../probuilder-ref/.Tools/CI/Settings/ProBuilderSettings.cs",
+      "lines": 63
+    },
+    {
+      "path": "../probuilder-ref/.Tools/CI/Recipes/Triggers.cs",
+      "lines": 31
+    },
+    {
+      "path": "../probuilder-ref/.Tools/CI/Program.cs",
+      "lines": 21
+    }
+  ],
+  "Addons": [
+    {
+      "path": "../probuilder-ref/Addons/Fbx.cs",
+      "lines": 73
+    }
+  ],
+  "AssetIdRemapUtility": [
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssetIdRemapEditor.cs",
+      "lines": 727
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssetIdRemapBuilderEditor.cs",
+      "lines": 487
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssetId.cs",
+      "lines": 379
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssetTreeView.cs",
+      "lines": 316
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssetIdRemapBuilderTreeView.cs",
+      "lines": 228
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/PackageImporter.cs",
+      "lines": 146
+    },
+    {
+      "path": "../probuilder-ref/AssetIdRemapUtility/Editor/AssemblyInfo.cs",
+      "lines": 4
+    }
+  ],
+  "Debug": [
+    {
+      "path": "../probuilder-ref/Debug/Editor/GenerateMenuItems.cs",
+      "lines": 321
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/CommandPalette.cs",
+      "lines": 316
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViewer.cs",
+      "lines": 280
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/EditorPrefViewer.cs",
+      "lines": 203
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViews/VertexView.cs",
+      "lines": 145
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/DebugEditor.cs",
+      "lines": 102
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/ResourceExplorer.cs",
+      "lines": 100
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/Guides.cs",
+      "lines": 99
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/SelectionDebug.cs",
+      "lines": 78
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViews/SharedVertexView.cs",
+      "lines": 72
+    },
+    {
+      "path": "../probuilder-ref/Debug/Scripts/ShowHoveredInfo.cs",
+      "lines": 71
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViews/PositionView.cs",
+      "lines": 68
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViews/FaceView.cs",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/GenerateDesaturatedImage.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshViews/EdgeView.cs",
+      "lines": 59
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/ShiftDuplicate.cs",
+      "lines": 45
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/MeshInfo.cs",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Debug/Scripts/ClickDuplicate.cs",
+      "lines": 25
+    },
+    {
+      "path": "../probuilder-ref/Debug/Editor/RegisterDebugDefines.cs",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Debug/Scripts/Teleport.cs",
+      "lines": 14
+    }
+  ],
+  "Editor/EditorCore": [
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/UVEditor.cs",
+      "lines": 3460
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/CutTool.cs",
+      "lines": 1573
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PolyShapeTool.cs",
+      "lines": 1269
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorToolbarMenuItems.cs",
+      "lines": 1169
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorSceneViewPicker.cs",
+      "lines": 944
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/DrawShapeTool.cs",
+      "lines": 892
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderEditor.cs",
+      "lines": 840
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorHandleUtility.cs",
+      "lines": 737
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/SmoothGroupEditor.cs",
+      "lines": 734
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/BezierSplineEditor.cs",
+      "lines": 716
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MeshSelection.cs",
+      "lines": 682
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/DimensionsEditor.cs",
+      "lines": 603
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ObjExporter.cs",
+      "lines": 577
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorGUIUtility.cs",
+      "lines": 559
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/AutoUVEditor.cs",
+      "lines": 558
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditShapeTool.cs",
+      "lines": 525
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorHandleDrawing.cs",
+      "lines": 520
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorUtility.cs",
+      "lines": 490
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderToolsContexts.cs",
+      "lines": 455
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MaterialEditor.cs",
+      "lines": 426
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProGridsInterface.cs",
+      "lines": 415
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PreferencesInternal.cs",
+      "lines": 406
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/BooleanEditor.cs",
+      "lines": 384
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VertexManipulationTool.cs",
+      "lines": 373
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorHandleDrawingScopes.cs",
+      "lines": 372
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorShapeUtility.cs",
+      "lines": 354
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderMeshEditor.cs",
+      "lines": 353
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MenuAction.cs",
+      "lines": 352
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/FileUtility.cs",
+      "lines": 300
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MeshAndElementSelection.cs",
+      "lines": 297
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorMeshUtility.cs",
+      "lines": 277
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorGUILayout.cs",
+      "lines": 273
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PreferencesUpdater.cs",
+      "lines": 266
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/Lightmapping.cs",
+      "lines": 262
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TooltipContent.cs",
+      "lines": 253
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VertexPositionEditor.cs",
+      "lines": 250
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VertexColorPalette.cs",
+      "lines": 228
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/UndoUtility.cs",
+      "lines": 227
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ReflectionUtility.cs",
+      "lines": 222
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/SceneDragAndDropListener.cs",
+      "lines": 216
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProbuilderMoveTool.cs",
+      "lines": 212
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PlyExporter.cs",
+      "lines": 210
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderShapeEditor.cs",
+      "lines": 197
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PositionTool.cs",
+      "lines": 182
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorToolbarLoader.cs",
+      "lines": 176
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/StripProBuilderScripts.cs",
+      "lines": 159
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EntityEditor.cs",
+      "lines": 154
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/RepairActions.cs",
+      "lines": 153
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorStyles.cs",
+      "lines": 144
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderAnalytics.cs",
+      "lines": 144
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/HierarchyListener.cs",
+      "lines": 141
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EntityUtility.cs",
+      "lines": 136
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorSnapping.cs",
+      "lines": 135
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MeshDebugTool.cs",
+      "lines": 133
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/LogEditor.cs",
+      "lines": 131
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ShapeMenuItems.cs",
+      "lines": 127
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TextureMoveTool.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/UnityScenePostProcessor.cs",
+      "lines": 118
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TextureTool.cs",
+      "lines": 114
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PolyShapeEditor.cs",
+      "lines": 104
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MenuItems.cs",
+      "lines": 102
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TooltipEditor.cs",
+      "lines": 97
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/Model.cs",
+      "lines": 96
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorPathSelectionUtility.cs",
+      "lines": 84
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/LightmapUVEditor.cs",
+      "lines": 84
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderSettings.cs",
+      "lines": 82
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MenuOption.cs",
+      "lines": 81
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProbuilderRotateTool.cs",
+      "lines": 77
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ScriptingSymbolManager.cs",
+      "lines": 77
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorMaterialUtility.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EntityVisibility.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VersionValidator.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TextureScaleTool.cs",
+      "lines": 72
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ConfigurableWindow.cs",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/Experimental.cs",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MaterialPalette.cs",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/UVRenderOptions.cs",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/TextureRotateTool.cs",
+      "lines": 64
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/DestroyListener.cs",
+      "lines": 62
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderEditorShortcuts.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/PreferenceDictionaryEditor.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ToolbarGroup.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ContextClickManipulator.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderMeshPreview.cs",
+      "lines": 54
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VertexManipulationToolSettings.cs",
+      "lines": 53
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/IconUtility.cs",
+      "lines": 51
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/LicenseEditor.cs",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/MenuToolToggle.cs",
+      "lines": 41
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/SelectionUtility.cs",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProbuilderScaleTool.cs",
+      "lines": 38
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderMenuActionAttribute.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/UnwrapParametersEditor.cs",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/EditorEnum.cs",
+      "lines": 29
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/ProBuilderSettingsProvider.cs",
+      "lines": 28
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/Pref.cs",
+      "lines": 19
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/Version.cs",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/HandleGUI.cs",
+      "lines": 17
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/IHasPreferences.cs",
+      "lines": 7
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/AssemblyInfo.cs",
+      "lines": 5
+    },
+    {
+      "path": "../probuilder-ref/Editor/EditorCore/VertexOnFaceEditor.cs",
+      "lines": 0
+    }
+  ],
+  "Editor/MenuActions/Editors": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/CutToolAction.cs",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/NewBezierShape.cs",
+      "lines": 49
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenLightmapUVEditor.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenSmoothingEditor.cs",
+      "lines": 33
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenVertexPositionEditor.cs",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenUVEditor.cs",
+      "lines": 30
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenVertexColorEditor.cs",
+      "lines": 28
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Editors/OpenMaterialEditor.cs",
+      "lines": 27
+    }
+  ],
+  "Editor/MenuActions/Export": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/ExportAsset.cs",
+      "lines": 319
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/Export.cs",
+      "lines": 238
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/ExportObj.cs",
+      "lines": 132
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/ExportPly.cs",
+      "lines": 112
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/ExportStlAscii.cs",
+      "lines": 91
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Export/ExportStlBinary.cs",
+      "lines": 46
+    }
+  ],
+  "Editor/MenuActions/Geometry": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/OffsetElements.cs",
+      "lines": 272
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SubdivideEdges.cs",
+      "lines": 272
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/FillHole.cs",
+      "lines": 190
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/WeldVertices.cs",
+      "lines": 187
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/ExtrudeFaces.cs",
+      "lines": 186
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/DetachFaces.cs",
+      "lines": 182
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/DuplicateFaces.cs",
+      "lines": 177
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/ExtrudeEdges.cs",
+      "lines": 147
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/BevelEdges.cs",
+      "lines": 126
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/CollapseVertices.cs",
+      "lines": 122
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/Extrude.cs",
+      "lines": 83
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/FlipFaceNormals.cs",
+      "lines": 81
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SubdivideFaces.cs",
+      "lines": 81
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/BridgeEdges.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/DeleteFaces.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/InsertEdgeLoop.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SmartSubdivide.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/MergeFaces.cs",
+      "lines": 72
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SplitVertices.cs",
+      "lines": 72
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/FlipFaceEdge.cs",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SetPivotToSelection.cs",
+      "lines": 64
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/ConformFaceNormals.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/ConnectVertices.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/TriangulateFaces.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/ConnectEdges.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Geometry/SmartConnect.cs",
+      "lines": 56
+    }
+  ],
+  "Editor/MenuActions/Interaction": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Interaction/ToggleHandleOrientation.cs",
+      "lines": 88
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Interaction/ToggleDragRectMode.cs",
+      "lines": 79
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Interaction/ToggleXRay.cs",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Interaction/ToggleSelectBackFaces.cs",
+      "lines": 64
+    }
+  ],
+  "Editor/MenuActions/Object": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/ProBuilderize.cs",
+      "lines": 294
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/MirrorObjects.cs",
+      "lines": 207
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/MergeObjects.cs",
+      "lines": 89
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/FreezeTransform.cs",
+      "lines": 79
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/SetTrigger.cs",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/SetCollider.cs",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/CenterPivot.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/SubdivideObject.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/GenerateUV2.cs",
+      "lines": 57
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/ConformObjectNormals.cs",
+      "lines": 56
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/FlipObjectNormals.cs",
+      "lines": 56
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Object/TriangulateObject.cs",
+      "lines": 48
+    }
+  ],
+  "Editor/MenuActions/Selection": [
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/GrowSelection.cs",
+      "lines": 222
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectVertexColor.cs",
+      "lines": 176
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectEdgeRing.cs",
+      "lines": 139
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectEdgeLoop.cs",
+      "lines": 138
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectMaterial.cs",
+      "lines": 137
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/ShrinkSelection.cs",
+      "lines": 116
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectFaceRing.cs",
+      "lines": 81
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectSmoothingGroup.cs",
+      "lines": 81
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectLoop.cs",
+      "lines": 74
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectRing.cs",
+      "lines": 74
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectFaceLoop.cs",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/Editor/MenuActions/Selection/SelectHole.cs",
+      "lines": 63
+    }
+  ],
+  "Editor/Overlays": [
+    {
+      "path": "../probuilder-ref/Editor/Overlays/ProBuilderActionsOverlay.cs",
+      "lines": 417
+    },
+    {
+      "path": "../probuilder-ref/Editor/Overlays/ActionSettings.cs",
+      "lines": 267
+    },
+    {
+      "path": "../probuilder-ref/Editor/Overlays/SelectionSettingsButtons.cs",
+      "lines": 234
+    },
+    {
+      "path": "../probuilder-ref/Editor/Overlays/SceneInformationOverlay.cs",
+      "lines": 84
+    }
+  ],
+  "Editor/StateMachines": [
+    {
+      "path": "../probuilder-ref/Editor/StateMachines/ShapeState_InitShape.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/Editor/StateMachines/ShapeState_DrawBaseShape.cs",
+      "lines": 116
+    },
+    {
+      "path": "../probuilder-ref/Editor/StateMachines/ShapeState_DrawHeightShape.cs",
+      "lines": 99
+    },
+    {
+      "path": "../probuilder-ref/Editor/StateMachines/ShapeState.cs",
+      "lines": 68
+    }
+  ],
+  "External": [
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweep.cs",
+      "lines": 908
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/KdTree.cs",
+      "lines": 669
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/VertexUtility.cs",
+      "lines": 327
+    },
+    {
+      "path": "../probuilder-ref/External/StlExporter/Code/pb_Stl_Importer.cs",
+      "lines": 294
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/Node.cs",
+      "lines": 256
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/DelaunayTriangle.cs",
+      "lines": 215
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Polygon/Polygon.cs",
+      "lines": 214
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepContext.cs",
+      "lines": 197
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/Vertex.cs",
+      "lines": 193
+    },
+    {
+      "path": "../probuilder-ref/External/StlExporter/Code/pb_Stl.cs",
+      "lines": 193
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/Plane.cs",
+      "lines": 156
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationUtil.cs",
+      "lines": 154
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/Model.cs",
+      "lines": 139
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/CSG.cs",
+      "lines": 134
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/AdvancingFront.cs",
+      "lines": 133
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/PriorityQueue.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/P2T.cs",
+      "lines": 112
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Util/PolygonGenerator.cs",
+      "lines": 99
+    },
+    {
+      "path": "../probuilder-ref/External/StlExporter/Code/pb_Stl_Exporter.cs",
+      "lines": 97
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/KdTreeNode.cs",
+      "lines": 86
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/NearestNeighbourList.cs",
+      "lines": 83
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/HyperRect.cs",
+      "lines": 79
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Utility/FixedArray3.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Utility/FixedBitArray3.cs",
+      "lines": 75
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationContext.cs",
+      "lines": 71
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/Math/DoubleMath.cs",
+      "lines": 69
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/Math/FloatMath.cs",
+      "lines": 69
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Sets/PointSet.cs",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationPoint.cs",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/Math/TypeMath.cs",
+      "lines": 64
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepDebugContext.cs",
+      "lines": 62
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Sets/ConstrainedPointSet.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Util/PointGenerator.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepConstraint.cs",
+      "lines": 57
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Polygon/PolygonSet.cs",
+      "lines": 56
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/AdvancingFrontNode.cs",
+      "lines": 54
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepPointComparator.cs",
+      "lines": 52
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/VertexAttributes.cs",
+      "lines": 50
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/ITriangulatable.cs",
+      "lines": 47
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/PointOnEdgeException.cs",
+      "lines": 46
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Polygon/PolygonPoint.cs",
+      "lines": 44
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationConstraint.cs",
+      "lines": 44
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationDebugContext.cs",
+      "lines": 42
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepBasin.cs",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Delaunay/Sweep/DTSweepEdgeEvent.cs",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/Classes/Polygon.cs",
+      "lines": 37
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/Orientation.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationAlgorithm.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/Triangulation/TriangulationMode.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/Math/ITypeMath.cs",
+      "lines": 33
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/IKdTree.cs",
+      "lines": 27
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/IPriorityQueue.cs",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/External/StlExporter/AssemblyInfo.cs",
+      "lines": 5
+    },
+    {
+      "path": "../probuilder-ref/External/CSG/AssemblyInfo.cs",
+      "lines": 4
+    },
+    {
+      "path": "../probuilder-ref/External/KdTree/KdTreeLib/AssemblyInfo.cs",
+      "lines": 3
+    },
+    {
+      "path": "../probuilder-ref/External/Poly2Tri/AssemblyInfo.cs",
+      "lines": 3
+    }
+  ],
+  "Runtime/Core": [
+    {
+      "path": "../probuilder-ref/Runtime/Core/ShapeGenerator.cs",
+      "lines": 1605
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Math.cs",
+      "lines": 1316
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProBuilderMesh.cs",
+      "lines": 1018
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProBuilderMeshFunction.cs",
+      "lines": 1006
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Vertex.cs",
+      "lines": 976
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPickerRenderer.cs",
+      "lines": 878
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/MeshUtility.cs",
+      "lines": 648
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/HandleUtility.cs",
+      "lines": 579
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Face.cs",
+      "lines": 539
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Projection.cs",
+      "lines": 448
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProBuilderEnum.cs",
+      "lines": 447
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Bounds2D.cs",
+      "lines": 421
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/WingedEdge.cs",
+      "lines": 406
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/PreferenceDictionary.cs",
+      "lines": 399
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SemVer.cs",
+      "lines": 399
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ColorUtility.cs",
+      "lines": 350
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/MeshHandles.cs",
+      "lines": 322
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ArrayUtility.cs",
+      "lines": 318
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPicker.cs",
+      "lines": 318
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProBuilderMeshSelection.cs",
+      "lines": 316
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SharedVertex.cs",
+      "lines": 314
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/BuiltinMaterials.cs",
+      "lines": 312
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/AutoUnwrapSettings.cs",
+      "lines": 308
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Log.cs",
+      "lines": 297
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPickerSettings.cs",
+      "lines": 271
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Normals.cs",
+      "lines": 265
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Edge.cs",
+      "lines": 245
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/PreferenceKeys.cs",
+      "lines": 242
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/VectorMask.cs",
+      "lines": 240
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Submesh.cs",
+      "lines": 219
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Spline.cs",
+      "lines": 218
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/VertexPositioning.cs",
+      "lines": 212
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/UvAutoManualConversion.cs",
+      "lines": 207
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/UvUnwrapping.cs",
+      "lines": 199
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectPathFaces.cs",
+      "lines": 194
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Smoothing.cs",
+      "lines": 183
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/InternalUtility.cs",
+      "lines": 173
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/EdgeLookup.cs",
+      "lines": 155
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/EdgeUtility.cs",
+      "lines": 154
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Clipping.cs",
+      "lines": 130
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/TransformUtility.cs",
+      "lines": 130
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/BezierPoint.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/PolyShape.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPickerRendererURP.cs",
+      "lines": 121
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/UnwrapParameters.cs",
+      "lines": 116
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SimpleTuple.cs",
+      "lines": 113
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPickerRendererStandard.cs",
+      "lines": 111
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/FaceRebuildData.cs",
+      "lines": 110
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ActionResult.cs",
+      "lines": 108
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionPickerRendererHDRP.cs",
+      "lines": 100
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/URPSelectionPickerPass.cs",
+      "lines": 98
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProBuilderSnapping.cs",
+      "lines": 97
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Changelog.cs",
+      "lines": 95
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ColorPalette.cs",
+      "lines": 95
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ShapeFactory.cs",
+      "lines": 88
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Normal.cs",
+      "lines": 84
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Triangle.cs",
+      "lines": 82
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/VectorHash.cs",
+      "lines": 80
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/IntVec4.cs",
+      "lines": 79
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/WingedEdgeEnumerator.cs",
+      "lines": 79
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/BezierShape.cs",
+      "lines": 76
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/IntVec3.cs",
+      "lines": 76
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/IntVec2.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ObjectPool.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/HandleConstraint2D.cs",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SerializationUtility.cs",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Entity.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/Transform2D.cs",
+      "lines": 45
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/TriggerBehaviour.cs",
+      "lines": 41
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ColliderBehaviour.cs",
+      "lines": 39
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/MaterialUtility.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/HandleOrientation.cs",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/EntityBehaviour.cs",
+      "lines": 30
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/MeshHandle.cs",
+      "lines": 30
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/PivotPoint.cs",
+      "lines": 29
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/ProGridsIgnoreSnap.cs",
+      "lines": 29
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/RaycastHit.cs",
+      "lines": 27
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/SelectionModifierBehaviour.cs",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/IHasDefault.cs",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Core/AssemblyInfo.cs",
+      "lines": 8
+    }
+  ],
+  "Runtime/MeshOperations": [
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/AppendElements.cs",
+      "lines": 1546
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/ElementSelection.cs",
+      "lines": 952
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/ConnectElements.cs",
+      "lines": 625
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/ExtrudeElements.cs",
+      "lines": 600
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/MeshValidation.cs",
+      "lines": 496
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/UV/UVEditing.cs",
+      "lines": 414
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/SurfaceTopology.cs",
+      "lines": 374
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/Bevel.cs",
+      "lines": 345
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/CombineMeshes.cs",
+      "lines": 335
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/VertexEditing.cs",
+      "lines": 333
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/InternalMeshUtility.cs",
+      "lines": 288
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/Triangulation.cs",
+      "lines": 264
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/MeshImporter.cs",
+      "lines": 251
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/DeleteElements.cs",
+      "lines": 166
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/QuadUtility.cs",
+      "lines": 161
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/UV/TextureStitching.cs",
+      "lines": 139
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/MergeElements.cs",
+      "lines": 138
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/MeshTransform.cs",
+      "lines": 102
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/Subdivision.cs",
+      "lines": 33
+    },
+    {
+      "path": "../probuilder-ref/Runtime/MeshOperations/AssemblyInfo.cs",
+      "lines": 3
+    }
+  ],
+  "Runtime/Shapes": [
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Stairs.cs",
+      "lines": 659
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Torus.cs",
+      "lines": 264
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Sphere.cs",
+      "lines": 254
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Arch.cs",
+      "lines": 248
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Pipe.cs",
+      "lines": 219
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Cylinder.cs",
+      "lines": 213
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/ProBuilderShape.cs",
+      "lines": 211
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Door.cs",
+      "lines": 185
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Cone.cs",
+      "lines": 179
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Plane.cs",
+      "lines": 115
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Prism.cs",
+      "lines": 96
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Sprite.cs",
+      "lines": 76
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Cube.cs",
+      "lines": 72
+    },
+    {
+      "path": "../probuilder-ref/Runtime/Shapes/Shape.cs",
+      "lines": 60
+    }
+  ],
+  "Tests": [
+    {
+      "path": "../probuilder-ref/Tests/Editor/Picking/FacePickerTests.cs",
+      "lines": 588
+    },
+    {
+      "path": "../probuilder-ref/Tests/Framework/TestUtility.cs",
+      "lines": 485
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Utilities/RuntimeUtility.cs",
+      "lines": 316
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Picking/EdgePickerTests.cs",
+      "lines": 313
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Picking/RectSelection.cs",
+      "lines": 300
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/UVEditorTest.cs",
+      "lines": 290
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/DeleteElementsTests.cs",
+      "lines": 271
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/ExtrudeTests.cs",
+      "lines": 254
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Object/PrefabTests.cs",
+      "lines": 253
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/CutToolTest.cs",
+      "lines": 241
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Undo/TestUndo.cs",
+      "lines": 237
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/MeshSyncTests.cs",
+      "lines": 218
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/TextureUnwrapTests.cs",
+      "lines": 213
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/VertexManipulationTests.cs",
+      "lines": 200
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/CompileSubmeshTests.cs",
+      "lines": 198
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Picking/ColorEncoding.cs",
+      "lines": 181
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/IconUtilityTests.cs",
+      "lines": 177
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Actions/ContextualMenuTests.cs",
+      "lines": 153
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/AppendElementsTests.cs",
+      "lines": 152
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Type/VertexTests.cs",
+      "lines": 152
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Export/ExportObj.cs",
+      "lines": 146
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Actions/StripProBuilderScriptsTest.cs",
+      "lines": 141
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Picking/RectSelectionPicker.cs",
+      "lines": 134
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Selection/SelectFacesByColor.cs",
+      "lines": 132
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/ConvertManualToAutoUVTests.cs",
+      "lines": 125
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/UV/AutoStitchingTests.cs",
+      "lines": 122
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Selection/SelectMaterial.cs",
+      "lines": 115
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/ShapeToolGridSnapTests.cs",
+      "lines": 112
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Import/MeshImporterTests.cs",
+      "lines": 112
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Object/ProBuilderMeshEventsTests.cs",
+      "lines": 109
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/TestVersionInfo.cs",
+      "lines": 102
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/DuplicateFacesTest.cs",
+      "lines": 92
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/SubdivideElementsTests.cs",
+      "lines": 91
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Object/CreateDestroy.cs",
+      "lines": 85
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/ProGrids/ProGridsMethodsExist.cs",
+      "lines": 85
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/ConnectElementsTests.cs",
+      "lines": 85
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Shape/ShapeGeneratorTests.cs",
+      "lines": 85
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Type/TestVertex.cs",
+      "lines": 84
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/CalculateNormalsTests.cs",
+      "lines": 82
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/CollapseVerticesTest.cs",
+      "lines": 77
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Utilities/TransformUtilityTests.cs",
+      "lines": 77
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/DrawShapeToolPivotOffsetTests.cs",
+      "lines": 73
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Actions/MergeObjectsTest.cs",
+      "lines": 67
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/BuiltinMaterialShaderReferenceTests.cs",
+      "lines": 67
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/BridgeEdgesTests.cs",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/ProbuilderMeshDegenerateTriangleTest.cs",
+      "lines": 63
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/UV/AutoUVUnwrapScaleUpgradeTests.cs",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/ReflectedMethodsExist.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/CollapseVerticesTests.cs",
+      "lines": 58
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/EditorToolTests.cs",
+      "lines": 56
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Type/EdgeTests.cs",
+      "lines": 56
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/UVGeneration.cs",
+      "lines": 54
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/DisabledMenuTests.cs",
+      "lines": 51
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/CombineMeshesTests.cs",
+      "lines": 50
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Type/FaceTests.cs",
+      "lines": 48
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/ProBuilderShapeResizePivotTests.cs",
+      "lines": 47
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/Type/SemVerTests.cs",
+      "lines": 46
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Actions/ProBuilderizeActionTest.cs",
+      "lines": 45
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Editor/InternalMethodsAreInvoked.cs",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Geometry/CsgTests.cs",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Tests/Runtime/MeshOps/VertexColorTests.cs",
+      "lines": 39
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Export/ExportStl.cs",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Export/ExportPly.cs",
+      "lines": 35
+    },
+    {
+      "path": "../probuilder-ref/Tests/Editor/Performance/PathToolTests.cs",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Tests/Framework/AssemblyInfo.cs",
+      "lines": 4
+    }
+  ],
+  "Documentation": [
+    {
+      "path": "../probuilder-ref/Documentation~/Arch.md",
+      "lines": 25
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/CenterPivot.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Cone.md",
+      "lines": 20
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Cube.md",
+      "lines": 8
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Cylinder.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Door.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_Bevel.md",
+      "lines": 14
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_Bridge.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_Connect.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_Extrude.md",
+      "lines": 30
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_FillHole.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_InsertLoop.md",
+      "lines": 13
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_SetPivot.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Edge_Subdivide.md",
+      "lines": 20
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Editor_Windows.md",
+      "lines": 7
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Entity_Trigger.md",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Bevel.md",
+      "lines": 16
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_ConformNormals.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Delete.md",
+      "lines": 7
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Detach.md",
+      "lines": 27
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Duplicate.md",
+      "lines": 14
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Extrude.md",
+      "lines": 33
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_FlipNormals.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_FlipTri.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Inset.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Merge.md",
+      "lines": 10
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_SetPivot.md",
+      "lines": 14
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Subdivide.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Face_Triangulate.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Freeze_Transform.md",
+      "lines": 5
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/HandleAlign.md",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_ConformNormals.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_Export.md",
+      "lines": 92
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_FlipNormals.md",
+      "lines": 7
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_LightmapUVs.md",
+      "lines": 5
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_Merge.md",
+      "lines": 10
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_Mirror.md",
+      "lines": 20
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_ProBuilderize.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_Subdivide.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Object_Triangulate.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Offset_Elements.md",
+      "lines": 32
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Pipe.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Plane.md",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Prism.md",
+      "lines": 6
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/ProBuilderMesh.md",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Scene_Information.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/SelectPath.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Grow.md",
+      "lines": 21
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Loop_Edge.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Loop_Face.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Rect_Intersect.md",
+      "lines": 19
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Ring_Edge.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Ring_Face.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_SelectByMaterial.md",
+      "lines": 19
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_SelectByVertexColor.md",
+      "lines": 19
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_SelectHidden.md",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_SelectHole.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Shift.md",
+      "lines": 18
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_Shrink.md",
+      "lines": 13
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Selection_SmoothingGroup.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Sphere.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Sprite.md",
+      "lines": 6
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Stair.md",
+      "lines": 22
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/TableOfContents.md",
+      "lines": 116
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Torus.md",
+      "lines": 25
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Transform_Tools.md",
+      "lines": 7
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_Collapse.md",
+      "lines": 20
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_Connect.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_FillHole.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_SetPivot.md",
+      "lines": 13
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_Split.md",
+      "lines": 10
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/Vert_Weld.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/_ReplaceSource.md",
+      "lines": 1
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/api.md",
+      "lines": 107
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/auto-uvs-actions.md",
+      "lines": 140
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/boolean.md",
+      "lines": 24
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/components.md",
+      "lines": 13
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/cut-tool.md",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/experimental.md",
+      "lines": 15
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/faq.md",
+      "lines": 84
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/gloss.md",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/hotkeys.md",
+      "lines": 5
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/index.md",
+      "lines": 19
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/installing.md",
+      "lines": 30
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/lightmap-uv.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/links.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/manual-uvs-actions.md",
+      "lines": 162
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/material-tools.md",
+      "lines": 150
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/menu.md",
+      "lines": 174
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/meshes-as-assets.md",
+      "lines": 11
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/modes.md",
+      "lines": 65
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/overview-ui.md",
+      "lines": 12
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/overview.md",
+      "lines": 39
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/polyshape.md",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/preferences.md",
+      "lines": 96
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/ref_actions.md",
+      "lines": 64
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/ref_tools.md",
+      "lines": 24
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/ref_windows.md",
+      "lines": 20
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/shape-tool.md",
+      "lines": 53
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/smoothing-groups.md",
+      "lines": 80
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/snap-to-grid.md",
+      "lines": 13
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/tool-options-overlay.md",
+      "lines": 9
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/tools.md",
+      "lines": 17
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/uv-editor-toolbar.md",
+      "lines": 64
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/uv-editor.md",
+      "lines": 44
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/uv_dropdown.md",
+      "lines": 43
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/vertex-colors.md",
+      "lines": 17
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/vertex-positions.md",
+      "lines": 23
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/whats-new.md",
+      "lines": 47
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-create-bezier.md",
+      "lines": 78
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-create.md",
+      "lines": 26
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-edit-smoothing.md",
+      "lines": 48
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-edit-tasks.md",
+      "lines": 77
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-edit-tips.md",
+      "lines": 66
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-edit.md",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-exporting.md",
+      "lines": 51
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-materials.md",
+      "lines": 38
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-texture-mapping.md",
+      "lines": 26
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-uvs.md",
+      "lines": 156
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-vertexcolors.md",
+      "lines": 36
+    },
+    {
+      "path": "../probuilder-ref/Documentation~/workflow-walkthroughs.md",
+      "lines": 16
+    }
+  ],
+  "Content/Shader": [
+    {
+      "path": "../probuilder-ref/Content/Shader/DiffuseTextureBlend.shader",
+      "lines": 54
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/DiffuseVertexColor.shader",
+      "lines": 28
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/EdgePicker.shader",
+      "lines": 59
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/EdgePickerURP.shader",
+      "lines": 67
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/FaceHighlight.shader",
+      "lines": 60
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/FacePicker.shader",
+      "lines": 52
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/FacePickerURP.shader",
+      "lines": 68
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/HideVertices.shader",
+      "lines": 44
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/LineBillboard.shader",
+      "lines": 107
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/LineBillboardMetal.shader",
+      "lines": 78
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/NormalPreview.shader",
+      "lines": 55
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/PointBillboard.shader",
+      "lines": 131
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/ProBuilderCG.cginc",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/ProBuilderCG_URP.hlsl",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/ReferenceUnlit.shader",
+      "lines": 67
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/ScrollHighlight.shader",
+      "lines": 70
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/SelectionPicker.shader",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/SelectionPickerURP.shader",
+      "lines": 40
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/SmoothingPreview.shader",
+      "lines": 63
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/Standard Vertex Color.shadergraph",
+      "lines": 1795
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/TransparentOverlay.shader",
+      "lines": 61
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/UnlitSolidColor.shader",
+      "lines": 55
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/UnlitVertexColor.shader",
+      "lines": 51
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/VertexPicker.shader",
+      "lines": 76
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/VertexPickerURP.shader",
+      "lines": 74
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/VertexShader.shader",
+      "lines": 82
+    }
+  ]
+}

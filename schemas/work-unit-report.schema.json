@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProBuilder Work Unit Extraction Report",
+  "type": "object",
+  "required": ["unit_id", "title", "domain", "files_read", "sections"],
+  "properties": {
+    "unit_id": {
+      "type": "string",
+      "description": "Work unit ID e.g. A01"
+    },
+    "title": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "files_read": {
+      "type": "array",
+      "description": "Every file path that was actually read, with line ranges",
+      "items": {
+        "type": "object",
+        "required": ["path", "lines_total", "lines_read"],
+        "properties": {
+          "path": { "type": "string" },
+          "lines_total": { "type": "integer" },
+          "lines_read": {
+            "type": "string",
+            "description": "e.g. '1-500' or '1-200,350-500' or 'FULL'"
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "One section per extract item from the work unit",
+      "items": {
+        "type": "object",
+        "required": ["heading", "content", "source_evidence"],
+        "properties": {
+          "heading": {
+            "type": "string",
+            "description": "Matches the extract item heading e.g. 'FIELDS' or 'MESH REPRESENTATION'"
+          },
+          "content": {
+            "type": "string",
+            "description": "The extracted specification. Must include concrete details: field names, types, values, algorithms, sequences."
+          },
+          "source_evidence": {
+            "type": "array",
+            "description": "Source code citations that ground each claim",
+            "items": {
+              "type": "object",
+              "required": ["file", "line_range", "quote"],
+              "properties": {
+                "file": { "type": "string" },
+                "line_range": { "type": "string" },
+                "quote": {
+                  "type": "string",
+                  "description": "Exact code snippet (10-30 lines) that evidences the claim. Verbatim from source."
+                }
+              }
+            },
+            "minItems": 1
+          },
+          "godot_notes": {
+            "type": "string",
+            "description": "Optional: relevant Godot equivalents, gaps, or implementation notes"
+          }
+        }
+      }
+    },
+    "cross_references": {
+      "type": "array",
+      "description": "References to other work units that interact with this one",
+      "items": {
+        "type": "object",
+        "properties": {
+          "unit_id": { "type": "string" },
+          "relationship": { "type": "string" }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "description": "Anything that could not be determined from the source code alone",
+      "items": { "type": "string" }
+    }
+  }
+}

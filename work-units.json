@@ -1,0 +1,843 @@
+[
+  {
+    "id": "A01",
+    "domain": "Data Model",
+    "title": "ProBuilderMesh core data structures",
+    "files": [
+      "../probuilder-ref/Runtime/Core/ProBuilderMesh.cs",
+      "../probuilder-ref/Runtime/Core/ProBuilderMeshFunction.cs",
+      "../probuilder-ref/Runtime/Core/ProBuilderMeshSelection.cs"
+    ],
+    "doc_refs": [
+      "ProBuilderMesh.md"
+    ],
+    "extract": [
+      "FIELDS: List every serialized/internal field with type, default, and purpose",
+      "MESH REPRESENTATION: How vertices, faces, edges, shared vertices, UV channels are stored. Array layouts. Index formats.",
+      "SUBMESH STRUCTURE: How materials map to submeshes, how triangles are grouped",
+      "REFRESH PIPELINE: What Refresh(RefreshMask) does step by step - when does ToMesh/Refresh get called, what does each mask bit rebuild",
+      "SELECTION STATE: How selected faces/edges/vertices are stored and queried per-mesh",
+      "LIFECYCLE: Creation, destruction, MakeUnique, undo integration, prefab support"
+    ]
+  },
+  {
+    "id": "A02",
+    "domain": "Data Model",
+    "title": "Face, Edge, Vertex, SharedVertex types",
+    "files": [
+      "../probuilder-ref/Runtime/Core/Face.cs",
+      "../probuilder-ref/Runtime/Core/Edge.cs",
+      "../probuilder-ref/Runtime/Core/EdgeLookup.cs",
+      "../probuilder-ref/Runtime/Core/EdgeUtility.cs",
+      "../probuilder-ref/Runtime/Core/Vertex.cs",
+      "../probuilder-ref/Runtime/Core/SharedVertex.cs",
+      "../probuilder-ref/Runtime/Core/FaceRebuildData.cs",
+      "../probuilder-ref/Runtime/Core/Normal.cs",
+      "../probuilder-ref/Runtime/Core/Normals.cs"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "FACE: All fields (indexes, smoothingGroup, textureGroup, manualUV, submeshIndex, elementGroup). How indexes relate to mesh vertex array. Distinct vs shared vertex semantics.",
+      "EDGE: Local vs common edge representation. EdgeLookup purpose. How edges reference vertices.",
+      "VERTEX: All 8 channels (position, color, uv0-3, normal, tangent). Equals/hash semantics.",
+      "SHARED VERTEX: Mapping from local index to shared index. Purpose for welding, merging. GetSharedVertexLookup.",
+      "NORMAL CALCULATION: CalculateNormals algorithm - per-face, per-smoothing-group averaging. Hard vs soft edge normals."
+    ]
+  },
+  {
+    "id": "A03",
+    "domain": "Data Model",
+    "title": "Enums, preferences, and configuration",
+    "files": [
+      "../probuilder-ref/Runtime/Core/ProBuilderEnum.cs",
+      "../probuilder-ref/Runtime/Core/PreferenceKeys.cs",
+      "../probuilder-ref/Runtime/Core/HandleOrientation.cs",
+      "../probuilder-ref/Runtime/Core/HandleConstraint2D.cs",
+      "../probuilder-ref/Runtime/Core/PivotPoint.cs",
+      "../probuilder-ref/Runtime/Core/SelectionModifierBehaviour.cs",
+      "../probuilder-ref/Runtime/Core/AutoUnwrapSettings.cs",
+      "../probuilder-ref/Runtime/Core/UnwrapParameters.cs",
+      "../probuilder-ref/Runtime/Core/ActionResult.cs",
+      "../probuilder-ref/Runtime/Core/VectorMask.cs"
+    ],
+    "doc_refs": [
+      "preferences.md",
+      "HandleAlign.md",
+      "Selection_Rect_Intersect.md"
+    ],
+    "extract": [
+      "EVERY ENUM: List every enum with every member and its numeric value. SelectMode, ComponentMode, EditLevel, EntityType, ColliderType, ProjectionAxis, HandleAxis, Axis, WindingOrder, SortMethod, CullingMode, RectSelectMode, MeshSyncState, MeshArrays, IndexFormat, RefreshMask, ExtrudeMethod.",
+      "HANDLE ORIENTATION: World vs ActiveObject vs ActiveElement - exact behavior of each for vertex/edge/face",
+      "PIVOT POINT: How pivot calculation works per selection",
+      "AUTO UNWRAP SETTINGS: All fields (offset, rotation, scale, fill, stretch, anchor, swapUV, flipU, flipV, useWorldSpace) with their meaning",
+      "UNWRAP PARAMETERS: hardAngle, packMargin, angleError, areaError",
+      "PREFERENCE KEYS: Every preference key string, its type, and default value",
+      "RECT SELECT: Partial vs Complete intersection behavior",
+      "SELECTION MODIFIER: Add, Subtract, Difference behavior with shift/ctrl"
+    ]
+  },
+  {
+    "id": "A04",
+    "domain": "Data Model",
+    "title": "Math, projection, snapping utilities",
+    "files": [
+      "../probuilder-ref/Runtime/Core/Math.cs",
+      "../probuilder-ref/Runtime/Core/Projection.cs",
+      "../probuilder-ref/Runtime/Core/ProBuilderSnapping.cs",
+      "../probuilder-ref/Runtime/Core/TransformUtility.cs",
+      "../probuilder-ref/Runtime/Core/HandleUtility.cs",
+      "../probuilder-ref/Runtime/Core/Bounds2D.cs",
+      "../probuilder-ref/Runtime/Core/Clipping.cs",
+      "../probuilder-ref/Runtime/Core/IntVec2.cs",
+      "../probuilder-ref/Runtime/Core/IntVec3.cs",
+      "../probuilder-ref/Runtime/Core/IntVec4.cs",
+      "../probuilder-ref/Runtime/Core/VectorHash.cs"
+    ],
+    "doc_refs": [
+      "snap-to-grid.md"
+    ],
+    "extract": [
+      "SNAPPING: Snap(value, snap) algorithm. ProGrids integration. How grid snapping works during vertex/face/edge movement.",
+      "MATH: All static methods - ray-face intersection, triangle area, normal calculation, point-in-polygon, closest point on edge/face/line, polygon centroid, signed angle",
+      "PROJECTION: How 3D faces are projected to 2D for UV operations and triangulation. FindBestPlane, PlanarProject.",
+      "HANDLE UTILITY: ScreenToGuiPoint, GetActiveCamera, FaceRaycast, edge picking distance calculations",
+      "BOUNDS 2D: Axis-aligned bounding box for UV/2D operations",
+      "INT VECTORS: Why they exist (hash-based comparison with epsilon tolerance)"
+    ]
+  },
+  {
+    "id": "B01",
+    "domain": "Mesh Operations",
+    "title": "Extrude, Inset, Offset",
+    "files": [
+      "../probuilder-ref/Runtime/MeshOperations/ExtrudeElements.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/ExtrudeFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/ExtrudeEdges.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/OffsetElements.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/Extrude.cs"
+    ],
+    "doc_refs": [
+      "Face_Extrude.md",
+      "Edge_Extrude.md",
+      "Face_Inset.md",
+      "Offset_Elements.md"
+    ],
+    "extract": [
+      "FACE EXTRUDE: ExtrudeMethod.IndividualFaces vs VertexNormal vs FaceNormal - geometry algorithm for each. How new faces/vertices are created.",
+      "EDGE EXTRUDE: How edge extrusion creates new faces along edges",
+      "INSET: How Shift+Scale creates inset faces. The algorithm - scale face inward, create bridge faces.",
+      "OFFSET: How offset differs from extrude. Distance parameter behavior.",
+      "SHIFT+MOVE EXTRUDE: The Shift+Move shortcut that auto-extrudes faces/edges during translation. Exact trigger conditions and state machine.",
+      "UX FLOW: What happens click-by-click. When does the extrusion commit? Undo behavior."
+    ]
+  },
+  {
+    "id": "B02",
+    "domain": "Mesh Operations",
+    "title": "Connect, Bridge, Subdivide, InsertEdgeLoop",
+    "files": [
+      "../probuilder-ref/Runtime/MeshOperations/ConnectElements.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/ConnectEdges.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/ConnectVertices.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SmartConnect.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/BridgeEdges.cs",
+      "../probuilder-ref/Runtime/MeshOperations/Subdivision.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SubdivideEdges.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SubdivideFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SmartSubdivide.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/InsertEdgeLoop.cs"
+    ],
+    "doc_refs": [
+      "Edge_Connect.md",
+      "Vert_Connect.md",
+      "Edge_Bridge.md",
+      "Edge_Subdivide.md",
+      "Face_Subdivide.md",
+      "Edge_InsertLoop.md"
+    ],
+    "extract": [
+      "CONNECT EDGES: Algorithm - finds face(s) sharing selected edges, inserts new edge(s). How it handles quads vs n-gons.",
+      "CONNECT VERTICES: Connects selected vertices within a face with new edge(s). Algorithm.",
+      "BRIDGE EDGES: Creates face(s) between two selected edges. Requirements (same object, edges must share no face). Algorithm.",
+      "SUBDIVIDE EDGES: Splits edges into N segments. subdivisions parameter.",
+      "SUBDIVIDE FACES: Center vertex + connecting edges. Algorithm for quad vs n-gon.",
+      "INSERT EDGE LOOP: Full loop detection algorithm. How it follows quad strips. What happens at non-quad faces.",
+      "SMART CONNECT/SUBDIVIDE: Mode-aware dispatch logic"
+    ]
+  },
+  {
+    "id": "B03",
+    "domain": "Mesh Operations",
+    "title": "Delete, Detach, Duplicate, Merge, Collapse, Split, Weld, Bevel",
+    "files": [
+      "../probuilder-ref/Runtime/MeshOperations/DeleteElements.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/DeleteFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/DetachFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/DuplicateFaces.cs",
+      "../probuilder-ref/Runtime/MeshOperations/MergeElements.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/MergeFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/CollapseVertices.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SplitVertices.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/WeldVertices.cs",
+      "../probuilder-ref/Runtime/MeshOperations/Bevel.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/BevelEdges.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/FillHole.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/FlipFaceEdge.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/FlipFaceNormals.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/ConformFaceNormals.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/TriangulateFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Geometry/SetPivotToSelection.cs"
+    ],
+    "doc_refs": [
+      "Face_Delete.md",
+      "Face_Detach.md",
+      "Face_Duplicate.md",
+      "Face_Merge.md",
+      "Vert_Collapse.md",
+      "Vert_Split.md",
+      "Vert_Weld.md",
+      "Edge_Bevel.md",
+      "Face_Bevel.md",
+      "Edge_FillHole.md",
+      "Vert_FillHole.md",
+      "Face_FlipTri.md",
+      "Face_FlipNormals.md",
+      "Face_ConformNormals.md",
+      "Face_Triangulate.md"
+    ],
+    "extract": [
+      "DELETE: How faces are removed. Orphan vertex cleanup. Shared vertex cleanup.",
+      "DETACH: Detach to new object vs detach in place. How it duplicates vertices and creates separate submeshes.",
+      "DUPLICATE: Creates new object from selected faces. Difference from detach.",
+      "MERGE FACES: When allowed (adjacent, same smoothing/material). Algorithm.",
+      "COLLAPSE: Collapse to first vs collapse to center. Vertex merging algorithm.",
+      "SPLIT: Unshares a vertex - duplicates it so faces don't share it. Reverses welding.",
+      "WELD: Distance-based vertex welding. Threshold parameter. SharedVertex update.",
+      "BEVEL: Edge bevel algorithm - distance parameter, how new faces are created at beveled edges. Face bevel.",
+      "FILL HOLE: Hole detection from selected edges/vertices. How the fill polygon is triangulated.",
+      "FLIP FACE EDGE: Flips shared triangle edge between two triangles.",
+      "CONFORM NORMALS: Makes all face normals point same direction. Algorithm.",
+      "SET PIVOT: How pivot point is moved to selection center while keeping geometry in place."
+    ]
+  },
+  {
+    "id": "B04",
+    "domain": "Mesh Operations",
+    "title": "Mesh transforms and vertex positioning",
+    "files": [
+      "../probuilder-ref/Runtime/MeshOperations/MeshTransform.cs",
+      "../probuilder-ref/Runtime/Core/VertexPositioning.cs",
+      "../probuilder-ref/Runtime/MeshOperations/SurfaceTopology.cs",
+      "../probuilder-ref/Runtime/MeshOperations/VertexEditing.cs",
+      "../probuilder-ref/Runtime/MeshOperations/MeshValidation.cs",
+      "../probuilder-ref/Runtime/MeshOperations/InternalMeshUtility.cs"
+    ],
+    "doc_refs": [
+      "vertex-positions.md",
+      "Freeze_Transform.md"
+    ],
+    "extract": [
+      "VERTEX POSITIONING: TranslateVertices, SetVertexPosition - how positions are applied in world vs local space. How SharedVertex groups move together.",
+      "MESH TRANSFORM: FreezeTransform algorithm - bakes transform into vertices and resets transform. MirrorObject - axis selection, how UVs/normals are flipped.",
+      "SURFACE TOPOLOGY: GetConnectedFaces, GetConnectedEdges, WingedEdge traversal for topology queries",
+      "VERTEX EDITING: AppendSharedVertex, SetSharedVertex - maintaining the shared vertex map during edits",
+      "MESH VALIDATION: RemoveDegenerateTriangles, RemoveUnusedVertices, EnsureMeshIsValid"
+    ]
+  },
+  {
+    "id": "C01",
+    "domain": "UV & Texturing",
+    "title": "UV Editor window",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/UVEditor.cs"
+    ],
+    "doc_refs": [
+      "uv-editor.md",
+      "uv-editor-toolbar.md",
+      "uv_dropdown.md",
+      "workflow-uvs.md",
+      "workflow-texture-mapping.md"
+    ],
+    "extract": [
+      "WINDOW LAYOUT: All UI elements, panels, toolbars. What each button/dropdown does.",
+      "UV MANIPULATION: How UVs are moved, rotated, scaled in the UV editor. Gizmo behavior.",
+      "AUTO VS MANUAL UV: What determines auto vs manual mode. How switching works.",
+      "UV ACTIONS: Project, Reset, Fit, Fill, Flip, Rotate90, manual UV adjust. What each does to the UV coordinates.",
+      "UV RENDER: How the UV wireframe is drawn. Preview texture rendering. Island highlighting.",
+      "COORDINATE DISPLAY: UV coordinate readout precision and format"
+    ]
+  },
+  {
+    "id": "C02",
+    "domain": "UV & Texturing",
+    "title": "Auto UV, manual UV, UV stitching, UV unwrapping",
+    "files": [
+      "../probuilder-ref/Runtime/Core/AutoUnwrapSettings.cs",
+      "../probuilder-ref/Runtime/Core/UvUnwrapping.cs",
+      "../probuilder-ref/Runtime/Core/UvAutoManualConversion.cs",
+      "../probuilder-ref/Runtime/MeshOperations/UV/UVEditing.cs",
+      "../probuilder-ref/Runtime/MeshOperations/UV/TextureStitching.cs",
+      "../probuilder-ref/Editor/EditorCore/AutoUVEditor.cs"
+    ],
+    "doc_refs": [
+      "auto-uvs-actions.md",
+      "manual-uvs-actions.md",
+      "lightmap-uv.md"
+    ],
+    "extract": [
+      "AUTO UNWRAP: Complete algorithm - how face normal determines projection axis. How offset/rotation/scale/anchor are applied. useWorldSpace flag behavior.",
+      "MANUAL UV: What data is stored per-face for manual UVs. How the user edits them.",
+      "UV STITCHING: TextureStitching algorithm - how adjacent faces have their UVs matched. When auto-stitching fires.",
+      "AUTO-MANUAL CONVERSION: What happens when switching a face from auto to manual and back. Data preserved/lost.",
+      "UV EDITING OPERATIONS: SewUVs, SplitUVs, CollapseUVs, ProjectFacesBox, ProjectFacesPlanar, ProjectFacesAuto",
+      "TEXTURE GROUPS: How textureGroup field groups faces for coordinated UV projection"
+    ]
+  },
+  {
+    "id": "D01",
+    "domain": "Shape Creation",
+    "title": "All shape primitives - geometry generation",
+    "files": [
+      "../probuilder-ref/Runtime/Core/ShapeGenerator.cs",
+      "../probuilder-ref/Runtime/Shapes/Shape.cs",
+      "../probuilder-ref/Runtime/Shapes/ProBuilderShape.cs",
+      "../probuilder-ref/Runtime/Shapes/Cube.cs",
+      "../probuilder-ref/Runtime/Shapes/Arch.cs",
+      "../probuilder-ref/Runtime/Shapes/Cone.cs",
+      "../probuilder-ref/Runtime/Shapes/Cylinder.cs",
+      "../probuilder-ref/Runtime/Shapes/Door.cs",
+      "../probuilder-ref/Runtime/Shapes/Pipe.cs",
+      "../probuilder-ref/Runtime/Shapes/Plane.cs",
+      "../probuilder-ref/Runtime/Shapes/Prism.cs",
+      "../probuilder-ref/Runtime/Shapes/Sphere.cs",
+      "../probuilder-ref/Runtime/Shapes/Sprite.cs",
+      "../probuilder-ref/Runtime/Shapes/Stairs.cs",
+      "../probuilder-ref/Runtime/Shapes/Torus.cs"
+    ],
+    "doc_refs": [
+      "Arch.md",
+      "Cone.md",
+      "Cube.md",
+      "Cylinder.md",
+      "Door.md",
+      "Pipe.md",
+      "Plane.md",
+      "Prism.md",
+      "Sphere.md",
+      "Sprite.md",
+      "Stair.md",
+      "Torus.md"
+    ],
+    "extract": [
+      "SHAPE BASE CLASS: Shape abstract class - what methods each shape implements. UpdateShape, RebuildMesh lifecycle.",
+      "FOR EACH SHAPE: List every configurable parameter (with type, range, default). Describe the exact geometry generation algorithm (vertex layout, face topology, UV generation).",
+      "PROBUILDER SHAPE COMPONENT: How it wraps Shape + ProBuilderMesh. Serialized properties. Editor integration.",
+      "SHAPE GENERATOR (legacy): All static generation methods. Parameters for each."
+    ]
+  },
+  {
+    "id": "D02",
+    "domain": "Shape Creation",
+    "title": "Draw shape tool, edit shape tool, shape state machines",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/DrawShapeTool.cs",
+      "../probuilder-ref/Editor/EditorCore/EditShapeTool.cs",
+      "../probuilder-ref/Editor/StateMachines/ShapeState.cs",
+      "../probuilder-ref/Editor/StateMachines/ShapeState_InitShape.cs",
+      "../probuilder-ref/Editor/StateMachines/ShapeState_DrawBaseShape.cs",
+      "../probuilder-ref/Editor/StateMachines/ShapeState_DrawHeightShape.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorShapeUtility.cs",
+      "../probuilder-ref/Editor/EditorCore/ProBuilderShapeEditor.cs"
+    ],
+    "doc_refs": [
+      "shape-tool.md",
+      "workflow-create.md"
+    ],
+    "extract": [
+      "DRAW TOOL STATE MACHINE: InitShape \u2192 DrawBaseShape \u2192 DrawHeightShape states. What each state does, what input it consumes, what transitions exist.",
+      "MOUSE INTERACTION: How mouse position maps to 3D plane intersection. Which plane is used (active grid, face normal, camera plane). How drag defines width/depth, then height.",
+      "GRID SNAPPING: How snapping is applied during shape drawing. ProGrids integration.",
+      "SHAPE SELECTION: How the shape type dropdown works. How switching shapes preserves/resets parameters.",
+      "EDIT SHAPE TOOL: How handles appear for editing existing shapes. Which parameters get handles. Bounds handle behavior.",
+      "PIVOT OFFSET: How the shape's pivot relates to its geometry. Configurable?"
+    ]
+  },
+  {
+    "id": "D03",
+    "domain": "Shape Creation",
+    "title": "PolyShape tool and Bezier shape tool",
+    "files": [
+      "../probuilder-ref/Runtime/Core/PolyShape.cs",
+      "../probuilder-ref/Editor/EditorCore/PolyShapeTool.cs",
+      "../probuilder-ref/Editor/EditorCore/PolyShapeEditor.cs",
+      "../probuilder-ref/Runtime/Core/BezierShape.cs",
+      "../probuilder-ref/Runtime/Core/BezierPoint.cs",
+      "../probuilder-ref/Runtime/Core/Spline.cs",
+      "../probuilder-ref/Editor/EditorCore/BezierSplineEditor.cs"
+    ],
+    "doc_refs": [
+      "polyshape.md",
+      "workflow-create-bezier.md",
+      "experimental.md"
+    ],
+    "extract": [
+      "POLYSHAPE: Point placement UX - click to place points, close polygon, extrude height. How normals are computed for non-planar point sets.",
+      "POLYSHAPE EDIT: How existing points are moved. Adding/removing points. Handles.",
+      "POLYSHAPE EXTRUSION: flipNormals flag. How 2D outline becomes 3D mesh. Triangulation of top/bottom cap.",
+      "BEZIER SHAPE: Tangent handle types. Knot placement. How bezier curve becomes mesh (tessellation parameter). Surface generation from spline.",
+      "BEZIER EDITING: Moving knots vs tangent handles. Inserting/deleting control points."
+    ]
+  },
+  {
+    "id": "E01",
+    "domain": "Selection & Picking",
+    "title": "Selection picker rendering and raycasting",
+    "files": [
+      "../probuilder-ref/Runtime/Core/SelectionPicker.cs",
+      "../probuilder-ref/Runtime/Core/SelectionPickerRenderer.cs",
+      "../probuilder-ref/Runtime/Core/SelectionPickerRendererStandard.cs",
+      "../probuilder-ref/Runtime/Core/SelectionPickerRendererHDRP.cs",
+      "../probuilder-ref/Runtime/Core/SelectionPickerRendererURP.cs",
+      "../probuilder-ref/Runtime/Core/URPSelectionPickerPass.cs",
+      "../probuilder-ref/Runtime/Core/SelectionPickerSettings.cs",
+      "../probuilder-ref/Runtime/Core/RaycastHit.cs"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "COLOR ENCODING PICKING: How faces/edges/vertices are encoded as unique colors and rendered to an offscreen texture. The render pipeline (Standard/HDRP/URP variants).",
+      "RECT SELECTION: How a drag rectangle reads the color buffer to determine selected elements. Partial vs Complete mode.",
+      "CLICK SELECTION: How a single click picks the nearest face/edge/vertex. Distance calculations.",
+      "DEPTH TESTING: How occluded elements are handled. SelectHidden toggle behavior.",
+      "PERFORMANCE: Resolution of the pick texture. How it scales with rect size.",
+      "RENDER PIPELINE DIFFERENCES: What each renderer variant does differently for Standard vs URP vs HDRP"
+    ]
+  },
+  {
+    "id": "E02",
+    "domain": "Selection & Picking",
+    "title": "Scene view picking, selection utilities, element selection algorithms",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/EditorSceneViewPicker.cs",
+      "../probuilder-ref/Editor/EditorCore/MeshSelection.cs",
+      "../probuilder-ref/Editor/EditorCore/MeshAndElementSelection.cs",
+      "../probuilder-ref/Editor/EditorCore/SelectionUtility.cs",
+      "../probuilder-ref/Runtime/MeshOperations/ElementSelection.cs",
+      "../probuilder-ref/Runtime/Core/SelectPathFaces.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorPathSelectionUtility.cs"
+    ],
+    "doc_refs": [
+      "SelectPath.md",
+      "Selection_Grow.md",
+      "Selection_Shrink.md",
+      "Selection_Shift.md"
+    ],
+    "extract": [
+      "SCENE VIEW PICKER: DoMouseDrag, DoMouseClick - full event handling. How modifier keys (shift, ctrl, alt) affect selection.",
+      "MESH SELECTION: How the global selection state tracks which ProBuilderMeshes are selected and which elements within each.",
+      "ELEMENT SELECTION ALGORITHMS: GetConnectedFaces, GetConnectedEdges, GetPerimeterEdges, GetPerimeterFaces, GetVertexRing, GetEdgeLoop, GetEdgeRing, GetFaceLoop, GetFaceRing - FULL ALGORITHM for each.",
+      "GROW SELECTION: How it expands selection by one ring of adjacent elements. iterative parameter. angle constraint.",
+      "SHRINK SELECTION: Inverse of grow - removes perimeter elements.",
+      "SELECT PATH: A* pathfinding between two faces/edges. How cost is calculated.",
+      "SHIFT MODIFIER: How Selection_Shift.md 'Shift' action works - extends to connected"
+    ]
+  },
+  {
+    "id": "E03",
+    "domain": "Selection & Picking",
+    "title": "Selection menu actions",
+    "files": [
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectEdgeLoop.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectEdgeRing.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectFaceLoop.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectFaceRing.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectHole.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectLoop.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectRing.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectMaterial.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectSmoothingGroup.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/SelectVertexColor.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/GrowSelection.cs",
+      "../probuilder-ref/Editor/MenuActions/Selection/ShrinkSelection.cs"
+    ],
+    "doc_refs": [
+      "Selection_Loop_Edge.md",
+      "Selection_Ring_Edge.md",
+      "Selection_Loop_Face.md",
+      "Selection_Ring_Face.md",
+      "Selection_SelectHole.md",
+      "Selection_SelectByMaterial.md",
+      "Selection_SelectByVertexColor.md",
+      "Selection_SmoothingGroup.md",
+      "Selection_SelectHidden.md"
+    ],
+    "extract": [
+      "EDGE LOOP: Definition of loop. Algorithm to walk loop from selected edge. How it handles T-junctions and boundaries.",
+      "EDGE RING: Definition of ring (perpendicular to loop). Algorithm.",
+      "FACE LOOP/RING: How face loops/rings are computed. Relationship to edge loops.",
+      "SELECT HOLE: How boundary edges are detected and grouped into holes.",
+      "SELECT BY MATERIAL: How material index comparison works across submeshes.",
+      "SELECT BY VERTEX COLOR: Color comparison with tolerance parameter.",
+      "SELECT BY SMOOTHING GROUP: How smoothing group IDs are compared.",
+      "EACH ACTION: enabled conditions, modifier behavior, undo registration"
+    ]
+  },
+  {
+    "id": "F01",
+    "domain": "Editor Tools",
+    "title": "ProBuilder Move/Rotate/Scale tools",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/ProbuilderMoveTool.cs",
+      "../probuilder-ref/Editor/EditorCore/ProbuilderRotateTool.cs",
+      "../probuilder-ref/Editor/EditorCore/ProbuilderScaleTool.cs",
+      "../probuilder-ref/Editor/EditorCore/VertexManipulationTool.cs",
+      "../probuilder-ref/Editor/EditorCore/VertexManipulationToolSettings.cs",
+      "../probuilder-ref/Editor/EditorCore/PositionTool.cs"
+    ],
+    "doc_refs": [
+      "Transform_Tools.md"
+    ],
+    "extract": [
+      "MOVE TOOL: How translation is applied to selected vertices/edges/faces. World vs Local vs Element coordinate space. How the gizmo orientation follows HandleOrientation setting.",
+      "ROTATE TOOL: Rotation pivot calculation. How rotation is applied per-element vs grouped. How the rotation handle appears for face/edge/vertex.",
+      "SCALE TOOL: Scale pivot and axis. How scaling works for sub-mesh elements (faces scale around their center, not mesh center). Uniform vs non-uniform.",
+      "SHIFT+MOVE/SCALE: The extrude-on-move and inset-on-scale behavior. Exact trigger: is it Shift held before or during drag? State tracking.",
+      "VERTEX MANIPULATION TOOL BASE: Common functionality. How undo is registered. How mesh is refreshed during drag vs on release.",
+      "SNAPPING DURING TRANSFORM: How ProGrids snapping integrates with move/rotate/scale. Increment snapping.",
+      "TOOL SETTINGS: What options appear in the tool settings overlay for each tool."
+    ]
+  },
+  {
+    "id": "F02",
+    "domain": "Editor Tools",
+    "title": "Cut tool",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/CutTool.cs",
+      "../probuilder-ref/Editor/MenuActions/Editors/CutToolAction.cs"
+    ],
+    "doc_refs": [
+      "cut-tool.md"
+    ],
+    "extract": [
+      "POINT PLACEMENT: How clicks place cut points on face. Snapping to edges/vertices. How the point snaps to face surface (raycasting).",
+      "VISUAL FEEDBACK: How the cut preview is drawn (line segments, vertex dots). Colors and styling.",
+      "CUT EXECUTION: When the user completes the cut (Enter/double-click). Algorithm: how the face is split into new faces along the cut path.",
+      "UNDO/CANCEL: Backspace to remove last point. Escape to cancel. Undo integration.",
+      "MULTI-FACE CUTS: Can the cut path span multiple faces? How.",
+      "STATE MACHINE: Internal state tracking. When is the tool 'active' vs 'idle'."
+    ]
+  },
+  {
+    "id": "F03",
+    "domain": "Editor Tools",
+    "title": "Texture manipulation tools",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/TextureMoveTool.cs",
+      "../probuilder-ref/Editor/EditorCore/TextureRotateTool.cs",
+      "../probuilder-ref/Editor/EditorCore/TextureScaleTool.cs",
+      "../probuilder-ref/Editor/EditorCore/TextureTool.cs"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "TEXTURE MOVE: How UV offset is adjusted via in-scene handles. Which UV channels are affected.",
+      "TEXTURE ROTATE: In-scene rotation of UVs. Pivot point for rotation.",
+      "TEXTURE SCALE: In-scene UV scaling. Per-axis vs uniform.",
+      "TEXTURE TOOL BASE: Common state management. How it interacts with auto vs manual UV mode.",
+      "HANDLE RENDERING: How the texture manipulation handles are drawn in the scene view."
+    ]
+  },
+  {
+    "id": "G01",
+    "domain": "Visual Rendering",
+    "title": "Editor handle drawing - wireframes, selection overlays",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/EditorHandleDrawing.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorHandleDrawingScopes.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorHandleUtility.cs",
+      "../probuilder-ref/Runtime/Core/MeshHandle.cs",
+      "../probuilder-ref/Runtime/Core/MeshHandles.cs",
+      "../probuilder-ref/Editor/EditorCore/HandleGUI.cs"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "WIREFRAME OVERLAY: How wireframe is drawn over the mesh in edit mode. Line width, color, depth testing behavior. When is it drawn (always? only in ProBuilder context?).",
+      "FACE HIGHLIGHT: How selected faces are highlighted. Color, transparency, shader used (FaceHighlight.shader). How unselected face dimming works.",
+      "EDGE HIGHLIGHT: How selected edges are drawn. Line width, billboard shader usage (LineBillboard.shader).",
+      "VERTEX DOTS: How vertex points are rendered. Point size (PointBillboard.shader). Selected vs unselected colors.",
+      "DEPTH/OCCLUSION: How overlay rendering handles depth. X-ray mode toggle.",
+      "MESH HANDLE: How MeshHandle caches GL draw data for performance. When it rebuilds.",
+      "DRAWING SCOPES: What EditorHandleDrawingScopes does with GL state management.",
+      "COLORS: Every color constant used for selection, wireframe, hover, etc."
+    ]
+  },
+  {
+    "id": "G02",
+    "domain": "Visual Rendering",
+    "title": "Shaders for picking and overlay rendering",
+    "files": [
+      "../probuilder-ref/Content/Shader/FaceHighlight.shader",
+      "../probuilder-ref/Content/Shader/LineBillboard.shader",
+      "../probuilder-ref/Content/Shader/LineBillboardMetal.shader",
+      "../probuilder-ref/Content/Shader/PointBillboard.shader",
+      "../probuilder-ref/Content/Shader/VertexShader.shader",
+      "../probuilder-ref/Content/Shader/FacePicker.shader",
+      "../probuilder-ref/Content/Shader/EdgePicker.shader",
+      "../probuilder-ref/Content/Shader/VertexPicker.shader",
+      "../probuilder-ref/Content/Shader/SelectionPicker.shader.meta",
+      "../probuilder-ref/Content/Shader/TransparentOverlay.shader",
+      "../probuilder-ref/Content/Shader/HideVertices.shader",
+      "../probuilder-ref/Content/Shader/UnlitSolidColor.shader",
+      "../probuilder-ref/Content/Shader/UnlitVertexColor.shader",
+      "../probuilder-ref/Content/Shader/NormalPreview.shader",
+      "../probuilder-ref/Content/Shader/SmoothingPreview.shader",
+      "../probuilder-ref/Content/Shader/ProBuilderCG.cginc"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "FACE HIGHLIGHT SHADER: Vertex/fragment program. How face color overlay is blended. Depth test mode.",
+      "LINE BILLBOARD: How lines are expanded to screen-space width. The geometry shader or vertex expansion technique. Metal variant differences.",
+      "POINT BILLBOARD: How vertex dots are rendered as screen-space quads.",
+      "PICKER SHADERS: Face/Edge/Vertex picker shaders - how they output the color-encoded ID. Differences between Standard and URP variants.",
+      "TRANSPARENT OVERLAY: How transparent overlay renders on top of geometry.",
+      "NORMAL PREVIEW: How normal direction arrows are visualized.",
+      "SMOOTHING PREVIEW: How smoothing group colors are visualized.",
+      "COMMON CG INCLUDE: Shared shader utilities."
+    ]
+  },
+  {
+    "id": "H01",
+    "domain": "UI & Overlays",
+    "title": "ProBuilder overlays, actions toolbar, scene info",
+    "files": [
+      "../probuilder-ref/Editor/Overlays/ProBuilderActionsOverlay.cs",
+      "../probuilder-ref/Editor/Overlays/ActionSettings.cs",
+      "../probuilder-ref/Editor/Overlays/SelectionSettingsButtons.cs",
+      "../probuilder-ref/Editor/Overlays/SceneInformationOverlay.cs",
+      "../probuilder-ref/Editor/EditorCore/ProBuilderToolsContexts.cs"
+    ],
+    "doc_refs": [
+      "tool-options-overlay.md",
+      "Scene_Information.md",
+      "overview-ui.md"
+    ],
+    "extract": [
+      "ACTIONS OVERLAY: Every button/action in the overlay. How they're grouped. Icon vs text mode. How overlay populates differently per edit mode.",
+      "ACTION SETTINGS: How per-action option panels work. What triggers them to appear.",
+      "SELECTION SETTINGS: Handle orientation toggle, select back faces toggle, rect select mode toggle, X-ray toggle. How each button state is persisted.",
+      "SCENE INFORMATION: What stats are shown (vertex count, face count, triangle count, mesh count). When they update.",
+      "TOOL CONTEXTS: How ProBuilder registers as a custom tool context. How it integrates with Unity's overlay system."
+    ]
+  },
+  {
+    "id": "H02",
+    "domain": "UI & Overlays",
+    "title": "ProBuilder editor core, settings, menu system",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/ProBuilderEditor.cs",
+      "../probuilder-ref/Editor/EditorCore/ProBuilderSettings.cs",
+      "../probuilder-ref/Editor/EditorCore/ProBuilderSettingsProvider.cs",
+      "../probuilder-ref/Editor/EditorCore/Pref.cs",
+      "../probuilder-ref/Editor/EditorCore/PreferencesInternal.cs",
+      "../probuilder-ref/Editor/EditorCore/MenuAction.cs",
+      "../probuilder-ref/Editor/EditorCore/MenuItems.cs",
+      "../probuilder-ref/Editor/EditorCore/MenuOption.cs",
+      "../probuilder-ref/Editor/EditorCore/MenuToolToggle.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorToolbarLoader.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorToolbarMenuItems.cs",
+      "../probuilder-ref/Editor/EditorCore/ProBuilderMenuActionAttribute.cs"
+    ],
+    "doc_refs": [
+      "preferences.md",
+      "menu.md",
+      "hotkeys.md"
+    ],
+    "extract": [
+      "PROBUILDER EDITOR: The central editor class. OnSceneGUI flow. How it coordinates selection, tools, and overlays.",
+      "SETTINGS: Every user-configurable preference with its key, type, default, and UI. Group by category.",
+      "MENU ACTION BASE CLASS: How actions are registered, enabled/disabled per mode. DoAction/PerformAction pattern.",
+      "MENU SYSTEM: How the ProBuilder menu and context menu are populated. MenuAction discovery.",
+      "TOOLBAR: How the toolbar is built from MenuAction list. Icon loading. Tooltip system.",
+      "SHORTCUTS: How keyboard shortcuts are registered and dispatched."
+    ]
+  },
+  {
+    "id": "I01",
+    "domain": "Object Operations",
+    "title": "Object-level actions: merge, mirror, export, probuilderize",
+    "files": [
+      "../probuilder-ref/Editor/MenuActions/Object/MergeObjects.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/MirrorObjects.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/FreezeTransform.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/CenterPivot.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/SubdivideObject.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/TriangulateObject.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/FlipObjectNormals.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/ConformObjectNormals.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/GenerateUV2.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/ProBuilderize.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/SetCollider.cs",
+      "../probuilder-ref/Editor/MenuActions/Object/SetTrigger.cs",
+      "../probuilder-ref/Runtime/MeshOperations/CombineMeshes.cs"
+    ],
+    "doc_refs": [
+      "Object_Merge.md",
+      "Object_Mirror.md",
+      "Freeze_Transform.md",
+      "CenterPivot.md",
+      "Object_Subdivide.md",
+      "Object_Triangulate.md",
+      "Object_FlipNormals.md",
+      "Object_ConformNormals.md",
+      "Object_LightmapUVs.md",
+      "Object_ProBuilderize.md"
+    ],
+    "extract": [
+      "MERGE OBJECTS: How multiple ProBuilder objects are combined. Vertex/face renumbering. Material/submesh consolidation.",
+      "MIRROR: Axis selection UI. How geometry is duplicated and mirrored. Normal/UV correction.",
+      "FREEZE TRANSFORM: How transform is baked into mesh vertices.",
+      "CENTER PIVOT: How pivot is moved to bounds center.",
+      "SUBDIVIDE OBJECT: Applies subdivision to every face. Algorithm.",
+      "TRIANGULATE: Converts all faces to triangles.",
+      "PROBUILDERIZE: How a regular Unity mesh gets ProBuilder data attached. Vertex sharing detection. Face creation from triangle groups. Smoothing group inference.",
+      "COMBINE MESHES: Internal algorithm for merging vertex/face arrays."
+    ]
+  },
+  {
+    "id": "I02",
+    "domain": "Object Operations",
+    "title": "Export (OBJ, PLY, STL, Asset), import, materials",
+    "files": [
+      "../probuilder-ref/Editor/MenuActions/Export/Export.cs",
+      "../probuilder-ref/Editor/MenuActions/Export/ExportObj.cs",
+      "../probuilder-ref/Editor/MenuActions/Export/ExportPly.cs",
+      "../probuilder-ref/Editor/MenuActions/Export/ExportStlAscii.cs",
+      "../probuilder-ref/Editor/MenuActions/Export/ExportStlBinary.cs",
+      "../probuilder-ref/Editor/MenuActions/Export/ExportAsset.cs",
+      "../probuilder-ref/Editor/EditorCore/ObjExporter.cs",
+      "../probuilder-ref/Editor/EditorCore/PlyExporter.cs",
+      "../probuilder-ref/Runtime/MeshOperations/MeshImporter.cs",
+      "../probuilder-ref/Editor/EditorCore/MaterialEditor.cs",
+      "../probuilder-ref/Editor/EditorCore/MaterialPalette.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorMaterialUtility.cs",
+      "../probuilder-ref/Runtime/Core/BuiltinMaterials.cs"
+    ],
+    "doc_refs": [
+      "Object_Export.md",
+      "workflow-exporting.md",
+      "material-tools.md",
+      "workflow-materials.md",
+      "meshes-as-assets.md"
+    ],
+    "extract": [
+      "EXPORT FORMATS: For each format (OBJ, PLY, STL ASCII, STL Binary, Asset), what data is exported. Options per format.",
+      "OBJ EXPORTER: Vertex, normal, UV, face output format. Material/MTL file generation. Multi-object handling.",
+      "PLY EXPORTER: Vertex color support. Binary vs ASCII.",
+      "MESH IMPORTER: How external meshes are converted to ProBuilder format. Vertex sharing heuristics.",
+      "MATERIAL EDITOR: Material palette UI. Apply material to selection. Quick material picker.",
+      "BUILTIN MATERIALS: Default materials provided by ProBuilder. How they're loaded."
+    ]
+  },
+  {
+    "id": "J01",
+    "domain": "Special Editors",
+    "title": "Smoothing groups, vertex colors, vertex positions, lightmap UV editors",
+    "files": [
+      "../probuilder-ref/Editor/EditorCore/SmoothGroupEditor.cs",
+      "../probuilder-ref/Runtime/Core/Smoothing.cs",
+      "../probuilder-ref/Editor/EditorCore/VertexColorPalette.cs",
+      "../probuilder-ref/Editor/EditorCore/VertexPositionEditor.cs",
+      "../probuilder-ref/Editor/EditorCore/LightmapUVEditor.cs",
+      "../probuilder-ref/Editor/EditorCore/DimensionsEditor.cs",
+      "../probuilder-ref/Editor/EditorCore/VertexOnFaceEditor.cs"
+    ],
+    "doc_refs": [
+      "smoothing-groups.md",
+      "vertex-colors.md",
+      "vertex-positions.md",
+      "workflow-vertexcolors.md",
+      "workflow-edit-smoothing.md"
+    ],
+    "extract": [
+      "SMOOTHING GROUP EDITOR: Full UI - how groups are assigned, previewed. Color coding per group. Auto smoothing angle threshold.",
+      "SMOOTHING ALGORITHM: How smoothing group IDs affect normal calculation. Hard edges (group 0 or Smoothing.hardGroup). Shared normals within group.",
+      "VERTEX COLOR PALETTE: Color picker UI. Apply mode (face vs vertex). Preset colors.",
+      "VERTEX POSITION EDITOR: Direct coordinate input for selected vertices. World vs local display.",
+      "LIGHTMAP UV EDITOR: UV2 generation settings. Preview.",
+      "DIMENSIONS EDITOR: Object dimensions display and editing."
+    ]
+  },
+  {
+    "id": "K01",
+    "domain": "Interaction & Undo",
+    "title": "Interaction toggles, undo, editor styles, hierarchy, drag-and-drop",
+    "files": [
+      "../probuilder-ref/Editor/MenuActions/Interaction/ToggleHandleOrientation.cs",
+      "../probuilder-ref/Editor/MenuActions/Interaction/ToggleSelectBackFaces.cs",
+      "../probuilder-ref/Editor/MenuActions/Interaction/ToggleXRay.cs",
+      "../probuilder-ref/Editor/MenuActions/Interaction/ToggleDragRectMode.cs",
+      "../probuilder-ref/Editor/EditorCore/UndoUtility.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorStyles.cs",
+      "../probuilder-ref/Editor/EditorCore/HierarchyListener.cs",
+      "../probuilder-ref/Editor/EditorCore/SceneDragAndDropListener.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorSnapping.cs",
+      "../probuilder-ref/Editor/EditorCore/EditorEnum.cs"
+    ],
+    "doc_refs": [
+      "HandleAlign.md",
+      "Selection_SelectHidden.md",
+      "Selection_Rect_Intersect.md"
+    ],
+    "extract": [
+      "HANDLE ORIENTATION TOGGLE: Cycles World \u2192 ActiveObject \u2192 ActiveElement. How it affects gizmo rendering and transform application.",
+      "SELECT BACK FACES: What 'hidden' means - backface culling during selection. How it affects rect select and click select.",
+      "X-RAY TOGGLE: What X-ray mode does visually. How it affects selection (makes all elements selectable regardless of occlusion).",
+      "DRAG RECT MODE: Partial vs Complete intersection toggle.",
+      "UNDO: RegisterCompleteObjectUndo usage. How ProBuilder tracks undo for mesh changes. What state is captured.",
+      "EDITOR SNAPPING: How ProBuilder's own snapping wraps Unity/ProGrids snapping.",
+      "HIERARCHY LISTENER: What happens when objects are reparented, duplicated, deleted in the hierarchy.",
+      "DRAG AND DROP: Material/texture drag onto ProBuilder faces."
+    ]
+  },
+  {
+    "id": "L01",
+    "domain": "Topology",
+    "title": "WingedEdge data structure and topology traversal",
+    "files": [
+      "../probuilder-ref/Runtime/Core/WingedEdge.cs",
+      "../probuilder-ref/Runtime/Core/WingedEdgeEnumerator.cs",
+      "../probuilder-ref/Runtime/MeshOperations/ElementSelection.cs",
+      "../probuilder-ref/Runtime/MeshOperations/QuadUtility.cs",
+      "../probuilder-ref/Runtime/Core/Triangle.cs",
+      "../probuilder-ref/Runtime/Core/Submesh.cs"
+    ],
+    "doc_refs": [],
+    "extract": [
+      "WINGED EDGE: Full data structure - edge, face, next, previous, opposite. How it's built from Face/Edge arrays.",
+      "TRAVERSAL: How GetWingedEdges builds the topology. Performance characteristics.",
+      "ENUMERATOR: How WingedEdgeEnumerator walks around a face or vertex.",
+      "ELEMENT SELECTION: How topology is used for loop/ring/grow/shrink operations. GetConnectedFaces/Edges algorithm.",
+      "QUAD UTILITY: How quads are detected from triangle pairs. IsQuad check.",
+      "SUBMESH: How submeshes map to material slots. Triangle array per submesh."
+    ]
+  },
+  {
+    "id": "M01",
+    "domain": "Boolean/CSG",
+    "title": "CSG boolean operations",
+    "files": [
+      "../probuilder-ref/External/CSG/Classes/Node.cs",
+      "../probuilder-ref/External/CSG/Classes/Plane.cs",
+      "../probuilder-ref/External/CSG/Classes/Polygon.cs",
+      "../probuilder-ref/Editor/EditorCore/BooleanEditor.cs"
+    ],
+    "doc_refs": [
+      "boolean.md"
+    ],
+    "extract": [
+      "CSG ALGORITHM: BSP tree construction from mesh. Union, Subtract, Intersect operations.",
+      "NODE: BSP node structure - plane, front/back children, polygons.",
+      "POLYGON: How mesh faces are converted to CSG polygons and back.",
+      "BOOLEAN EDITOR: UI for boolean operations. Object selection. Preview.",
+      "LIMITATIONS: Known limitations, edge cases, precision issues."
+    ]
+  }
+]
