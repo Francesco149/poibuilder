@@ -4,7 +4,7 @@
 ## Faces also carry material assignments (submesh index), smoothing groups, and Auto-UV settings.
 @tool
 class_name PBFace
-extends RefCounted
+extends Resource
 
 # ==============================================================================
 # Serialized Properties

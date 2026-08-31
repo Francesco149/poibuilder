@@ -4,7 +4,7 @@
 ## PBSharedVertex clusters these distinct local vertex indices into topological groups.
 @tool
 class_name PBSharedVertex
-extends RefCounted
+extends Resource
 
 ## The vertex indices belonging to this coincident group.
 var indices: PackedInt32Array = PackedInt32Array()
