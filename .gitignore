@@ -1,1 +1,9 @@
 __pycache__/
+
+# Godot
+project/.godot/
+*.import
+*.uid
+
+# Test results
+project/tests/results.xml
