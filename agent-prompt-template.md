@@ -28,10 +28,13 @@ Read PROTOCOL.md in the working directory first, then follow it exactly.
 - Do NOT skip any file in the files list.
 - Do NOT use phrases like "similar to", "as expected", "straightforward", "handles this".
 - Do NOT guess. If unsure, add to open_questions.
-- Every section needs at least one source_evidence citation with verbatim code.
+- CITATION DENSITY: Provide at least 1 source_evidence citation per 1500 characters
+  of section content. A 3000-char section needs 2+ citations from different line ranges.
+  Copy-paste quotes verbatim — do NOT retype from memory.
 - Minimum 200 characters per section content.
 - Name every field, type, method, parameter, default value you encounter.
 
 ## Output
 
-Your final output is the file `reports/{unit_id}.json`. Confirm it passes validation.
+Your final output is the file `reports/{unit_id}.json`. Confirm it passes validation
+with zero errors. Address warnings where possible (especially LOW CITATION DENSITY).

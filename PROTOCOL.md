@@ -79,12 +79,17 @@ Fix all errors before declaring done. Warnings are advisory but should be addres
 1. **Skip files.** Every file in the unit's `files` array must be read completely.
 2. **Handwave.** Phrases like "similar to", "as expected", "straightforward",
    "handles this" are rejected. Say exactly what happens.
-3. **Omit evidence.** Every section needs at least one source code citation.
+3. **Skimp on evidence.** Provide at least 1 source code citation per 1500 chars
+   of content. A 3000-char section needs at least 2 citations from different
+   line ranges. Cite the actual code that evidences each sub-claim, not just
+   one representative snippet.
 4. **Invent behavior.** If you can't determine something from source, list it
    in `open_questions`. Never guess.
 5. **Write thin sections.** Minimum 200 characters per section content.
 6. **Skip extract items.** Every item in the `extract` array must have a
    corresponding section in your report.
+7. **Quote inaccurately.** Quotes must be verbatim from source. Copy-paste, don't
+   retype from memory. Encoding errors cause validation failures.
 
 ## Report JSON Structure
 
