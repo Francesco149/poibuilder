@@ -1,0 +1,260 @@
+{
+  "unit_id": "G02",
+  "title": "Shaders for picking and overlay rendering",
+  "domain": "Visual Rendering",
+  "files_read": [
+    {
+      "path": "../probuilder-ref/Content/Shader/FaceHighlight.shader",
+      "lines_total": 60,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/LineBillboard.shader",
+      "lines_total": 107,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/LineBillboardMetal.shader",
+      "lines_total": 78,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/PointBillboard.shader",
+      "lines_total": 131,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/VertexShader.shader",
+      "lines_total": 82,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/FacePicker.shader",
+      "lines_total": 52,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/EdgePicker.shader",
+      "lines_total": 59,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/VertexPicker.shader",
+      "lines_total": 76,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/SelectionPicker.shader.meta",
+      "lines_total": 9,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/TransparentOverlay.shader",
+      "lines_total": 61,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/HideVertices.shader",
+      "lines_total": 44,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/UnlitSolidColor.shader",
+      "lines_total": 55,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/UnlitVertexColor.shader",
+      "lines_total": 51,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/NormalPreview.shader",
+      "lines_total": 55,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/SmoothingPreview.shader",
+      "lines_total": 63,
+      "lines_read": "FULL"
+    },
+    {
+      "path": "../probuilder-ref/Content/Shader/ProBuilderCG.cginc",
+      "lines_total": 61,
+      "lines_read": "FULL"
+    }
+  ],
+  "sections": [
+    {
+      "heading": "FACE HIGHLIGHT SHADER",
+      "content": "The face highlight shader (`Hidden/ProBuilder/FaceHighlight`) renders selection highlights, hover overlays, and GL wireframe faces on top of geometry. The shader defines four properties: `_Color` (`Color Tint`, default `(1,1,1,1)`), `_Dither` (`Dithering`, float, default `0`), `_HandleZTest` (`Int`, default `8` which corresponds to `UnityEngine.Rendering.CompareFunction.Always`), and `_HandleZWrite` (`Int`, default `0` for depth-write disabled).\n\nSubShader Configuration:\n- Tags: `IgnoreProjector=\"True\"`, `Queue=\"Transparent\"`.\n- Fixed Function State: `Lighting Off`, `ZTest [_HandleZTest]`, `ZWrite [_HandleZWrite]`, `Cull Off`, `Blend SrcAlpha OneMinusSrcAlpha`.\n- Culling is disabled (`Cull Off`) so both front and back faces are highlighted when selected. Alpha blending computes `FinalColor = _Color.rgb * _Color.a + DestColor.rgb * (1.0 - _Color.a)`.\n\nVertex Program (`vert`):\n- Vertex struct `appdata` receives `float4 vertex : POSITION`.\n- Vertex transformation invokes `UnityObjectToClipPosWithOffset(v.vertex.xyz)` from `ProBuilderCG.cginc`. This function transforms local coordinates into view space via `UnityObjectToViewPos(pos)`, applies depth scaling (`ret.xyz *= lerp(.99, 1, unity_OrthoParams.w)` and `ret.z *= lerp(1, 0.95, unity_OrthoParams.w)`), and multiplies by `UNITY_MATRIX_P` to output clip position `o.pos` pulled slightly toward the camera to eliminate z-fighting with the underlying mesh geometry.\n\nFragment Program (`frag`):\n- When dithering is enabled (`_Dither > 0`), the fragment program evaluates a screen-space checkerboard dither mask on `i.pos.xy`:\n  1. `i.pos.xy = floor(i.pos.xy * 1) * .5;`\n  2. `float checker = -frac(i.pos.x + i.pos.y);`\n  3. `clip(lerp(1, checker, _Dither));`\n- When `_Dither == 0`, `lerp(1, checker, 0) == 1 >= 0`, no pixels are discarded and the overlay renders as a solid tinted fill. When `_Dither == 1`, `checker` is negative for pixels where `frac(i.pos.x + i.pos.y) > 0`, discarding alternating pixels in a 2x2 grid pattern.\n- Returns `_Color`.\n\nRelated unlit overlay shaders:\n- `ProBuilder/Unlit Solid Color` (`UnlitSolidColor.shader`): Tags `IgnoreProjector=\"True\"`, `Queue=\"Transparent\"`, `Lighting Off`, `ZTest LEqual`, `ZWrite On`, `Cull Back`, `Blend SrcAlpha OneMinusSrcAlpha`. Outputs uniform `_Color` via standard `UnityObjectToClipPos(v.vertex)`.\n- `ProBuilder/UnlitVertexColor` (`UnlitVertexColor.shader`): Tags `Queue=\"Transparent\"`, `IgnoreProjector=\"True\"`, `RenderType=\"Transparent\"`, `Lighting Off`, `ZTest LEqual`, `Blend SrcAlpha OneMinusSrcAlpha`, `ZWrite On`, `Cull Off`. Pass-through `v.color` in `vert` and outputs `i.color` in `frag`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/FaceHighlight.shader",
+          "line_range": "1-31",
+          "quote": "Shader \"Hidden/ProBuilder/FaceHighlight\"\n{\n    Properties\n    {\n        _Color (\"Color Tint\", Color) = (1,1,1,1)\n        _Dither (\"Dithering\", float) = 0\n        _HandleZTest (\"_HandleZTest\", Int) = 8\n        _HandleZWrite(\"_HandleZWrite\", Int) = 0\n    }\n\n    SubShader\n    {\n        Tags { \"IgnoreProjector\"=\"True\" \"Queue\"=\"Transparent\" }\n        Lighting Off\n        ZTest [_HandleZTest]\n        ZWrite [_HandleZWrite]\n        Cull Off\n        Blend SrcAlpha OneMinusSrcAlpha\n\n        Pass\n        {\n            CGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #include \"UnityCG.cginc\"\n            #include \"ProBuilderCG.cginc\"\n\n            float4 _Color;\n            float _Dither;\n\n            struct appdata"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/FaceHighlight.shader",
+          "line_range": "36-57",
+          "quote": "            struct v2f\n            {\n                float4 pos : SV_POSITION;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\t\t\t\to.pos = UnityObjectToClipPosWithOffset(v.vertex.xyz);\n                return o;\n            }\n\n            half4 frag (v2f i) : SV_Target\n            {\n                i.pos.xy = floor(i.pos.xy * 1) * .5;\n                float checker = -frac(i.pos.x + i.pos.y);\n                clip(lerp(1, checker, _Dither));\n\n                return _Color;\n            }\n\n            ENDCG"
+        }
+      ],
+      "godot_notes": "In Godot 4, face highlighting can be implemented as a StandardMaterial3D or ShaderMaterial on a secondary overlay mesh instance. Set `transparency = TransparencyEnum.ALPHA`, `cull_mode = CullModeEnum.DISABLED`, and `depth_draw_mode = DepthDrawModeEnum.ALWAYS` or `DEPTH_PRE_PASS`. Set `no_depth_test = true` or use render priority to render on top. For dithering, calculate screen coordinates via `FRAGCOORD.xy`."
+    },
+    {
+      "heading": "LINE BILLBOARD",
+      "content": "Line billboard shaders render mesh wireframes, edge selection highlights, and guide outlines with constant screen-space pixel width `_Scale`. ProBuilder provides two implementations: `Hidden/ProBuilder/LineBillboard` (geometry shader path for DX11/GL) and `Hidden/ProBuilder/LineBillboardMetal` (vertex extrusion path for platforms without geometry shaders such as Apple Metal).\n\n1. Geometry Shader Line Expansion (`LineBillboard.shader`):\n- SubShader Tags: `\"ProBuilderPicker\"=\"EdgePass\"`, `\"RenderType\"=\"Geometry\"`, `\"Queue\"=\"Geometry\"`, `\"DisableBatching\"=\"True\"`, `\"ForceNoShadowCasting\"=\"True\"`, `\"IgnoreProjector\"=\"True\"`.\n- State: `Lighting Off`, `ZTest [_HandleZTest]`, `ZWrite [_HandleZWrite]`, `Cull Off`, `Blend Off`, `Offset -1, -1`. Target `#pragma target 4.0`, excludes Metal renderer (`#pragma exclude_renderers metal`).\n- Vertex Program (`vert`): Converts position to view space `float4(UnityObjectToViewPos(v.vertex.xyz), 1)`, pulls closer to camera by scaling `o.pos *= .99`, projects to clip space `mul(UNITY_MATRIX_P, o.pos)`, and transforms clip coordinates to screen-space pixel coordinates `ClipToScreen(o.pos)`.\n- Geometry Program (`geo`): Takes a line segment `line v2f p[2]` in screen space and computes a perpendicular normal vector: `float2 perp = normalize(float2(-(p[1].pos.y - p[0].pos.y), p[1].pos.x - p[0].pos.x)) * _Scale`. Generates a 4-vertex triangle strip quad connecting `p[1] + perp`, `p[1] - perp`, `p[0] + perp`, `p[0] - perp`, transformed back to clip coordinates via `ScreenToClip(float4)`. Emits `maxvertexcount(4)` vertices into `TriangleStream<v2f> triStream`.\n- Fragment Program (`frag`): Returns `i.color * _Color`.\n\n2. Metal & Non-Geometry Fallback Line Expansion (`LineBillboardMetal.shader`):\n- Used when `BuiltinMaterials.geometryShadersSupported` is `false`.\n- Mesh Data Generation (`MeshHandles.CreateEdgeBillboardMesh`): For every edge `(a, b)`, four vertices are constructed as a quad with `MeshTopology.Quads`. Vertices 0 and 1 are located at position `a` with tangents `(b.x, b.y, b.z, +1.0)` and `(b.x, b.y, b.z, -1.0)`. Vertices 2 and 3 are located at position `b` with tangents `(c.x, c.y, c.z, +1.0)` and `(c.x, c.y, c.z, -1.0)`, where `c = b + (b - a)` represents the extended direction vector.\n- Vertex Program (`vert` in `LineBillboardMetal.shader`): Transforms `v.vertex.xyz` to clip coordinates with offset `UnityObjectToClipPosWithOffsetMetal(v.vertex.xyz)`. Projects both the current vertex and the tangent target vertex `v.tangent.xyz` into screen coordinates `a = ClipToScreen(o.pos)` and `b = ClipToScreen(UnityObjectToClipPosWithOffset(v.tangent.xyz))`. Calculates the screen-space direction vector `d = normalize(b - a).xy` and perpendicular vector `p = float2(-d.y, d.x)`. Shifts the screen position `a.xy += p * v.tangent.w * _Scale` and maps back to clip space `o.pos = ScreenToClip(a)`.\n- Fragment Program (`frag`): Returns `_Color`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/LineBillboard.shader",
+          "line_range": "58-95",
+          "quote": "            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);\n\n                // pull closer to camera and into clip space\n                o.pos *= .99;\n                o.pos = mul(UNITY_MATRIX_P, o.pos);\n                // convert clip -> ndc -> screen, build billboards in geo shader, then screen -> ndc -> clip\n                o.pos = ClipToScreen(o.pos);\n                o.color = v.color;\n                return o;\n            }\n\n            [maxvertexcount(4)]\n            void geo(line v2f p[2], inout TriangleStream<v2f> triStream)\n            {\n                float2 perp = normalize(float2(-(p[1].pos.y - p[0].pos.y), p[1].pos.x - p[0].pos.x)) * _Scale;\n\n                v2f geo_out;\n\n                geo_out.pos = ScreenToClip( float4(p[1].pos.x + perp.x, p[1].pos.y + perp.y, p[1].pos.z, p[1].pos.w) );\n                geo_out.color = p[1].color;\n                triStream.Append(geo_out);\n\n                geo_out.pos =  ScreenToClip( float4(p[1].pos.x - perp.x, p[1].pos.y - perp.y, p[1].pos.z, p[1].pos.w) );\n                geo_out.color = p[1].color;\n                triStream.Append(geo_out);\n\n                geo_out.pos =  ScreenToClip( float4(p[0].pos.x + perp.x, p[0].pos.y + perp.y, p[0].pos.z, p[0].pos.w) );\n                geo_out.color = p[0].color;\n                triStream.Append(geo_out);\n\n                geo_out.pos =  ScreenToClip( float4(p[0].pos.x - perp.x, p[0].pos.y - perp.y, p[0].pos.z, p[0].pos.w) );\n                geo_out.color = p[0].color;\n                triStream.Append(geo_out);\n            }"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/LineBillboardMetal.shader",
+          "line_range": "51-68",
+          "quote": "            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = UnityObjectToClipPosWithOffsetMetal(v.vertex.xyz);\n\n                // convert vertex to screen space, add pixel-unit xy to vertex, then transform back to clip space.\n                float4 clip = o.pos;\n\n                float4 a = ClipToScreen(o.pos);\n                float4 b = ClipToScreen(UnityObjectToClipPosWithOffset(v.tangent.xyz));\n                float2 d = normalize(b-a).xy;\n                float2 p = float2(-d.y, d.x);\n                a.xy += p * v.tangent.w * _Scale;\n\n                o.pos = ScreenToClip(a);\n                return o;\n            }"
+        }
+      ],
+      "godot_notes": "In Godot 4, geometry shaders are not supported in Vulkan standard shader passes. The vertex expansion technique used in `LineBillboardMetal.shader` (generating 4 vertices per line segment in `MeshTopology.Quads` / `PRIMITIVE_TRIANGLES` and expanding screen-space perpendiculars in the vertex shader) is the exact recommended approach for screen-space wireframe and line rendering in Godot 4."
+    },
+    {
+      "heading": "POINT BILLBOARD",
+      "content": "Point billboard shaders render individual mesh vertices as screen-space square dot handles facing the camera. ProBuilder implements two techniques: `Hidden/ProBuilder/PointBillboard` (geometry shader path expanding points into quads) and `Hidden/ProBuilder/VertexShader` (vertex shader quad expansion fallback).\n\n1. Geometry Shader Point Expansion (`PointBillboard.shader`):\n- Tags: `\"ProBuilderPicker\"=\"VertexPass\"`, `\"RenderType\"=\"Geometry\"`, `\"Queue\"=\"Geometry\"`, `\"IgnoreProjector\"=\"True\"`, `\"ForceNoShadowCasting\"=\"True\"`, `\"DisableBatching\"=\"True\"`.\n- State: `Lighting Off`, `ZTest [_HandleZTest]`, `ZWrite [_HandleZWrite]`, `Cull Off`, `Blend Off`, `Offset 0, -2`.\n- Mesh Data: Prepared by `MeshHandles.CreatePointMesh` with `MeshTopology.Points` containing 1 vertex per point position.\n- Vertex Program (`vert`): Converts object coordinate to view position `float4(UnityObjectToViewPos(v.vertex.xyz), 1)`. Scales coordinates by `lerp(1, .95, ORTHO)` where `#define ORTHO (1 - UNITY_MATRIX_P[3][3])` to bias depth. Projects to clip space and converts to screen coordinates via `ClipToScreen(output.pos)`.\n- Geometry Program (`geo`): Takes a single point `point GS_INPUT p[1]` and outputs 4 vertices (`maxvertexcount(4)`) forming a screen-space rectangle centered at `(p[0].pos.x, p[0].pos.y)`:\n  - Vertex 0 (bottom-right): `(p[0].pos.x + _Scale, p[0].pos.y - _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier)`\n  - Vertex 1 (top-right): `(p[0].pos.x + _Scale, p[0].pos.y + _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier)`\n  - Vertex 2 (bottom-left): `(p[0].pos.x - _Scale, p[0].pos.y - _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier)`\n  - Vertex 3 (top-left): `(p[0].pos.x - _Scale, p[0].pos.y + _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier)`\n  - Screen depth modifier `#define ScreenDepthModifier (lerp(.00001, 0, ORTHO))` offsets the depth in perspective projections. Converts each vertex back to clip space with `ScreenToClip(float4)` and appends to `triStream`.\n- Fragment Program (`frag`): Outputs `_Color * input.color`.\n\n2. Vertex Quad Dot Expansion (`VertexShader.shader`):\n- Used when `BuiltinMaterials.geometryShadersSupported` is `false` (referenced as `BuiltinMaterials.dotShader`).\n- Mesh Data: Prepared by `MeshHandles.CreatePointBillboardMesh`. For each point, four vertices are created at identical 3D positions, with `TEXCOORD0` (`texcoord`) storing corner offsets: `k_Billboard0 = (-1f, -1f)`, `k_Billboard1 = (-1f, 1f)`, `k_Billboard2 = (1f, -1f)`, `k_Billboard3 = (1f, 1f)`. Triangle index order is `[i*4+0, i*4+1, i*4+3, i*4+2]` (`MeshTopology.Quads`).\n- Vertex Program (`vert` in `VertexShader.shader`):\n  1. `o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);`\n  2. `o.pos.xyz *= lerp(.99, .95, ortho);` where `ortho = (1 - UNITY_MATRIX_P[3][3])`.\n  3. `o.pos = mul(UNITY_MATRIX_P, o.pos);`\n  4. Converts to screen coordinates: `clip.xy /= clip.w; clip.xy = clip.xy * .5 + .5; clip.xy *= _ScreenParams.xy;`\n  5. Expands screen position by corner offset: `clip.xy += v.texcoord.xy * _Scale;`\n  6. Converts back to clip coordinates: `clip.xy /= _ScreenParams.xy; clip.xy = (clip.xy - .5) / .5; clip.xy *= clip.w;`\n- Fragment Program (`frag`): Returns `_Color`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/PointBillboard.shader",
+          "line_range": "83-119",
+          "quote": "                GS_INPUT vert(appdata v)\n                {\n                    GS_INPUT output = (GS_INPUT)0;\n\n                    output.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);\n                    // perspective rendering applies offset in view coordinates, and orthographic applies offset in the geometry\n                    // shader screen space\n                    output.pos.xyz *= lerp(1, .95, ORTHO);\n                    output.pos = mul(UNITY_MATRIX_P, output.pos);\n                    // convert clip -> ndc -> screen, build billboards in geo shader, then screen -> ndc -> clip\n                    output.pos = ClipToScreen(output.pos);\n                    output.color = v.color;\n\n                    return output;\n                }\n\n                [maxvertexcount(4)]\n                void geo(point GS_INPUT p[1], inout TriangleStream<FS_INPUT> triStream)\n                {\n                    // 3  1\n                    // 2  0\n\n                    FS_INPUT geo_out;\n                    geo_out.color = p[0].color;\n\n                    geo_out.pos = ScreenToClip( float4(p[0].pos.x + _Scale, p[0].pos.y - _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier) );\n                    triStream.Append(geo_out);\n\n                    geo_out.pos =  ScreenToClip( float4(p[0].pos.x + _Scale, p[0].pos.y + _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier) );\n                    triStream.Append(geo_out);\n\n                    geo_out.pos =  ScreenToClip( float4(p[0].pos.x - _Scale, p[0].pos.y - _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier) );\n                    triStream.Append(geo_out);\n\n                    geo_out.pos =  ScreenToClip( float4(p[0].pos.x - _Scale, p[0].pos.y + _Scale, p[0].pos.z, p[0].pos.w - ScreenDepthModifier) );\n                    triStream.Append(geo_out);\n                }"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/VertexShader.shader",
+          "line_range": "48-72",
+          "quote": "            v2f vert (appdata v)\n            {\n                float ortho = (1 - UNITY_MATRIX_P[3][3]);\n                v2f o;\n\n                o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);\n                o.pos.xyz *= lerp(.99, .95, ortho);\n                o.pos = mul(UNITY_MATRIX_P, o.pos);\n\n                // convert vertex to screen space, add pixel-unit xy to vertex, then transform back to clip space.\n                float4 clip = o.pos;\n\n                clip.xy /= clip.w;\n                clip.xy = clip.xy * .5 + .5;\n                clip.xy *= _ScreenParams.xy;\n\n                clip.xy += v.texcoord.xy * _Scale;\n                clip.xy /= _ScreenParams.xy;\n                clip.xy = (clip.xy - .5) / .5;\n                clip.xy *= clip.w;\n\n                o.pos = clip;\n\n                return o;\n            }"
+        }
+      ],
+      "godot_notes": "Godot 4 handles vertex dot rendering using a custom spatial shader that operates on a mesh generated with 4 vertices per point (triangle fan / quad), reading UV coordinates in the vertex shader to offset `VERTEX` in screen coordinates (`PROJECTION_MATRIX`), identical to `VertexShader.shader`."
+    },
+    {
+      "heading": "PICKER SHADERS",
+      "content": "ProBuilder performs element picking (faces, edges, vertices) by rendering an offscreen lookup texture using specialized picker shaders where every pickable element's unique index is encoded into RGBA vertex colors.\n\n1. Color Encoding & Decoding Algorithm (`SelectionPickerRenderer.EncodeRGBA` & `DecodeRGBA`):\n- A 24-bit unsigned integer ID is packed into RGB channels with alpha fixed to 255 (1.0).\n- Little-Endian Encoding:\n  - `r = (byte)((hash >> 16) & 0xFF)`\n  - `g = (byte)((hash >> 8) & 0xFF)`\n  - `b = (byte)(hash & 0xFF)`\n  - `a = 255`\n- Little-Endian Decoding:\n  - `uint hash = ((uint)color.r << 16) | ((uint)color.g << 8) | (uint)color.b;`\n- Hash ID allocation conventions:\n  - `k_PickerHashNone = 0x00` (Background / clear color / no selection).\n  - `k_PickerHashMin = 0x01` (Face picking begins at index 0, where `EncodeRGBA(0)` maps to `(0,0,0,255)` with `a=255` distinct from background).\n  - Vertex and edge picking begin at `index = 0x02` to avoid black/zero ambiguity.\n  - Maximum addressable elements: `k_PickerHashMax = 0x00FFFFFF` (16,777,215 elements per picker pass).\n\n2. Selection Picker Master Shader (`SelectionPicker.shader` / `SelectionPickerURP.shader`):\n- Contains 3 subshaders tagged with `\"ProBuilderPicker\"`:\n  - SubShader with `\"ProBuilderPicker\"=\"EdgePass\"` -> `UsePass \"Hidden/ProBuilder/EdgePicker/EDGES\"`\n  - SubShader with `\"ProBuilderPicker\"=\"VertexPass\"` -> `UsePass \"Hidden/ProBuilder/VertexPicker/VERTICES\"`\n  - SubShader with `\"ProBuilderPicker\"=\"Base\"` -> `UsePass \"Hidden/ProBuilder/FacePicker/BASE\"`\n- In Built-in pipeline, `SelectionPickerRendererStandard` invokes `renderCam.RenderWithShader(BuiltinMaterials.selectionPickerShader, \"ProBuilderPicker\")`. Unity replaces object shaders matching the tag `\"ProBuilderPicker\"` with the corresponding SubShader pass.\n\n3. Individual Picker Shaders:\n- `Hidden/ProBuilder/FacePicker` (`FacePicker.shader`): Tags `\"ProBuilderPicker\"=\"Base\"`, `\"LightMode\"=\"Always\"`, `ZTest LEqual`, `ZWrite On`, `Cull Back`, `Blend Off`. Vertex shader runs `o.pos = UnityObjectToClipPos(v.vertex); o.color = v.color;`. Fragment shader returns `i.color`.\n- `Hidden/ProBuilder/EdgePicker` (`EdgePicker.shader`): Tags `\"ProBuilderPicker\"=\"EdgePass\"`, `\"LightMode\"=\"Always\"`, `\"IgnoreProjector\"=\"True\"`, `\"DisableBatching\"=\"True\"`, `ZTest LEqual`, `ZWrite On`, `Cull Off`, `Blend Off`. Pass uses `AlphaTest Greater .25`. Vertex shader calls `o.pos = UnityObjectToClipPosWithOffset(v.vertex.xyz)`. Fragment shader returns `i.color`.\n- `Hidden/ProBuilder/VertexPicker` (`VertexPicker.shader`): Tags `\"ProBuilderPicker\"=\"VertexPass\"`, `\"RenderType\"=\"Transparent\"`, `\"LightMode\"=\"Always\"`, `ZTest LEqual`, `ZWrite On`, `Cull Off`, `Blend Off`, `Offset -1, -1`. Mesh has 4 vertices per shared vertex index with UV2 offsets (`t_uv2[0] = -up - right`, `t_uv2[1] = -up + right`, `t_uv2[2] = up - right`, `t_uv2[3] = up + right`). Vertex shader computes `o.pos = GetPickerColor(o.pos, v.texcoord1)` which expands the vertex quad in screen space by 3.5 pixels (`clip.xy += texcoord1.xy * 3.5; clip.z -= .0001 * (1 - UNITY_MATRIX_P[3][3]);`).\n\n4. Standard vs URP Picker Shader Differences:\n- Language: Standard shaders use CG/HLSL blocks with `UnityCG.cginc` and `ProBuilderCG.cginc`. URP variants (`FacePickerURP.shader`, `EdgePickerURP.shader`, `VertexPickerURP.shader`, `SelectionPickerURP.shader`) use HLSL blocks with `Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl` and `ProBuilderCG_URP.hlsl`.\n- Pipeline Tags: URP subshaders declare `\"RenderPipeline\"=\"UniversalPipeline\"` and `PackageRequirements { \"com.unity.render-pipelines.universal\": \"17.0\" }`. Pass tag is `\"LightMode\"=\"ProBuilderPickerA\"`.\n- Edge Picker Alpha Test: Standard uses fixed-function `AlphaTest Greater .25`. URP shader executes manual discard in fragment shader: `clip(input.color.a - 0.75);`.\n- Coordinate Transforms: Standard uses `UnityObjectToViewPos` / `UnityObjectToClipPos`. URP uses `GetVertexPositionInputs(input.positionOS.xyz)` (`positions.positionVS`, `positions.positionCS`).\n- Fallback: URP shaders include explicit fallbacks (`Fallback \"Hidden/ProBuilder/FacePicker\"`, `Fallback \"Hidden/ProBuilder/EdgePicker\"`, `Fallback \"Hidden/ProBuilder/VertexPicker\"`).\n- Render Execution: In URP, `SelectionPickerRendererURP` injects `URPSelectionPickerPass` (`ScriptableRenderPass` at `RenderPassEvent.AfterRendering`) with `ShaderTagId(\"ProBuilderPickerA\")` to render elements into the temporary picker `RenderTexture`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/FacePicker.shader",
+          "line_range": "14-42",
+          "quote": "        Pass\n        {\n            Name \"Base\"\n\n            CGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #include \"UnityCG.cginc\"\n\n            struct appdata\n            {\n                float4 vertex : POSITION;\n                float4 color : COLOR;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float4 color : COLOR;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = UnityObjectToClipPos(v.vertex);\n                o.color = v.color;\n                return o;\n            }"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/EdgePicker.shader",
+          "line_range": "9-56",
+          "quote": "            \"ProBuilderPicker\"=\"EdgePass\"\n            \"IgnoreProjector\"=\"True\"\n            \"DisableBatching\"=\"True\"\n            \"LightMode\"=\"Always\"\n        }\n\n        Lighting Off\n        ZTest LEqual\n        ZWrite On\n        Cull Off\n        Blend Off\n\n        Pass\n        {\n            Name \"Edges\"\n            AlphaTest Greater .25\n\nCGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #include \"UnityCG.cginc\"\n            #include \"ProBuilderCG.cginc\"\n\n            struct appdata\n            {\n                float4 vertex : POSITION;\n                float4 color : COLOR;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float4 color : COLOR;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\t\t\t\to.pos = UnityObjectToClipPosWithOffset(v.vertex.xyz);\n                o.color = v.color;\n                return o;\n            }\n\n            float4 frag (v2f i) : SV_Target\n            {\n                return i.color;\n            }\nENDCG"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/VertexPicker.shader",
+          "line_range": "46-73",
+          "quote": "            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float2 uv : TEXCOORD0;\n                float4 color : COLOR;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);\n                o.pos.xyz *= lerp(.99, .95, ORTHO);\n                o.pos = mul(UNITY_MATRIX_P, o.pos);\n\n                o.pos = GetPickerColor(o.pos,  v.texcoord1);\n                o.uv = v.texcoord.xy;\n                o.color = v.color;\n\n                return o;\n            }\n\n            float4 frag (v2f i) : SV_Target\n            {\n                return i.color;\n            }\n\nENDCG"
+        },
+        {
+          "file": "../probuilder-ref/Runtime/Core/SelectionPickerRenderer.cs",
+          "line_range": "805-836",
+          "quote": "\n                    edgeIndex++;\n                }\n            }\n\n            Mesh mesh = new Mesh();\n            mesh.name = \"Edge Billboard\";\n            mesh.vertices = positions;\n            mesh.colors32 = color;\n            mesh.subMeshCount = 1;\n            mesh.SetIndices(tris, MeshTopology.Lines, 0);\n\n            return mesh;\n        }\n\n        /// <summary>\n        /// Decodes Color32.RGB values to a 32-bit unsigned int, using the RGB as the little bytes. Discards the hi byte (alpha).\n        /// </summary>\n        /// <param name=\"color\">The color to decode.</param>\n        /// <returns>32-bit unsigned int containing the decoded RGB values.</returns>\n        public static uint DecodeRGBA(Color32 color)\n        {\n            uint r = (uint)color.r;\n            uint g = (uint)color.g;\n            uint b = (uint)color.b;\n\n            if (System.BitConverter.IsLittleEndian)\n                return r << 16 | g << 8 | b;\n            else\n                return r << 24 | g << 16 | b << 8;\n        }\n"
+        }
+      ],
+      "godot_notes": "In Godot 4, color-ID picking is implemented by rendering into a dedicated SubViewport configured with `SubViewport.UPDATE_ONCE` and an RGBA8 or RGBAF ViewportTexture. Material override shaders write encoded integer IDs to `COLOR.rgb`. Godot's `RenderingServer` or `Viewport.get_texture().get_image()` provides pixel readback for rectangular or point sampling."
+    },
+    {
+      "heading": "TRANSPARENT OVERLAY",
+      "content": "The transparent overlay shader (`Hidden/ProBuilder/TransparentOverlay`) renders texture mapping previews, texture UV overlays, and interactive drag overlays directly on top of model surfaces.\n\n1. Shader Properties & Render State (`TransparentOverlay.shader`):\n- Properties: `_MainTex (\"Texture\", 2D) = \"white\" {}`.\n- Tags: `IgnoreProjector=\"True\"`, `RenderType=\"Transparent\"`, `Queue=\"Transparent\"`.\n- Fixed Function State: `Lighting Off`, `ZTest LEqual`, `ZWrite On`, `Cull Back`, `Blend SrcAlpha OneMinusSrcAlpha`.\n- Alpha blending evaluates `FinalColor = TextureColor * VertexColor * Alpha + DestColor * (1.0 - Alpha)`.\n\n2. Vertex & Fragment Processing:\n- Vertex input `appdata` accepts `float4 vertex : POSITION`, `float4 color : COLOR`, `float4 texcoord0 : TEXCOORD0`.\n- Vertex output `v2f` passes `float4 pos : SV_POSITION`, `float4 color : COLOR`, `float2 uv : TEXCOORD0`.\n- Vertex transformation: `o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.texcoord0.xy; o.color = v.color;`.\n- Fragment processing: Samples the main texture and modulates by vertex color: `return tex2D(_MainTex, i.uv) * i.color;`.\n\n3. Vertex Culling Utility (`HideVertices.shader`):\n- Shader `Hidden/ProBuilder/HideVertices` collapses all vertex geometry to zero clip coordinates: `o.pos = fixed4(0,0,0,0);`.\n- Render State: `IgnoreProjector=\"True\"`, `RenderType=\"Geometry\"`, `Lighting Off`, `ZTest On`, `ZWrite On`, `Cull Back`.\n- Fragment shader outputs `return fixed4(0,0,0,0);`.\n- Used by ProBuilder when certain submesh elements or temporary geometry must be completely culled from rendering without removing indices or reallocating vertex buffers.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/TransparentOverlay.shader",
+          "line_range": "26-51",
+          "quote": "            struct appdata\n            {\n                float4 vertex : POSITION;\n                float4 color : COLOR;\n                float4 texcoord0 : TEXCOORD0;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float4 color : COLOR;\n                float2 uv : TEXCOORD0;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = UnityObjectToClipPos(v.vertex);\n\n                o.uv = v.texcoord0.xy;\n\n                o.color = v.color;\n\n                return o;\n            }"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/HideVertices.shader",
+          "line_range": "18-41",
+          "quote": "            struct appdata\n            {\n                float4 vertex : POSITION;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n                o.pos = fixed4(0,0,0,0);\n\n                return o;\n            }\n\n            half4 frag (v2f i) : SV_Target\n            {\n                return fixed4(0,0,0,0);\n            }\n\n            ENDCG"
+        }
+      ],
+      "godot_notes": "In Godot 4, transparent overlay meshes use a ShaderMaterial or StandardMaterial3D with `transparency = TransparencyEnum.ALPHA`, `blend_mode = BlendModeEnum.MIX`, and `albedo_texture`. Vertex collapsing can be implemented in a Godot spatial shader by setting `POSITION = vec4(0.0);` in the `vertex()` processor."
+    },
+    {
+      "heading": "NORMAL PREVIEW",
+      "content": "The normal preview shader (`Hidden/ProBuilder/NormalPreview`) visualizes vertex and surface normal directions as 3D colored vector arrows extending from mesh vertices during smoothing group editing or normal inspection.\n\n1. Shader Configuration (`NormalPreview.shader`):\n- Tags: `Queue=\"AlphaTest\"`, `IgnoreProjector=\"True\"`, `RenderType=\"Geometry\"`.\n- State: `Lighting Off`, `ZTest LEqual`, `Blend SrcAlpha OneMinusSrcAlpha`, `ZWrite On`, `Cull Off`.\n- Uniform Property: `float _Scale;` controls the world-space extrusion length of the normal vectors. In `SmoothGroupEditor.cs`, scale is computed per frame as `normalPreviewMaterial.SetFloat(\"_Scale\", s_NormalsSize * HandleUtility.GetHandleSize(trs.GetComponent<MeshRenderer>().bounds.center))`.\n\n2. Mesh Geometry Construction (`SmoothGroupEditor.RebuildNormalsMesh`):\n- For each source vertex `i` (up to `ushort.MaxValue / 2`), two vertices `a = i * 2` (arrow base) and `b = i * 2 + 1` (arrow tip) are constructed:\n  - `positions[a] = srcPositions[i]`, `positions[b] = srcPositions[i]` (both initially share the vertex local position).\n  - `tangents[a] = Vector4(normal.x, normal.y, normal.z, 0f)` (base has extrusion factor `w = 0f`).\n  - `tangents[b] = Vector4(normal.x, normal.y, normal.z, 1f)` (tip has extrusion factor `w = 1f`).\n  - Indices: `indexes[a] = a`, `indexes[b] = b` with `MeshTopology.Lines`.\n\n3. Vertex Transformation & Normal Coloring Algorithm:\n- Vertex shader reads the normal vector packed into `v.tangent.xyz` and the extrusion weight in `v.tangent.w`:\n  1. Transforms local vertex position to world space: `float4 world = mul(unity_ObjectToWorld, v.vertex);`.\n  2. Transforms tangent normal to world-space normal direction: `float3 nrm = UnityObjectToWorldNormal(v.tangent.xyz);`.\n  3. Extrudes the tip along the world normal: `float4 extruded = world + float4((nrm * v.tangent.w * _Scale), 0);`.\n  4. Multiplies by view-projection matrix: `o.pos = mul(UNITY_MATRIX_VP, extruded);`.\n  5. Color encoding: `o.color = float4(abs(v.tangent.xyz), 1);`. Taking the absolute value of the local normal coordinates maps normal directions directly to RGB space (X normals appear Red, Y normals appear Green, Z normals appear Blue).\n- Fragment shader returns the interpolated normal color `return i.color;`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/NormalPreview.shader",
+          "line_range": "19-45",
+          "quote": "            float _Scale;\n\n            struct appdata\n            {\n                float4 vertex : POSITION;\n                // secretely this is the normal, w is used to pass extrusion\n                float4 tangent : TANGENT;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float4 color : COLOR;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\n                float4 world = mul(unity_ObjectToWorld, v.vertex);\n                float3 nrm = UnityObjectToWorldNormal(v.tangent.xyz);\n                float4 extruded = world + float4((nrm * v.tangent.w * _Scale), 0);\n                o.pos = mul(UNITY_MATRIX_VP, extruded);\n                o.color = float4(abs(v.tangent.xyz), 1);\n\n                return o;\n            }"
+        },
+        {
+          "file": "../probuilder-ref/Editor/EditorCore/SmoothGroupEditor.cs",
+          "line_range": "104-126",
+          "quote": "                normalsMesh.Clear();\n                Vector3[] srcPositions = pb.mesh.vertices;\n                Vector3[] srcNormals = pb.mesh.normals;\n                int vertexCount = System.Math.Min(ushort.MaxValue / 2, pb.mesh.vertexCount);\n                Vector3[] positions = new Vector3[vertexCount * 2];\n                Vector4[] tangents = new Vector4[vertexCount * 2];\n                int[] indexes = new int[vertexCount * 2];\n                for (int i = 0; i < vertexCount; i++)\n                {\n                    int a = i * 2, b = i * 2 + 1;\n\n                    positions[a] = srcPositions[i];\n                    positions[b] = srcPositions[i];\n                    tangents[a] = new Vector4(srcNormals[i].x, srcNormals[i].y, srcNormals[i].z, 0f);\n                    tangents[b] = new Vector4(srcNormals[i].x, srcNormals[i].y, srcNormals[i].z, 1f);\n                    indexes[a] = a;\n                    indexes[b] = b;\n                }\n                normalsMesh.vertices = positions;\n                normalsMesh.tangents = tangents;\n                normalsMesh.subMeshCount = 1;\n                normalsMesh.SetIndices(indexes, MeshTopology.Lines, 0);\n            }"
+        }
+      ],
+      "godot_notes": "In Godot 4, normal preview lines can be drawn with an ImmediateMesh / ArrayMesh using `PRIMITIVE_LINES`. A custom shader computes `VERTEX += NORMAL * float(CUSTOM0.x) * scale` and assigns `COLOR = vec4(abs(NORMAL), 1.0)` in the `vertex()` processor."
+    },
+    {
+      "heading": "SMOOTHING PREVIEW",
+      "content": "The smoothing preview shader (`Hidden/ProBuilder/SmoothingPreview`) renders face surfaces with distinct color tints corresponding to their assigned smoothing group IDs, with configurable opacity and optional screen-space dithering.\n\n1. Shader Properties & Uniforms (`SmoothingPreview.shader`):\n- Property: `_Opacity (\"Opacity\", Float) = .5`.\n- Uniforms: `float _Opacity;` and `float _Dither;`.\n- Tags: `IgnoreProjector=\"True\"`, `RenderType=\"Geometry\"`.\n- Fixed Function State: `Lighting Off`, `ZTest LEqual`, `ZWrite On`, `Cull Back`, `Blend SrcAlpha OneMinusSrcAlpha`.\n\n2. Mesh Preparation (`SmoothGroupEditor.RebuildPreviewMesh`):\n- Iterates over all active smoothing groups (`smoothGroup.Key > Smoothing.smoothingGroupNone`).\n- Generates a distinct pseudo-random color for each group ID: `Color32 color = GetDistinctColor(smoothGroup.Key)`.\n- Assigns vertex colors `colors32[i] = color` for all vertex indices belonging to faces within the smoothing group.\n\n3. Vertex Program (`vert` in `SmoothingPreview.shader`):\n- Transforms vertex to view space: `o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);`.\n- Depth bias: `o.pos.xyz *= .98;` pulls the smoothing preview geometry 2% closer to the camera in view space to avoid z-fighting with the underlying model.\n- Projects to clip coordinates: `o.pos = mul(UNITY_MATRIX_P, o.pos);`.\n- Passes vertex color: `o.color = v.color;`.\n\n4. Fragment Program (`frag` in `SmoothingPreview.shader`):\n- Dither pattern calculation:\n  1. `i.pos.xy = floor(i.pos.xy * 1) * .5;`\n  2. `float checker = -frac(i.pos.x + i.pos.y);`\n  3. `clip(lerp(1, checker, _Dither));`\n- When `_Dither` is `0`, all pixels are retained. When `_Dither` is `1`, pixels are discarded in an alternating 2x2 grid.\n- Alpha modulation: Multiplies vertex color alpha by the opacity factor `half4 c = half4(i.color.rgb, i.color.a * _Opacity); return c;`.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/SmoothingPreview.shader",
+          "line_range": "26-58",
+          "quote": "            struct appdata\n            {\n                float4 vertex : POSITION;\n                float4 color : COLOR;\n            };\n\n            struct v2f\n            {\n                float4 pos : SV_POSITION;\n                float4 color : COLOR;\n            };\n\n            v2f vert (appdata v)\n            {\n                v2f o;\n\n                o.pos = float4(UnityObjectToViewPos(v.vertex.xyz), 1);\n                o.pos.xyz *= .98;\n                o.pos = mul(UNITY_MATRIX_P, o.pos);\n                o.color = v.color;\n\n                return o;\n            }\n\n            half4 frag (v2f i) : SV_Target\n            {\n                i.pos.xy = floor(i.pos.xy * 1) * .5;\n                float checker = -frac(i.pos.x + i.pos.y);\n                clip(lerp(1, checker, _Dither));\n\n                half4 c = half4(i.color.rgb, i.color.a * _Opacity);\n                return c;\n            }"
+        },
+        {
+          "file": "../probuilder-ref/Editor/EditorCore/SmoothGroupEditor.cs",
+          "line_range": "75-98",
+          "quote": "            }\n\n            void RebuildPreviewMesh(ProBuilderMesh pb)\n            {\n                List<int> indexes = new List<int>();\n                Color32[] colors = new Color32[pb.vertexCount];\n                groupColors.Clear();\n\n                foreach (KeyValuePair<int, List<Face>> smoothGroup in groups)\n                {\n                    if (smoothGroup.Key > Smoothing.smoothingGroupNone)\n                    {\n                        Color32 color = GetDistinctColor(smoothGroup.Key);\n                        groupColors.Add(smoothGroup.Key, color);\n                        var groupIndexes = smoothGroup.Value.SelectMany(y => y.indexesInternal);\n                        indexes.AddRange(groupIndexes);\n                        foreach (int i in groupIndexes)\n                            colors[i] = color;\n                    }\n                }\n\n                previewMesh.Clear();\n                previewMesh.vertices = pb.positionsInternal;\n                previewMesh.colors32 = colors;"
+        }
+      ],
+      "godot_notes": "In Godot 4, smoothing group preview overlays can be rendered using a ShaderMaterial with `transparency = TransparencyEnum.ALPHA` and `depth_draw_mode = DepthDrawModeEnum.ALWAYS`. Distinct smoothing group colors are passed via per-vertex `COLOR` attributes or a palette uniform."
+    },
+    {
+      "heading": "COMMON CG INCLUDE",
+      "content": "The common shader include file `ProBuilderCG.cginc` (and its URP counterpart `ProBuilderCG_URP.hlsl`) provides shared helper macros, coordinate transformations, and depth-offset algorithms across all ProBuilder shaders.\n\n1. Camera Mode Macros & Constants:\n- `#define ORTHO (1 - UNITY_MATRIX_P[3][3])`: In standard projection matrices, `UNITY_MATRIX_P[3][3]` is `0.0` for perspective projections and `1.0` for orthographic projections. Therefore `ORTHO` evaluates to `1.0` in perspective mode and `0.0` in orthographic mode.\n- `const float ORTHO_CAM_OFFSET = .0001;`: Defines the depth bias pulled toward the camera in orthographic mode to resolve depth contention.\n\n2. Coordinate Space Transformation Functions:\n- `inline float4 ClipToScreen(float4 v)`: Converts homogeneous clip-space position `[-w, w]` into screen-space pixel coordinates `[0, _ScreenParams.x] x [0, _ScreenParams.y]`:\n  1. `v.xy /= v.w;` (perspective divide to NDC `[-1, 1]`)\n  2. `v.xy = v.xy * .5 + .5;` (maps NDC `[-1, 1]` to normalized UV coordinates `[0, 1]`)\n  3. `v.xy *= _ScreenParams.xy;` (scales normalized UVs to pixel dimensions)\n- `inline float4 ScreenToClip(float4 v)`: Inverts screen pixel coordinates back into homogeneous clip coordinates:\n  1. `v.z -= ORTHO_CAM_OFFSET * ORTHO;` (applies camera depth offset in orthographic mode)\n  2. `v.xy /= _ScreenParams.xy;` (normalizes pixels to `[0, 1]`)\n  3. `v.xy = (v.xy - .5) / .5;` (maps `[0, 1]` to NDC `[-1, 1]`)\n  4. `v.xy *= v.w;` (multiplies by clip `w` component to recover clip coordinates)\n\n3. Depth Offset & Z-Fighting Prevention Functions:\n- `inline float4 UnityObjectToClipPosWithOffset(float3 pos)`: Transforms local position `pos` to clip space with adaptive depth biasing based on projection type (`unity_OrthoParams.w`):\n  - View position: `float4 ret = float4(UnityObjectToViewPos(pos), 1);`\n  - In perspective (`unity_OrthoParams.w == 0`): scales view vector `ret.xyz *= 0.99` to pull edges 1% closer to the eye without shifting screen positions.\n  - In orthographic (`unity_OrthoParams.w == 1`): leaves `ret.xyz` unscaled and pulls depth component `ret.z *= 0.95` closer by 5%.\n  - Projects: `return mul(UNITY_MATRIX_P, ret);`.\n- `inline float4 UnityObjectToClipPosWithOffsetMetal(float3 pos)`: Metal-specific implementation applying `ret *= lerp(.99, .95, ORTHO)` prior to multiplying by `UNITY_MATRIX_P`.\n- `inline float4 GetPickerColor(float4 pos, float2 texcoord1)`: Used in vertex picker shaders (`VertexPicker.shader` / `VertexPickerURP.shader`). Converts clip position `pos` to screen pixel coordinates, expands the billboard by `texcoord1.xy * 3.5` pixels, applies orthographic depth offset `clip.z -= .0001 * (1 - UNITY_MATRIX_P[3][3])`, and transforms back to clip space.",
+      "source_evidence": [
+        {
+          "file": "../probuilder-ref/Content/Shader/ProBuilderCG.cginc",
+          "line_range": "1-35",
+          "quote": "// Is the camera in orthographic mode? (1 yes, 0 no)\n#define ORTHO (1 - UNITY_MATRIX_P[3][3])\n\n// How far to pull vertices towards camera in orthographic mode\nconst float ORTHO_CAM_OFFSET = .0001;\n\ninline float4 ClipToScreen(float4 v)\n{\n    v.xy /= v.w;\n    v.xy = v.xy * .5 + .5;\n    v.xy *= _ScreenParams.xy;\n    return v;\n}\n\ninline float4 ScreenToClip(float4 v)\n{\n    v.z -= ORTHO_CAM_OFFSET * ORTHO;\n    v.xy /= _ScreenParams.xy;\n    v.xy = (v.xy - .5) / .5;\n    v.xy *= v.w;\n    return v;\n}\n\ninline float4 UnityObjectToClipPosWithOffset(float3 pos)\n{\n    float4 ret = float4(UnityObjectToViewPos(pos), 1);\n    //Offsetting the edges to avoid z-fighting problems\n\t//Do not offset when using orthographic camera as XY are\n    //screen coords, this would shift the rendering\n    ret.xyz *= lerp(.99, 1, unity_OrthoParams.w);\n    //Moving edges closer\n\t//.99 is not sufficient for Orthographic Camera\n    ret.z *= lerp(1, 0.95, unity_OrthoParams.w);\n    return mul(UNITY_MATRIX_P, ret);\n}"
+        },
+        {
+          "file": "../probuilder-ref/Content/Shader/ProBuilderCG.cginc",
+          "line_range": "37-61",
+          "quote": "inline float4 UnityObjectToClipPosWithOffsetMetal(float3 pos)\n{\n    float4 ret = float4(UnityObjectToViewPos(pos), 1);\n    ret *= lerp(.99, .95, ORTHO);\n    return mul(UNITY_MATRIX_P, ret);\n}\n\ninline float4 GetPickerColor(float4 pos, float2 texcoord1)\n{\n    // convert vertex to screen space, add pixel-unit xy to vertex, then transform back to clip space.\n    float4 clip = pos;\n\n    clip.xy /= clip.w;\n    clip.xy = clip.xy * .5 + .5;\n    clip.xy *= _ScreenParams.xy;\n\n    clip.xy += texcoord1.xy * 3.5;\n    clip.z -= .0001 * (1 - UNITY_MATRIX_P[3][3]);\n\n    clip.xy /= _ScreenParams.xy;\n    clip.xy = (clip.xy - .5) / .5;\n    clip.xy *= clip.w;\n\n    return clip;\n}"
+        }
+      ],
+      "godot_notes": "In Godot 4 shaders, camera mode is tested via `PROJECTION_MATRIX[3][3] == 1.0` (orthographic). Screen-to-clip and clip-to-screen transformations use `VIEWPORT_SIZE` and `INV_PROJECTION_MATRIX`. Depth bias can be applied via `POSITION.z -= bias` in clip coordinates or setting `render_priority` on materials."
+    }
+  ],
+  "cross_references": [
+    {
+      "unit_id": "G01",
+      "relationship": "Wireframe and handle rendering pipelines instantiate and configure line, point, and face highlight materials"
+    },
+    {
+      "unit_id": "E01",
+      "relationship": "Selection picker rendering uses face, edge, and vertex picker shaders with 24-bit color encoding"
+    },
+    {
+      "unit_id": "E02",
+      "relationship": "Rectangular selection samples the lookup texture rendered by selection picker shaders"
+    },
+    {
+      "unit_id": "J01",
+      "relationship": "Smoothing group editor utilizes NormalPreview and SmoothingPreview shaders to display normals and smooth groups"
+    },
+    {
+      "unit_id": "A01",
+      "relationship": "Mesh data and vertex structures feed into billboard and preview mesh generators"
+    }
+  ],
+  "open_questions": [
+    "In HDRP 7.1.0+, SelectionPickerRendererHDRP handles custom passes differently from URP; full source code verification of HDRP custom pass injection was outside the core runtime package shaders."
+  ]
+}
