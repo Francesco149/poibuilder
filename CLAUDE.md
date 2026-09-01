@@ -52,6 +52,15 @@ Phase 6 (Element Manipulation Tools) complete:
 - PBCommand snapshot-once undo; CmdMove/Rotate/ScaleElements ✓
 - PBTool + Move/Rotate/Scale camera-plane drag (W/E/R, Q select) ✓
 - Tool Properties dock (left) — tool/mode/selection + live delta/rotation/scale ✓
+- Per-element axis gizmo with Element/Object/World space toggle (X key) ✓
+- Winding order fix: to_array_mesh reverses CW→CCW + negates normals for Godot ✓
+- Input exclusivity: tool drag suppresses rect selection, clears on finish ✓
+- Overlay sync: 3D overlay + gizmo rebuilt after every position mutation ✓
 - 457/457 headless tests passing (9016 assertions) ✓
+
+Key conventions:
+- Internal mesh data uses CW winding (Unity convention) throughout
+- to_array_mesh() converts to Godot CCW at GPU submission time
+- PBMath.normal() returns CW-convention normals (consistent with internal data)
 
 Next: Phase 7 (Core Mesh Operations) — after human sign-off of Phase 6

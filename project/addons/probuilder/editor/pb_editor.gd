@@ -19,6 +19,12 @@ enum SelectMode {
 	FACE,     ## Select faces
 }
 
+## Coordinate space for tool gizmo axes.
+enum OrientationSpace {
+	ELEMENT,  ## Axes aligned to the selected element's normal
+	OBJECT,   ## Axes aligned to the PBMesh node's local transform
+	WORLD,    ## Axes aligned to world XYZ
+}
 # ==============================================================================
 # Signals
 # ==============================================================================
@@ -34,6 +40,9 @@ signal element_selection_changed()
 
 ## Emitted when the active viewport editing tool changes.
 signal active_tool_changed(tool: PBTool)
+
+## Emitted when the orientation space changes.
+signal orientation_space_changed(space: OrientationSpace)
 # ==============================================================================
 # State
 # ==============================================================================
@@ -56,6 +65,10 @@ var active_tool: PBTool = null:
 ## Logger reference for debug output.
 var logger: PBLogger = null:
 	set = set_logger
+
+## Active coordinate space for tool gizmo orientation.
+var orientation_space: OrientationSpace = OrientationSpace.ELEMENT:
+	set = set_orientation_space
 # ==============================================================================
 # Setters
 # ==============================================================================
@@ -89,6 +102,19 @@ func set_logger(value: PBLogger) -> void:
 	logger = value
 	if active_tool != null:
 		active_tool.logger = value
+
+func set_orientation_space(value: OrientationSpace) -> void:
+	if orientation_space == value:
+		return
+	orientation_space = value
+	if logger:
+		logger.info("editor", "Orientation space: %s" % OrientationSpace.keys()[value])
+	orientation_space_changed.emit(orientation_space)
+
+## Cycles orientation space: Element → Object → World → Element.
+func cycle_orientation_space() -> void:
+	var next: int = (orientation_space + 1) % OrientationSpace.size()
+	set_orientation_space(next as OrientationSpace)
 func set_active_mesh(value: PBMesh) -> void:
 	if active_mesh == value:
 		return

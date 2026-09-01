@@ -270,6 +270,7 @@ func calculate_normals() -> PackedVector3Array:
 				continue
 			var edge1: Vector3 = positions[i1] - positions[i0]
 			var edge2: Vector3 = positions[i2] - positions[i0]
+			# Internal data uses CW winding (Unity convention) — normal = edge1 × edge2
 			var cross_prod: Vector3 = edge1.cross(edge2)
 			var normal: Vector3 = cross_prod.normalized() if not cross_prod.is_zero_approx() else Vector3.ZERO
 			normals[i0] = normal
@@ -295,7 +296,14 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 	if positions.is_empty() or faces.is_empty():
 		return mesh
 
-	var normals: PackedVector3Array = calculate_normals()
+	var internal_normals: PackedVector3Array = calculate_normals()
+	# Negate normals: internal data uses CW winding (Unity), so cross product
+	# normals point outward for CW. After reversing winding for Godot CCW,
+	# the outward direction flips — negate to keep normals facing outward.
+	var normals := PackedVector3Array()
+	normals.resize(internal_normals.size())
+	for i in range(internal_normals.size()):
+		normals[i] = -internal_normals[i]
 
 	# Group faces by submesh_index
 	var submesh_faces: Dictionary = {}
@@ -318,7 +326,13 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 		var indices := PackedInt32Array()
 		for face in group_faces:
 			if face != null:
-				indices.append_array(face.get_indexes())
+				var fi: PackedInt32Array = face.get_indexes()
+				# Reverse each triangle's winding for Godot CCW front-face convention.
+				# Internal data uses CW (Unity convention); GPU needs CCW.
+				for tri_i in range(0, fi.size() - 2, 3):
+					indices.append(fi[tri_i + 2])
+					indices.append(fi[tri_i + 1])
+					indices.append(fi[tri_i])
 
 		if indices.is_empty():
 			continue

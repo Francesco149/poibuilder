@@ -91,6 +91,8 @@ func set_editor(value: PBEditor) -> void:
 			editor.element_selection_changed.disconnect(_on_editor_changed)
 		if editor.active_mesh_changed.is_connected(_on_editor_changed):
 			editor.active_mesh_changed.disconnect(_on_editor_changed)
+		if editor.orientation_space_changed.is_connected(_on_editor_changed):
+			editor.orientation_space_changed.disconnect(_on_editor_changed)
 
 	editor = value
 
@@ -99,6 +101,7 @@ func set_editor(value: PBEditor) -> void:
 		editor.select_mode_changed.connect(_on_editor_changed)
 		editor.element_selection_changed.connect(_on_editor_changed)
 		editor.active_mesh_changed.connect(_on_editor_changed)
+		editor.orientation_space_changed.connect(_on_editor_changed)
 
 	refresh()
 
@@ -134,7 +137,8 @@ func refresh() -> void:
 	# 2. Select mode
 	var mode_str: String = PBEditor.mode_name(editor.select_mode)
 	if mode_label:
-		mode_label.text = "Mode: %s" % mode_str
+		var space_str: String = PBEditor.OrientationSpace.keys()[editor.orientation_space]
+		mode_label.text = "Mode: %s  Space: %s (X)" % [mode_str, space_str.capitalize()]
 
 	# 3. Selection counts
 	var v_cnt: int = 0

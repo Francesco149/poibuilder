@@ -186,8 +186,10 @@ func test_empty_faces_with_positions():
 
 func test_single_triangle():
 	var data := PBMeshData.new()
-	# CCW triangle in XY plane looking from +Z:
-	# v0=(0,0,0), v1=(1,0,0), v2=(0,1,0) -> normal is (0, 0, 1)
+	# Triangle with vertices in XY plane, indices [0,1,2].
+	# Internal cross product (edge1×edge2) yields (0,0,+1).
+	# to_array_mesh reverses winding for Godot CCW and negates normals,
+	# so the compiled ArrayMesh normal is (0,0,-1).
 	data.positions = PackedVector3Array([
 		Vector3(0, 0, 0),
 		Vector3(1, 0, 0),
@@ -209,10 +211,11 @@ func test_single_triangle():
 	assert_eq(indices.size(), 3, "Surface index count should be 3")
 	assert_eq(normals.size(), 3, "Surface normal count should be 3")
 
+	# Normals are negated in to_array_mesh (CW→CCW winding conversion)
 	for n in normals:
 		assert_almost_eq(n.x, 0.0, 0.001)
 		assert_almost_eq(n.y, 0.0, 0.001)
-		assert_almost_eq(n.z, 1.0, 0.001, "Normal should point towards +Z")
+		assert_almost_eq(n.z, -1.0, 0.001, "Normal should point towards -Z (negated for Godot CCW)")
 
 func test_single_triangle_reversed_winding():
 	var data := PBMeshData.new()

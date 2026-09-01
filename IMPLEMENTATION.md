@@ -456,6 +456,51 @@ You are implementing IU {iu_id}: {description}
 5. **Reject theater** — if worker claims "all tests pass" but didn't show
    test output, reject and re-run.
 
+### Mandatory Verification Gates (Post-P6 Retrospective)
+
+These rules were added after Phase 6 review uncovered compounded bugs that
+headless tests did not catch. Every gate is BLOCKING — the phase cannot be
+submitted for human sign-off until all applicable gates pass.
+
+**G1 — Coordinate Convention Check (any phase producing geometry)**
+- After creating or modifying any shape generator or mesh compilation code,
+  verify that compiled ArrayMesh triangles are CCW when viewed from outside.
+- Internal data uses CW winding (Unity convention). `to_array_mesh()` reverses
+  winding and negates normals for Godot. Any new geometry code must work within
+  this pipeline — do NOT mix conventions.
+- Test: instantiate the shape as a PBMesh, add to a scene, verify front faces
+  are visible from the default camera (not inside-out).
+
+**G2 — Input State Machine Exclusivity (any phase touching input handling)**
+- `_forward_3d_gui_input` manages multiple exclusive interaction modes (tool
+  drag, rect selection, click picking). When one mode is active, ALL other
+  mode state must be suppressed.
+- Rule: if `_tool_drag_begun` is true, rect selection state must NOT be updated.
+  On tool drag completion, `_is_rect_selecting` must be cleared.
+- Test: programmatically verify that after begin_drag → update_drag → finish_drag,
+  `_is_rect_selecting` is false and no spurious selection changes occurred.
+
+**G3 — Overlay Sync After Mutation (any phase modifying mesh data)**
+- After ANY operation that modifies vertex positions (tool drag, command do/undo,
+  mesh operations), the overlay AND gizmo MUST be rebuilt from the new data.
+- Calling `update_overlays()` alone is NOT sufficient — that only triggers 2D
+  draw callbacks. The 3D overlay meshes require explicit `overlay.rebuild()`.
+- Test: move a face, verify overlay vertex positions match the new mesh positions.
+
+**G4 — Per-Element Gizmo Placement**
+- The axis gizmo must appear at the selection centroid, not the object pivot.
+- After any selection change or position mutation, verify gizmo world position
+  matches the centroid of the selected element vertices.
+
+**G5 — Combined Interaction Smoke Test (phases with UI interaction)**
+- Before submitting for human sign-off, the orchestrator must verify these
+  combined scenarios (not just individual features):
+  1. Select element → drag with tool → verify no rect selection triggered
+  2. Click empty space → verify no teleportation or spurious selection
+  3. Box select → release → verify marquee disappears
+  4. Tool drag → release without moving → verify click-pick fires correctly
+  5. Undo after tool drag → verify overlay and gizmo update
+
 ## Human Sign-Off Protocol
 
 After each phase, the orchestrator:
