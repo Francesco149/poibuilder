@@ -80,6 +80,14 @@ subgizmo selection API is single-id (clears+replaces). Multi-select works
 natively via click, shift-click, and rubber band. Revisit if the engine
 exposes a multi-id API.
 
+Known limitation: the orange selection box around the selected node is
+engine-native (Node3DEditorViewport draws it for EVERY selected Node3D from
+the node's AABB merged recursively with all VisualInstance3D descendants).
+It cannot be suppressed per-node in Godot 4.7: any child MeshInstance3D
+re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
+the edited mesh (the child-node overlay inflation was removed in the P6
+rewrite). An upstream engine flag would be the proper fix.
+
 Next: Phase 7 (Core Mesh Operations) — after human sign-off of Phase 6.
 
 ## Key Conventions

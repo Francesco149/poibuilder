@@ -457,3 +457,139 @@ class FakeUndoManager:
 	func commit_action() -> void:
 		actions.append(_current)
 		_current = {}
+
+# ==============================================================================
+# Regression: vertex-mode id semantics (the "moves a different vert" bug)
+# ==============================================================================
+
+func test_vertex_drag_moves_the_selected_corner_not_a_neighbor():
+	## Subgizmo ids in VERTEX mode are shared-vertex GROUP indices. The old
+	## code passed the group id to get_coincident_vertices* which looked it up
+	## as a POSITION index — moving a different corner than the gizmo showed.
+	var s := _make_setup(PBEditor.SelectMode.VERTEX)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var ids := _ids([0]) # group 0 == positions [1, 8, 21], corner (-h,-h,-h)
+	var start_positions: PackedVector3Array = md.positions.duplicate()
+	var start_xf: Transform3D = logic.get_subgizmo_transform(md, mesh, 0)
+	var delta := Vector3(0.3, 0.2, -0.4)
+
+	_apply_motion(s, ids, {0: start_xf.translated(delta)})
+
+	# The gizmo sat at group 0's position — group 0's members must move
+	var group0: PackedInt32Array = md.shared_vertices[0].indices
+	for idx in group0:
+		assert_lt((md.positions[idx] - (start_positions[idx] + delta)).length(), 0.0001,
+			"Group 0 vertex %d must move by the drag delta" % idx)
+
+	# The corner whose POSITION INDEX equals the group id must NOT move
+	# (old bug: positions [0,13,22] moved instead)
+	for idx in md.shared_vertices[1].indices:
+		assert_eq(md.positions[idx], start_positions[idx],
+			"Group 1 vertex %d must not move when dragging group 0" % idx)
+
+	# Exactly one corner (3 welded positions) moved
+	var moved := 0
+	for i in range(md.positions.size()):
+		if not md.positions[i].is_equal_approx(start_positions[i]):
+			moved += 1
+	assert_eq(moved, 3, "Exactly one welded corner (3 positions) must move")
+
+func test_vertex_origin_matches_group_not_position_lookup():
+	var s := _make_setup(PBEditor.SelectMode.VERTEX)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	# The gizmo origin for group id must be the group's own position
+	for g in range(md.shared_vertices.size()):
+		var origin: Vector3 = logic.element_origin(md, g)
+		var expected: Vector3 = md.positions[md.shared_vertices[g].indices[0]]
+		assert_eq(origin, expected, "Group %d gizmo origin must be its own corner" % g)
+
+# ==============================================================================
+# Regression: depth tie-break in picking (hidden far-side elements)
+# ==============================================================================
+
+func test_vertex_pick_prefers_near_corner_when_projected_together():
+	## Camera looks along the cube's diagonal: corners (h,h,h) and (-h,-h,-h)
+	## project to the SAME screen point. The visible near corner must win.
+	var s := _make_setup(PBEditor.SelectMode.VERTEX)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+
+	var center: Vector2 = _camera.unproject_position(Vector3.ZERO)
+	var result: PBPicking.VertexPickResult = PBPicking.pick_vertex(
+		mesh.pb_mesh_data, mesh.global_transform, center, _camera)
+
+	# Group [6,15,18] is corner (+h,+h,+h) — the near one
+	var near_group: int = -1
+	for g in range(mesh.pb_mesh_data.shared_vertices.size()):
+		if mesh.pb_mesh_data.shared_vertices[g].indices.has(6):
+			near_group = g
+			break
+	assert_eq(result.common_index, near_group,
+		"Pick at screen center must return the NEAR corner group, not the far one")
+
+func test_edge_pick_prefers_near_edge_when_projected_together():
+	## Two stacked quads viewed with an ORTHOGONAL camera project identically.
+	## The far quad is FIRST in the face list, so the old "first wins" behavior
+	## returned the hidden far edge; depth tie-break must return the near one.
+	var ed := PBEditor.new()
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+	ed.select_mode = PBEditor.SelectMode.EDGE
+
+	# Quad A (far, listed first) at z=-1; quad B (near) at z=+1
+	var md := PBMeshData.new()
+	md.positions = PackedVector3Array([
+		Vector3(-0.5, -0.5, -1), Vector3(0.5, -0.5, -1), Vector3(0.5, 0.5, -1), Vector3(-0.5, 0.5, -1),
+		Vector3(-0.5, -0.5, 1), Vector3(0.5, -0.5, 1), Vector3(0.5, 0.5, 1), Vector3(-0.5, 0.5, 1),
+	])
+	var faces: Array[PBFace] = []
+	for base in [0, 4]:
+		faces.append(PBFace.new(PackedInt32Array([
+			base + 0, base + 1, base + 2,
+			base + 2, base + 3, base + 0,
+		])))
+	md.faces = faces
+	# One shared-vertex group per position (no welds)
+	var groups: Array[PBSharedVertex] = []
+	for i in range(8):
+		groups.append(PBSharedVertex.new(PackedInt32Array([i])))
+	md.shared_vertices = groups
+	md.invalidate_caches()
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = md
+	add_child_autofree(mesh)
+
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.size = 4.0
+	_viewport.add_child(cam)
+	cam.position = Vector3(0, 0, 5)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Click at the projection of the top edge — both quads' top edges project there
+	var click: Vector2 = cam.unproject_position(Vector3(0, 0.5, 0))
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(md, mesh.global_transform, click, cam)
+	assert_true(result.edge != null, "Edge pick should hit an edge")
+	if result.edge != null:
+		var a: Vector3 = md.positions[result.edge.a]
+		var b: Vector3 = md.positions[result.edge.b]
+		var midpoint: Vector3 = (a + b) * 0.5
+		assert_gt(midpoint.z, 0.0,
+			"Must pick the NEAR (visible) edge, not the hidden far quad's edge")
+
+func test_face_edges_are_perimeter_no_diagonals():
+	## N-gon guarantee: a quad face's edge list is its 4 perimeter edges —
+	## the triangulation diagonal (shared by both triangles) must be excluded.
+	var md := PBMeshData.create_cube(1.0)
+	var edges := md.get_common_edges()
+	assert_eq(edges.size(), 12, "Cube must dedupe to 12 perimeter edges")
+	for fi in range(md.faces.size()):
+		assert_eq(md.faces[fi].get_edges().size(), 4,
+			"Quad face %d must expose exactly 4 perimeter edges" % fi)

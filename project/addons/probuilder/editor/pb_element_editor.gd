@@ -85,7 +85,16 @@ func element_indices(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 		return PackedInt32Array()
 	match editor.select_mode:
 		PBEditor.SelectMode.VERTEX:
-			return mesh_data.get_coincident_vertices_multi(PackedInt32Array([id]))
+			# Subgizmo ids are shared-vertex GROUP indices here — return the
+			# group's positions directly. (Passing the group id to
+			# get_coincident_vertices* would look it up as a POSITION index
+			# and move a different corner — the "moves a different vert" bug.)
+			if id >= mesh_data.shared_vertices.size():
+				return PackedInt32Array()
+			var sv: PBSharedVertex = mesh_data.shared_vertices[id]
+			if sv == null:
+				return PackedInt32Array()
+			return sv.indices.duplicate()
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
 			if id >= edges.size():

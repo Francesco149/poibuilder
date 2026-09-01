@@ -21,6 +21,13 @@ const MAX_VERTEX_PICK_DISTANCE: float = 20.0
 ## Maximum screen-space distance (pixels) to pick an edge.
 const MAX_EDGE_PICK_DISTANCE: float = 15.0
 
+## Screen-distance window (pixels) inside which two candidates are considered
+## tied and the one CLOSER TO THE CAMERA wins. Without this, a hidden far-side
+## edge/vertex projecting near the cursor can steal the pick from the visible
+## one (its highlight then shows through the mesh — the "diagonal of the top
+## face" report).
+const PICK_DEPTH_TIE_BREAK_PIXELS: float = 6.0
+
 ## Minimum epsilon for ray distance comparisons.
 const PICK_EPSILON: float = 0.0001
 
@@ -142,6 +149,8 @@ static func pick_faces_all(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 ## Picks the nearest edge to a screen position.
 ## camera_transform + projection_matrix are used to project edge endpoints to screen.
+## Candidates within the pixel radius are tie-broken by camera distance, so a
+## visible edge wins over a hidden far-side edge projecting nearby.
 ## Returns EdgePickResult with edge != null on hit, or null edge on miss.
 static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> EdgePickResult:
@@ -150,7 +159,11 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 	var positions := mesh_data.positions
 	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
-	var best := EdgePickResult.new()
+	var cam_pos: Vector3 = camera.global_position
+	var cam_fwd: Vector3 = -camera.global_basis.z
+
+	# Collect all candidates within the pixel radius: [dist, depth, edge, face]
+	var candidates: Array = []
 	var seen: Dictionary = {} # Vector2i -> bool (by common edge)
 
 	for fi in range(mesh_data.faces.size()):
@@ -172,8 +185,6 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			var world_b: Vector3 = mesh_transform * positions[edge.b]
 
 			# Check if both points are behind the camera
-			var cam_pos: Vector3 = camera.global_position
-			var cam_fwd: Vector3 = -camera.global_basis.z
 			if (world_a - cam_pos).dot(cam_fwd) < 0 and (world_b - cam_pos).dot(cam_fwd) < 0:
 				continue
 
@@ -181,16 +192,39 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			var screen_b: Vector2 = camera.unproject_position(world_b)
 
 			var dist: float = PBMath.distance_point_line_segment_2d(screen_pos, screen_a, screen_b)
-			if dist < best.screen_distance and dist <= MAX_EDGE_PICK_DISTANCE:
-				best = EdgePickResult.new(edge, fi, dist)
+			if dist > MAX_EDGE_PICK_DISTANCE:
+				continue
 
-	return best
+			var midpoint: Vector3 = (world_a + world_b) * 0.5
+			candidates.append([dist, (midpoint - cam_pos).length(), edge, fi])
+
+	if candidates.is_empty():
+		return EdgePickResult.new()
+
+	# Best screen distance, then among candidates tied within the tie window,
+	# the one closest to the camera.
+	var best_dist: float = INF
+	for c in candidates:
+		best_dist = minf(best_dist, c[0])
+
+	var best: EdgePickResult = null
+	var nearest_depth: float = INF
+	for c in candidates:
+		if c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+			continue
+		if c[1] < nearest_depth:
+			nearest_depth = c[1]
+			best = EdgePickResult.new(c[2], c[3], c[0])
+
+	return best if best != null else EdgePickResult.new()
 
 # ==============================================================================
 # Vertex Picking (Screen-Space Distance)
 # ==============================================================================
 
 ## Picks the nearest vertex to a screen position.
+## Candidates within the pixel radius are tie-broken by camera distance, so a
+## visible vertex wins over a hidden far-side vertex projecting nearby.
 ## Returns VertexPickResult with common_index >= 0 on hit, or -1 on miss.
 static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> VertexPickResult:
@@ -198,9 +232,10 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		return VertexPickResult.new()
 
 	var positions := mesh_data.positions
-	var best := VertexPickResult.new()
 	var cam_pos: Vector3 = camera.global_position
 	var cam_fwd: Vector3 = -camera.global_basis.z
+
+	var candidates: Array = [] # [dist, depth, common_index]
 
 	for sv_idx in range(mesh_data.shared_vertices.size()):
 		var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
@@ -219,8 +254,24 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		var screen_pt: Vector2 = camera.unproject_position(world_pos)
 		var dist: float = screen_pos.distance_to(screen_pt)
 
-		if dist < best.screen_distance and dist <= MAX_VERTEX_PICK_DISTANCE:
-			best = VertexPickResult.new(sv_idx, local_idx, dist)
+		if dist <= MAX_VERTEX_PICK_DISTANCE:
+			candidates.append([dist, (world_pos - cam_pos).length(), sv_idx, local_idx])
+
+	if candidates.is_empty():
+		return VertexPickResult.new()
+
+	var best_dist: float = INF
+	for c in candidates:
+		best_dist = minf(best_dist, c[0])
+
+	var best := VertexPickResult.new()
+	var nearest_depth: float = INF
+	for c in candidates:
+		if c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+			continue
+		if c[1] < nearest_depth:
+			nearest_depth = c[1]
+			best = VertexPickResult.new(c[2], c[3], c[0])
 
 	return best
 
