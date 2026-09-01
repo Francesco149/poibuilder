@@ -45,11 +45,12 @@ Tests: `project/tests/` (GUT framework, headless-capable)
 Phase 0 (Scaffolding) complete ✓
 Phase 1 (Core Data Model) complete ✓
 Phase 2 (Math & Topology) complete ✓
-Phase 3 (Shape Generators) complete:
-- PBShapeGenerators: Box (segmented), Plane, Sprite, Prism ✓
-- PBShapeCylinder: Cylinder, Cone, Pipe ✓
-- PBShapeComplex: Sphere (icosphere), Torus, Arch, Stairs, Door ✓
-- PBShapeFactory: string ID → generator dispatch for all 13 shape types ✓
-- 249/249 headless tests passing ✓
+Phase 3 (Shape Generators) complete ✓
+Phase 4 (Basic Editor Integration) complete:
+- PBEditor: SelectMode enum (Object/Vertex/Edge/Face), mode switching, active mesh tracking ✓
+- PBOverlay: Wireframe edge rendering via ArrayMesh PRIMITIVE_LINES, vertex dot rendering via PRIMITIVE_POINTS ✓
+- PBToolbar: Mode buttons in 3D viewport header, synced with PBEditor state ✓
+- ProBuilderPlugin: _handles/_edit/_make_visible, PBMesh custom type registration, keyboard shortcuts (H/J/K) ✓
+- 270/270 headless tests passing ✓
 
-Next: Phase 4 (Basic Editor Integration)
+Next: Phase 5 (Element Selection & Picking)
