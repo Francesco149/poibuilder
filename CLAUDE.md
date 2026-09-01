@@ -33,7 +33,7 @@ godot-mono --editor project/project.godot
 Plugin: `project/addons/probuilder/`
 - `probuilder_plugin.gd` — EditorPlugin entry point
 - `core/` — PBMeshData, PBFace, PBEdge, PBMath, PBTopology
-- `editor/` — Selection, input, overlay rendering, tools
+- `editor/` — PBEditor, PBSelection, PBPicking, PBOverlay, PBToolbar, tools
 - `commands/` — Undo/redo command pattern
 - `shapes/` — Primitive shape generators
 - `debug/` — PBLogger, PBTelemetry, PBDebugDock
@@ -46,11 +46,14 @@ Phase 0 (Scaffolding) complete ✓
 Phase 1 (Core Data Model) complete ✓
 Phase 2 (Math & Topology) complete ✓
 Phase 3 (Shape Generators) complete ✓
-Phase 4 (Basic Editor Integration) complete:
-- PBEditor: SelectMode enum (Object/Vertex/Edge/Face), mode switching, active mesh tracking ✓
-- PBOverlay: Wireframe edge rendering via ArrayMesh PRIMITIVE_LINES, vertex dot rendering via PRIMITIVE_POINTS ✓
-- PBToolbar: Mode buttons in 3D viewport header, synced with PBEditor state ✓
-- ProBuilderPlugin: _handles/_edit/_make_visible, PBMesh custom type registration, keyboard shortcuts (H/J/K) ✓
-- 270/270 headless tests passing ✓
+Phase 4 (Basic Editor Integration) complete ✓
+Phase 5 (Element Selection & Picking) complete:
+- PBSelection: Selection state management for vertices (common indices), edges (deduped by common), faces (by index) ✓
+- PBPicking: CPU raycast face picking (Möller–Trumbore), screen-space edge/vertex picking, rect selection ✓
+- PBOverlay: Selection rendering — selected vertices (cyan dots), edges (cyan lines), faces (cyan semi-transparent triangles) ✓
+- ProBuilderPlugin: Click picking with Shift (additive) / Ctrl (subtractive), drag-rect marquee selection ✓
+- Select All (Ctrl+A), Deselect All (Ctrl+D), Invert (Ctrl+Shift+A), Grow (Ctrl+=), Shrink (Ctrl+-) ✓
+- Edge loop/ring selection via PBTopology (tested on cube and cylinder) ✓
+- 341/341 headless tests passing (7550 assertions) ✓
 
-Next: Phase 5 (Element Selection & Picking)
+Next: Phase 6 (Element Manipulation Tools)

@@ -11,6 +11,19 @@ var editor: PBEditor = PBEditor.new()
 var overlay: PBOverlay = PBOverlay.new()
 
 # ==============================================================================
+# Rect Selection State
+# ==============================================================================
+
+## Whether a rect-drag selection is in progress.
+var _is_rect_selecting: bool = false
+
+## Start point of the rect selection drag (screen coords).
+var _rect_start: Vector2 = Vector2.ZERO
+
+## Current end point of the rect selection drag.
+var _rect_end: Vector2 = Vector2.ZERO
+
+# ==============================================================================
 # UI Components
 # ==============================================================================
 
@@ -35,6 +48,7 @@ func _enter_tree():
 	# Connect editor signals
 	editor.active_mesh_changed.connect(_on_active_mesh_changed)
 	editor.select_mode_changed.connect(_on_select_mode_changed)
+	editor.element_selection_changed.connect(_on_element_selection_changed)
 
 	# Register custom type
 	add_custom_type(
@@ -126,15 +140,202 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			KEY_ESCAPE:
 				editor.active_mesh = null
 				return AFTER_GUI_INPUT_STOP
+			KEY_A:
+				# Ctrl+A = Select All, Ctrl+Shift+A or Ctrl+I = Invert
+				if key_event.ctrl_pressed:
+					if key_event.shift_pressed:
+						editor.selection.invert_selection(editor.select_mode)
+					else:
+						editor.selection.select_all(editor.select_mode)
+					return AFTER_GUI_INPUT_STOP
+			KEY_D:
+				# Ctrl+D = Deselect All
+				if key_event.ctrl_pressed:
+					editor.selection.clear_all()
+					return AFTER_GUI_INPUT_STOP
+			KEY_EQUAL:
+				# Ctrl+= (Numpad Plus) = Grow Selection
+				if key_event.ctrl_pressed:
+					editor.selection.grow_selection(editor.select_mode)
+					return AFTER_GUI_INPUT_STOP
+			KEY_MINUS:
+				# Ctrl+- = Shrink Selection
+				if key_event.ctrl_pressed:
+					editor.selection.shrink_selection(editor.select_mode)
+					return AFTER_GUI_INPUT_STOP
+
+	# Element picking via mouse click
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_rect_start = mb.position
+				_rect_end = mb.position
+				_is_rect_selecting = false
+				# Don't consume press — wait for release to determine click vs drag
+				return AFTER_GUI_INPUT_PASS
+			else:
+				# Mouse button released
+				if _is_rect_selecting:
+					# Rect selection complete
+					_is_rect_selecting = false
+					_do_rect_select(camera, mb)
+					update_overlays()
+					return AFTER_GUI_INPUT_STOP
+				else:
+					# Single click pick
+					_do_click_pick(camera, mb)
+					return AFTER_GUI_INPUT_STOP
+
+	# Track mouse drag for rect selection
+	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		var mm: InputEventMouseMotion = event as InputEventMouseMotion
+		_rect_end = mm.position
+		if not _is_rect_selecting:
+			var drag_dist: float = _rect_start.distance_to(_rect_end)
+			if drag_dist > 4.0:
+				_is_rect_selecting = true
+		if _is_rect_selecting:
+			update_overlays()
+			return AFTER_GUI_INPUT_STOP
 
 	return AFTER_GUI_INPUT_PASS
 
 func _forward_3d_draw_over_viewport(viewport_control: Control):
-	# 2D overlay drawing (e.g. stats, labels) — placeholder for future use
-	pass
+	# Draw rect selection marquee
+	if _is_rect_selecting:
+		var rect := Rect2(_rect_start, _rect_end - _rect_start).abs()
+		viewport_control.draw_rect(rect, Color(0.0, 0.824, 0.937, 0.15), true)
+		viewport_control.draw_rect(rect, Color(0.0, 0.824, 0.937, 0.6), false, 1.0)
 
 # ==============================================================================
-# Selection Handling
+# Click Picking
+# ==============================================================================
+
+func _do_click_pick(camera: Camera3D, event: InputEventMouseButton) -> void:
+	var mesh: PBMesh = editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+
+	var shift_held: bool = event.shift_pressed
+	var ctrl_held: bool = event.ctrl_pressed
+
+	match editor.select_mode:
+		PBEditor.SelectMode.FACE:
+			_pick_face(camera, event.position, shift_held, ctrl_held)
+		PBEditor.SelectMode.EDGE:
+			_pick_edge(camera, event.position, shift_held, ctrl_held)
+		PBEditor.SelectMode.VERTEX:
+			_pick_vertex(camera, event.position, shift_held, ctrl_held)
+
+func _pick_face(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
+	var mesh: PBMesh = editor.active_mesh
+	var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var result: PBPicking.FacePickResult = PBPicking.pick_face(
+		mesh.pb_mesh_data, mesh.global_transform, ray_origin, ray_dir)
+
+	if result.face_index < 0:
+		# Miss — clear unless shift/ctrl held
+		if not shift and not ctrl:
+			editor.selection.clear_faces()
+		return
+
+	if ctrl:
+		# Ctrl-click = remove
+		editor.selection.remove_face(result.face_index)
+	elif shift:
+		# Shift-click = toggle
+		editor.selection.toggle_face(result.face_index)
+	else:
+		# Plain click = replace selection
+		editor.selection.set_faces(PackedInt32Array([result.face_index]))
+
+func _pick_edge(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
+	var mesh: PBMesh = editor.active_mesh
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
+		mesh.pb_mesh_data, mesh.global_transform, screen_pos, camera)
+
+	if result.edge == null:
+		if not shift and not ctrl:
+			editor.selection.clear_edges()
+		return
+
+	if ctrl:
+		editor.selection.remove_edge(result.edge)
+	elif shift:
+		editor.selection.toggle_edge(result.edge)
+	else:
+		var edges: Array[PBEdge] = [result.edge]
+		editor.selection.set_edges(edges)
+
+func _pick_vertex(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
+	var mesh: PBMesh = editor.active_mesh
+	var result: PBPicking.VertexPickResult = PBPicking.pick_vertex(
+		mesh.pb_mesh_data, mesh.global_transform, screen_pos, camera)
+
+	if result.common_index < 0:
+		if not shift and not ctrl:
+			editor.selection.clear_vertices()
+		return
+
+	if ctrl:
+		editor.selection.remove_vertex(result.common_index)
+	elif shift:
+		editor.selection.toggle_vertex(result.common_index)
+	else:
+		editor.selection.set_vertices(PackedInt32Array([result.common_index]))
+
+# ==============================================================================
+# Rect Selection
+# ==============================================================================
+
+func _do_rect_select(camera: Camera3D, event: InputEventMouseButton) -> void:
+	var mesh: PBMesh = editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+
+	var rect := Rect2(_rect_start, _rect_end - _rect_start).abs()
+	var shift_held: bool = event.shift_pressed
+	var ctrl_held: bool = event.ctrl_pressed
+
+	match editor.select_mode:
+		PBEditor.SelectMode.FACE:
+			var faces: PackedInt32Array = PBPicking.pick_faces_in_rect(
+				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
+			if ctrl_held:
+				for fi in faces:
+					editor.selection.remove_face(fi)
+			elif shift_held:
+				for fi in faces:
+					editor.selection.add_face(fi)
+			else:
+				editor.selection.set_faces(faces)
+		PBEditor.SelectMode.EDGE:
+			var edges: Array[PBEdge] = PBPicking.pick_edges_in_rect(
+				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
+			if ctrl_held:
+				for edge in edges:
+					editor.selection.remove_edge(edge)
+			elif shift_held:
+				for edge in edges:
+					editor.selection.add_edge(edge)
+			else:
+				editor.selection.set_edges(edges)
+		PBEditor.SelectMode.VERTEX:
+			var verts: PackedInt32Array = PBPicking.pick_vertices_in_rect(
+				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
+			if ctrl_held:
+				for sv_idx in verts:
+					editor.selection.remove_vertex(sv_idx)
+			elif shift_held:
+				for sv_idx in verts:
+					editor.selection.add_vertex(sv_idx)
+			else:
+				editor.selection.set_vertices(verts)
+
+# ==============================================================================
+# Object Selection Handling
 # ==============================================================================
 
 func _on_selection_changed() -> void:
@@ -158,7 +359,7 @@ func _on_selection_changed() -> void:
 func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	if mesh != null:
 		overlay.attach(mesh)
-		overlay.rebuild(editor.select_mode)
+		overlay.rebuild(editor.select_mode, editor.selection)
 		toolbar.activate()
 	else:
 		overlay.detach()
@@ -166,5 +367,11 @@ func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	update_overlays()
 
 func _on_select_mode_changed(mode: PBEditor.SelectMode) -> void:
-	overlay.rebuild(mode)
+	# Clear element selection when mode changes (ProBuilder behavior)
+	editor.selection.clear_all()
+	overlay.rebuild(mode, editor.selection)
+	update_overlays()
+
+func _on_element_selection_changed() -> void:
+	overlay.rebuild(editor.select_mode, editor.selection)
 	update_overlays()

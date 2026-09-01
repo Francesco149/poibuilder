@@ -1,8 +1,8 @@
 ## PBEditor — Central editor state for ProBuilder.
 ##
 ## Manages the active PBMesh, selection mode (Object/Vertex/Edge/Face),
-## and coordinates overlay/toolbar updates. Lives as a child of the
-## EditorPlugin node.
+## element selection state, and coordinates overlay/toolbar updates.
+## Lives as a child of the EditorPlugin node.
 @tool
 class_name PBEditor
 extends RefCounted
@@ -29,6 +29,8 @@ signal select_mode_changed(mode: SelectMode)
 ## Emitted when the active PBMesh node changes (selected/deselected).
 signal active_mesh_changed(mesh: PBMesh)
 
+## Emitted when the element selection changes (vertices/edges/faces).
+signal element_selection_changed()
 # ==============================================================================
 # State
 # ==============================================================================
@@ -40,6 +42,9 @@ var select_mode: SelectMode = SelectMode.OBJECT:
 ## The currently active (selected) PBMesh, or null.
 var active_mesh: PBMesh = null:
 	set = set_active_mesh
+
+## Element selection state for the active mesh.
+var selection: PBSelection = PBSelection.new()
 
 ## Logger reference for debug output.
 var logger: PBLogger = null
@@ -60,13 +65,21 @@ func set_select_mode(value: SelectMode) -> void:
 func set_active_mesh(value: PBMesh) -> void:
 	if active_mesh == value:
 		return
+	# Disconnect old selection signal
+	if selection.selection_changed.is_connected(_on_selection_changed):
+		selection.selection_changed.disconnect(_on_selection_changed)
 	active_mesh = value
 	if active_mesh == null:
+		selection.set_mesh_data(null)
 		# Revert to object mode when no mesh is selected
 		select_mode = SelectMode.OBJECT
-	elif select_mode == SelectMode.OBJECT:
-		# Enter face mode by default when a PBMesh is selected (ProBuilder behavior)
-		select_mode = SelectMode.FACE
+	else:
+		selection.set_mesh_data(active_mesh.pb_mesh_data)
+		if select_mode == SelectMode.OBJECT:
+			# Enter face mode by default when a PBMesh is selected (ProBuilder behavior)
+			select_mode = SelectMode.FACE
+	# Connect new selection signal
+	selection.selection_changed.connect(_on_selection_changed)
 	if logger:
 		var name_str: String = active_mesh.name if active_mesh else "null"
 		logger.info("editor", "Active mesh: %s" % name_str)
@@ -83,3 +96,10 @@ func is_editing() -> bool:
 ## Returns the display name for a given mode.
 static func mode_name(mode: SelectMode) -> String:
 	return SelectMode.keys()[mode].capitalize()
+
+# ==============================================================================
+# Selection Callbacks
+# ==============================================================================
+
+func _on_selection_changed() -> void:
+	element_selection_changed.emit()
