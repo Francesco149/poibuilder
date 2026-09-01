@@ -144,6 +144,14 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				if not key_event.ctrl_pressed and not key_event.alt_pressed:
 					editor.active_tool = PBToolMove.new()
 					return AFTER_GUI_INPUT_STOP
+			KEY_E:
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.active_tool = PBToolRotate.new()
+					return AFTER_GUI_INPUT_STOP
+			KEY_R:
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.active_tool = PBToolScale.new()
+					return AFTER_GUI_INPUT_STOP
 			KEY_Q:
 				if not key_event.ctrl_pressed and not key_event.alt_pressed:
 					editor.active_tool = null
