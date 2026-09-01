@@ -48,12 +48,10 @@ Phase 2 (Math & Topology) complete ✓
 Phase 3 (Shape Generators) complete ✓
 Phase 4 (Basic Editor Integration) complete ✓
 Phase 5 (Element Selection & Picking) complete ✓
-Phase 6 (Element Manipulation Tools) in progress:
-- P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data ✓
-- P6-02: CmdMoveElements — coincident-expanded translate ✓
-- P6-03: PBTool + PBToolMove — camera-plane drag, live preview, W/Q hotkeys ✓
-- P6-04: CmdRotateElements + PBToolRotate — quaternion drag, E hotkey ✓
-- P6-05: CmdScaleElements + PBToolScale — uniform distance-ratio scale, R hotkey ✓
-- 441/441 headless tests passing (8969 assertions) ✓
+Phase 6 (Element Manipulation Tools) complete:
+- PBCommand snapshot-once undo; CmdMove/Rotate/ScaleElements ✓
+- PBTool + Move/Rotate/Scale camera-plane drag (W/E/R, Q select) ✓
+- Tool Properties dock (left) — tool/mode/selection + live delta/rotation/scale ✓
+- 457/457 headless tests passing (9016 assertions) ✓
 
-Next: P6-06 Tool properties dock
+Next: Phase 7 (Core Mesh Operations) — after human sign-off of Phase 6

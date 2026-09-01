@@ -41,8 +41,9 @@ var _mouse_press_pos: Vector2 = Vector2.ZERO
 
 var debug_dock_panel: PBDebugDock
 var debug_dock: Control
+var tool_properties_dock_panel: PBToolPropertiesDock
+var tool_properties_dock: Control
 var toolbar: PBToolbar
-
 # ==============================================================================
 # Plugin Lifecycle
 # ==============================================================================
@@ -76,6 +77,11 @@ func _enter_tree():
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, debug_dock_panel)
 	debug_dock = debug_dock_panel
 
+	# Tool properties dock
+	tool_properties_dock_panel = preload("res://addons/probuilder/gui/docks/pb_tool_properties_dock.tscn").instantiate()
+	tool_properties_dock_panel.editor = editor
+	add_control_to_dock(DOCK_SLOT_LEFT_BL, tool_properties_dock_panel)
+	tool_properties_dock = tool_properties_dock_panel
 	# Mode toolbar (added to 3D viewport header)
 	toolbar = PBToolbar.new()
 	toolbar.editor = editor
@@ -112,6 +118,12 @@ func _exit_tree():
 		debug_dock.queue_free()
 		debug_dock = null
 
+	# Remove tool properties dock
+	if tool_properties_dock:
+		remove_control_from_docks(tool_properties_dock)
+		tool_properties_dock.queue_free()
+		tool_properties_dock = null
+		tool_properties_dock_panel = null
 	# Remove custom type
 	remove_custom_type("PBMesh")
 
@@ -224,12 +236,16 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 						var undo_mgr: Object = get_undo_redo() if Engine.is_editor_hint() and has_method("get_undo_redo") else null
 						editor.active_tool.finish_drag(undo_mgr)
 						update_overlays()
+						if tool_properties_dock_panel:
+							tool_properties_dock_panel.refresh()
 						return AFTER_GUI_INPUT_STOP
 					else:
 						# Click without drag (released before 4px): cancel drag preview and do click pick
 						editor.active_tool.cancel_drag()
 						_do_click_pick(camera, mb)
 						update_overlays()
+						if tool_properties_dock_panel:
+							tool_properties_dock_panel.refresh()
 						return AFTER_GUI_INPUT_STOP
 
 				if _is_rect_selecting:
@@ -256,7 +272,8 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				var ray_dir: Vector3 = camera.project_ray_normal(mm.position)
 				editor.active_tool.update_drag(ray_origin, ray_dir)
 				update_overlays()
-			return AFTER_GUI_INPUT_STOP
+				if tool_properties_dock_panel:
+					tool_properties_dock_panel.refresh()
 
 		_rect_end = mm.position
 		if not _is_rect_selecting:

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://test_scenes/human_test_phase6.gd" id="1"]
+
+[node name="HumanTestPhase6" type="Node3D"]
+script = ExtResource("1")
