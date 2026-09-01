@@ -51,8 +51,9 @@ Phase 5 (Element Selection & Picking) complete ✓
 Phase 6 (Element Manipulation Tools) in progress:
 - P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data ✓
 - P6-02: CmdMoveElements — coincident-expanded translate ✓
+- P6-03: PBTool + PBToolMove — camera-plane drag, live preview, W/Q hotkeys ✓
 - P6-04 cmd: CmdRotateElements — quaternion about centroid/custom pivot ✓
 - P6-05 cmd: CmdScaleElements — component scale, near-zero clamp ✓
-- 396/396 headless tests passing (8648 assertions) ✓
+- 410/410 headless tests passing (8730 assertions) ✓
 
-Next: P6-03 Move tool (viewport drag + live preview); then rotate/scale tools + properties dock
+Next: P6-04/P6-05 viewport rotate & scale tools, then tool properties dock

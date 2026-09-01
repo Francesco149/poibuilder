@@ -31,6 +31,9 @@ signal active_mesh_changed(mesh: PBMesh)
 
 ## Emitted when the element selection changes (vertices/edges/faces).
 signal element_selection_changed()
+
+## Emitted when the active viewport editing tool changes.
+signal active_tool_changed(tool: PBTool)
 # ==============================================================================
 # State
 # ==============================================================================
@@ -46,9 +49,13 @@ var active_mesh: PBMesh = null:
 ## Element selection state for the active mesh.
 var selection: PBSelection = PBSelection.new()
 
-## Logger reference for debug output.
-var logger: PBLogger = null
+## Currently active viewport editing tool, or null for selection-only mode.
+var active_tool: PBTool = null:
+	set = set_active_tool
 
+## Logger reference for debug output.
+var logger: PBLogger = null:
+	set = set_logger
 # ==============================================================================
 # Setters
 # ==============================================================================
@@ -56,15 +63,37 @@ var logger: PBLogger = null
 func set_select_mode(value: SelectMode) -> void:
 	if select_mode == value:
 		return
+	if active_tool != null and active_tool.is_dragging():
+		active_tool.cancel_drag()
 	var old := select_mode
 	select_mode = value
 	if logger:
 		logger.info("editor", "Mode changed: %s → %s" % [SelectMode.keys()[old], SelectMode.keys()[value]])
 	select_mode_changed.emit(select_mode)
 
+func set_active_tool(value: PBTool) -> void:
+	if active_tool == value:
+		return
+	if active_tool != null and active_tool.is_dragging():
+		active_tool.cancel_drag()
+	active_tool = value
+	if active_tool != null:
+		active_tool.editor = self
+		active_tool.logger = logger
+	if logger:
+		var tname: String = active_tool.tool_name() if active_tool != null else "Select"
+		logger.info("editor", "Active tool: %s" % tname)
+	active_tool_changed.emit(active_tool)
+
+func set_logger(value: PBLogger) -> void:
+	logger = value
+	if active_tool != null:
+		active_tool.logger = value
 func set_active_mesh(value: PBMesh) -> void:
 	if active_mesh == value:
 		return
+	if active_tool != null and active_tool.is_dragging():
+		active_tool.cancel_drag()
 	# Disconnect old selection signal
 	if selection.selection_changed.is_connected(_on_selection_changed):
 		selection.selection_changed.disconnect(_on_selection_changed)

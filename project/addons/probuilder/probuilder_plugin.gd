@@ -24,6 +24,18 @@ var _rect_start: Vector2 = Vector2.ZERO
 var _rect_end: Vector2 = Vector2.ZERO
 
 # ==============================================================================
+# Tool Drag State
+# ==============================================================================
+
+## Whether an active tool drag session has begun.
+var _tool_drag_begun: bool = false
+
+## Whether the mouse has moved far enough (>4px) during a tool drag to apply live preview.
+var _is_moving: bool = false
+
+## Mouse press position for drag distance calculation.
+var _mouse_press_pos: Vector2 = Vector2.ZERO
+# ==============================================================================
 # UI Components
 # ==============================================================================
 
@@ -128,6 +140,14 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key_event: InputEventKey = event as InputEventKey
 		match key_event.keycode:
+			KEY_W:
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.active_tool = PBToolMove.new()
+					return AFTER_GUI_INPUT_STOP
+			KEY_Q:
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.active_tool = null
+					return AFTER_GUI_INPUT_STOP
 			KEY_H:
 				editor.select_mode = PBEditor.SelectMode.VERTEX
 				return AFTER_GUI_INPUT_STOP
@@ -164,18 +184,46 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 					editor.selection.shrink_selection(editor.select_mode)
 					return AFTER_GUI_INPUT_STOP
 
-	# Element picking via mouse click
+	# Element manipulation & picking via mouse click / drag
 	if event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
+				_mouse_press_pos = mb.position
 				_rect_start = mb.position
 				_rect_end = mb.position
 				_is_rect_selecting = false
-				# Don't consume press — wait for release to determine click vs drag
+				_is_moving = false
+				_tool_drag_begun = false
+
+				# If active tool is present and we have a nonempty selection, attempt begin_drag
+				if editor.active_tool != null and not editor.selection.is_empty():
+					var ray_origin: Vector3 = camera.project_ray_origin(mb.position)
+					var ray_dir: Vector3 = camera.project_ray_normal(mb.position)
+					if editor.active_tool.begin_drag(ray_origin, ray_dir):
+						_tool_drag_begun = true
+						return AFTER_GUI_INPUT_STOP
+
+				# Fall through to default click/rect selection
 				return AFTER_GUI_INPUT_PASS
 			else:
 				# Mouse button released
+				if _tool_drag_begun:
+					var was_moving: bool = _is_moving
+					_tool_drag_begun = false
+					_is_moving = false
+					if was_moving:
+						var undo_mgr: Object = get_undo_redo() if Engine.is_editor_hint() and has_method("get_undo_redo") else null
+						editor.active_tool.finish_drag(undo_mgr)
+						update_overlays()
+						return AFTER_GUI_INPUT_STOP
+					else:
+						# Click without drag (released before 4px): cancel drag preview and do click pick
+						editor.active_tool.cancel_drag()
+						_do_click_pick(camera, mb)
+						update_overlays()
+						return AFTER_GUI_INPUT_STOP
+
 				if _is_rect_selecting:
 					# Rect selection complete
 					_is_rect_selecting = false
@@ -187,9 +235,21 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 					_do_click_pick(camera, mb)
 					return AFTER_GUI_INPUT_STOP
 
-	# Track mouse drag for rect selection
+	# Track mouse drag for tool manipulation or rect selection
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		var mm: InputEventMouseMotion = event as InputEventMouseMotion
+		if _tool_drag_begun:
+			if not _is_moving:
+				var drag_dist: float = _mouse_press_pos.distance_to(mm.position)
+				if drag_dist > 4.0:
+					_is_moving = true
+			if _is_moving:
+				var ray_origin: Vector3 = camera.project_ray_origin(mm.position)
+				var ray_dir: Vector3 = camera.project_ray_normal(mm.position)
+				editor.active_tool.update_drag(ray_origin, ray_dir)
+				update_overlays()
+			return AFTER_GUI_INPUT_STOP
+
 		_rect_end = mm.position
 		if not _is_rect_selecting:
 			var drag_dist: float = _rect_start.distance_to(_rect_end)
@@ -198,7 +258,6 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		if _is_rect_selecting:
 			update_overlays()
 			return AFTER_GUI_INPUT_STOP
-
 	return AFTER_GUI_INPUT_PASS
 
 func _forward_3d_draw_over_viewport(viewport_control: Control):
