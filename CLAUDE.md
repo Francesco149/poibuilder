@@ -50,6 +50,7 @@ Phase 4 (Basic Editor Integration) complete ✓
 Phase 5 (Element Selection & Picking) complete ✓
 Phase 6 (Element Manipulation Tools) in progress:
 - P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data, EditorUndoRedoManager duck-typed integration ✓
-- 350/350 headless tests passing (7868 assertions) ✓
+- P6-02: CmdMoveElements — coincident-expanded translate for verts/edges/faces, world-delta, UndoRedo ✓
+- 364/364 headless tests passing (8042 assertions) ✓
 
-Next: P6-02 CmdMoveElements (translate selected verts/edges/faces with undo)
+Next: P6-04/P6-05 rotate & scale commands, then move tool
