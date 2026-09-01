@@ -49,8 +49,10 @@ Phase 3 (Shape Generators) complete ✓
 Phase 4 (Basic Editor Integration) complete ✓
 Phase 5 (Element Selection & Picking) complete ✓
 Phase 6 (Element Manipulation Tools) in progress:
-- P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data, EditorUndoRedoManager duck-typed integration ✓
-- P6-02: CmdMoveElements — coincident-expanded translate for verts/edges/faces, world-delta, UndoRedo ✓
-- 364/364 headless tests passing (8042 assertions) ✓
+- P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data ✓
+- P6-02: CmdMoveElements — coincident-expanded translate ✓
+- P6-04 cmd: CmdRotateElements — quaternion about centroid/custom pivot ✓
+- P6-05 cmd: CmdScaleElements — component scale, near-zero clamp ✓
+- 396/396 headless tests passing (8648 assertions) ✓
 
-Next: P6-04/P6-05 rotate & scale commands, then move tool
+Next: P6-03 Move tool (viewport drag + live preview); then rotate/scale tools + properties dock
