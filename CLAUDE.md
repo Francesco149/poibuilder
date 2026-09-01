@@ -47,13 +47,9 @@ Phase 1 (Core Data Model) complete ✓
 Phase 2 (Math & Topology) complete ✓
 Phase 3 (Shape Generators) complete ✓
 Phase 4 (Basic Editor Integration) complete ✓
-Phase 5 (Element Selection & Picking) complete:
-- PBSelection: Selection state management for vertices (common indices), edges (deduped by common), faces (by index) ✓
-- PBPicking: CPU raycast face picking (Möller–Trumbore), screen-space edge/vertex picking, rect selection ✓
-- PBOverlay: Selection rendering — selected vertices (cyan dots), edges (cyan lines), faces (cyan semi-transparent triangles) ✓
-- ProBuilderPlugin: Click picking with Shift (additive) / Ctrl (subtractive), drag-rect marquee selection ✓
-- Select All (Ctrl+A), Deselect All (Ctrl+D), Invert (Ctrl+Shift+A), Grow (Ctrl+=), Shrink (Ctrl+-) ✓
-- Edge loop/ring selection via PBTopology (tested on cube and cylinder) ✓
-- 341/341 headless tests passing (7550 assertions) ✓
+Phase 5 (Element Selection & Picking) complete ✓
+Phase 6 (Element Manipulation Tools) in progress:
+- P6-01: PBCommand base — snapshot-once do/undo, copy/restore mesh data, EditorUndoRedoManager duck-typed integration ✓
+- 350/350 headless tests passing (7868 assertions) ✓
 
-Next: Phase 6 (Element Manipulation Tools)
+Next: P6-02 CmdMoveElements (translate selected verts/edges/faces with undo)
