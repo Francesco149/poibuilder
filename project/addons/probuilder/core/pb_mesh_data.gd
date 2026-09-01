@@ -46,6 +46,10 @@ var _shared_texture_lookup_valid: bool = false
 ## Cached normals (calculated on demand, not serialized)
 var _normals: PackedVector3Array = PackedVector3Array()
 
+## Cached: deduplicated common edges in stable face-scan order
+var _common_edges: Array[PBEdge] = []
+var _common_edges_valid: bool = false
+
 # ==============================================================================
 # Property Accessors (Computed, Read-Only)
 # ==============================================================================
@@ -114,7 +118,31 @@ func invalidate_shared_texture_lookup() -> void:
 func invalidate_caches() -> void:
 	invalidate_shared_vertex_lookup()
 	invalidate_shared_texture_lookup()
+	_common_edges_valid = false
 	_normals.clear()
+
+## Returns all unique edges as common (coincident-welded) PBEdges, deduplicated
+## by shared vertex group pair, in stable face-scan order. Lazy-cached.
+## Subgizmo IDs for edge mode index into this list.
+func get_common_edges() -> Array[PBEdge]:
+	if not _common_edges_valid:
+		_common_edges.clear()
+		var seen: Dictionary = {}
+		var lookup := get_shared_vertex_lookup()
+		for face in faces:
+			if face == null:
+				continue
+			for edge in face.get_edges():
+				var ca: int = lookup.get(edge.a, -1)
+				var cb: int = lookup.get(edge.b, -1)
+				var key := Vector2i(mini(ca, cb), maxi(ca, cb))
+				if seen.has(key):
+					continue
+				seen[key] = true
+				var common: PBEdge = get_common_edge(edge)
+				_common_edges.append(common if common != null else edge)
+		_common_edges_valid = true
+	return _common_edges
 
 # ==============================================================================
 # Coincident Vertex Queries & Common Index Lookups
@@ -270,7 +298,8 @@ func calculate_normals() -> PackedVector3Array:
 				continue
 			var edge1: Vector3 = positions[i1] - positions[i0]
 			var edge2: Vector3 = positions[i2] - positions[i0]
-			# Internal data uses CW winding (Unity convention) — normal = edge1 × edge2
+			# Internal data is CCW-from-outside (Unity convention) —
+			# normal = edge1 × edge2 points outward
 			var cross_prod: Vector3 = edge1.cross(edge2)
 			var normal: Vector3 = cross_prod.normalized() if not cross_prod.is_zero_approx() else Vector3.ZERO
 			normals[i0] = normal
@@ -296,14 +325,14 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 	if positions.is_empty() or faces.is_empty():
 		return mesh
 
-	var internal_normals: PackedVector3Array = calculate_normals()
-	# Negate normals: internal data uses CW winding (Unity), so cross product
-	# normals point outward for CW. After reversing winding for Godot CCW,
-	# the outward direction flips — negate to keep normals facing outward.
-	var normals := PackedVector3Array()
-	normals.resize(internal_normals.size())
-	for i in range(internal_normals.size()):
-		normals[i] = -internal_normals[i]
+	# Internal data is CCW-from-outside (Unity/ProBuilder convention), so
+	# calculate_normals() cross products point OUTWARD. Godot front faces are
+	# CW-from-outside (see ArrayMesh docs), hence the index reversal below.
+	# The reversal only flips which side is culled — the outward direction is
+	# a property of the geometry, so normals must NOT be negated.
+	# Ground truth: Godot's own BoxMesh stores CW tris whose cross(v1-v0,
+	# v2-v0) points inward, with attribute normals pointing outward.
+	var normals: PackedVector3Array = calculate_normals()
 
 	# Group faces by submesh_index
 	var submesh_faces: Dictionary = {}
@@ -327,8 +356,8 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 		for face in group_faces:
 			if face != null:
 				var fi: PackedInt32Array = face.get_indexes()
-				# Reverse each triangle's winding for Godot CCW front-face convention.
-				# Internal data uses CW (Unity convention); GPU needs CCW.
+				# Reverse each triangle's winding: internal data is CCW-from-outside
+				# (Unity convention), Godot front faces are CW-from-outside.
 				for tri_i in range(0, fi.size() - 2, 3):
 					indices.append(fi[tri_i + 2])
 					indices.append(fi[tri_i + 1])

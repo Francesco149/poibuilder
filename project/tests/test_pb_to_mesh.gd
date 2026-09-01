@@ -187,9 +187,9 @@ func test_empty_faces_with_positions():
 func test_single_triangle():
 	var data := PBMeshData.new()
 	# Triangle with vertices in XY plane, indices [0,1,2].
-	# Internal cross product (edge1×edge2) yields (0,0,+1).
-	# to_array_mesh reverses winding for Godot CCW and negates normals,
-	# so the compiled ArrayMesh normal is (0,0,-1).
+	# Internal CCW winding: cross product (edge1×edge2) yields (0,0,+1).
+	# to_array_mesh reverses the INDEX order (Godot CW front faces) but
+	# normals keep the geometric outward direction — (0,0,+1).
 	data.positions = PackedVector3Array([
 		Vector3(0, 0, 0),
 		Vector3(1, 0, 0),
@@ -211,11 +211,17 @@ func test_single_triangle():
 	assert_eq(indices.size(), 3, "Surface index count should be 3")
 	assert_eq(normals.size(), 3, "Surface normal count should be 3")
 
-	# Normals are negated in to_array_mesh (CW→CCW winding conversion)
+	# Normals keep the outward direction — they are NOT negated.
+	# (Negating them was the Phase 6 normals bug: inward-facing shading.)
 	for n in normals:
 		assert_almost_eq(n.x, 0.0, 0.001)
 		assert_almost_eq(n.y, 0.0, 0.001)
-		assert_almost_eq(n.z, -1.0, 0.001, "Normal should point towards -Z (negated for Godot CCW)")
+		assert_almost_eq(n.z, 1.0, 0.001, "Normal should keep the outward +Z direction")
+
+	# The indices must be reversed for Godot's CW front faces
+	assert_eq(indices[0], 2, "Reversed winding: output tri starts at internal index 2")
+	assert_eq(indices[1], 1)
+	assert_eq(indices[2], 0)
 
 func test_single_triangle_reversed_winding():
 	var data := PBMeshData.new()

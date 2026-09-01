@@ -456,50 +456,81 @@ You are implementing IU {iu_id}: {description}
 5. **Reject theater** — if worker claims "all tests pass" but didn't show
    test output, reject and re-run.
 
-### Mandatory Verification Gates (Post-P6 Retrospective)
+### Mandatory Verification Gates (Post-P6 Retrospective, rev 2)
 
-These rules were added after Phase 6 review uncovered compounded bugs that
-headless tests did not catch. Every gate is BLOCKING — the phase cannot be
-submitted for human sign-off until all applicable gates pass.
+Written after Phase 6 needed TWO rounds of human rework. Revision 1's gates
+documented the wrong winding convention and tried to patch the hand-rolled
+input stack; revision 2 reflects the native-subgizmo architecture
+(PBGizmoPlugin/PBElementEditor) and the test-infrastructure holes found
+while rewriting it. Every gate is BLOCKING.
 
-**G1 — Coordinate Convention Check (any phase producing geometry)**
-- After creating or modifying any shape generator or mesh compilation code,
-  verify that compiled ArrayMesh triangles are CCW when viewed from outside.
-- Internal data uses CW winding (Unity convention). `to_array_mesh()` reverses
-  winding and negates normals for Godot. Any new geometry code must work within
-  this pipeline — do NOT mix conventions.
-- Test: instantiate the shape as a PBMesh, add to a scene, verify front faces
-  are visible from the default camera (not inside-out).
+**G1 — Geometry Convention Check (any phase producing geometry)**
+- INTERNAL PBMeshData is CCW-from-outside (Unity/ProBuilder convention).
+  Godot front faces are CW-from-outside, so `to_array_mesh()` reverses index
+  order. Normals are NOT negated — outward is outward regardless of winding.
+  (Revision 1's gate claimed CW internal + negated normals. That doc error
+  produced the inside-out cube AND the inward-normals bug. Do not re-edit
+  conventions from docs — run the ground-truth test.)
+- Executable gate: `tests/test_pb_winding.gd` compares every factory shape's
+  compiled ArrayMesh against Godot's own BoxMesh convention
+  (attr_normal · cross(v1-v0, v2-v0) < 0 for ALL triangles) and, for convex
+  shapes, requires every output triangle's geometric normal to point away
+  from the mesh interior. Any new shape generator or winding change must
+  pass this file AND add a case for the new geometry.
 
-**G2 — Input State Machine Exclusivity (any phase touching input handling)**
-- `_forward_3d_gui_input` manages multiple exclusive interaction modes (tool
-  drag, rect selection, click picking). When one mode is active, ALL other
-  mode state must be suppressed.
-- Rule: if `_tool_drag_begun` is true, rect selection state must NOT be updated.
-  On tool drag completion, `_is_rect_selecting` must be cleared.
-- Test: programmatically verify that after begin_drag → update_drag → finish_drag,
-  `_is_rect_selecting` is false and no spurious selection changes occurred.
+**G2 — Native Editor Integration Rule (any phase touching 3D interaction)**
+- Do NOT hand-roll viewport input, element picking, rubber-band selection,
+  marquee drawing, or drag state machines in `_forward_3d_gui_input`. That
+  approach produced the Phase 6 regression cluster: teleporting elements,
+  double box-selection, stuck cyan marquee, gizmo fights. The plugin's mouse
+  path is PASS-THROUGH; all interaction is delegated to the native editor via
+  EditorNode3DGizmoPlugin subgizmos (pattern: Path3D / Skeleton3D /
+  NavigationObstacle3D gizmo plugins in the engine source).
+- Any proposed interaction feature that the subgizmo API cannot express
+  (e.g. programmatic multi-select — the engine's script API is single-id)
+  must be surfaced as a documented limitation BEFORE being half-implemented.
+  Half-implementations create highlight/gizmo divergence — the exact bug
+  class this rule exists to prevent.
+- Keyboard handling must return AFTER_GUI_INPUT_PASS unless a key was
+  actually consumed, and must never consume Escape (the editor uses it to
+  cancel native drags).
 
-**G3 — Overlay Sync After Mutation (any phase modifying mesh data)**
-- After ANY operation that modifies vertex positions (tool drag, command do/undo,
-  mesh operations), the overlay AND gizmo MUST be rebuilt from the new data.
-- Calling `update_overlays()` alone is NOT sufficient — that only triggers 2D
-  draw callbacks. The 3D overlay meshes require explicit `overlay.rebuild()`.
-- Test: move a face, verify overlay vertex positions match the new mesh positions.
+**G3 — Headless-Testability Rule (any new editor-layer logic)**
+- Editor-only classes (anything under `editor/` that extends an
+  Editor* class, e.g. EditorNode3DGizmoPlugin) can ONLY be instantiated by
+  the editor process. All mesh math, drag state, selection mirroring, and
+  undo payloads must live in runtime-safe classes (RefCounted, no editor
+  base classes) so the headless suite can exercise them. PBElementEditor is
+  the template; PBGizmoPlugin is a thin adapter.
 
-**G4 — Per-Element Gizmo Placement**
-- The axis gizmo must appear at the selection centroid, not the object pivot.
-- After any selection change or position mutation, verify gizmo world position
-  matches the centroid of the selected element vertices.
+**G4 — Test-Runner Gate (EVERY phase, no exceptions)**
+- Never invoke GUT directly and claim green. GUT SILENTLY SKIPS test scripts
+  that fail to parse or whose classes don't resolve — the suite stays green
+  with fewer tests in it. Run `./run_tests.sh` from the repo root, which:
+  (a) refreshes the class cache via an editor boot and fails on any SCRIPT
+  ERROR (this also smoke-tests plugin registration), (b) fails if any SCRIPT
+  ERROR appears inside the test run, (c) fails if the number of discovered
+  test suites differs from the number of test_*.gd files on disk.
+- When adding a new class_name script, remember the global class cache is
+  only refreshed by an editor scan — run_tests.sh does this; raw GUT does not.
 
-**G5 — Combined Interaction Smoke Test (phases with UI interaction)**
-- Before submitting for human sign-off, the orchestrator must verify these
-  combined scenarios (not just individual features):
-  1. Select element → drag with tool → verify no rect selection triggered
-  2. Click empty space → verify no teleportation or spurious selection
-  3. Box select → release → verify marquee disappears
-  4. Tool drag → release without moving → verify click-pick fires correctly
-  5. Undo after tool drag → verify overlay and gizmo update
+**G5 — Engine Version Gate (any new engine API usage)**
+- The `../godot` checkout is 4.8-dev; the INSTALLED engine is 4.7.2-stable.
+  APIs seen in the source tree may not exist (or may not be script-bound) in
+  the installed version. Before using any editor API, verify it exists in
+  `/opt/src/godot/doc/classes/<Class>.xml` AND probe it in a real editor
+  boot (G5 is enforced by run_tests.sh step 1). Examples that passed code
+  review but failed at runtime: `EditorNode3DGizmo.is_selected()` (4.8+),
+  `Basis.get_rotation_matrix()` (Godot 3 only).
+
+**G6 — Combined Interaction Checklist (phases with UI interaction)**
+- Before submitting for human sign-off, run the scripted checklist in
+  `test_scenes/human_test_phase6.gd` scenarios yourself in a real editor
+  session and paste the outcome into the phase summary. The checklist covers
+  combined gestures (box-select while tool active, empty-space clicks,
+  undo/redo after drags, marquee cleanup), not just individual features —
+  regressions so far have all been INTERACTIONS between features, which is
+  also why single-feature unit tests were insufficient.
 
 ## Human Sign-Off Protocol
 

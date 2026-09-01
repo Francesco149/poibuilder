@@ -8,34 +8,8 @@ class_name ProBuilderPlugin
 
 var logger: PBLogger = PBLogger.new()
 var editor: PBEditor = PBEditor.new()
-var overlay: PBOverlay = PBOverlay.new()
-var gizmo: PBGizmo = PBGizmo.new()
+var gizmo_plugin: PBGizmoPlugin = PBGizmoPlugin.new()
 
-# ==============================================================================
-# Rect Selection State
-# ==============================================================================
-
-## Whether a rect-drag selection is in progress.
-var _is_rect_selecting: bool = false
-
-## Start point of the rect selection drag (screen coords).
-var _rect_start: Vector2 = Vector2.ZERO
-
-## Current end point of the rect selection drag.
-var _rect_end: Vector2 = Vector2.ZERO
-
-# ==============================================================================
-# Tool Drag State
-# ==============================================================================
-
-## Whether an active tool drag session has begun.
-var _tool_drag_begun: bool = false
-
-## Whether the mouse has moved far enough (>4px) during a tool drag to apply live preview.
-var _is_moving: bool = false
-
-## Mouse press position for drag distance calculation.
-var _mouse_press_pos: Vector2 = Vector2.ZERO
 # ==============================================================================
 # UI Components
 # ==============================================================================
@@ -45,6 +19,7 @@ var debug_dock: Control
 var tool_properties_dock_panel: PBToolPropertiesDock
 var tool_properties_dock: Control
 var toolbar: PBToolbar
+
 # ==============================================================================
 # Plugin Lifecycle
 # ==============================================================================
@@ -57,14 +32,15 @@ func _enter_tree():
 
 	# Wire up subsystems
 	editor.logger = logger
-	overlay.logger = logger
-	gizmo.logger = logger
+	gizmo_plugin.editor = editor
+	gizmo_plugin.logger = logger
+	gizmo_plugin.element_editor.editor = editor
+	gizmo_plugin.element_editor.undo = get_undo_redo()
 
 	# Connect editor signals
 	editor.active_mesh_changed.connect(_on_active_mesh_changed)
 	editor.select_mode_changed.connect(_on_select_mode_changed)
 	editor.element_selection_changed.connect(_on_element_selection_changed)
-	editor.active_tool_changed.connect(_on_active_tool_changed)
 	editor.orientation_space_changed.connect(_on_orientation_space_changed)
 
 	# Register custom type
@@ -75,6 +51,11 @@ func _enter_tree():
 		preload("res://addons/probuilder/icons/pb_mesh_icon.svg") if FileAccess.file_exists("res://addons/probuilder/icons/pb_mesh_icon.svg") else null
 	)
 
+	# Register the node gizmo plugin — this is the native editor integration:
+	# element picking, rubber-band selection, transform drags, snapping, and
+	# undo are all driven by the editor through the subgizmo API.
+	add_node_3d_gizmo_plugin(gizmo_plugin)
+
 	# Debug dock
 	debug_dock_panel = preload("res://addons/probuilder/debug/pb_debug_dock.tscn").instantiate()
 	debug_dock_panel.logger = logger
@@ -84,8 +65,10 @@ func _enter_tree():
 	# Tool properties dock
 	tool_properties_dock_panel = preload("res://addons/probuilder/gui/docks/pb_tool_properties_dock.tscn").instantiate()
 	tool_properties_dock_panel.editor = editor
+	tool_properties_dock_panel.element_editor = gizmo_plugin.element_editor
 	add_control_to_dock(DOCK_SLOT_LEFT_BL, tool_properties_dock_panel)
 	tool_properties_dock = tool_properties_dock_panel
+
 	# Mode toolbar (added to 3D viewport header)
 	toolbar = PBToolbar.new()
 	toolbar.editor = editor
@@ -107,9 +90,8 @@ func _exit_tree():
 	if selection.selection_changed.is_connected(_on_selection_changed):
 		selection.selection_changed.disconnect(_on_selection_changed)
 
-	# Clean up overlay and gizmo
-	overlay.detach()
-	gizmo.detach()
+	# Unregister the gizmo plugin
+	remove_node_3d_gizmo_plugin(gizmo_plugin)
 
 	# Remove toolbar
 	if toolbar:
@@ -129,6 +111,7 @@ func _exit_tree():
 		tool_properties_dock.queue_free()
 		tool_properties_dock = null
 		tool_properties_dock_panel = null
+
 	# Remove custom type
 	remove_custom_type("PBMesh")
 
@@ -149,296 +132,39 @@ func _make_visible(visible: bool) -> void:
 	if not visible:
 		editor.active_mesh = null
 
+## Keyboard handling only. ALL mouse events are passed through untouched:
+## the native editor viewport handles clicks (subgizmo picking), rubber-band
+## element selection, transform-gizmo drags, snapping, and camera controls.
+## Hand-rolling any of that here is what caused the Phase 6 regression cluster
+## (teleporting elements, double box-selection, stuck marquee).
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
 
-	# Mode hotkeys (matching ProBuilder: H for vertex, J for edge, K for face)
+	# Element mode hotkeys (matching ProBuilder: H vertex, J edge, K face,
+	# X cycles gizmo space). Godot's own Q/W/E/R already switch
+	# select/move/rotate/scale, so tools need no handling here.
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key_event: InputEventKey = event as InputEventKey
 		match key_event.keycode:
-			KEY_W:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.active_tool = PBToolMove.new()
-					return AFTER_GUI_INPUT_STOP
-			KEY_E:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.active_tool = PBToolRotate.new()
-					return AFTER_GUI_INPUT_STOP
-			KEY_R:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.active_tool = PBToolScale.new()
-					return AFTER_GUI_INPUT_STOP
-			KEY_Q:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.active_tool = null
-					return AFTER_GUI_INPUT_STOP
 			KEY_H:
-				editor.select_mode = PBEditor.SelectMode.VERTEX
-				return AFTER_GUI_INPUT_STOP
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.select_mode = PBEditor.SelectMode.VERTEX
+					return AFTER_GUI_INPUT_STOP
 			KEY_J:
-				editor.select_mode = PBEditor.SelectMode.EDGE
-				return AFTER_GUI_INPUT_STOP
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.select_mode = PBEditor.SelectMode.EDGE
+					return AFTER_GUI_INPUT_STOP
 			KEY_K:
-				editor.select_mode = PBEditor.SelectMode.FACE
-				return AFTER_GUI_INPUT_STOP
-			KEY_ESCAPE:
-				editor.active_mesh = null
-				return AFTER_GUI_INPUT_STOP
-			KEY_A:
-				# Ctrl+A = Select All, Ctrl+Shift+A or Ctrl+I = Invert
-				if key_event.ctrl_pressed:
-					if key_event.shift_pressed:
-						editor.selection.invert_selection(editor.select_mode)
-					else:
-						editor.selection.select_all(editor.select_mode)
-					return AFTER_GUI_INPUT_STOP
-			KEY_D:
-				# Ctrl+D = Deselect All
-				if key_event.ctrl_pressed:
-					editor.selection.clear_all()
-					return AFTER_GUI_INPUT_STOP
-			KEY_EQUAL:
-				# Ctrl+= (Numpad Plus) = Grow Selection
-				if key_event.ctrl_pressed:
-					editor.selection.grow_selection(editor.select_mode)
-					return AFTER_GUI_INPUT_STOP
-			KEY_MINUS:
-				# Ctrl+- = Shrink Selection
-				if key_event.ctrl_pressed:
-					editor.selection.shrink_selection(editor.select_mode)
+				if not key_event.ctrl_pressed and not key_event.alt_pressed:
+					editor.select_mode = PBEditor.SelectMode.FACE
 					return AFTER_GUI_INPUT_STOP
 			KEY_X:
 				# X = Cycle orientation space (Element → Object → World)
 				if not key_event.ctrl_pressed and not key_event.alt_pressed and not key_event.shift_pressed:
 					editor.cycle_orientation_space()
 					return AFTER_GUI_INPUT_STOP
-
-	# Element manipulation & picking via mouse click / drag
-	if event is InputEventMouseButton:
-		var mb: InputEventMouseButton = event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT:
-			if mb.pressed:
-				_mouse_press_pos = mb.position
-				_rect_start = mb.position
-				_rect_end = mb.position
-				_is_rect_selecting = false
-				_is_moving = false
-				_tool_drag_begun = false
-
-				# If active tool is present and we have a nonempty selection, attempt begin_drag
-				if editor.active_tool != null and not editor.selection.is_empty():
-					var ray_origin: Vector3 = camera.project_ray_origin(mb.position)
-					var ray_dir: Vector3 = camera.project_ray_normal(mb.position)
-					if editor.active_tool.begin_drag(ray_origin, ray_dir):
-						_tool_drag_begun = true
-						return AFTER_GUI_INPUT_STOP
-
-				# Fall through to default click/rect selection
-				return AFTER_GUI_INPUT_PASS
-		else:
-			# Mouse button released
-			if _tool_drag_begun:
-				var was_moving: bool = _is_moving
-				_tool_drag_begun = false
-				_is_moving = false
-				_is_rect_selecting = false
-				if was_moving:
-					var undo_mgr: Object = get_undo_redo() if Engine.is_editor_hint() and has_method("get_undo_redo") else null
-					editor.active_tool.finish_drag(undo_mgr)
-					# Rebuild 3D overlay and gizmo to reflect new positions after drag
-					overlay.rebuild(editor.select_mode, editor.selection)
-					gizmo.rebuild(editor)
-					update_overlays()
-					if tool_properties_dock_panel:
-						tool_properties_dock_panel.refresh()
-					return AFTER_GUI_INPUT_STOP
-				else:
-					# Click without drag (released before 4px): cancel drag preview and do click pick
-					editor.active_tool.cancel_drag()
-					_do_click_pick(camera, mb)
-					overlay.rebuild(editor.select_mode, editor.selection)
-					gizmo.rebuild(editor)
-					update_overlays()
-					if tool_properties_dock_panel:
-						tool_properties_dock_panel.refresh()
-					return AFTER_GUI_INPUT_STOP
-
-			if _is_rect_selecting:
-				# Rect selection complete
-				_is_rect_selecting = false
-				_do_rect_select(camera, mb)
-				update_overlays()
-				return AFTER_GUI_INPUT_STOP
-			else:
-				# Single click pick
-				_do_click_pick(camera, mb)
-				return AFTER_GUI_INPUT_STOP
-
-	# Track mouse drag for tool manipulation or rect selection
-	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		var mm: InputEventMouseMotion = event as InputEventMouseMotion
-		if _tool_drag_begun:
-			# Tool drag in progress — handle tool only, no rect selection
-			if not _is_moving:
-				var drag_dist: float = _mouse_press_pos.distance_to(mm.position)
-				if drag_dist > 4.0:
-					_is_moving = true
-			if _is_moving:
-				var ray_origin: Vector3 = camera.project_ray_origin(mm.position)
-				var ray_dir: Vector3 = camera.project_ray_normal(mm.position)
-				editor.active_tool.update_drag(ray_origin, ray_dir)
-				# Rebuild 3D overlay and gizmo during drag so they track the live preview
-				overlay.rebuild(editor.select_mode, editor.selection)
-				gizmo.rebuild(editor)
-				update_overlays()
-				if tool_properties_dock_panel:
-					tool_properties_dock_panel.refresh()
-			return AFTER_GUI_INPUT_STOP
-
-		# No tool drag — rect selection logic
-		_rect_end = mm.position
-		if not _is_rect_selecting:
-			var drag_dist: float = _rect_start.distance_to(_rect_end)
-			if drag_dist > 4.0:
-				_is_rect_selecting = true
-		if _is_rect_selecting:
-			update_overlays()
-			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
-
-func _forward_3d_draw_over_viewport(viewport_control: Control):
-	# Draw rect selection marquee
-	if _is_rect_selecting:
-		var rect := Rect2(_rect_start, _rect_end - _rect_start).abs()
-		viewport_control.draw_rect(rect, Color(0.0, 0.824, 0.937, 0.15), true)
-		viewport_control.draw_rect(rect, Color(0.0, 0.824, 0.937, 0.6), false, 1.0)
-
-# ==============================================================================
-# Click Picking
-# ==============================================================================
-
-func _do_click_pick(camera: Camera3D, event: InputEventMouseButton) -> void:
-	var mesh: PBMesh = editor.active_mesh
-	if mesh == null or mesh.pb_mesh_data == null:
-		return
-
-	var shift_held: bool = event.shift_pressed
-	var ctrl_held: bool = event.ctrl_pressed
-
-	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
-			_pick_face(camera, event.position, shift_held, ctrl_held)
-		PBEditor.SelectMode.EDGE:
-			_pick_edge(camera, event.position, shift_held, ctrl_held)
-		PBEditor.SelectMode.VERTEX:
-			_pick_vertex(camera, event.position, shift_held, ctrl_held)
-
-func _pick_face(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
-	var mesh: PBMesh = editor.active_mesh
-	var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
-	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
-	var result: PBPicking.FacePickResult = PBPicking.pick_face(
-		mesh.pb_mesh_data, mesh.global_transform, ray_origin, ray_dir)
-
-	if result.face_index < 0:
-		# Miss — clear unless shift/ctrl held
-		if not shift and not ctrl:
-			editor.selection.clear_faces()
-		return
-
-	if ctrl:
-		# Ctrl-click = remove
-		editor.selection.remove_face(result.face_index)
-	elif shift:
-		# Shift-click = toggle
-		editor.selection.toggle_face(result.face_index)
-	else:
-		# Plain click = replace selection
-		editor.selection.set_faces(PackedInt32Array([result.face_index]))
-
-func _pick_edge(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
-	var mesh: PBMesh = editor.active_mesh
-	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
-		mesh.pb_mesh_data, mesh.global_transform, screen_pos, camera)
-
-	if result.edge == null:
-		if not shift and not ctrl:
-			editor.selection.clear_edges()
-		return
-
-	if ctrl:
-		editor.selection.remove_edge(result.edge)
-	elif shift:
-		editor.selection.toggle_edge(result.edge)
-	else:
-		var edges: Array[PBEdge] = [result.edge]
-		editor.selection.set_edges(edges)
-
-func _pick_vertex(camera: Camera3D, screen_pos: Vector2, shift: bool, ctrl: bool) -> void:
-	var mesh: PBMesh = editor.active_mesh
-	var result: PBPicking.VertexPickResult = PBPicking.pick_vertex(
-		mesh.pb_mesh_data, mesh.global_transform, screen_pos, camera)
-
-	if result.common_index < 0:
-		if not shift and not ctrl:
-			editor.selection.clear_vertices()
-		return
-
-	if ctrl:
-		editor.selection.remove_vertex(result.common_index)
-	elif shift:
-		editor.selection.toggle_vertex(result.common_index)
-	else:
-		editor.selection.set_vertices(PackedInt32Array([result.common_index]))
-
-# ==============================================================================
-# Rect Selection
-# ==============================================================================
-
-func _do_rect_select(camera: Camera3D, event: InputEventMouseButton) -> void:
-	var mesh: PBMesh = editor.active_mesh
-	if mesh == null or mesh.pb_mesh_data == null:
-		return
-
-	var rect := Rect2(_rect_start, _rect_end - _rect_start).abs()
-	var shift_held: bool = event.shift_pressed
-	var ctrl_held: bool = event.ctrl_pressed
-
-	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
-			var faces: PackedInt32Array = PBPicking.pick_faces_in_rect(
-				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
-			if ctrl_held:
-				for fi in faces:
-					editor.selection.remove_face(fi)
-			elif shift_held:
-				for fi in faces:
-					editor.selection.add_face(fi)
-			else:
-				editor.selection.set_faces(faces)
-		PBEditor.SelectMode.EDGE:
-			var edges: Array[PBEdge] = PBPicking.pick_edges_in_rect(
-				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
-			if ctrl_held:
-				for edge in edges:
-					editor.selection.remove_edge(edge)
-			elif shift_held:
-				for edge in edges:
-					editor.selection.add_edge(edge)
-			else:
-				editor.selection.set_edges(edges)
-		PBEditor.SelectMode.VERTEX:
-			var verts: PackedInt32Array = PBPicking.pick_vertices_in_rect(
-				mesh.pb_mesh_data, mesh.global_transform, rect, camera)
-			if ctrl_held:
-				for sv_idx in verts:
-					editor.selection.remove_vertex(sv_idx)
-			elif shift_held:
-				for sv_idx in verts:
-					editor.selection.add_vertex(sv_idx)
-			else:
-				editor.selection.set_vertices(verts)
 
 # ==============================================================================
 # Object Selection Handling
@@ -464,33 +190,26 @@ func _on_selection_changed() -> void:
 
 func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	if mesh != null:
-		overlay.attach(mesh)
-		overlay.rebuild(editor.select_mode, editor.selection)
-		gizmo.attach(mesh)
-		gizmo.rebuild(editor)
 		toolbar.activate()
+		mesh.update_gizmos()
 	else:
-		overlay.detach()
-		gizmo.detach()
 		toolbar.deactivate()
-	update_overlays()
 
 func _on_select_mode_changed(mode: PBEditor.SelectMode) -> void:
-	# Clear element selection when mode changes (ProBuilder behavior)
+	# Clear element selection when mode changes (ProBuilder behavior).
+	# The engine's subgizmo selection is the authoritative drag source, so it
+	# must be cleared too, and the gizmo redrawn for the new element type.
 	editor.selection.clear_all()
-	overlay.rebuild(mode, editor.selection)
-	gizmo.rebuild(editor)
-	update_overlays()
+	if editor.active_mesh != null:
+		editor.active_mesh.clear_subgizmo_selection()
+		editor.active_mesh.update_gizmos()
 
 func _on_element_selection_changed() -> void:
-	overlay.rebuild(editor.select_mode, editor.selection)
-	gizmo.rebuild(editor)
-	update_overlays()
-
-func _on_active_tool_changed(_tool: PBTool) -> void:
-	gizmo.rebuild(editor)
-	update_overlays()
+	if tool_properties_dock_panel:
+		tool_properties_dock_panel.refresh()
 
 func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
-	gizmo.rebuild(editor)
-	update_overlays()
+	# Re-fetch subgizmo transforms so the editor re-renders the transform
+	# gizmo with the new axis orientation.
+	if editor.active_mesh != null:
+		editor.active_mesh.update_gizmos()

@@ -1,4 +1,9 @@
 ## Phase 6 human sign-off scene: cube + printed checklist.
+##
+## The plugin now integrates through Godot's NATIVE editor machinery
+## (EditorNode3DGizmoPlugin subgizmos): the editor itself handles element
+## picking, rubber-band selection, the transform gizmo (its own Q/W/E/R
+## toolbar modes), snapping, and undo. Verify THAT nothing fights.
 @tool
 extends Node3D
 
@@ -13,14 +18,40 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
-	print("========== Phase 6 human checklist ==========")
-	print("1. Enable the ProBuilder plugin if needed.")
-	print("2. Select PBCube. Toolbar should show Vertex/Edge/Face.")
-	print("3. Face mode (K): click a face so it highlights.")
-	print("4. W = Move, drag in the viewport — face translates. Ctrl+Z undoes.")
-	print("5. E = Rotate, drag — face rotates about centroid. Undo.")
-	print("6. R = Scale, drag — face scales about centroid. Undo.")
-	print("7. Q = Select-only. Tool Properties dock (left) shows tool/mode/selection.")
-	print("8. Dock settings line shows Delta / Rotation / Scale while dragging.")
-	print("Hotkeys: H vertex, J edge, K face, W move, E rotate, R scale, Q select.")
-	print("================================================")
+	print("========== Phase 6 human checklist (native subgizmo integration) ==========")
+	print("Setup: enable the ProBuilder plugin if needed, select PBCube in the 3D view.")
+	print("")
+	print("Object-level (native behavior must be untouched):")
+	print("  1. Selecting PBCube auto-enters FACE mode; toolbar shows Vertex/Edge/Face.")
+	print("  2. The orange selection box hugs the cube (no stray overlay boxes inflating it).")
+	print("  3. Q/W/E/R switch Godot's own Select/Move/Rotate/Scale; camera orbit/pan/zoom")
+	print("     work everywhere EXCEPT while actually dragging an element.")
+	print("")
+	print("Element picking:")
+	print("  4. Click a face -> cyan highlight; Godot's transform gizmo jumps to THAT FACE,")
+	print("     not the cube center. Shift-click toggles; click empty space clears.")
+	print("  5. Box select starting on EMPTY SPACE -> Godot's dashed marquee selects faces")
+	print("     in the rect; the marquee is Godot's own and never lingers afterwards.")
+	print("  6. H/J/K switch Vertex/Edge/Face; vertex dots / edge highlights render;")
+	print("     box select works in each mode; switching mode clears the selection.")
+	print("")
+	print("Manipulation (Godot's own gizmo + toolbar modes):")
+	print("  7. W + drag an arrow -> face translates; welded corners stay welded;")
+	print("     adjacent faces stretch. Ctrl+Z undoes, Ctrl+Shift+Z redoes. No teleporting,")
+	print("     and repeated fast drags never compound.")
+	print("  8. E + drag a ring -> face rotates about its own centroid. Undo.")
+	print("  9. R + drag -> face scales about its centroid. Undo.")
+	print(" 10. X cycles gizmo space Element -> Object -> World; the gizmo axes visibly")
+	print("     re-orient each time (Element = face normal, Object = node axes, World = world).")
+	print(" 11. Hold Ctrl while dragging -> Godot's snapping applies natively.")
+	print("")
+	print("Negative checks (the Phase 6 regression cluster):")
+	print(" 12. Clicking/dragging EMPTY SPACE never moves the cube.")
+	print(" 13. Dragging an element never simultaneously draws a selection marquee.")
+	print(" 14. No cyan marquee (ours is gone; Godot's never sticks around).")
+	print(" 15. Nothing fights: only ONE gizmo is ever visible (the editor's own, at the")
+	print("     element/object pivot), and selecting faces always responds on the first click.")
+	print("")
+	print("Tool Properties dock (bottom-left): shows mode, space, selection counts, and a")
+	print("live Delta/Rotation/Scale readout while dragging.")
+	print("=============================================================================")

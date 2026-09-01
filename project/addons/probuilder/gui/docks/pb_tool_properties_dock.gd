@@ -1,6 +1,7 @@
-## PBToolPropertiesDock — Editor dock panel showing active tool properties and settings.
+## PBToolPropertiesDock — Editor dock panel showing ProBuilder element editing state.
 ##
-## Displays: active tool name, selection mode, selection counts, and live transform readout.
+## Displays: selection mode, gizmo orientation space, selection counts, and a
+## live readout while the native transform gizmo drags elements.
 @tool
 class_name PBToolPropertiesDock
 extends VBoxContainer
@@ -9,13 +10,16 @@ extends VBoxContainer
 # Properties
 # ==============================================================================
 
-## PBEditor reference for tracking active tool, mode, and selection state.
+## PBEditor reference for tracking mode, selection, and orientation space.
 var editor: PBEditor = null:
 	set = set_editor
 
+## PBElementEditor reference for live drag readout.
+var element_editor: PBElementEditor = null:
+	set = set_element_editor
+
 ## UI Labels
 var title_label: Label
-var tool_label: Label
 var mode_label: Label
 var selection_label: Label
 var settings_label: Label
@@ -43,20 +47,14 @@ func _ensure_ui() -> void:
 	# Title
 	title_label = Label.new()
 	title_label.name = "TitleLabel"
-	title_label.text = "Tool Properties"
+	title_label.text = "ProBuilder"
 	title_label.add_theme_font_size_override("font_size", 14)
 	add_child(title_label)
 
 	# Separator
 	add_child(HSeparator.new())
 
-	# Tool name
-	tool_label = Label.new()
-	tool_label.name = "ToolLabel"
-	tool_label.text = "Tool: Select"
-	add_child(tool_label)
-
-	# Selection mode
+	# Selection mode + orientation space
 	mode_label = Label.new()
 	mode_label.name = "ModeLabel"
 	mode_label.text = "Mode: Object"
@@ -71,7 +69,7 @@ func _ensure_ui() -> void:
 	# Separator
 	add_child(HSeparator.new())
 
-	# Settings / live transform readout
+	# Live transform readout while dragging elements
 	settings_label = Label.new()
 	settings_label.name = "SettingsLabel"
 	settings_label.text = "—"
@@ -83,8 +81,6 @@ func _ensure_ui() -> void:
 
 func set_editor(value: PBEditor) -> void:
 	if editor != null:
-		if editor.active_tool_changed.is_connected(_on_editor_changed):
-			editor.active_tool_changed.disconnect(_on_editor_changed)
 		if editor.select_mode_changed.is_connected(_on_editor_changed):
 			editor.select_mode_changed.disconnect(_on_editor_changed)
 		if editor.element_selection_changed.is_connected(_on_editor_changed):
@@ -97,7 +93,6 @@ func set_editor(value: PBEditor) -> void:
 	editor = value
 
 	if editor != null:
-		editor.active_tool_changed.connect(_on_editor_changed)
 		editor.select_mode_changed.connect(_on_editor_changed)
 		editor.element_selection_changed.connect(_on_editor_changed)
 		editor.active_mesh_changed.connect(_on_editor_changed)
@@ -105,7 +100,15 @@ func set_editor(value: PBEditor) -> void:
 
 	refresh()
 
-func _on_editor_changed(_arg = null) -> void:
+func set_element_editor(value: PBElementEditor) -> void:
+	if element_editor != null and element_editor.element_drag_updated.is_connected(_on_editor_changed):
+		element_editor.element_drag_updated.disconnect(_on_editor_changed)
+	element_editor = value
+	if element_editor != null:
+		element_editor.element_drag_updated.connect(_on_editor_changed)
+	refresh()
+
+func _on_editor_changed(_arg = null, _arg2 = null, _arg3 = null, _arg4 = null) -> void:
 	refresh()
 
 # ==============================================================================
@@ -117,8 +120,6 @@ func refresh() -> void:
 	_ensure_ui()
 
 	if editor == null:
-		if tool_label:
-			tool_label.text = "Tool: Select"
 		if mode_label:
 			mode_label.text = "Mode: Object"
 		if selection_label:
@@ -127,20 +128,13 @@ func refresh() -> void:
 			settings_label.text = "—"
 		return
 
-	# 1. Tool name
-	var tool_name_str: String = "Select"
-	if editor.active_tool != null:
-		tool_name_str = editor.active_tool.tool_name()
-	if tool_label:
-		tool_label.text = "Tool: %s" % tool_name_str
-
-	# 2. Select mode
+	# 1. Select mode + orientation space
 	var mode_str: String = PBEditor.mode_name(editor.select_mode)
 	if mode_label:
 		var space_str: String = PBEditor.OrientationSpace.keys()[editor.orientation_space]
 		mode_label.text = "Mode: %s  Space: %s (X)" % [mode_str, space_str.capitalize()]
 
-	# 3. Selection counts
+	# 2. Selection counts
 	var v_cnt: int = 0
 	var e_cnt: int = 0
 	var f_cnt: int = 0
@@ -151,34 +145,9 @@ func refresh() -> void:
 	if selection_label:
 		selection_label.text = "Selection: V:%d E:%d F:%d" % [v_cnt, e_cnt, f_cnt]
 
-	# 4. Settings line / live transform readout
+	# 3. Live transform readout while the native gizmo drags elements
 	var settings_str: String = "—"
-	if editor.active_tool != null and editor.active_tool.has_method("get_command"):
-		var cmd = editor.active_tool.get_command()
-		if cmd != null:
-			if editor.active_tool is PBToolMove and cmd is CmdMoveElements:
-				settings_str = "Delta: %s" % _format_vector3(cmd.delta)
-			elif editor.active_tool is PBToolRotate and cmd is CmdRotateElements:
-				var euler_rad: Vector3 = cmd.rotation.get_euler()
-				var euler_deg := Vector3(rad_to_deg(euler_rad.x), rad_to_deg(euler_rad.y), rad_to_deg(euler_rad.z))
-				settings_str = "Rotation: %s deg" % _format_vector3(euler_deg)
-			elif editor.active_tool is PBToolScale and cmd is CmdScaleElements:
-				settings_str = "Scale: %s" % _format_vector3(cmd.scale)
-
+	if element_editor != null:
+		settings_str = element_editor.drag_readout()
 	if settings_label:
 		settings_label.text = settings_str
-
-# ==============================================================================
-# Helper Formatting
-# ==============================================================================
-
-static func _format_vector3(v: Vector3) -> String:
-	var x: float = 0.0 if is_zero_approx(v.x) else v.x
-	var y: float = 0.0 if is_zero_approx(v.y) else v.y
-	var z: float = 0.0 if is_zero_approx(v.z) else v.z
-	var rounded := Vector3(
-		round(x * 1000.0) / 1000.0,
-		round(y * 1000.0) / 1000.0,
-		round(z * 1000.0) / 1000.0
-	)
-	return str(rounded)

@@ -97,8 +97,25 @@ func undo_it() -> void:
 ### Coordinate System
 - Godot is **right-handed Y-up** (Unity is left-handed)
 - `Vector3.FORWARD = (0, 0, -1)` (Unity: `(0, 0, 1)`)
-- Triangle winding: **counter-clockwise** for front faces (Unity: clockwise)
+- Triangle winding: INTERNAL data is CCW-from-outside (Unity convention);
+  **Godot renders CLOCKWISE front faces** (see the ArrayMesh docs note —
+  this is the opposite of what you'd guess, and this exact doc line used to
+  say "counter-clockwise", which caused two shipped winding bugs).
+  `to_array_mesh()` reverses index order; normals are NEVER negated.
+  Ground truth + regression tests: `project/tests/test_pb_winding.gd`.
 - UV origin: bottom-left in both engines (no conversion needed)
+
+### Editor Integration Rules (mandatory — see IMPLEMENTATION.md gates)
+- Do NOT hand-roll viewport input, picking, rubber-band selection, marquees,
+  or drag state machines. All element interaction goes through the native
+  editor via `editor/pb_gizmo_plugin.gd` subgizmos; the plugin's mouse path
+  is pass-through.
+- Editor-only base classes (EditorNode3DGizmoPlugin etc.) cannot be
+  instantiated in headless runs — keep logic in runtime-safe classes
+  (`pb_element_editor.gd` is the template).
+- The `../godot` checkout is 4.8-dev but the installed engine is 4.7.2.
+  Verify editor APIs against `../godot/doc/classes/*.xml` and a real editor
+  boot before using them.
 
 ## Testing
 
@@ -115,15 +132,12 @@ func test_something():
 
 ### Running Tests
 ```bash
-cd /opt/src/newbuilder/project
+# From the repo root — THE ONLY accepted way to run tests:
+/opt/src/newbuilder/run_tests.sh
 
-# Run all tests
-GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless \
-  -s addons/gut/gut_cmdln.gd -gdir=res://tests -ginclude_subdirs -gexit
-
-# Run one test file
-GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless \
-  -s addons/gut/gut_cmdln.gd -gtest=res://tests/test_my_feature.gd -gexit
+# It refreshes the class cache, runs GUT, fails on ANY script error, and
+# fails if any test script was silently skipped. Raw GUT invocations report
+# green even when test scripts fail to parse — never use them to claim done.
 ```
 
 Exit code 0 = all pass. Exit code 1 = failures.
@@ -134,7 +148,9 @@ that blocks headless execution. If you create new scenes, do not change the
 main scene setting.
 
 ### Test Requirements
-- Your test MUST pass headlessly before you declare done
+- Your test MUST pass via run_tests.sh before you declare done (GUT alone
+  silently skips unparseable test scripts and still reports green)
+- Check the run summary: your test file must appear in results.xml
 - Test file goes in `project/tests/`
 - Test file name: `test_<feature>.gd`
 - Tests must be deterministic — no random seeds, no timing dependencies

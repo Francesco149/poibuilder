@@ -1,8 +1,11 @@
 ## PBEditor — Central editor state for ProBuilder.
 ##
-## Manages the active PBMesh, selection mode (Object/Vertex/Edge/Face),
-## element selection state, and coordinates overlay/toolbar updates.
-## Lives as a child of the EditorPlugin node.
+## Manages the active PBMesh, element selection mode (Object/Vertex/Edge/Face),
+## element selection state, and the gizmo orientation space.
+##
+## Input, picking, dragging, and transform-gizmo behavior are NOT managed here:
+## those are delegated to the native Godot editor via PBGizmoPlugin subgizmos.
+## This class only holds state and emits change signals for UI (toolbar, dock).
 @tool
 class_name PBEditor
 extends RefCounted
@@ -19,12 +22,13 @@ enum SelectMode {
 	FACE,     ## Select faces
 }
 
-## Coordinate space for tool gizmo axes.
+## Coordinate space for the element transform gizmo axes.
 enum OrientationSpace {
 	ELEMENT,  ## Axes aligned to the selected element's normal
 	OBJECT,   ## Axes aligned to the PBMesh node's local transform
 	WORLD,    ## Axes aligned to world XYZ
 }
+
 # ==============================================================================
 # Signals
 # ==============================================================================
@@ -38,11 +42,9 @@ signal active_mesh_changed(mesh: PBMesh)
 ## Emitted when the element selection changes (vertices/edges/faces).
 signal element_selection_changed()
 
-## Emitted when the active viewport editing tool changes.
-signal active_tool_changed(tool: PBTool)
-
 ## Emitted when the orientation space changes.
 signal orientation_space_changed(space: OrientationSpace)
+
 # ==============================================================================
 # State
 # ==============================================================================
@@ -56,19 +58,18 @@ var active_mesh: PBMesh = null:
 	set = set_active_mesh
 
 ## Element selection state for the active mesh.
+## NOTE: the engine's subgizmo selection is authoritative while editing;
+## PBGizmoPlugin mirrors engine selection into this object.
 var selection: PBSelection = PBSelection.new()
-
-## Currently active viewport editing tool, or null for selection-only mode.
-var active_tool: PBTool = null:
-	set = set_active_tool
 
 ## Logger reference for debug output.
 var logger: PBLogger = null:
 	set = set_logger
 
-## Active coordinate space for tool gizmo orientation.
+## Active coordinate space for the element transform gizmo orientation.
 var orientation_space: OrientationSpace = OrientationSpace.ELEMENT:
 	set = set_orientation_space
+
 # ==============================================================================
 # Setters
 # ==============================================================================
@@ -76,32 +77,14 @@ var orientation_space: OrientationSpace = OrientationSpace.ELEMENT:
 func set_select_mode(value: SelectMode) -> void:
 	if select_mode == value:
 		return
-	if active_tool != null and active_tool.is_dragging():
-		active_tool.cancel_drag()
 	var old := select_mode
 	select_mode = value
 	if logger:
 		logger.info("editor", "Mode changed: %s → %s" % [SelectMode.keys()[old], SelectMode.keys()[value]])
 	select_mode_changed.emit(select_mode)
 
-func set_active_tool(value: PBTool) -> void:
-	if active_tool == value:
-		return
-	if active_tool != null and active_tool.is_dragging():
-		active_tool.cancel_drag()
-	active_tool = value
-	if active_tool != null:
-		active_tool.editor = self
-		active_tool.logger = logger
-	if logger:
-		var tname: String = active_tool.tool_name() if active_tool != null else "Select"
-		logger.info("editor", "Active tool: %s" % tname)
-	active_tool_changed.emit(active_tool)
-
 func set_logger(value: PBLogger) -> void:
 	logger = value
-	if active_tool != null:
-		active_tool.logger = value
 
 func set_orientation_space(value: OrientationSpace) -> void:
 	if orientation_space == value:
@@ -115,11 +98,10 @@ func set_orientation_space(value: OrientationSpace) -> void:
 func cycle_orientation_space() -> void:
 	var next: int = (orientation_space + 1) % OrientationSpace.size()
 	set_orientation_space(next as OrientationSpace)
+
 func set_active_mesh(value: PBMesh) -> void:
 	if active_mesh == value:
 		return
-	if active_tool != null and active_tool.is_dragging():
-		active_tool.cancel_drag()
 	# Disconnect old selection signal
 	if selection.selection_changed.is_connected(_on_selection_changed):
 		selection.selection_changed.disconnect(_on_selection_changed)

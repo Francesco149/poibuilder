@@ -144,14 +144,15 @@ static func create_cylinder(
 		var p0 := Vector3(radius * cos0, hy, radius * sin0)
 		var p1 := Vector3(radius * cos1, hy, radius * sin1)
 
-		# Winding for +Y normal: top_center, p0, p1
+		# Winding for +Y normal (CCW viewed from above): top_center, p1, p0.
+		# (theta0, p0, p1) crosses to -Y — that is the bottom-cap order.
 		positions.append(top_center)
-		positions.append(p0)
 		positions.append(p1)
+		positions.append(p0)
 
 		textures0.append(top_center_uv)
-		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
 		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
+		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
 
 		var face := PBFace.new(PackedInt32Array([
 			vert_offset + 0, vert_offset + 1, vert_offset + 2
@@ -176,14 +177,14 @@ static func create_cylinder(
 		var p0 := Vector3(radius * cos0, -hy, radius * sin0)
 		var p1 := Vector3(radius * cos1, -hy, radius * sin1)
 
-		# Winding for -Y normal: bottom_center, p1, p0
+		# Winding for -Y normal (CCW viewed from below): bottom_center, p0, p1.
 		positions.append(bottom_center)
-		positions.append(p1)
 		positions.append(p0)
+		positions.append(p1)
 
 		textures0.append(bottom_center_uv)
-		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
 		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
+		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
 
 		var face := PBFace.new(PackedInt32Array([
 			vert_offset + 0, vert_offset + 1, vert_offset + 2
