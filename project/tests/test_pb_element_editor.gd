@@ -818,3 +818,86 @@ func test_face_fill_mesh_is_offset_centroid_fan():
 	# Every vertex is offset off the face plane (z = -0.5 face → z < -0.5)
 	for v in verts:
 		assert_lt(v.z, -0.5, "Fill vertices must sit just above the surface")
+
+# ==============================================================================
+# Regression: common edges must be POSITION pairs (round 5 — the wireframe X)
+# ==============================================================================
+
+func test_common_edges_are_real_perimeter_edges_not_chords():
+	## ROOT CAUSE of the "diagonal / X on the face" reports: get_common_edges()
+	## used to return shared-GROUP indices, and renderers indexed `positions`
+	## with them — drawing chords across faces (an X on the cube) and making
+	## selected-edge highlights appear where no edge exists. On a unit cube
+	## every real edge has length 1; any chord is longer.
+	var md := PBMeshData.create_cube(1.0)
+	var edges := md.get_common_edges()
+	assert_eq(edges.size(), 12)
+	for i in range(edges.size()):
+		var e: PBEdge = edges[i]
+		assert_lt(e.a, md.positions.size(), "Edge endpoints must be position indices")
+		assert_lt(e.b, md.positions.size(), "Edge endpoints must be position indices")
+		var length: float = md.positions[e.a].distance_to(md.positions[e.b])
+		assert_almost_eq(length, 1.0, 0.001,
+			"Edge %d must be a unit perimeter edge (length 1), not a chord" % i)
+
+	# No edge may connect diagonal corners of the same quad face loop
+	for face in md.faces:
+		var loop := face.get_distinct_indexes()
+		if loop.size() != 4:
+			continue
+		for e in edges:
+			var ia: int = loop.find(e.a)
+			var ib: int = loop.find(e.b)
+			if ia != -1 and ib != -1:
+				assert_ne(absi(ia - ib), 2,
+					"No common edge may be a face diagonal")
+
+func test_edge_subgizmo_drag_expands_to_full_welded_corners():
+	## An edge subgizmo id must resolve to its two welded corners (6 positions
+	## on a cube). Partial expansion tears corners apart on drag.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var ids := _ids([0])
+	var start_positions: PackedVector3Array = md.positions.duplicate()
+	var start_xf: Transform3D = logic.get_subgizmo_transform(md, mesh, 0)
+	var delta := Vector3(0, 0.35, 0)
+
+	_apply_motion(s, ids, {0: start_xf.translated(delta)})
+
+	var moved := 0
+	for i in range(md.positions.size()):
+		if not md.positions[i].is_equal_approx(start_positions[i]):
+			moved += 1
+	assert_eq(moved, 6, "Edge drag must move exactly 2 welded corners (6 positions)")
+
+	# All moved positions must move by the SAME delta (no tearing)
+	var edge: PBEdge = md.get_common_edges()[0]
+	for idx in logic.element_indices(md, 0):
+		assert_lt((md.positions[idx] - (start_positions[idx] + delta)).length(), 0.0001)
+
+func test_edge_pick_projection_matches_selected_edge_highlight():
+	## The picked edge id, rendered, must draw the SAME segment the user
+	## clicked: element origin must equal the real edge midpoint.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var cam := Camera3D.new()
+	_viewport.add_child(cam)
+	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Click exactly on the top-back edge midpoint
+	var target := Vector3(0, 0.5, -0.5)
+	var screen: Vector2 = cam.unproject_position(target)
+	var hit: int = logic.pick_ray(md, mesh.global_transform, cam, screen)
+	assert_gte(hit, 0, "Border edge pick should hit")
+
+	var origin: Vector3 = logic.element_origin(md, hit)
+	assert_lt(origin.distance_to(target), 0.001,
+		"The selected edge's origin must be the clicked edge's midpoint — " +
+		"if not, the highlight draws somewhere the user never clicked")

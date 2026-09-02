@@ -121,8 +121,13 @@ func invalidate_caches() -> void:
 	_common_edges_valid = false
 	_normals.clear()
 
-## Returns all unique edges as common (coincident-welded) PBEdges, deduplicated
-## by shared vertex group pair, in stable face-scan order. Lazy-cached.
+## Returns all unique edges as position-index pairs, deduplicated by shared
+## vertex group pair, in stable face-scan order. Lazy-cached.
+## IMPORTANT: the returned PBEdge.a/.b are POSITION indices (one representative
+## per welded corner pair) — safe to index into `positions` directly for
+## rendering and picking. (An earlier version returned shared-GROUP indices
+## here; consumers that indexed positions with them drew garbage chords —
+## the "X / diagonal edges on the face" bug.)
 ## Subgizmo IDs for edge mode index into this list.
 func get_common_edges() -> Array[PBEdge]:
 	if not _common_edges_valid:
@@ -139,8 +144,9 @@ func get_common_edges() -> Array[PBEdge]:
 				if seen.has(key):
 					continue
 				seen[key] = true
-				var common: PBEdge = get_common_edge(edge)
-				_common_edges.append(common if common != null else edge)
+				# Emit the raw POSITION pair; the group key above already
+				# guarantees one entry per welded edge.
+				_common_edges.append(PBEdge.new(edge.a, edge.b))
 		_common_edges_valid = true
 	return _common_edges
 
