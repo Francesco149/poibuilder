@@ -1,13 +1,19 @@
 ## Editor GUI test harness — REPRODUCTION testing for viewport interactions.
 ##
-## Open this scene in a REAL (non-headless) editor session:
-##   xvfb-run godot-mono --editor --rendering-driver opengl3 \
-##       res://test_scenes/editor_gui_test.tscn
+## Runs ONLY when the PB_GUI_TEST environment variable is set (the
+## run_gui_tests.sh wrapper sets it). Opening this scene in a normal,
+## interactive editor session does nothing — it is a plain empty Node3D.
+##
+## With the gate set:
+##   ./run_gui_tests.sh
+## (equivalent to: PB_GUI_TEST=1 xvfb-run godot-mono --editor
+## --rendering-driver opengl3 res://test_scenes/editor_gui_test.tscn)
+##
 ## The script synthesizes genuine mouse events through the input pipeline
 ## (Input.parse_input_event) and asserts the OBSERVABLE outcomes:
 ##
 ## 1. SELECT: with mesh A active in face mode, clicking mesh B (another
-##    PBMesh) must make B the editor selection (the round-3 regression).
+##    PBMesh) must make B the editor selection.
 ## 2. CREATE: arming a cube via the plugin and drag-releasing on a surface
 ##    must produce a preview that finalizes into a Shape_Cube node.
 ##
@@ -19,7 +25,7 @@ extends Node3D
 var _failures: int = 0
 
 func _ready() -> void:
-	if Engine.is_editor_hint():
+	if Engine.is_editor_hint() and OS.get_environment("PB_GUI_TEST") != "":
 		_run.call_deferred()
 
 func _fail(msg: String) -> void:

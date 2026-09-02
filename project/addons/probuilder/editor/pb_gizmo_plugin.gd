@@ -250,10 +250,10 @@ func _redraw(gizmo) -> void:
 	# is cached per mesh instance (hover redraws must not rebuild it).
 	if not element_editor.drag_active and node.mesh != null:
 		var mesh_id: int = node.mesh.get_instance_id()
-		if int(node.get_meta("pb_pick_mesh_id", -1)) != mesh_id:
-			node.set_meta("pb_pick_mesh_id", mesh_id)
-			node.set_meta("pb_pick_tmesh", node.mesh.generate_triangle_mesh())
-		gizmo.add_collision_triangles(node.get_meta("pb_pick_tmesh"))
+		if int(node.get_meta("_pb_pick_mesh_id", -1)) != mesh_id:
+			node.set_meta("_pb_pick_mesh_id", mesh_id)
+			node.set_meta("_pb_pick_tmesh", node.mesh.generate_triangle_mesh())
+		gizmo.add_collision_triangles(node.get_meta("_pb_pick_tmesh"))
 
 	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
 	# and the cyan hover highlight on the surface under the cursor. Checked
