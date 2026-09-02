@@ -303,9 +303,25 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge. Sign-off items
-addressed in v0.9.0; re-run the printed checklist in
-test_scenes/human_test_phase6.tscn for the v0.9.0 human pass.
+v0.9.4 round complete ✓ (second-sign-off fixes; requires editor restart to
+load — verify the overlay title)
+- Click-picking + creation VERIFIED in a real editor via run_gui_tests.sh
+  (see the reproduce-before-claiming convention above).
+- SCALE UX reworked per sign-off: axis/plane handles scale FREELY (the
+  forced-ratio UNIFORM gesture was removed — it also caused "twisted
+  geometry" flicker during inset via unstable engine-rel factor
+  extraction). A CENTER SQUARE HANDLE (gizmo-plugin handle API:
+  add_handles + _get/_set/_commit_handle in PBGizmoPlugin; drag state in
+  PBElementEditor.begin/apply/commit_center_drag, DragGesture.CENTER_SCALE
+  / CENTER_INSET) scales all axes together; Shift + center on faces insets
+  uniformly. The factor is a screen-radius ratio about the pivot — smooth,
+  no engine deliveries involved.
+- Collision triangles are cached per mesh instance in node meta
+  (pb_pick_mesh_id / pb_pick_tmesh) — hover-frequency redraws no longer
+  rebuild the TriangleMesh.
+
+Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
+checklist in test_scenes/human_test_phase6.tscn for the human pass.
 
 ## Key Conventions
 
@@ -316,6 +332,20 @@ test_scenes/human_test_phase6.tscn for the v0.9.0 human pass.
   e.g. `Co-authored-by: zai-coding-plan/glm-5.3-flash <zai-coding-plan+glm-5.3-flash@users.noreply.github.com>`.
   Derive the slugs from YOUR OWN model id (lowercase, provider path prefix);
   never reuse another model's trailer.
+- VERSION BUMP EVERY SIGN-OFF ROUND (mandatory): bump `VERSION` in
+  probuilder_plugin.gd, `PLUGIN_VERSION` in pb_editor.gd, and
+  plugin.cfg's `version` TOGETHER at the start of every fix/UX round. The
+  overlay title is how the human verifies they are running the new build —
+  rounds 2 and 3 of v0.9.0 skipped this and shipped fixes the human never
+  received (they rightly checked "is it 0.9.0?" and it was).
+- REPRODUCE BEFORE CLAIMING: for viewport-interaction bugs (click picking,
+  gizmo behavior, creation flow), do not rely on static code reading — use
+  `./run_gui_tests.sh` (editor_gui_test.tscn: boots a REAL editor under
+  Xvfb and drives synthesized mouse events through the input pipeline,
+  asserting selection and creation outcomes). Extend that scene with a new
+  test case for every regression it catches. GUT alone cannot see this
+  layer; twice, view-port fixes that "looked right" shipped unverified and
+  were not fixes.
 - The README.md is a purely HUMAN-FACING doc: do not read it for context and
   do not factor it into how you work on the project. The ONLY exception is
   updating the feature checklist when features are completed, when

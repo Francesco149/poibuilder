@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cguieditortest1"]
+
+[ext_resource type="Script" path="res://test_scenes/editor_gui_test.gd" id="1_script"]
+
+[node name="EditorGuiTest" type="Node3D"]
+script = ExtResource("1_script")

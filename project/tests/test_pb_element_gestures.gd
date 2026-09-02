@@ -1,9 +1,9 @@
-## Tests for the v0.9.0 drag gestures in PBElementEditor:
-## - Scale defaults to UNIFORM (locked aspect ratio); shift+scale on
-##   non-face selections keeps free scaling (#3)
+## Tests for the v0.9.x drag gestures in PBElementEditor:
+## - Engine scale drags (axis/plane handles) are FREE; uniform scaling and
+##   inset live on the CENTER scale handle (ProBuilder-style center square)
 ## - Shift+Move on faces/edges extrudes at drag begin, then the gesture
 ##   drags ONLY the new caps/fins (#4)
-## - Shift+Scale on faces insets uniformly (aspect fixed) (#5/#13)
+## - Shift+center-handle on faces insets uniformly (aspect fixed) (#5/#13)
 ## - Topology gestures undo via whole-mesh snapshots and cancel restores
 extends GutTest
 
@@ -62,8 +62,10 @@ func test_gesture_decision_matrix():
 	var logic: PBElementEditor = s["logic"]
 	var ed: PBEditor = s["ed"]
 
-	assert_eq(logic._decide_gesture(false), PBElementEditor.DragGesture.UNIFORM_SCALE,
-		"Scale without shift is UNIFORM (locked aspect ratio)")
+	# Engine-delivered scale drags (axis/plane handles) are ALWAYS free —
+	# uniform scaling lives on the CENTER handle, not on forced ratios.
+	assert_eq(logic._decide_gesture(false), PBElementEditor.DragGesture.NORMAL,
+		"Scale via engine handles stays free (no ratio constraint)")
 
 	ed.tool_mode = PBEditor.ToolMode.MOVE
 	assert_eq(logic._decide_gesture(false), PBElementEditor.DragGesture.NORMAL,
@@ -77,64 +79,107 @@ func test_gesture_decision_matrix():
 
 	ed.tool_mode = PBEditor.ToolMode.SCALE
 	ed.select_mode = PBEditor.SelectMode.FACE
-	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.INSET_SCALE,
-		"Shift+Scale on faces INSETS")
-	ed.select_mode = PBEditor.SelectMode.VERTEX
 	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.NORMAL,
-		"Shift+Scale on verts stays free scale (the aspect override)")
-	ed.select_mode = PBEditor.SelectMode.EDGE
-	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.NORMAL,
-		"Shift+Scale on edges stays free scale (the aspect override)")
+		"Shift+axis-scale is free (inset lives on the center handle)")
 
 	ed.tool_mode = PBEditor.ToolMode.ROTATE
 	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.NORMAL,
 		"Rotate never becomes a topology gesture")
 
 # ==============================================================================
-# Uniform scale (#3)
+# Center scale handle: uniform scale (the ProBuilder-style center square)
 # ==============================================================================
 
-func test_uniform_scale_keeps_aspect_ratio():
+func test_center_drag_uniform_scales_about_pivot():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
 	var md: PBMeshData = mesh.pb_mesh_data
 	var start_positions := md.positions.duplicate()
 
-	var ids := _ids([0])  # +Y top face
-	var start_xf := logic.get_subgizmo_transform(md, mesh, 0)
-	# Engine-style axis scale: target = start scaled 2x along the gizmo x.
-	var scaled := start_xf
-	scaled.basis = start_xf.basis * Basis().scaled(Vector3(2, 1, 1))
-	_motion(s, ids, {0: scaled})
+	var ids := _ids([0])
+	var pivot := logic.center_pivot(md, ids)
+	assert_true(logic.begin_center_drag(mesh, ids, false, pivot, Vector2(200, 200)),
+		"Center drag begins over a selection")
+	assert_true(logic.center_drag_active())
 
-	# Every moved vertex must keep its distance RATIO to the pivot: uniform
-	# scaling about the face center scales x, y, and z equally.
-	var pivot: Vector3 = start_xf.origin
+	# Move the cursor to the OPPOSITE side at 2x the start radius → 2x scale.
+	var pivot_screen: Vector2 = _camera.unproject_position(mesh.global_transform * pivot)
+	var start_offset := Vector2(50, -20)
+	logic._center_start_screen = pivot_screen + start_offset
+	logic.apply_center_drag(mesh, _camera, pivot_screen + start_offset * -2.0)
+
 	var checked := 0
 	for idx in logic.element_indices(md, 0):
 		var before := start_positions[idx] - pivot
 		var after: Vector3 = md.positions[idx] - pivot
 		if before.length() > 0.0001:
-			var ratio: float = after.length() / before.length()
-			assert_almost_eq(ratio, 2.0, 0.02,
-				"Aspect is locked: every axis scales by the drag factor")
+			assert_almost_eq(after.length() / before.length(), 2.0, 0.02,
+				"The center handle scales ALL axes together about the pivot")
 			checked += 1
 	assert_gt(checked, 0, "Sanity: vertices actually scaled")
 
-func test_shift_scale_on_verts_stays_free():
-	# The documented override: shift+scale on a non-face selection must NOT
-	# uniform-scale — decided NORMAL, so rel applies raw (free scaling).
-	var s := _make_setup(PBEditor.SelectMode.VERTEX, PBEditor.ToolMode.SCALE)
+	assert_true(logic.commit_center_drag(mesh, ids, false))
+	assert_eq(md.faces.size(), 6, "Uniform scale commit keeps topology")
+
+func test_center_drag_factor_tracks_screen_radius_ratio():
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]
-	# The decision is what controls the path (asserted in the matrix above);
-	# here we just verify the wiring compiles into a NORMAL drag end-to-end.
 	var mesh: PBMesh = s["mesh"]
 	var md: PBMeshData = mesh.pb_mesh_data
+	var start_positions := md.positions.duplicate()
+
 	var ids := _ids([0])
-	var start_xf := logic.get_subgizmo_transform(md, mesh, 0)
-	_motion(s, ids, {0: start_xf.translated(Vector3(0.2, 0, 0))})
-	assert_true(logic.drag_active, "A NORMAL drag runs via the plain entry point")
+	var pivot := logic.center_pivot(md, ids)
+	var pivot_screen: Vector2 = _camera.unproject_position(mesh.global_transform * pivot)
+	# Start 10px from the pivot, end 30px away → factor 3.
+	logic.begin_center_drag(mesh, ids, false, pivot, pivot_screen + Vector2(10, 0))
+	logic.apply_center_drag(mesh, _camera, pivot_screen + Vector2(30, 0))
+
+	for idx in logic.element_indices(md, 0):
+		var before := start_positions[idx] - pivot
+		if before.length() > 0.0001:
+			var after: Vector3 = md.positions[idx] - pivot
+			assert_almost_eq(after.length() / before.length(), 3.0, 0.05,
+				"The factor is the screen-radius ratio (smooth, no engine rel math)")
+
+func test_center_drag_scale_commit_uses_position_undo():
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+	var fake := GestureUndoSpy.new()
+	logic.undo = fake
+
+	var ids := _ids([0])
+	var pivot := logic.center_pivot(md, ids)
+	logic.begin_center_drag(mesh, ids, false, pivot, Vector2(200, 200))
+	logic.apply_center_drag(mesh, _camera, Vector2(260, 200))
+	assert_true(logic.commit_center_drag(mesh, ids, false))
+
+	assert_eq(fake.actions.size(), 1, "Exactly one undo action")
+	assert_null(fake.actions[0]["do_snapshot"],
+		"Uniform scale rewrites no topology — per-position undo, not snapshots")
+	assert_eq(fake.actions[0]["position_indices"].size(), 12,
+		"The payload covers the face's corners expanded through weld groups "
+		+ "(4 corners x 3 adjacent face copies)")
+	assert_eq(md.faces.size(), 6)
+
+func test_center_drag_cancel_restores_positions():
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+	var start_positions := md.positions.duplicate()
+
+	var ids := _ids([0])
+	var pivot := logic.center_pivot(md, ids)
+	logic.begin_center_drag(mesh, ids, false, pivot, Vector2(200, 200))
+	logic.apply_center_drag(mesh, _camera, Vector2(300, 200))
+	logic.commit_center_drag(mesh, ids, true)
+
+	for i in range(md.positions.size()):
+		assert_eq(md.positions[i], start_positions[i], "Cancel restores the mesh")
 
 # ==============================================================================
 # Shift+Move extrude (#4)
@@ -187,13 +232,13 @@ func test_shift_move_extrude_commit_uses_snapshot_undo():
 			state["start"][id].translated(Vector3(0, 0.5, 0)), true)
 
 	logic.commit_subgizmos(mesh, ids, false)
-	assert_eq(fake.snapshot_actions.size(), 1,
+	assert_eq(fake.actions.size(), 1,
 		"A topology gesture commits ONE whole-mesh snapshot action")
-	assert_eq(fake.snapshot_actions[0]["name"], "Extrude (Shift+Move)")
+	assert_eq(fake.actions[0]["name"], "Extrude (Shift+Move)")
 
 	# Replay undo → pre-gesture mesh (no extrude, original face count).
 	logic._restore_full_mesh(mesh.get_instance_id(),
-		fake.snapshot_actions[0]["undo_snapshot"])
+		fake.actions[0]["undo_snapshot"])
 	assert_eq(md.faces.size(), faces_before, "Undo restores the pre-extrude topology")
 
 func test_shift_move_extrude_cancel_removes_the_extrusion():
@@ -234,31 +279,39 @@ func test_shift_move_edges_extrudes_fins():
 	logic.commit_subgizmos(mesh, ids, true)
 	assert_eq(md.faces.size(), faces_before, "Cancel removes the fin")
 
-## Minimal undo spy for snapshot payloads (the per-position FakeUndoManager
-## in test_pb_element_editor.gd does not match the snapshot signature).
+## Undo spy covering BOTH payload shapes: whole-mesh snapshots
+## (_restore_full_mesh) and per-position payloads (_apply_positions).
 class GestureUndoSpy:
-	var snapshot_actions: Array = []
+	var actions: Array = []
+
+	func _current() -> Dictionary:
+		return actions[-1] if not actions.is_empty() else {}
 
 	func create_action(name: String, _merge: int = 0, _context: Object = null) -> void:
-		snapshot_actions.append({"name": name, "do_snapshot": null, "undo_snapshot": null})
+		actions.append({"name": name, "do_snapshot": null, "undo_snapshot": null,
+			"position_indices": PackedInt32Array()})
 
-	func add_do_method(_obj: Object, method: String, node_id: int, snapshot: PBMeshData) -> void:
+	func add_do_method(_obj: Object, method: String, a = null, b = null, c = null) -> void:
 		if method == "_restore_full_mesh":
-			snapshot_actions[-1]["do_snapshot"] = snapshot
-			snapshot_actions[-1]["node_id"] = node_id
+			_current()["do_snapshot"] = b
+		elif method == "_apply_positions":
+			_current()["position_indices"] = b
 
-	func add_undo_method(_obj: Object, method: String, node_id: int, snapshot: PBMeshData) -> void:
+	func add_undo_method(_obj: Object, method: String, a = null, b = null, c = null) -> void:
 		if method == "_restore_full_mesh":
-			snapshot_actions[-1]["undo_snapshot"] = snapshot
+			_current()["undo_snapshot"] = b
 
 	func commit_action() -> void:
 		pass
 
+	func snapshot_actions() -> Array:
+		return actions
+
 # ==============================================================================
-# Shift+Scale inset (#5 / #13)
+# Center handle + Shift on faces: uniform inset (#5 / #13)
 # ==============================================================================
 
-func test_shift_scale_insets_faces_uniformly():
+func test_center_drag_with_shift_insets_faces_uniformly():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
@@ -266,19 +319,15 @@ func test_shift_scale_insets_faces_uniformly():
 	var faces_before := md.faces.size()
 
 	var ids := _ids([0])
-	var state := _gesture_state(s, ids, true)
-	# Scale gesture: 0.5x along the gizmo x → inset amount 0.5.
-	for id in ids:
-		var target: Transform3D = state["start"][id]
-		target.basis = state["start"][id].basis * Basis().scaled(Vector3(0.5, 1, 1))
-		logic.set_subgizmo_transform_with_shift(mesh, ids, id, target, true)
-
+	var pivot := logic.center_pivot(md, ids)
+	assert_true(logic.begin_center_drag(mesh, ids, true, pivot, Vector2(200, 200)))
 	assert_eq(md.faces.size(), faces_before + 4,
 		"The seeded inset adds one ring quad per face edge (6 → 10)")
 
-	# Uniform inset: the gesture's union override lists the inner face's
-	# corners — every corner sits at the SAME radius from the face centroid
-	# (aspect ratio fixed), whatever the drag factor was.
+	# Radius ratio 0.5 → inset amount 0.5: the inner face's corners sit
+	# halfway to the centroid, ALL at the same radius (aspect ratio fixed).
+	logic.apply_center_drag(mesh, _camera, Vector2(200, 200) * 0.5 + pivot_screen_of(mesh, pivot) * 0.5)
+
 	var inner_positions: Array[Vector3] = []
 	for idx in logic._drag_union_override:
 		inner_positions.append(md.positions[idx])
@@ -292,12 +341,15 @@ func test_shift_scale_insets_faces_uniformly():
 		assert_almost_eq((p - centroid).length(), first_radius, 0.01,
 			"Aspect ratio fixed: all corners sit at the same inset radius")
 	assert_almost_eq(first_radius, 0.7071 * 0.5, 0.03,
-		"A 0.5 drag factor insets by 0.5 (halfway to the centroid)")
+		"A 0.5 radius ratio insets by 0.5 (halfway to the centroid)")
 
-	logic.commit_subgizmos(mesh, ids, true)
+	logic.commit_center_drag(mesh, ids, true)
 	assert_eq(md.faces.size(), faces_before, "Cancel un-insets completely")
 
-func test_inset_gesture_commit_uses_snapshot_undo():
+func pivot_screen_of(mesh: PBMesh, pivot: Vector3) -> Vector2:
+	return _camera.unproject_position(mesh.global_transform * pivot)
+
+func test_center_drag_inset_commit_uses_snapshot_undo():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
@@ -307,14 +359,12 @@ func test_inset_gesture_commit_uses_snapshot_undo():
 	var faces_before := md.faces.size()
 
 	var ids := _ids([0])
-	var state := _gesture_state(s, ids, true)
-	for id in ids:
-		var target: Transform3D = state["start"][id]
-		target.basis = state["start"][id].basis * Basis().scaled(Vector3(0.5, 1, 1))
-		logic.set_subgizmo_transform_with_shift(mesh, ids, id, target, true)
-	logic.commit_subgizmos(mesh, ids, false)
+	var pivot := logic.center_pivot(md, ids)
+	logic.begin_center_drag(mesh, ids, true, pivot, Vector2(200, 200))
+	logic.apply_center_drag(mesh, _camera, Vector2(170, 170))
+	assert_true(logic.commit_center_drag(mesh, ids, false))
 
-	assert_eq(fake.snapshot_actions.size(), 1, "Inset commits one snapshot action")
-	assert_eq(fake.snapshot_actions[0]["name"], "Inset (Shift+Scale)")
-	logic._restore_full_mesh(mesh.get_instance_id(), fake.snapshot_actions[0]["undo_snapshot"])
+	assert_eq(fake.actions.size(), 1, "Inset commits one snapshot action")
+	assert_eq(fake.actions[0]["name"], "Inset (Shift+Scale)")
+	logic._restore_full_mesh(mesh.get_instance_id(), fake.actions[0]["undo_snapshot"])
 	assert_eq(md.faces.size(), faces_before, "Undo restores the pre-inset topology")

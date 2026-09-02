@@ -47,17 +47,19 @@ signal drag_topology_committed(node: PBMesh)
 
 enum DragGesture {
 	NORMAL,        ## Raw rel transform from the engine (move/free scale/rotate)
-	UNIFORM_SCALE, ## Scale locked to one factor about the pivot (shift frees)
 	EXTRUDE_MOVE,  ## Shift+move: extrude the selection at drag begin, drag the caps
-	INSET_SCALE,   ## Shift+scale on faces: uniform per-face inset driven by the drag
+	CENTER_SCALE,  ## Dragging the center scale handle: uniform scale about the pivot
+	CENTER_INSET,  ## Shift+center handle on faces: uniform per-face inset
 }
 
-## What the current drag does (decided once at begin_drag from the tool and
-## shift state — mid-drag modifier flaps do not re-decide it).
+## What the current drag does (decided once at drag begin — mid-drag
+## modifier flaps do not re-decide it). Axis/plane scale drags are FREE
+## (engine rel applies raw); uniform scaling and inset live on the center
+## scale handle the gizmo plugin draws.
 var _drag_gesture: DragGesture = DragGesture.NORMAL
 
 ## Positions a topology-creating gesture drags (caps/fins' lifted corners or
-## inset inner faces). Empty for NORMAL/UNIFORM_SCALE — the union then comes
+## inset inner faces). Empty for NORMAL/CENTER_SCALE — the union then comes
 ## from the element ids.
 var _drag_union_override: PackedInt32Array = PackedInt32Array()
 
@@ -74,12 +76,20 @@ var _drag_inset_bases: Array = []
 ## Latest inset amount applied this gesture (readout only).
 var _last_inset_amount: float = 0.0
 
+## Center-handle drag state: screen-space radius ratio about the pivot, and
+## the captured pivot/start point. Driven by PBGizmoPlugin handle callbacks.
+var _center_factor: float = 1.0
+var _center_start_screen: Vector2 = Vector2.ZERO
+var _center_pivot: Vector3 = Vector3.ZERO  # node-local
+var _center_has_start: bool = false
+
 ## Reads live modifier state. Editor-process only (headless tests inject
 ## shift directly into _decide_gesture).
 static func shift_held() -> bool:
 	return Input.is_key_pressed(KEY_SHIFT)
 
-## Pure decision (testable): tool + shift → gesture.
+## Pure decision (testable): tool + shift → gesture for ENGINE-delivered
+## drags (the center handle decides its own gesture explicitly).
 func _decide_gesture(shift: bool) -> DragGesture:
 	if editor == null:
 		return DragGesture.NORMAL
@@ -89,11 +99,6 @@ func _decide_gesture(shift: bool) -> DragGesture:
 				return DragGesture.EXTRUDE_MOVE
 			if shift and editor.select_mode == PBEditor.SelectMode.EDGE:
 				return DragGesture.EXTRUDE_MOVE
-		PBEditor.ToolMode.SCALE:
-			if shift and editor.select_mode == PBEditor.SelectMode.FACE:
-				return DragGesture.INSET_SCALE
-			if not shift:
-				return DragGesture.UNIFORM_SCALE
 		_:
 			pass
 	return DragGesture.NORMAL
@@ -116,6 +121,10 @@ var _drag_pending: Dictionary = {}
 
 ## Id whose pending transform was stored most recently.
 var _drag_latest_id: int = -1
+
+## The engine selection captured at drag begin (center drags carry no
+## per-motion deliveries, so _apply_drag falls back to these).
+var _drag_ids: PackedInt32Array = PackedInt32Array()
 
 ## Per-element "side" face recorded at pick time (the face under the cursor).
 ## ProBuilder UX: the ELEMENT-space gizmo for an edge/vertex is oriented by
@@ -591,6 +600,7 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	drag_active = true
 	_drag_mesh = node
 	_drag_gesture = _decide_gesture(shift)
+	_drag_ids = ids.duplicate()
 	_drag_original_positions = mesh_data.positions.duplicate()
 	_drag_start_xf.clear()
 	_drag_pending.clear()
@@ -599,19 +609,19 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_drag_before_op = null
 	_drag_inset_bases = []
 	_last_inset_amount = 0.0
+	_center_factor = 1.0
+	_center_has_start = false
 	for id in ids:
 		_drag_start_xf[id] = get_subgizmo_transform(mesh_data, node, id)
 
 	# Topology-creating gestures undo via whole-mesh snapshots — capture the
 	# pre-op state before mutating.
-	if _drag_gesture == DragGesture.EXTRUDE_MOVE or _drag_gesture == DragGesture.INSET_SCALE:
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE:
 		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
 
 	match _drag_gesture:
 		DragGesture.EXTRUDE_MOVE:
 			_begin_extrude_move(mesh_data, ids)
-		DragGesture.INSET_SCALE:
-			_begin_inset(mesh_data, ids)
 
 	if logger != null:
 		logger.info("tools", "Drag begun: %s, %d element(s)" % [
@@ -637,13 +647,13 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	_drag_original_positions = mesh_data.positions.duplicate()
 	_drag_union_override = result["drag_positions"]
 
-## Shift+scale on faces: seed a minimal inset (topology: inner face + ring
-## per face), then the drag lerps each inner face's corners between the
-## pre-op outline and its centroid. Uniform amount — aspect ratio locked.
-## The inset op REMAPS position indexes (replace + compact), so the per-face
-## bases must bind the POST-op inner-face indexes to the PRE-op corner
-## positions — matched by per-face order (duplicate_face preserves the
-## index sequence).
+## Center-handle inset (shift + center square on faces): seed a minimal
+## inset (topology: inner face + ring per face), then the drag lerps each
+## inner face's corners between the pre-op outline and its centroid. Uniform
+## amount — aspect ratio fixed. The inset op REMAPS position indexes
+## (replace + compact), so the per-face bases must bind the POST-op
+## inner-face indexes to the PRE-op corner positions — matched by per-face
+## order (duplicate_face preserves the index sequence).
 func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	var pre := mesh_data.positions.duplicate()
 	var face_bases: Array = []
@@ -705,6 +715,8 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	if not _drag_union_override.is_empty():
 		union = _drag_union_override
 	else:
+		if ids.is_empty():
+			ids = _drag_ids
 		var seen := {}
 		for id in ids:
 			for idx in element_indices(mesh_data, id):
@@ -717,18 +729,21 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	# rel = latest target * start^-1. The engine composes the same motion into
 	# every selected subgizmo's transform, so any id's rel is the gesture's
 	# node-space delta (translation / rotate-about-pivot / scale-about-pivot).
-	if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) \
-			or not _drag_pending.has(_drag_latest_id):
-		return
-	var rel: Transform3D = _drag_pending[_drag_latest_id] * _drag_start_xf[_drag_latest_id].affine_inverse()
+	# Center-handle drags have no engine deliveries — they carry their own
+	# factor and skip this entirely.
+	var rel: Transform3D = Transform3D()
+	if _drag_gesture == DragGesture.NORMAL or _drag_gesture == DragGesture.EXTRUDE_MOVE:
+		if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) \
+				or not _drag_pending.has(_drag_latest_id):
+			return
+		rel = _drag_pending[_drag_latest_id] * _drag_start_xf[_drag_latest_id].affine_inverse()
 
 	var new_positions := _drag_original_positions.duplicate()
 	var pos_count: int = new_positions.size()
 
 	match _drag_gesture:
-		DragGesture.INSET_SCALE:
-			var amount := _gesture_scale_factor(rel)
-			amount = clampf(1.0 - amount, -1.0, 0.95)
+		DragGesture.CENTER_INSET:
+			var amount := clampf(1.0 - _center_factor, -1.0, 0.95)
 			_last_inset_amount = amount
 			for base in _drag_inset_bases:
 				var idxs: PackedInt32Array = base["idxs"]
@@ -739,14 +754,12 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = pre[i].lerp(centroid, amount)
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
-		DragGesture.UNIFORM_SCALE:
-			var s := _gesture_scale_factor(rel)
-			var pivot: Vector3 = _drag_start_xf[_drag_latest_id].origin
-			var uniform := Transform3D(Basis.from_scale(Vector3.ONE * s), pivot - pivot * s)
+		DragGesture.CENTER_SCALE:
+			var pivot := _center_pivot
 			for idx in union:
 				if idx >= 0 and idx < pos_count:
-					new_positions[idx] = uniform * _drag_original_positions[idx]
-			_emit_drag_update(true, uniform.origin, Vector3.ZERO, Vector3.ONE * s)
+					new_positions[idx] = pivot + (_drag_original_positions[idx] - pivot) * _center_factor
+			_emit_drag_update(true, pivot - pivot * _center_factor, Vector3.ZERO, Vector3.ONE * _center_factor)
 		_:
 			for idx in union:
 				if idx >= 0 and idx < pos_count:
@@ -757,19 +770,90 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	mesh_data.invalidate_caches()
 	node.rebuild()
 
-## The gesture's scale factor from a scale-mode rel: the stretch applied to
-## the gizmo's own x-axis (exact for the engine's scale-in-gizmo-frame
-## delivery, incl. rotated element bases). Signed by the determinant so a
-## drag through zero mirrors.
-func _gesture_scale_factor(rel: Transform3D) -> float:
-	if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id):
-		return 1.0
-	var gizmo_x: Vector3 = _drag_start_xf[_drag_latest_id].basis.x.normalized()
-	if gizmo_x.length_squared() < 0.5:
-		return 1.0
-	var stretched: Vector3 = rel.basis * gizmo_x
-	var det_sign := signf(rel.basis.determinant())
-	return stretched.length() * det_sign if det_sign != 0.0 else stretched.length()
+# ==============================================================================
+# Center scale handle (uniform scale + inset, ProBuilder-style)
+# ==============================================================================
+
+## True while the gizmo plugin is driving a center-handle drag.
+func center_drag_active() -> bool:
+	return drag_active and (_drag_gesture == DragGesture.CENTER_SCALE \
+		or _drag_gesture == DragGesture.CENTER_INSET)
+
+## The average origin of `ids`' elements (node-local) — the pivot for the
+## center scale handle.
+func center_pivot(mesh_data: PBMeshData, ids: PackedInt32Array) -> Vector3:
+	if mesh_data == null or ids.is_empty():
+		return Vector3.ZERO
+	var acc := Vector3.ZERO
+	var count := 0
+	for id in ids:
+		acc += element_origin(mesh_data, id)
+		count += 1
+	return acc / float(count) if count > 0 else Vector3.ZERO
+
+## Begins a center-handle drag. `inset`: shift+handle on a face selection —
+## seeds a real inset(0.01) and the drag lerps each inner face toward its
+## pre-op centroid (aspect fixed). Otherwise the drag scales the selection's
+## positions uniformly about `pivot` (node-local).
+func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
+		pivot: Vector3, start_screen: Vector2) -> bool:
+	if node == null or node.pb_mesh_data == null or ids.is_empty() or drag_active:
+		return false
+	var mesh_data: PBMeshData = node.pb_mesh_data
+	drag_active = true
+	_drag_mesh = node
+	_drag_ids = ids.duplicate()
+	_drag_original_positions = mesh_data.positions.duplicate()
+	_drag_start_xf.clear()
+	_drag_pending.clear()
+	_drag_latest_id = -1
+	_drag_union_override = PackedInt32Array()
+	_drag_before_op = null
+	_drag_inset_bases = []
+	_last_inset_amount = 0.0
+	for id in ids:
+		_drag_start_xf[id] = get_subgizmo_transform(mesh_data, node, id)
+	_center_pivot = pivot
+	_center_start_screen = start_screen
+	_center_has_start = true
+
+	if inset:
+		_drag_gesture = DragGesture.CENTER_INSET
+		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
+		_begin_inset(mesh_data, ids)
+		if _drag_gesture != DragGesture.CENTER_INSET:
+			# Faces were not inset-able — degrade to uniform scale.
+			_drag_before_op = null
+			_drag_gesture = DragGesture.CENTER_SCALE
+	else:
+		_drag_gesture = DragGesture.CENTER_SCALE
+
+	if logger != null:
+		logger.info("tools", "Center drag begun: %s, %d element(s)" % [
+			DragGesture.keys()[_drag_gesture], ids.size()])
+	return true
+
+## Applies the drag from the current screen point: a radius ratio about the
+## pivot's screen position drives either uniform scale or the inset amount.
+func apply_center_drag(node: PBMesh, camera: Camera3D, screen_pos: Vector2) -> void:
+	if not center_drag_active() or node == null or camera == null:
+		return
+	if not _center_has_start:
+		return
+	var pivot_screen := camera.unproject_position(node.global_transform * _center_pivot)
+	var start_radius := _center_start_screen.distance_to(pivot_screen)
+	var radius := screen_pos.distance_to(pivot_screen)
+	if start_radius < 1.0:
+		return
+	_center_factor = clampf(radius / start_radius, 0.01, 10.0)
+	_apply_drag(node, node.pb_mesh_data, PackedInt32Array())
+
+## Commits (or cancels) a center-handle drag through the shared commit
+## machinery (undo payloads, topology snapshots, signals).
+func commit_center_drag(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool:
+	if not center_drag_active():
+		return false
+	return commit_subgizmos(node, ids, cancel)
 
 ## Commit (drag released) or cancel (Escape) — called by the editor adapter.
 ## `restores` are the start transforms the engine snapshotted; on cancel the
@@ -804,9 +888,9 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	match _drag_gesture:
 		DragGesture.EXTRUDE_MOVE:
 			action_name = "Extrude (Shift+Move)"
-		DragGesture.INSET_SCALE:
+		DragGesture.CENTER_INSET:
 			action_name = "Inset (Shift+Scale)"
-		DragGesture.UNIFORM_SCALE:
+		DragGesture.CENTER_SCALE:
 			action_name = "Scale Elements (Uniform)"
 
 	if _drag_before_op != null:
@@ -899,6 +983,10 @@ func _reset_drag_state() -> void:
 	_drag_before_op = null
 	_drag_inset_bases = []
 	_last_inset_amount = 0.0
+	_center_factor = 1.0
+	_center_has_start = false
+	_center_pivot = Vector3.ZERO
+	_drag_ids = PackedInt32Array()
 
 const TRANSFORM_ACTION_NAME := "Transform Elements"
 
@@ -1041,16 +1129,13 @@ func _emit_drag_update(active: bool, translation: Vector3, rotation_deg: Vector3
 func drag_readout() -> String:
 	if not _last_drag_active:
 		return "—"
-	if _drag_gesture == DragGesture.INSET_SCALE and _drag_active():
+	if _drag_gesture == DragGesture.CENTER_INSET and drag_active:
 		return "Inset: %.2f" % _last_inset_amount
 	if not _last_drag_rotation_deg.is_equal_approx(Vector3.ZERO):
 		return "Rotation: %s deg" % _fmt_vec(_last_drag_rotation_deg)
 	if not _last_drag_scale.is_equal_approx(Vector3.ONE):
 		return "Scale: %s" % _fmt_vec(_last_drag_scale)
 	return "Delta: %s" % _fmt_vec(_last_drag_translation)
-
-func _drag_active() -> bool:
-	return drag_active
 
 static func _rel_rotation_deg(rel: Transform3D) -> Vector3:
 	var euler: Vector3 = rel.basis.get_euler()

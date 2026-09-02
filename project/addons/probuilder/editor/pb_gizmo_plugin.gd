@@ -104,6 +104,7 @@ func _init() -> void:
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
 	create_material("pb_creation_edge", CREATION_COLOR, false, true)
 	create_material("pb_creation_arrow", CREATION_ARROW_COLOR, false, true)
+	create_handle_material("pb_center_handle")
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
@@ -245,9 +246,14 @@ func _redraw(gizmo) -> void:
 	# never emits property-change notifications for its rebuilt ArrayMesh.
 	# Without this, every PBMesh except the initially-selected one is
 	# unpickable by clicking. Skipped mid-drag: picking is irrelevant there
-	# and the rebuild cost would land on every motion event.
+	# and the rebuild cost would land on every motion event. The TriangleMesh
+	# is cached per mesh instance (hover redraws must not rebuild it).
 	if not element_editor.drag_active and node.mesh != null:
-		gizmo.add_collision_triangles(node.mesh.generate_triangle_mesh())
+		var mesh_id: int = node.mesh.get_instance_id()
+		if int(node.get_meta("pb_pick_mesh_id", -1)) != mesh_id:
+			node.set_meta("pb_pick_mesh_id", mesh_id)
+			node.set_meta("pb_pick_tmesh", node.mesh.generate_triangle_mesh())
+		gizmo.add_collision_triangles(node.get_meta("pb_pick_tmesh"))
 
 	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
 	# and the cyan hover highlight on the surface under the cursor. Checked
@@ -299,6 +305,80 @@ func _redraw(gizmo) -> void:
 			_draw_hover_edge(gizmo, mesh_data)
 		PBEditor.SelectMode.VERTEX:
 			_draw_vertex_dots(gizmo, mesh_data)
+
+	_draw_center_scale_handle(gizmo, mesh_data)
+
+## Draws the ProBuilder-style CENTER square handle while the scale tool is
+## active over a selection: dragging it scales all axes together; with Shift
+## on a face selection it insets uniformly (aspect fixed). Godot's own scale
+## gizmo has no uniform center — this is ours.
+func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
+	if editor == null or editor.tool_mode != PBEditor.ToolMode.SCALE:
+		return
+	if not is_editing_node(gizmo.get_node_3d()):
+		return
+	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if selected.is_empty():
+		return
+	# Pivot = the average origin of the selected elements (node-local).
+	var acc := Vector3.ZERO
+	var count := 0
+	for id in selected:
+		acc += element_editor.element_origin(mesh_data, id)
+		count += 1
+	if count == 0:
+		return
+	gizmo.add_handles(PackedVector3Array([acc / float(count)]),
+		get_material("pb_center_handle", gizmo), PackedInt32Array([0]), true)
+
+## The center handle's id in our gizmo (single handle, id 0).
+const CENTER_HANDLE_ID := 0
+
+func _get_handle_name(gizmo, handle_id: int, secondary: bool) -> String:
+	if handle_id == CENTER_HANDLE_ID and editor != null \
+			and editor.tool_mode == PBEditor.ToolMode.SCALE:
+		return "Uniform Scale (Shift: Inset faces)"
+	return ""
+
+func _get_handle_value(gizmo, handle_id: int, secondary: bool):
+	var node := gizmo.get_node_3d() as PBMesh
+	if node == null or node.pb_mesh_data == null:
+		return null
+	return {"pivot": element_editor.center_pivot(node.pb_mesh_data,
+		gizmo.get_subgizmo_selection()), "factor": 1.0}
+
+func _set_handle(gizmo, handle_id: int, secondary: bool, camera: Camera3D,
+		screen_pos: Vector2) -> void:
+	if handle_id != CENTER_HANDLE_ID or camera == null:
+		return
+	var node := gizmo.get_node_3d() as PBMesh
+	if node == null or editor == null or not is_editing_node(node):
+		return
+	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if selected.is_empty():
+		return
+
+	if not element_editor.center_drag_active():
+		# First motion of the gesture: decide uniform scale vs inset.
+		var inset: bool = Input.is_key_pressed(KEY_SHIFT) \
+			and editor.select_mode == PBEditor.SelectMode.FACE
+		var pivot := element_editor.center_pivot(node.pb_mesh_data, selected)
+		if not element_editor.begin_center_drag(node, selected, inset, pivot, screen_pos):
+			return
+
+	element_editor.apply_center_drag(node, camera, screen_pos)
+	node.update_gizmos()
+
+func _commit_handle(gizmo, handle_id: int, secondary: bool, restore: Variant,
+		cancel: bool) -> void:
+	if handle_id != CENTER_HANDLE_ID:
+		return
+	var node := gizmo.get_node_3d() as PBMesh
+	if node == null:
+		return
+	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	element_editor.commit_center_drag(node, selected, cancel)
+	node.update_gizmos()
 
 ## Draws each input line (a pair of points) as a center line plus parallel
 ## offset lines, approximating a thick stroke from any angle. `offset` is the
