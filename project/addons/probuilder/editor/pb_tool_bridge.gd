@@ -331,6 +331,30 @@ func apply_tool(tool: int) -> void:
 	# the pressed states of ALL tool buttons.
 	btn.emit_signal("pressed")
 
+## Presses the engine's SELECT tool (V) — the transform gizmo disappears.
+## The plugin uses this in element mode whenever NO element is selected:
+## builder mode must never show the whole-object transform gizmo. The
+## select button is DISABLED while editing (Q/V pinned out), but a
+## programmatic press still fires its handler.
+func press_engine_select_tool() -> bool:
+	if not _buttons.has(PATH_SELECT):
+		return false
+	var btn: BaseButton = _buttons[PATH_SELECT]
+	if not is_instance_valid(btn):
+		return false
+	if btn.button_pressed:
+		return true
+	btn.emit_signal("pressed")
+	return true
+
+## True when the engine currently sits on the select tool (no transform
+## gizmo). Tests drive this through stand-in buttons.
+func is_engine_in_select_tool() -> bool:
+	if not _buttons.has(PATH_SELECT):
+		return false
+	var btn: BaseButton = _buttons[PATH_SELECT]
+	return is_instance_valid(btn) and btn.button_pressed
+
 func _path_for_tool(tool: int) -> String:
 	match tool:
 		PBEditor.ToolMode.MOVE:

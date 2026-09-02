@@ -239,6 +239,16 @@ func _redraw(gizmo) -> void:
 	if mesh_data == null or mesh_data.positions.is_empty():
 		return
 
+	# The engine's viewport click/rubber-band picking runs through GIZMO
+	# collision meshes only (_select_ray has no mesh raycast fallback), and
+	# the stock MeshInstance3D gizmo's triangles go stale because PBMesh
+	# never emits property-change notifications for its rebuilt ArrayMesh.
+	# Without this, every PBMesh except the initially-selected one is
+	# unpickable by clicking. Skipped mid-drag: picking is irrelevant there
+	# and the rebuild cost would land on every motion event.
+	if not element_editor.drag_active and node.mesh != null:
+		gizmo.add_collision_triangles(node.mesh.generate_triangle_mesh())
+
 	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
 	# and the cyan hover highlight on the surface under the cursor. Checked
 	# BEFORE the selected-node early-out (preview/hover nodes are usually not

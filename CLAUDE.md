@@ -248,6 +248,26 @@ v0.9.0 round complete ✓ (sign-off fixes + ProBuilder creation UX)
   custom_context object to create_action (plugin + element editor do) —
   without it actions land in the GLOBAL history and add_do_reference errors
   with "UndoRedo history mismatch" while Ctrl+Z never removes created nodes.
+- VIEWPORT CLICK-PICKING RUNS THROUGH GIZMO COLLISION MESHES ONLY
+  (Node3DEditorViewport._select_ray → EditorNode3DGizmo.intersect_ray →
+  collision_triangles; there is NO mesh raycast fallback). PBMesh never
+  emits property-change notifications for its rebuilt ArrayMesh, so the
+  stock MeshInstance3D gizmo's triangles go stale — PBGizmoPlugin._redraw
+  therefore adds collision triangles (node.mesh.generate_triangle_mesh) on
+  every redraw (skipped mid-drag). Removing that block makes every PBMesh
+  except the initially-selected one unpickable by clicking.
+- ENGINE-TOOL POLICY (_update_engine_tool, the single place that drives the
+  engine's tool buttons): OBJECT mode → our Move/Rotate/Scale drives the
+  whole-node gizmo (toolbar tool buttons must switch it visibly). Element
+  mode WITH a subgizmo selection → our tool drives the element gizmo;
+  element mode with NO selection → the engine idles in its SELECT tool
+  (PBToolBridge.press_engine_select_tool — a programmatic pressed works on
+  the disabled button), so builder mode never shows the whole-object gizmo.
+  The flip is DEFERRED (call_deferred) because element-selection changes
+  are mirrored from inside _redraw. Subgizmo click/rubber-band picking is
+  NOT tool-gated in the engine, so element selection works under the select
+  tool; the engine's W/E/R presses mirror into editor.tool_mode in all
+  modes.
 - The plugin calls set_input_event_forwarding_always_enabled() so
   _forward_3d_gui_input runs with NOTHING selected (creation is armed from
   the menu; the engine otherwise only forwards viewport input to plugins

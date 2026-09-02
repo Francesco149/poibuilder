@@ -407,6 +407,9 @@ func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 func _on_element_selection_changed() -> void:
 	if tool_overlay:
 		tool_overlay.refresh()
+	# Deferred: this fires from inside a gizmo redraw (the engine-selection
+	# mirror) — the engine tool must not be flipped re-entrantly.
+	_update_engine_tool.call_deferred()
 
 func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 	# The engine's transform gizmo only adopts a subgizmo's basis while its
@@ -423,14 +426,12 @@ func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 		editor.active_mesh.update_gizmos()
 
 func _on_tool_mode_changed(_tool: PBEditor.ToolMode) -> void:
-	if editor.is_editing() and tool_bridge.is_ready():
-		tool_bridge.apply_tool(editor.tool_mode)
+	_update_engine_tool()
 
 ## The user switched the engine tool itself (W/E/R or its toolbar buttons)
 ## while editing — mirror it into the plugin's own tool state.
 func _on_engine_tool_selected(tool: int) -> void:
-	if editor.is_editing():
-		editor.tool_mode = tool as PBEditor.ToolMode
+	editor.tool_mode = tool as PBEditor.ToolMode
 
 ## Applies the plugin editing context to the editor UI: toolbar buttons,
 ## engine tool buttons (universal/select disabled while editing, our tool
@@ -445,7 +446,28 @@ func _update_editing_context() -> void:
 		if editing:
 			tool_bridge.editor_space = editor.orientation_space
 			tool_bridge.apply_orientation_space(editor.orientation_space)
-			tool_bridge.apply_tool(editor.tool_mode)
+	_update_engine_tool()
+
+## Keeps the ENGINE's transform gizmo in the right state:
+## - OBJECT mode: our Move/Rotate/Scale drives the whole-node gizmo (the
+##   toolbar's tool buttons must visibly switch the node gizmo there too).
+## - Element mode: WITH a subgizmo selection our tool drives the element
+##   gizmo; with NO selection the engine idles in its SELECT tool — builder
+##   mode must never show the whole-object transform gizmo, and the select
+##   tool is also what makes click-selecting other nodes work natively.
+func _update_engine_tool() -> void:
+	if not tool_bridge.is_ready():
+		return
+	if not editor.is_editing():
+		tool_bridge.apply_tool(editor.tool_mode)
+		return
+	var sel := editor.selection
+	var has_selection := sel != null and (sel.selected_face_count() > 0 \
+		or sel.selected_edge_count() > 0 or sel.selected_vertex_count() > 0)
+	if has_selection:
+		tool_bridge.apply_tool(editor.tool_mode)
+	else:
+		tool_bridge.press_engine_select_tool()
 
 ## Toolbar Panel toggle → overlay pin (and back, keeping both in sync).
 func _on_overlay_toggled(pinned: bool) -> void:
@@ -720,9 +742,11 @@ func _make_preview_node() -> void:
 	shape_creator.preview_node = node
 
 ## Rebuilds the preview mesh + placement from the creator's current values.
-## During the BASE phase the mesh stays HIDDEN — the gizmo draws only the
-## cyan base-rect outline; the solid shape appears when the height stage
-## starts (ProBuilder behavior).
+## During the BASE phase the rendered MESH is hidden but the NODE stays
+## visible — an invisible Node3D also loses its gizmo, which would hide the
+## cyan base-rect outline. pb_mesh_data is still assigned (the gizmo's
+## redraw needs it to pass its data checks); only the render mesh is
+## cleared, AFTER the setter's rebuild.
 func _refresh_preview() -> void:
 	var node := shape_creator.preview_node
 	if node == null:
@@ -730,10 +754,11 @@ func _refresh_preview() -> void:
 	var data := shape_creator.build_data()
 	if data == null:
 		return
-	node.visible = shape_creator.state != PBShapeCreator.State.BASE
-	node.pb_mesh_data = data
 	node.transform = shape_creator.placement_transform(data)
-	# The creation overlays (bounds/outline) live on the node's gizmo — a
+	node.pb_mesh_data = data
+	if shape_creator.state == PBShapeCreator.State.BASE:
+		node.mesh = null
+	# The creation overlays (outline/bounds) live on the node's gizmo — a
 	# rebuild alone never redraws it.
 	node.update_gizmos()
 

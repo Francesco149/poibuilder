@@ -109,6 +109,43 @@ func test_apply_tool_ignores_universal_and_select():
 	assert_eq(received.size(), 0, "Only move/rotate/scale may ever be pressed")
 
 # ==============================================================================
+# Select-tool press (builder mode's no-gizmo idle state)
+# ==============================================================================
+
+func test_press_engine_select_tool_presses_even_when_disabled():
+	# While editing the select button is DISABLED (Q/V pinned out), but a
+	# programmatic press must still fire its handler — the element mode idles
+	# the engine in the select tool whenever no element is selected.
+	var bridge := _make_bridge_with_buttons()
+	bridge.setup(_root)
+	bridge.set_editing_active(true)  # disables universal + select
+
+	var select_btn: Button = _root.get_child(4)
+	assert_true(select_btn.disabled, "Precondition: select button pinned out while editing")
+	var received: Array = []
+	select_btn.pressed.connect(func(): received.append("select"))
+	assert_true(bridge.press_engine_select_tool(), "Press succeeds while disabled")
+	assert_eq(received.size(), 1, "The disabled select button was still pressed")
+
+	# The engine marks the tool active in its own handler — simulate it.
+	select_btn.button_pressed = true
+	assert_true(bridge.press_engine_select_tool(), "Idempotent press reports success")
+	assert_eq(received.size(), 1, "No duplicate press when select is already active")
+
+	assert_true(bridge.is_engine_in_select_tool())
+	select_btn.button_pressed = false
+	assert_false(bridge.is_engine_in_select_tool())
+
+func test_press_engine_select_tool_without_button_fails():
+	var partial := Node.new()
+	partial.add_child(_make_tool_button("spatial_editor/tool_move", KEY_W))
+	add_child_autofree(partial)
+	var bridge := PBToolBridge.new()
+	bridge.setup(partial)
+	assert_false(bridge.press_engine_select_tool(),
+		"Without a select button the press reports failure")
+
+# ==============================================================================
 # Editing context (universal/select pinning)
 # ==============================================================================
 
