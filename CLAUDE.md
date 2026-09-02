@@ -52,13 +52,21 @@ Plugin: `project/addons/probuilder/`
   buttons to mirror OUR tool onto the engine's transform gizmo, and DISABLES
   the engine's Transform(Q, universal)/Select(V) buttons while editing (a
   disabled button also ignores its shortcut). Headless-testable decisions.
-- `editor/pb_toolbar.gd` — Persistent toolbar row BELOW the 3D scene toolbar
-  (inserted as a sibling row in the Node3DEditor's root VBox, located by
-  walking up from a throwaway anchor added to CONTAINER_SPATIAL_EDITOR_MENU).
-  Buttons disable when no PBMesh is selected; the row never hides.
+- `editor/pb_toolbar.gd` — Persistent toolbar row BELOW the 3D scene toolbar.
+  PLACEMENT IS VERSION-SENSITIVE: Node3DEditor must be located by walking the
+  anchor's real ancestor path — in 4.7 the Node3DEditor IS the layout VBox
+  (`VBoxContainer *vbc = this;`, get_class() still says "Node3DEditor"), so
+  NEVER search descendants by "VBoxContainer" class (that found a hidden snap
+  dialog's VBox = the invisible-toolbar bug). The row is inserted as a
+  sibling AFTER the engine's toolbar MarginContainer; the engine's own VBox
+  layout then sizes the row and pushes the viewports down. Icon buttons (SVGs
+  in icons/), disabled when no PBMesh is selected; the row never hides.
 - `gui/overlays/pb_tool_overlay.gd` — Floating in-viewport PanelContainer
-  (bottom-left of the editor viewport) with tool info + live drag readout.
-  NO docks: debug logging goes to the Godot console via PBLogger.
+  (bottom-left of the editor viewport) in standard panel language: TOOL
+  section (transform tool buttons, orientation space OptionButton, live drag
+  readout) and SELECTION section (mode, counts against mesh totals). Grows
+  contextual sections later (e.g. shape params after placing shapes). NO
+  docks: debug logging goes to the Godot console via PBLogger.
 - `editor/pb_picking.gd` — Pure-logic ray/screen picking.
 - `commands/` — Undo/redo command pattern (CmdMove/Rotate/ScaleElements)
 - `shapes/` — Primitive shape generators

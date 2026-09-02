@@ -4,11 +4,12 @@
 ## inside it) and stays visible at all times. When no PBMesh is selected the
 ## buttons are disabled but the row remains.
 ##
-## Two groups:
+## Icon-driven groups (simple SVG glyphs, see icons/):
 ## - Tool (Move/Rotate/Scale): the plugin's OWN transform tool. While editing
 ##   we never follow the editor's Q/V universal/select tool state.
 ## - Mode (Vertex/Edge/Face): element selection mode, remembered across
 ##   selection changes by PBEditor.
+## - Space button: cycles the gizmo orientation space (same as X).
 @tool
 class_name PBToolbar
 extends HBoxContainer
@@ -24,10 +25,16 @@ signal mode_button_pressed(mode: PBEditor.SelectMode)
 signal tool_button_pressed(tool: PBEditor.ToolMode)
 
 # ==============================================================================
+# Icons
+# ==============================================================================
+
+const ICON_DIR := "res://addons/probuilder/icons/"
+
+# ==============================================================================
 # Internal UI
 # ==============================================================================
 
-var _label: Label
+var _logo: TextureRect
 var _btn_move: Button
 var _btn_rotate: Button
 var _btn_scale: Button
@@ -35,6 +42,9 @@ var _btn_space: Button
 var _btn_vertex: Button
 var _btn_edge: Button
 var _btn_face: Button
+
+var _tool_group: ButtonGroup = ButtonGroup.new()
+var _mode_group: ButtonGroup = ButtonGroup.new()
 
 ## Editor reference for mode/tool tracking
 var editor: PBEditor = null:
@@ -51,52 +61,74 @@ func _init() -> void:
 	_build_ui()
 
 func _build_ui() -> void:
-	_label = Label.new()
-	_label.text = "ProBuilder"
-	_label.add_theme_font_size_override("font_size", 13)
-	_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	add_child(_label)
+	_logo = TextureRect.new()
+	_logo.name = "Logo"
+	_logo.texture = _load_icon("pb_logo.svg")
+	_logo.custom_minimum_size = Vector2(18, 18)
+	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_logo.tooltip_text = "ProBuilder"
+	add_child(_logo)
 
-	_add_sep()
+	_label_space()
 
 	# Transform tool group (plugin-owned; never the editor's universal gizmo)
-	_btn_move = _create_tool_button("Move", PBEditor.ToolMode.MOVE)
-	_btn_rotate = _create_tool_button("Rotate", PBEditor.ToolMode.ROTATE)
-	_btn_scale = _create_tool_button("Scale", PBEditor.ToolMode.SCALE)
+	_btn_move = _create_tool_button("Move", PBEditor.ToolMode.MOVE, "icon_move.svg")
+	_btn_rotate = _create_tool_button("Rotate", PBEditor.ToolMode.ROTATE, "icon_rotate.svg")
+	_btn_scale = _create_tool_button("Scale", PBEditor.ToolMode.SCALE, "icon_scale.svg")
 
-	_add_sep()
+	_label_space()
+
+	# Element mode group
+	_btn_vertex = _create_mode_button("Vertex", PBEditor.SelectMode.VERTEX, "icon_vertex.svg")
+	_btn_edge = _create_mode_button("Edge", PBEditor.SelectMode.EDGE, "icon_edge.svg")
+	_btn_face = _create_mode_button("Face", PBEditor.SelectMode.FACE, "icon_face.svg")
+
+	_label_space()
 
 	# Orientation space readout/cycler (X key does the same)
 	_btn_space = Button.new()
-	_btn_space.text = "Space: Element"
+	_btn_space.name = "SpaceButton"
+	_btn_space.icon = _load_icon("icon_space.svg")
+	_btn_space.text = "Element"
 	_btn_space.flat = true
+	_btn_space.tooltip_text = "Gizmo orientation space (X to cycle): Element, Object, World"
 	_btn_space.pressed.connect(_on_space_button_pressed)
 	add_child(_btn_space)
 
-	_add_sep()
-
-	# Element mode group
-	_btn_vertex = _create_mode_button("Vertex", PBEditor.SelectMode.VERTEX)
-	_btn_edge = _create_mode_button("Edge", PBEditor.SelectMode.EDGE)
-	_btn_face = _create_mode_button("Face", PBEditor.SelectMode.FACE)
-
-func _add_sep() -> void:
+func _label_space() -> void:
 	add_child(VSeparator.new())
 
-func _create_tool_button(text: String, tool: PBEditor.ToolMode) -> Button:
+static func _load_icon(icon_name: String) -> Texture2D:
+	var path := ICON_DIR + icon_name
+	if ResourceLoader.exists(path):
+		return load(path)
+	return null
+
+func _create_tool_button(text: String, tool: PBEditor.ToolMode, icon_name: String) -> Button:
 	var btn := Button.new()
-	btn.text = text
+	btn.name = "Tool" + text
+	btn.icon = _load_icon(icon_name)
+	if btn.icon == null:
+		btn.text = text
 	btn.toggle_mode = true
 	btn.flat = true
+	btn.button_group = _tool_group
+	btn.tooltip_text = "%s tool (%s)" % [text, ["W", "E", "R"][tool]]
 	btn.pressed.connect(_on_tool_button_pressed.bind(tool))
 	add_child(btn)
 	return btn
 
-func _create_mode_button(text: String, mode: PBEditor.SelectMode) -> Button:
+func _create_mode_button(text: String, mode: PBEditor.SelectMode, icon_name: String) -> Button:
 	var btn := Button.new()
-	btn.text = text
+	btn.name = "Mode" + text
+	btn.icon = _load_icon(icon_name)
+	if btn.icon == null:
+		btn.text = text
 	btn.toggle_mode = true
 	btn.flat = true
+	btn.button_group = _mode_group
+	btn.tooltip_text = "%s select mode (%s)" % [text, ["", "H", "J", "K"][mode]]
 	btn.pressed.connect(_on_mode_button_pressed.bind(mode))
 	add_child(btn)
 	return btn
@@ -137,16 +169,20 @@ func _on_tool_changed(tool: PBEditor.ToolMode) -> void:
 	_btn_scale.set_pressed_no_signal(tool == PBEditor.ToolMode.SCALE)
 
 func _on_space_changed(space: PBEditor.OrientationSpace) -> void:
-	_btn_space.text = "Space: %s" % PBEditor.OrientationSpace.keys()[space].capitalize()
+	_btn_space.text = PBEditor.OrientationSpace.keys()[space].capitalize()
 
 func _on_mode_button_pressed(mode: PBEditor.SelectMode) -> void:
 	if editor != null:
 		editor.select_mode = mode
+		# Re-clicking the active button toggles it off visually while the
+		# editor state is unchanged — restore the pressed look.
+		_on_mode_changed(editor.select_mode)
 	mode_button_pressed.emit(mode)
 
 func _on_tool_button_pressed(tool: PBEditor.ToolMode) -> void:
 	if editor != null:
 		editor.tool_mode = tool
+		_on_tool_changed(editor.tool_mode)
 	tool_button_pressed.emit(tool)
 
 func _on_space_button_pressed() -> void:

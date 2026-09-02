@@ -23,9 +23,8 @@ var toolbar: PBToolbar
 var _hover_drawn_last: int = -1
 
 ## Invisible anchor used to locate the 3D editor's toolbar containers; added
-## to CONTAINER_SPATIAL_EDITOR_MENU, then walked up to find the Node3DEditor
-## and its root VBox so the toolbar can be inserted as its own row BELOW the
-## engine's toolbar.
+## to CONTAINER_SPATIAL_EDITOR_MENU, walked for the placement below, then
+## removed again.
 var _toolbar_anchor: Control = null
 
 # ==============================================================================
@@ -36,7 +35,7 @@ func _get_plugin_name() -> String:
 	return "ProBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.7.0"
+const VERSION := "0.7.1"
 
 func _enter_tree():
 	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
@@ -149,32 +148,40 @@ func toolbar_has_3d_editor() -> bool:
 ## Adds the toolbar as its own row below the 3D scene toolbar.
 ##
 ## The plugin API only offers a slot INSIDE the engine's toolbar flow, so a
-## throwaway anchor control is added there and used to walk up to the
-## Node3DEditor's root VBoxContainer, where the row is inserted right after
-## the engine's toolbar margin (index 1). Falls back to the in-toolbar slot
-## (old behavior) if the layout walk fails.
+## throwaway anchor control is added there and walked to find the real
+## layout: anchor → context panel → HFlowContainer → toolbar MarginContainer
+## → layout container. In Godot 4.7 the Node3DEditor IS the layout VBox
+## (`VBoxContainer *vbc = this;` — get_class() still reports
+## "Node3DEditor", so class-name searches for a VBox miss it and must never
+## be used; one such search landed the row inside a hidden snap dialog).
+## Inserting our row into the margin's parent container as a sibling AFTER
+## the engine toolbar makes the engine's own VBox layout give us a
+## full-width row and push the viewports down, whatever the version.
 func _add_toolbar_row_below_3d_toolbar() -> void:
 	_toolbar_anchor = Control.new()
 	_toolbar_anchor.name = "PBToolbarAnchor"
 	add_control_to_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
 
+	var flow: Node = _find_ancestor_of_class(_toolbar_anchor, "HFlowContainer")
 	_n3d_editor = _find_ancestor_of_class(_toolbar_anchor, "Node3DEditor")
-	var vbox: Control = null
-	if _n3d_editor != null:
-		vbox = _find_descendant_of_class(_n3d_editor, "VBoxContainer", 2)
-	if vbox == null:
-		logger.warn("plugin", "Could not locate the 3D editor layout — toolbar placed inside the scene toolbar")
+	var layout: Container = null
+	if flow != null and flow.get_parent() is Container:
+		var margin: Container = flow.get_parent()
+		if margin.get_parent() is Container:
+			layout = margin.get_parent()
+	if layout == null or _n3d_editor == null:
+		logger.warn("plugin", "Could not locate the 3D editor toolbar layout — toolbar placed inside the scene toolbar")
 		return
 
-	vbox.add_child(toolbar)
-	# Index 0 is the engine toolbar's MarginContainer; our row goes under it.
-	var toolbar_margin: Node = null
-	for child in vbox.get_children():
-		if child is MarginContainer:
-			toolbar_margin = child
-			break
-	var index: int = (toolbar_margin.get_index() + 1) if toolbar_margin != null else 1
-	vbox.move_child(toolbar, mini(index, vbox.get_child_count() - 1))
+	layout.add_child(toolbar)
+	var margin: Node = flow.get_parent()
+	layout.move_child(toolbar, mini(margin.get_index() + 1, layout.get_child_count() - 1))
+
+	# The anchor's job (locating the layout) is done; remove it so it does
+	# not leave an invisible entry in the context toolbar.
+	remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
+	_toolbar_anchor.queue_free()
+	_toolbar_anchor = null
 	logger.info("plugin", "Toolbar added as a row below the 3D scene toolbar")
 
 ## Parents `control` to the first 3D editor viewport so it floats over the
@@ -198,17 +205,6 @@ func _find_ancestor_of_class(node: Node, klass: String) -> Node:
 		if current.get_class() == klass:
 			return current
 		current = current.get_parent()
-	return null
-
-func _find_descendant_of_class(root: Node, klass: String, max_depth: int) -> Node:
-	if max_depth < 0:
-		return null
-	for child in root.get_children():
-		if child.get_class() == klass:
-			return child
-		var found := _find_descendant_of_class(child, klass, max_depth - 1)
-		if found != null:
-			return found
 	return null
 
 # ==============================================================================

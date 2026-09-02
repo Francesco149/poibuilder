@@ -211,10 +211,21 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Label, sep, Move/Rotate/Scale, sep, Space, sep, Vertex/Edge/Face
+	# Logo, sep, Move/Rotate/Scale, sep, Vertex/Edge/Face, sep, Space
 	assert_eq(tb.get_child_count(), 11, "Toolbar should have 11 children")
-	assert_true(tb._label is Label)
-	assert_eq(tb._label.text, "ProBuilder")
+	assert_true(tb._logo is TextureRect, "Toolbar should lead with the ProBuilder logo")
+	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
+
+func test_toolbar_icons_present():
+	var tb := PBToolbar.new()
+	add_child_autofree(tb)
+
+	# Icons come from imported SVGs; after an editor import run they must be
+	# loaded (text fallbacks only exist for fresh checkouts).
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+		assert_true(btn is Button, "Toolbar buttons must exist")
+		if tb._logo.texture != null:
+			assert_ne(btn.icon, null, "Toolbar buttons use SVG icons when icons are imported")
 
 func test_toolbar_editor_binding_modes():
 	var tb := PBToolbar.new()
