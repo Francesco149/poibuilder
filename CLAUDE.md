@@ -157,6 +157,10 @@ v0.8.0 round complete ✓
   Insert edge loop (loop cut): PBTopology.get_edge_ring walk; faces with 2
   opposite ring edges split at edge midpoints, 1-ring-edge faces (boundary /
   fan caps) stay unsplit (T-junction expected), corner turns fail cleanly.
+- Shape creation (Phase 9-lite): the persistent toolbar's New Shape menu
+  (ALWAYS enabled — creation needs no selection) emits shape_requested; the
+  plugin builds via PBShapeFactory, places a new PBMesh 3m in front of the
+  editor camera, undo via add_do_reference node pattern, auto-selects it.
 
 POSITION-PRIVACY INVARIANT (mesh ops, locked by test_pb_mesh_ops.gd):
 every face owns its corner positions exclusively; faces meeting at a 3D
@@ -182,10 +186,9 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge, merge/weld tools;
-also shape placement UI (Phase 9-lite: create shapes from the toolbar).
+Next: Phase 7 leftovers — bevel edges, connect, bridge, merge/weld tools.
 After mesh-op rounds: human sign-off (human_test_phase6.tscn prints the
-updated checklist incl. items 20-28).
+updated checklist incl. items 20-30).
 
 ## Key Conventions
 

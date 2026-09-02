@@ -74,6 +74,7 @@ func _enter_tree():
 	toolbar = PBToolbar.new()
 	toolbar.editor = editor
 	toolbar.set_editing_active(false)
+	toolbar.shape_requested.connect(_on_shape_requested)
 	_add_toolbar_row_below_3d_toolbar()
 
 	# Tool overlay panel floating in the 3D viewport (replaces the docks;
@@ -487,6 +488,65 @@ const OP_ACTION_NAMES := {
 	"extrude_edges": "Extrude Edges",
 	"insert_edge_loop": "Insert Edge Loop",
 }
+
+# ==============================================================================
+# Shape Creation (toolbar New Shape menu)
+# ==============================================================================
+
+## Creates a new PBMesh from a factory shape id, places it in front of the
+## editor camera, registers a node-level undo action, and selects it. Works
+## with nothing selected — creation needs no editing context.
+func _on_shape_requested(shape_id: StringName) -> void:
+	var data := PBShapeFactory.create_shape(shape_id)
+	if data == null:
+		if logger:
+			logger.warn("plugin", "Unknown shape id: %s" % shape_id)
+		return
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		if logger:
+			logger.warn("plugin", "No edited scene — shape not created")
+		return
+
+	var node := PBMesh.new()
+	node.name = _unique_shape_name(scene_root, shape_id)
+	node.pb_mesh_data = data
+	node.global_transform = _placement_transform()
+
+	var undo := get_undo_redo()
+	undo.create_action("Add %s" % String(shape_id).capitalize())
+	undo.add_do_method(self, "_attach_detached", node, scene_root)
+	undo.add_do_reference(node)
+	undo.add_undo_method(self, "_detach_node", node)
+	undo.commit_action()
+
+	# Select the new shape so element editing starts immediately (not part
+	# of the undo action — selection state is the user's to change).
+	var editor_selection := get_editor_interface().get_selection()
+	editor_selection.clear()
+	editor_selection.add_node(node)
+
+	if logger:
+		logger.info("plugin", "Created shape '%s' (%s)" % [node.name, shape_id])
+
+func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
+	var base := "Shape_%s" % String(shape_id).capitalize().replace(" ", "")
+	if scene_root.get_node_or_null(NodePath(base)) == null:
+		return base
+	var i := 2
+	while scene_root.get_node_or_null(NodePath("%s%d" % [base, i])) != null:
+		i += 1
+	return "%s%d" % [base, i]
+
+## 3m in front of the first 3D editor viewport's camera (origin as fallback).
+func _placement_transform() -> Transform3D:
+	var viewport: SubViewport = get_editor_interface().get_editor_viewport_3d(0)
+	if viewport != null:
+		var cam: Camera3D = viewport.get_camera_3d()
+		if cam != null:
+			var pos: Vector3 = cam.global_position - cam.global_transform.basis.z * 3.0
+			return Transform3D(Basis.IDENTITY, pos)
+	return Transform3D.IDENTITY
 
 func _unique_detached_name(mesh: PBMesh) -> String:
 	var parent := mesh.get_parent()

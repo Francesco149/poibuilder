@@ -24,6 +24,10 @@ signal mode_button_pressed(mode: PBEditor.SelectMode)
 ## Emitted when the user clicks a tool button.
 signal tool_button_pressed(tool: PBEditor.ToolMode)
 
+## Emitted when the user picks a shape from the New Shape menu. Works with
+## NOTHING selected — shape creation is the toolbar's always-on entry point.
+signal shape_requested(shape_id: StringName)
+
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -42,6 +46,7 @@ var _btn_space: Button
 var _btn_vertex: Button
 var _btn_edge: Button
 var _btn_face: Button
+var _btn_new_shape: MenuButton
 
 var _tool_group: ButtonGroup = ButtonGroup.new()
 var _mode_group: ButtonGroup = ButtonGroup.new()
@@ -95,6 +100,21 @@ func _build_ui() -> void:
 	_btn_space.tooltip_text = "Gizmo orientation space (X to cycle): Element, Object, World"
 	_btn_space.pressed.connect(_on_space_button_pressed)
 	add_child(_btn_space)
+
+	_label_space()
+
+	# New Shape menu: the always-enabled creation entry point (no PBMesh
+	# selection required). The plugin performs placement + undo.
+	_btn_new_shape = MenuButton.new()
+	_btn_new_shape.name = "NewShape"
+	_btn_new_shape.text = "New Shape"
+	_btn_new_shape.flat = true
+	_btn_new_shape.tooltip_text = "Create a new PoiBuilder shape in front of the editor camera"
+	var popup: PopupMenu = _btn_new_shape.get_popup()
+	for shape_id in PBShapeFactory.get_shape_ids():
+		popup.add_item(String(shape_id).capitalize(), popup.item_count)
+	popup.id_pressed.connect(_on_shape_menu_pressed)
+	add_child(_btn_new_shape)
 
 func _label_space() -> void:
 	add_child(VSeparator.new())
@@ -189,6 +209,11 @@ func _on_space_button_pressed() -> void:
 	if editor != null:
 		editor.cycle_orientation_space()
 
+func _on_shape_menu_pressed(id: int) -> void:
+	var ids := PBShapeFactory.get_shape_ids()
+	if id >= 0 and id < ids.size():
+		shape_requested.emit(ids[id])
+
 # ==============================================================================
 # Editing Context
 # ==============================================================================
@@ -199,3 +224,7 @@ func _on_space_button_pressed() -> void:
 func set_editing_active(active: bool) -> void:
 	for btn: Button in [_btn_move, _btn_rotate, _btn_scale, _btn_space, _btn_vertex, _btn_edge, _btn_face]:
 		btn.disabled = not active
+	# New Shape stays enabled: creation needs no editing context.
+
+func new_shape_button() -> MenuButton:
+	return _btn_new_shape

@@ -211,8 +211,9 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Logo, sep, Move/Rotate/Scale, sep, Vertex/Edge/Face, sep, Space
-	assert_eq(tb.get_child_count(), 11, "Toolbar should have 11 children")
+	# Logo, sep, Move/Rotate/Scale, sep, Vertex/Edge/Face, sep, Space,
+	# sep, New Shape menu
+	assert_eq(tb.get_child_count(), 13, "Toolbar should have 13 children")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 
