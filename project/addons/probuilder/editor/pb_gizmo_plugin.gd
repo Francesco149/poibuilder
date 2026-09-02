@@ -35,9 +35,14 @@ const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 1.0)
 const EDGE_MODE_WIREFRAME_COLOR := Color(0.02, 0.02, 0.02, 1.0)
 const SELECTED_COLOR := Color(0.0, 0.824, 0.937, 1.0)
 const FACE_FILL_COLOR := Color(0.0, 0.824, 0.937, 0.35)
+## Hover highlight: yellow (selection stays cyan), slightly more transparent
+## than the fully selected state.
+const HOVER_COLOR := Color(1.0, 0.9, 0.2, 0.7)
+const HOVER_FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.22)
 const VERTEX_COLOR := Color(0.05, 0.05, 0.05, 1.0)
 const VERTEX_DOT_SIZE: float = 7.0
 const VERTEX_DOT_SELECTED_SIZE: float = 11.0
+const VERTEX_DOT_HOVER_SIZE: float = 9.0
 
 ## World-space offset between the sub-lines of a "thick" edge. Godot lines are
 ## always 1px; stacking parallel lines fakes ProBuilder-style thickness.
@@ -61,9 +66,11 @@ var logger: PBLogger = null:
 # cannot express it).
 var _vertex_dot_material: StandardMaterial3D
 var _vertex_dot_selected_material: StandardMaterial3D
+var _vertex_dot_hover_material: StandardMaterial3D
 
-## Cached depth-tested face fill material (built lazily).
+## Cached depth-tested face fill materials (built lazily).
 var _face_fill_material: StandardMaterial3D
+var _face_hover_fill_material: StandardMaterial3D
 
 # ==============================================================================
 # Lifecycle
@@ -73,8 +80,10 @@ func _init() -> void:
 	create_material("pb_wireframe", WIREFRAME_COLOR, false, false)
 	create_material("pb_wireframe_edge", EDGE_MODE_WIREFRAME_COLOR, false, false)
 	create_material("pb_selected_edge", SELECTED_COLOR, false, true)
+	create_material("pb_hover_edge", HOVER_COLOR, false, true)
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
+	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
 
 func set_logger(value: PBLogger) -> void:
 	logger = value
@@ -84,16 +93,18 @@ static func _make_point_material(color: Color, point_size: float) -> StandardMat
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = color
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	# Translucent variants (hover) need alpha transparency; opaque colors are
+	# unaffected by enabling it.
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.no_depth_test = false
 	mat.use_point_size = true
 	mat.point_size = point_size
 	return mat
 
-func _make_face_fill_material() -> StandardMaterial3D:
+func _make_face_fill_material(color: Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = FACE_FILL_COLOR
+	mat.albedo_color = color
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.no_depth_test = false
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -228,8 +239,10 @@ func _redraw(gizmo) -> void:
 	match editor.select_mode:
 		PBEditor.SelectMode.FACE:
 			_draw_selected_faces(gizmo, mesh_data)
+			_draw_hover_face(gizmo, mesh_data)
 		PBEditor.SelectMode.EDGE:
 			_draw_selected_edges(gizmo, mesh_data)
+			_draw_hover_edge(gizmo, mesh_data)
 		PBEditor.SelectMode.VERTEX:
 			_draw_vertex_dots(gizmo, mesh_data)
 
@@ -296,9 +309,24 @@ func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 		return
 
 	if _face_fill_material == null:
-		_face_fill_material = _make_face_fill_material()
+		_face_fill_material = _make_face_fill_material(FACE_FILL_COLOR)
 	for fill in fill_meshes:
 		gizmo.add_mesh(fill, _face_fill_material)
+
+## The hovered (not selected) face as a translucent yellow fill — same style
+## as the selection, just yellow and slightly more transparent.
+func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
+	var hover_id: int = editor.hover_id
+	if hover_id < 0 or hover_id >= mesh_data.faces.size():
+		return
+	if gizmo.is_subgizmo_selected(hover_id):
+		return
+	var fill := element_editor.build_face_fill_mesh(mesh_data, hover_id)
+	if fill == null:
+		return
+	if _face_hover_fill_material == null:
+		_face_hover_fill_material = _make_face_fill_material(HOVER_FACE_FILL_COLOR)
+	gizmo.add_mesh(fill, _face_hover_fill_material)
 
 ## Selected edges as bright on-top strokes (thick in EDGE mode).
 func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
@@ -317,11 +345,29 @@ func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
 	if selected_any and lines.size() >= 2:
 		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo))
 
-## All shared vertices as gray dots, selected ones as cyan dots.
+## The hovered (not selected) edge as a translucent yellow on-top stroke.
+func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
+	var hover_id: int = editor.hover_id
+	var edges := mesh_data.get_common_edges()
+	if hover_id < 0 or hover_id >= edges.size():
+		return
+	if gizmo.is_subgizmo_selected(hover_id):
+		return
+	var positions := mesh_data.positions
+	var edge: PBEdge = edges[hover_id]
+	if edge.a < 0 or edge.a >= positions.size() or edge.b < 0 or edge.b >= positions.size():
+		return
+	_add_thick_lines(gizmo, PackedVector3Array([positions[edge.a], positions[edge.b]]),
+		get_material("pb_hover_edge", gizmo))
+
+## All shared vertices as gray dots, selected ones as cyan dots, the hovered
+## one (when not selected) as a yellow dot.
 func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 	var positions := mesh_data.positions
 	var unselected := PackedVector3Array()
 	var selected := PackedVector3Array()
+	var hovered := PackedVector3Array()
+	var hover_id: int = editor.hover_id
 	for sv_idx in range(mesh_data.shared_vertices.size()):
 		var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
 		if sv == null or sv.indices.is_empty():
@@ -331,10 +377,13 @@ func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 			continue
 		if gizmo.is_subgizmo_selected(sv_idx):
 			selected.append(positions[idx])
+		elif sv_idx == hover_id:
+			hovered.append(positions[idx])
 		else:
 			unselected.append(positions[idx])
 
 	_add_points_mesh(gizmo, unselected, _vertex_dot_material)
+	_add_points_mesh(gizmo, hovered, _vertex_dot_hover_material)
 	_add_points_mesh(gizmo, selected, _vertex_dot_selected_material)
 
 static func _add_points_mesh(gizmo, points: PackedVector3Array, material: StandardMaterial3D) -> void:

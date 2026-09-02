@@ -33,22 +33,41 @@ godot-mono --editor project/project.godot
 ## Architecture
 
 Plugin: `project/addons/probuilder/`
-- `probuilder_plugin.gd` — EditorPlugin entry: registration, H/J/K/X keys only.
-  ALL mouse events pass through to the native editor.
+- `probuilder_plugin.gd` — EditorPlugin entry: registration, hover tracking,
+  H/J/K/X keys. Clicks pass through untouched (the engine's own priority
+  applies: the transform gizmo wins over element picking).
 - `core/` — PBMeshData, PBFace, PBEdge, PBMath, PBTopology
 - `editor/pb_gizmo_plugin.gd` — THE editor integration: EditorNode3DGizmoPlugin
   with SUBGIZMOS. The native editor does element picking, rubber-band
-  selection, transform-gizmo drags (its own Q/W/E/R modes), snapping, and
+  selection, transform-gizmo drags, snapping, and
   calls back into us. Thin adapter only (editor-only classes cannot be
   instantiated in headless tests).
 - `editor/pb_element_editor.gd` — Runtime-safe element logic: per-element
   origins/bases, idempotent drag math from snapshot, undo payloads, selection
   mirroring. Fully headless-testable.
-- `editor/pb_editor.gd` — State: select mode, orientation space, selection.
+- `editor/pb_editor.gd` — State: select mode (REMEMBERED across selection
+  changes), the plugin's OWN tool mode (Move/Rotate/Scale — the editor's
+  universal gizmo is never used), orientation space, hover id, selection.
+- `editor/pb_tool_bridge.gd` — Presses the engine's Move/Rotate/Scale tool
+  buttons to mirror OUR tool onto the engine's transform gizmo, and DISABLES
+  the engine's Transform(Q, universal)/Select(V) buttons while editing (a
+  disabled button also ignores its shortcut). Headless-testable decisions.
+- `editor/pb_toolbar.gd` — Persistent toolbar row BELOW the 3D scene toolbar
+  (inserted as a sibling row in the Node3DEditor's root VBox, located by
+  walking up from a throwaway anchor added to CONTAINER_SPATIAL_EDITOR_MENU).
+  Buttons disable when no PBMesh is selected; the row never hides.
+- `gui/overlays/pb_tool_overlay.gd` — Floating in-viewport PanelContainer
+  (bottom-left of the editor viewport) with tool info + live drag readout.
+  NO docks: debug logging goes to the Godot console via PBLogger.
 - `editor/pb_picking.gd` — Pure-logic ray/screen picking.
 - `commands/` — Undo/redo command pattern (CmdMove/Rotate/ScaleElements)
 - `shapes/` — Primitive shape generators
-- `debug/` — PBLogger, PBTelemetry, PBDebugDock
+- `debug/` — PBLogger, PBTelemetry
+
+Hover highlights: `_forward_3d_gui_input` observes mouse motion (never
+consumes), picks the element under the cursor into `PBEditor.hover_id`, and
+redraws the gizmo; hovered elements render YELLOW and slightly more
+transparent than the cyan selected state (faces/edges/verts).
 
 Tests: `project/tests/` (GUT framework, headless-capable).
 NEVER claim "tests pass" without run_tests.sh output — GUT silently skips
@@ -74,6 +93,23 @@ deleted and replaced by the editor's own machinery. Conventions fixed:
 - Element gizmo = Godot's own transform gizmo at the element pivot, with
   Element/Object/World space toggle (X key) ✓
 
+Phase 7 UX round (v0.7.0, after Phase 6 sign-off) complete ✓
+- Persistent plugin toolbar row BELOW the 3D scene toolbar (not inside it);
+  always visible, buttons disabled outside ProBuilder context.
+- The plugin manages its OWN tool modes (Move/Rotate/Scale, remembered) and
+  the editor's universal gizmo is unreachable while editing: the bridge
+  disables the engine's Transform(Q)/Select(V) buttons and forces the engine
+  tool matching ours, so the element gizmo always shows exactly one tool's
+  handles. W/E/R stay live and sync back into the plugin toolbar.
+- Element mode persistence: clicking off the object (or selecting another
+  node) and coming back re-enters the last element mode.
+- Yellow hover highlights for faces/edges/verts, slightly more transparent
+  than the cyan selected state.
+- Click priority: the transform gizmo outranks element picking (the Phase 6
+  click-interception was removed; the engine's native order applies).
+- The docked panels are gone: tool info lives in a floating overlay panel in
+  the viewport (bottom-left); logging is console-only via PBLogger.
+
 Known limitation: programmatic multi-element selection (select-all / grow /
 shrink / invert) is NOT exposed to gizmo drags — the engine's script-side
 subgizmo selection API is single-id (clears+replaces). Multi-select works
@@ -88,7 +124,8 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 (Core Mesh Operations) — after human sign-off of Phase 6.
+Next: Phase 7 (Core Mesh Operations) — after human sign-off of this UX round
+(human_test_phase6.tscn prints the updated checklist).
 
 ## Key Conventions
 

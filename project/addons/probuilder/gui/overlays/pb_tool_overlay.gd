@@ -1,10 +1,17 @@
-## PBToolPropertiesDock — Editor dock panel showing ProBuilder element editing state.
+## PBToolOverlay — Floating in-viewport panel with ProBuilder tool info.
 ##
-## Displays: selection mode, gizmo orientation space, selection counts, and a
-## live readout while the native transform gizmo drags elements.
+## Replaces the docked panels: this is a small PanelContainer parented to the
+## 3D editor's viewport (bottom-left, like ProBuilder's Selection overlay)
+## showing the active mode, transform tool, orientation space, selection
+## counts, and a live readout while the native transform gizmo drags elements.
+## It only occupies its own rect — clicks on it are consumed, everything else
+## passes to the scene.
+##
+## As features land, sections are added to this panel (and more panels can be
+## parented the same way).
 @tool
-class_name PBToolPropertiesDock
-extends VBoxContainer
+class_name PBToolOverlay
+extends PanelContainer
 
 # ==============================================================================
 # Properties
@@ -44,36 +51,55 @@ func _ensure_ui() -> void:
 		return
 	_ui_built = true
 
+	# Use the engine's own viewport-info panel style when available so the
+	# overlay looks native (same stylebox as the engine's viewport info bar).
+	var editor_gui := EditorInterface.get_base_control() if Engine.is_editor_hint() else null
+	if editor_gui != null and editor_gui.has_theme_stylebox("Information3dViewport", "EditorStyles"):
+		add_theme_stylebox_override("panel",
+			editor_gui.get_theme_stylebox("Information3dViewport", "EditorStyles"))
+
+	mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 8)
+	margin.add_theme_constant_override("margin_right", 8)
+	margin.add_theme_constant_override("margin_top", 4)
+	margin.add_theme_constant_override("margin_bottom", 6)
+	add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	margin.add_child(vbox)
+
 	# Title
 	title_label = Label.new()
 	title_label.name = "TitleLabel"
 	title_label.text = "ProBuilder v%s" % PBEditor.PLUGIN_VERSION
-	title_label.add_theme_font_size_override("font_size", 14)
-	add_child(title_label)
+	title_label.add_theme_font_size_override("font_size", 13)
+	vbox.add_child(title_label)
 
-	# Separator
-	add_child(HSeparator.new())
-
-	# Selection mode + orientation space
+	# Selection mode + orientation space + transform tool
 	mode_label = Label.new()
 	mode_label.name = "ModeLabel"
 	mode_label.text = "Mode: Object"
-	add_child(mode_label)
+	vbox.add_child(mode_label)
 
 	# Selection counts
 	selection_label = Label.new()
 	selection_label.name = "SelectionLabel"
 	selection_label.text = "Selection: V:0 E:0 F:0"
-	add_child(selection_label)
-
-	# Separator
-	add_child(HSeparator.new())
+	vbox.add_child(selection_label)
 
 	# Live transform readout while dragging elements
 	settings_label = Label.new()
 	settings_label.name = "SettingsLabel"
 	settings_label.text = "—"
-	add_child(settings_label)
+	vbox.add_child(settings_label)
+
+	# Anchor to the bottom-left of the host viewport.
+	set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	position += Vector2(12, -12)
+	grow_vertical = Control.GROW_DIRECTION_BEGIN
+	grow_horizontal = Control.GROW_DIRECTION_END
 
 # ==============================================================================
 # Editor Binding
@@ -89,6 +115,8 @@ func set_editor(value: PBEditor) -> void:
 			editor.active_mesh_changed.disconnect(_on_editor_changed)
 		if editor.orientation_space_changed.is_connected(_on_editor_changed):
 			editor.orientation_space_changed.disconnect(_on_editor_changed)
+		if editor.tool_mode_changed.is_connected(_on_editor_changed):
+			editor.tool_mode_changed.disconnect(_on_editor_changed)
 
 	editor = value
 
@@ -97,6 +125,7 @@ func set_editor(value: PBEditor) -> void:
 		editor.element_selection_changed.connect(_on_editor_changed)
 		editor.active_mesh_changed.connect(_on_editor_changed)
 		editor.orientation_space_changed.connect(_on_editor_changed)
+		editor.tool_mode_changed.connect(_on_editor_changed)
 
 	refresh()
 
@@ -128,11 +157,12 @@ func refresh() -> void:
 			settings_label.text = "—"
 		return
 
-	# 1. Select mode + orientation space
+	# 1. Select mode + transform tool + orientation space
 	var mode_str: String = PBEditor.mode_name(editor.select_mode)
 	if mode_label:
 		var space_str: String = PBEditor.OrientationSpace.keys()[editor.orientation_space]
-		mode_label.text = "Mode: %s  Space: %s (X)" % [mode_str, space_str.capitalize()]
+		mode_label.text = "Mode: %s  Tool: %s  Space: %s (X)" % [
+			mode_str, PBEditor.tool_name(editor.tool_mode), space_str.capitalize()]
 
 	# 2. Selection counts
 	var v_cnt: int = 0

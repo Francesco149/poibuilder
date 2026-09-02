@@ -12,7 +12,7 @@ extends RefCounted
 
 ## Plugin version, shown in the dock and logged at startup so a stale build
 ## is immediately obvious when behavior "doesn't match" what was fixed.
-const PLUGIN_VERSION := "0.6.9"
+const PLUGIN_VERSION := "0.7.0"
 
 # ==============================================================================
 # Selection Mode
@@ -33,6 +33,17 @@ enum OrientationSpace {
 	WORLD,    ## Axes aligned to world XYZ
 }
 
+## The plugin's OWN transform tool, shown by the ProBuilder toolbar. While
+## editing we never follow the editor's Q/V (universal/select) tool state —
+## one of these three is always active, so the engine's transform gizmo over
+## the elements always shows exactly move arrows, rotate rings, or scale
+## handles, and never the combined universal gizmo.
+enum ToolMode {
+	MOVE,     ## Translate arrows
+	ROTATE,   ## Rotation rings
+	SCALE,    ## Scale handles
+}
+
 # ==============================================================================
 # Signals
 # ==============================================================================
@@ -49,6 +60,12 @@ signal element_selection_changed()
 ## Emitted when the orientation space changes.
 signal orientation_space_changed(space: OrientationSpace)
 
+## Emitted when the active transform tool changes.
+signal tool_mode_changed(tool: ToolMode)
+
+## Emitted when the hovered element id changes (-1 = nothing hovered).
+signal hover_changed(id: int)
+
 # ==============================================================================
 # State
 # ==============================================================================
@@ -57,7 +74,16 @@ signal orientation_space_changed(space: OrientationSpace)
 var select_mode: SelectMode = SelectMode.OBJECT:
 	set = set_select_mode
 
-## The currently active (selected) PBMesh, or null.
+## The plugin's active transform tool (independent of the editor's Q/W/E/R
+## state; the bridge mirrors it onto the editor's tool buttons).
+var tool_mode: ToolMode = ToolMode.MOVE:
+	set = set_tool_mode
+
+## Element id currently under the cursor for hover highlighting, or -1.
+var hover_id: int = -1:
+	set = set_hover_id
+
+## The active (selected) PBMesh, or null.
 var active_mesh: PBMesh = null:
 	set = set_active_mesh
 
@@ -74,6 +100,11 @@ var logger: PBLogger = null:
 var orientation_space: OrientationSpace = OrientationSpace.ELEMENT:
 	set = set_orientation_space
 
+## Last element mode the user was in. Re-entering a PBMesh (after clicking
+## off, selecting another node, or deselecting everything) restores this
+## instead of falling back to FACE, so the plugin "stays in" its mode.
+var _last_element_mode: SelectMode = SelectMode.FACE
+
 # ==============================================================================
 # Setters
 # ==============================================================================
@@ -83,9 +114,25 @@ func set_select_mode(value: SelectMode) -> void:
 		return
 	var old := select_mode
 	select_mode = value
+	if value != SelectMode.OBJECT:
+		_last_element_mode = value
 	if logger:
 		logger.info("editor", "Mode changed: %s → %s" % [SelectMode.keys()[old], SelectMode.keys()[value]])
 	select_mode_changed.emit(select_mode)
+
+func set_tool_mode(value: ToolMode) -> void:
+	if tool_mode == value:
+		return
+	tool_mode = value
+	if logger:
+		logger.info("editor", "Tool changed: %s" % ToolMode.keys()[value])
+	tool_mode_changed.emit(tool_mode)
+
+func set_hover_id(value: int) -> void:
+	if hover_id == value:
+		return
+	hover_id = value
+	hover_changed.emit(hover_id)
 
 func set_logger(value: PBLogger) -> void:
 	logger = value
@@ -112,13 +159,15 @@ func set_active_mesh(value: PBMesh) -> void:
 	active_mesh = value
 	if active_mesh == null:
 		selection.set_mesh_data(null)
-		# Revert to object mode when no mesh is selected
-		select_mode = SelectMode.OBJECT
+		hover_id = -1
+		# Keep select_mode as-is: the plugin remembers the element mode, so
+		# clicking off the object and back (or selecting another node and
+		# back) re-enters the same mode.
 	else:
 		selection.set_mesh_data(active_mesh.pb_mesh_data)
 		if select_mode == SelectMode.OBJECT:
-			# Enter face mode by default when a PBMesh is selected (ProBuilder behavior)
-			select_mode = SelectMode.FACE
+			# First entry (or an explicit OBJECT set) → last element mode.
+			select_mode = _last_element_mode
 	# Connect new selection signal
 	selection.selection_changed.connect(_on_selection_changed)
 	if logger:
@@ -137,6 +186,10 @@ func is_editing() -> bool:
 ## Returns the display name for a given mode.
 static func mode_name(mode: SelectMode) -> String:
 	return SelectMode.keys()[mode].capitalize()
+
+## Returns the display name for a given tool.
+static func tool_name(tool: ToolMode) -> String:
+	return ToolMode.keys()[tool].capitalize()
 
 # ==============================================================================
 # Selection Callbacks

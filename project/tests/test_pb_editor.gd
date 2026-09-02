@@ -53,9 +53,52 @@ func test_editor_active_mesh_null_reverts_to_object():
 	assert_eq(ed.select_mode, PBEditor.SelectMode.FACE)
 
 	ed.active_mesh = null
-	assert_eq(ed.select_mode, PBEditor.SelectMode.OBJECT,
-		"Clearing active_mesh should revert to OBJECT mode")
+	assert_eq(ed.select_mode, PBEditor.SelectMode.FACE,
+		"Clearing active_mesh must REMEMBER the element mode (mode persistence)")
 	assert_false(ed.is_editing())
+
+	ed.select_mode = PBEditor.SelectMode.EDGE
+	ed.active_mesh = null
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE,
+		"Mode stays as the user left it when deselecting")
+
+func test_editor_mode_persists_across_deselect_and_reselect():
+	var ed := PBEditor.new()
+	var mesh := PBMesh.new()
+	add_child_autofree(mesh)
+
+	ed.active_mesh = mesh
+	ed.select_mode = PBEditor.SelectMode.EDGE
+
+	# Click off the object, then click back → still EDGE
+	ed.active_mesh = null
+	ed.active_mesh = mesh
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE,
+		"Re-entering a PBMesh must restore the last element mode")
+
+	# Switch to another node (active_mesh = null) then a NEW mesh → still EDGE
+	var mesh2 := PBMesh.new()
+	add_child_autofree(mesh2)
+	ed.active_mesh = null
+	ed.active_mesh = mesh2
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE)
+
+	# FACE remembered too
+	ed.select_mode = PBEditor.SelectMode.FACE
+	ed.active_mesh = null
+	ed.active_mesh = mesh
+	assert_eq(ed.select_mode, PBEditor.SelectMode.FACE)
+
+func test_editor_first_entry_defaults_to_face():
+	var ed := PBEditor.new()
+	var mesh := PBMesh.new()
+	add_child_autofree(mesh)
+
+	assert_eq(ed.select_mode, PBEditor.SelectMode.OBJECT,
+		"A fresh editor starts in OBJECT (no mesh context)")
+	ed.active_mesh = mesh
+	assert_eq(ed.select_mode, PBEditor.SelectMode.FACE,
+		"First entry defaults to FACE (ProBuilder behavior)")
 
 func test_editor_active_mesh_preserves_mode():
 	var ed := PBEditor.new()
@@ -110,6 +153,56 @@ func test_editor_orientation_space_cycles():
 	assert_eq(received.size(), 1)
 	assert_eq(received[0], PBEditor.OrientationSpace.OBJECT)
 
+func test_editor_tool_mode_default_and_signal():
+	var ed := PBEditor.new()
+	assert_eq(ed.tool_mode, PBEditor.ToolMode.MOVE, "Default tool is MOVE")
+
+	var received: Array = []
+	ed.tool_mode_changed.connect(func(t): received.append(t))
+
+	ed.tool_mode = PBEditor.ToolMode.ROTATE
+	assert_eq(received.size(), 1)
+	assert_eq(received[0], PBEditor.ToolMode.ROTATE)
+
+	# Same tool does not re-emit
+	ed.tool_mode = PBEditor.ToolMode.ROTATE
+	assert_eq(received.size(), 1)
+
+func test_editor_tool_mode_is_independent_of_object_selection():
+	var ed := PBEditor.new()
+	var mesh := PBMesh.new()
+	add_child_autofree(mesh)
+
+	ed.active_mesh = mesh
+	ed.tool_mode = PBEditor.ToolMode.SCALE
+	ed.active_mesh = null
+	assert_eq(ed.tool_mode, PBEditor.ToolMode.SCALE,
+		"The plugin's transform tool persists across selection changes")
+
+func test_editor_tool_mode_names():
+	assert_eq(PBEditor.tool_name(PBEditor.ToolMode.MOVE), "Move")
+	assert_eq(PBEditor.tool_name(PBEditor.ToolMode.ROTATE), "Rotate")
+	assert_eq(PBEditor.tool_name(PBEditor.ToolMode.SCALE), "Scale")
+
+func test_editor_hover_id_setter_emits_on_change_only():
+	var ed := PBEditor.new()
+	assert_eq(ed.hover_id, -1, "Default hover is -1 (nothing hovered)")
+
+	var received: Array = []
+	ed.hover_changed.connect(func(id): received.append(id))
+
+	ed.hover_id = 4
+	assert_eq(received.size(), 1)
+	assert_eq(received[0], 4)
+	assert_eq(ed.hover_id, 4)
+
+	ed.hover_id = 4
+	assert_eq(received.size(), 1, "Same hover id must not re-emit")
+
+	ed.hover_id = -1
+	assert_eq(received.size(), 2)
+	assert_eq(received[1], -1)
+
 # ==============================================================================
 # PBToolbar Tests
 # ==============================================================================
@@ -118,19 +211,19 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Should have children: separator, label, vertex, edge, face buttons
-	assert_eq(tb.get_child_count(), 5, "Toolbar should have 5 children")
+	# Label, sep, Move/Rotate/Scale, sep, Space, sep, Vertex/Edge/Face
+	assert_eq(tb.get_child_count(), 11, "Toolbar should have 11 children")
 	assert_true(tb._label is Label)
 	assert_eq(tb._label.text, "ProBuilder")
 
-func test_toolbar_editor_binding():
+func test_toolbar_editor_binding_modes():
 	var tb := PBToolbar.new()
 	var ed := PBEditor.new()
 	add_child_autofree(tb)
 
 	tb.editor = ed
 
-	# Default is OBJECT mode — no buttons pressed
+	# Default is OBJECT mode — no element buttons pressed
 	assert_false(tb._btn_vertex.button_pressed)
 	assert_false(tb._btn_edge.button_pressed)
 	assert_false(tb._btn_face.button_pressed)
@@ -151,15 +244,35 @@ func test_toolbar_editor_binding():
 	assert_false(tb._btn_edge.button_pressed)
 	assert_true(tb._btn_face.button_pressed, "Face button should be pressed in FACE mode")
 
-func test_toolbar_activate_deactivate():
+func test_toolbar_editor_binding_tools_and_space():
+	var tb := PBToolbar.new()
+	var ed := PBEditor.new()
+	add_child_autofree(tb)
+
+	tb.editor = ed
+	assert_true(tb._btn_move.button_pressed, "Default tool MOVE should be pressed")
+	assert_false(tb._btn_rotate.button_pressed)
+	assert_false(tb._btn_scale.button_pressed)
+
+	ed.tool_mode = PBEditor.ToolMode.ROTATE
+	assert_true(tb._btn_rotate.button_pressed, "Rotate should follow editor tool")
+	assert_false(tb._btn_move.button_pressed)
+
+	ed.orientation_space = PBEditor.OrientationSpace.WORLD
+	assert_true(tb._btn_space.text.contains("World"), "Space button should show current space")
+
+func test_toolbar_set_editing_active_disables_not_hides():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	tb.deactivate()
-	assert_false(tb.visible, "Should be hidden after deactivate")
+	tb.set_editing_active(false)
+	assert_true(tb.visible, "The toolbar row is persistent — never hidden")
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+		assert_true(btn.disabled, "Buttons must be disabled outside editing context")
 
-	tb.activate()
-	assert_true(tb.visible, "Should be visible after activate")
+	tb.set_editing_active(true)
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+		assert_false(btn.disabled, "Buttons must be enabled while editing")
 
 func test_toolbar_mode_button_signal():
 	var tb := PBToolbar.new()
@@ -176,6 +289,31 @@ func test_toolbar_mode_button_signal():
 	assert_eq(received[0], PBEditor.SelectMode.VERTEX)
 	assert_eq(ed.select_mode, PBEditor.SelectMode.VERTEX,
 		"Editor mode should update when button pressed")
+
+func test_toolbar_tool_button_signal():
+	var tb := PBToolbar.new()
+	var ed := PBEditor.new()
+	add_child_autofree(tb)
+	tb.editor = ed
+
+	var received: Array = []
+	tb.tool_button_pressed.connect(func(t): received.append(t))
+
+	tb._btn_scale.emit_signal("pressed")
+	assert_eq(received.size(), 1)
+	assert_eq(received[0], PBEditor.ToolMode.SCALE)
+	assert_eq(ed.tool_mode, PBEditor.ToolMode.SCALE,
+		"Editor tool should update when tool button pressed")
+
+func test_toolbar_space_button_cycles():
+	var tb := PBToolbar.new()
+	var ed := PBEditor.new()
+	add_child_autofree(tb)
+	tb.editor = ed
+
+	tb._btn_space.emit_signal("pressed")
+	assert_eq(ed.orientation_space, PBEditor.OrientationSpace.OBJECT,
+		"Space button should cycle the orientation space")
 
 # ==============================================================================
 # PBGizmoPlugin Editing Gate Tests
