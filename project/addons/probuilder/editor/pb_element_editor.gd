@@ -792,8 +792,7 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 		_extrude_px_per_world = (d2 - d1).length()
 
 	if logger != null:
-		logger.info("drag", "Extrude seed ok: normal(node)=%s normal(world)=%s "
-			+ "constrained=%s caps=%d sides=%d union=%d px_per_world=%.1f" % [
+		logger.info("drag", "Extrude seed ok: normal(node)=%s normal(world)=%s constrained=%s caps=%d sides=%d union=%d px_per_world=%.1f" % [
 			str(_drag_extrude_normal), str(_extrude_normal_world),
 			str(_extrude_constrained),
 			result["cap_face_ids"].size(), _drag_side_faces.size(),
@@ -946,16 +945,15 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 			var motion := rel.origin
 			if origin_only:
 				if not rel.basis.is_equal_approx(Basis()) and logger != null:
-					logger.warn("drag", "REL BASIS NOT IDENTITY on a %s gesture — "
-						+ "engine composition mismatch? origin=%s (positions use "
-						+ "the origin only)" % [
+					logger.warn("drag", "REL BASIS NOT IDENTITY on a %s gesture — engine composition mismatch? origin=%s (positions use the origin only)" % [
 						DragGesture.keys()[_drag_gesture], str(rel.origin)])
-				# EXTRUDE_MOVE with a live cursor: drive the cap distance from
-				# the MOUSE projected onto the extrude normal's screen axis.
-				# This is the workflow guarantee (element gizmo, shift+grab
-				# the normal axis → the cap follows the cursor along the
-				# normal) and it is independent of the orientation space and
-				# of the engine's transform composition.
+				# EXTRUDE_MOVE verification against the live cursor: the
+				# engine rel SHOULD track the mouse along the extrude
+				# normal's screen axis. When it visibly disagrees (sign or
+				# scale error along the normal — the reported "extrudes
+				# backwards, doesn't follow the mouse"), take the distance
+				# from the cursor instead. A lateral engine motion is a
+				# legitimate move of the extruded cap and is NOT overridden.
 				if _drag_gesture == DragGesture.EXTRUDE_MOVE and drag_mouse_active \
 						and mouse_has and mouse_camera != null \
 						and _extrude_px_per_world > 2.0:
@@ -964,13 +962,16 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 							_extrude_pivot_world + _extrude_normal_world)
 						- mouse_camera.unproject_position(_extrude_pivot_world)
 					).normalized()
-					var world_dist: float = (mouse_screen - _extrude_mouse_start) \
+					var mouse_world_dist: float = (mouse_screen - _extrude_mouse_start) \
 						.dot(axis_screen) / _extrude_px_per_world
-					motion = _drag_extrude_normal * world_dist
-					if not _drag_mouse_driven and logger != null:
-						logger.info("drag", "extrude is MOUSE-driven: axis_screen=%s "
-							+ "px_per_world=%.1f" % [str(axis_screen), _extrude_px_per_world])
-					_drag_mouse_driven = true
+					var rel_normal_dist: float = rel.origin.dot(_drag_extrude_normal)
+					var dist_error: float = absf(rel_normal_dist - mouse_world_dist)
+					var dist_tolerance: float = maxf(0.1, 0.35 * absf(mouse_world_dist))
+					if dist_error > dist_tolerance:
+						motion = _drag_extrude_normal * mouse_world_dist
+						if not _drag_mouse_driven and logger != null:
+							logger.warn("drag", "EXTRUDE MISMATCH — engine rel along normal=%.3f but cursor says %.3f (px_per_world=%.1f); driving the cap from the cursor" % [rel_normal_dist, mouse_world_dist, _extrude_px_per_world])
+						_drag_mouse_driven = true
 				# Spec (VertexManipulationTool.cs): shift+move extrudes at
 				# begin, then ApplyTranslation pulls the new faces along the
 				# translation delta — the cap follows the cursor.
@@ -979,8 +980,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = _drag_original_positions[idx] + motion
 				if logger != null:
-					logger.debug("drag", "apply %s: rel_origin=%s motion=%s union=%d "
-						+ "mouse_driven=%s" % [
+					logger.debug("drag", "apply %s: rel_origin=%s motion=%s union=%d mouse_driven=%s" % [
 						DragGesture.keys()[_drag_gesture], str(rel.origin), str(motion),
 						union.size(), str(_drag_mouse_driven)])
 				_emit_drag_update(true, motion, Vector3.ZERO, Vector3.ONE)
@@ -1212,16 +1212,25 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
 	var mesh_node: PBMesh = instance_from_id(node_id) as PBMesh
 	if mesh_node == null or mesh_node.pb_mesh_data == null:
+		if logger != null:
+			logger.warn("undo", "_restore_full_mesh skipped (node %d missing or dataless)" % node_id)
 		return
 	PBCommand.restore_mesh_data(mesh_node.pb_mesh_data, snapshot)
 	mesh_node.pb_mesh_data.invalidate_caches()
 	mesh_node.rebuild()
+	mesh_node.update_gizmos()
+	if logger != null:
+		logger.info("undo", "_restore_full_mesh applied on %s: V=%d F=%d (render rebuilt + gizmo refreshed)" % [
+			mesh_node.name, mesh_node.pb_mesh_data.positions.size(),
+			mesh_node.pb_mesh_data.faces.size()])
 
 ## Reapplies a position subset by node instance id (undo/redo payload).
 ## Instance id survives history replay; missing nodes are skipped silently.
 func _apply_positions(node_id: int, indices: PackedInt32Array, positions_subset: PackedVector3Array) -> void:
 	var node: PBMesh = instance_from_id(node_id) as PBMesh
 	if node == null or node.pb_mesh_data == null:
+		if logger != null:
+			logger.warn("undo", "_apply_positions skipped (node %d missing or dataless)" % node_id)
 		return
 	var positions := node.pb_mesh_data.positions
 	var count: int = mini(indices.size(), positions_subset.size())

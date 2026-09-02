@@ -339,6 +339,34 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.8 round complete ✓ — fixes from the first LOGGED sign-off (the user
+supplied console output; the log immediately paid for itself):
+- UNDO STALE VIEW ROOT CAUSE: CmdMeshOp.do_it/undo_it restored the
+  PBMeshData but NEVER rebuilt the node — the restored geometry only
+  reached the screen when a later drag forced a rebuild. CmdMeshOp now
+  carries the node, and _apply_snapshot (do/undo) restores + invalidates
+  + rebuild + update_gizmos. The plugin passes the node and the logger.
+- LOG FORMAT STRINGS: GDScript's % binds to the LAST string literal of a
+  "..." + "..." % [...] chain — multi-line formatted log messages printed
+  raw placeholders and hid every critical value ("not all arguments
+  converted" / "a number is required" errors). All logger calls now keep
+  the format string in ONE literal. RULE: never let % [...] span a +
+  concatenation.
+- UNDO LOGGING: CmdMeshOp do/undo, _restore_full_mesh, _apply_positions,
+  and the plugin's _restore_mesh_snapshot all log their application
+  (and skipped-restore warnings) so undo traces are visible.
+- EXTRUDE VERIFIED AGAINST THE CURSOR: the user's log showed the engine
+  delivering SANE rels for the element-space normal-axis drag, so the
+  mouse-driven override from v0.9.7 became a VERIFIED FALLBACK: the
+  engine rel is trusted unless its distance along the extrude normal
+  disagrees with the cursor projection by > max(0.1 m, 35 % of the
+  cursor's distance) — then the cursor drives the cap and the takeover
+  is logged. The user's log lines to watch: apply EXTRUDE_MOVE
+  (rel_origin vs motion), EXTRUDE MISMATCH warnings.
+- CREATION ARROW BARBS: the barbs carried an out-of-plane component and
+  rendered as a degenerate standing "Y"; they are now a backward V lying
+  in the dragged surface plane.
+
 v0.9.7 round complete ✓ — extrude workflow + center-handle fixes from the
 fourth sign-off:
 - EXTRUDE IS MOUSE-DRIVEN: PBElementEditor.track_mouse() is fed every

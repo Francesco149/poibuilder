@@ -225,8 +225,7 @@ func _subgizmos_intersect_ray(gizmo, camera: Camera3D, screen_pos: Vector2) -> i
 	# translates/extrudes it, exactly like ProBuilder's shift+face-drag.
 	if id >= 0 and Input.is_key_pressed(KEY_SHIFT) and gizmo.is_subgizmo_selected(id):
 		if logger != null:
-			logger.info("pick", "shift-press on selected %s id=%d suppressed "
-				+ "(kept selection for the drag; toggle-off is disabled)" % [
+			logger.info("pick", "shift-press on selected %s id=%d suppressed (kept selection for the drag; toggle-off is disabled)" % [
 				PBEditor.SelectMode.keys()[editor.select_mode], id])
 		return -1
 	# Alt+click / double-click on an edge selects its whole loop (the engine
@@ -619,7 +618,9 @@ func _creation_materials() -> void:
 		_creation_vert_material.render_priority = RenderingServer.MATERIAL_RENDER_PRIORITY_MAX
 
 ## Adds the orange facing arrow as thick on-top lines: a shaft from `base`
-## along `dir` plus a three-line barb. All inputs are world space.
+## along `dir` plus two barbs forming a backward V at the tip. All barbs lie
+## IN the dragged surface plane (an out-of-plane barb component rendered as
+## a degenerate standing "Y").
 func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vector3,
 		length: float, plane_normal: Vector3) -> void:
 	var tip := base + dir * length
@@ -628,12 +629,13 @@ func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vecto
 		side = dir.cross(Vector3.UP)
 		if side.length_squared() < 0.5:
 			side = dir.cross(Vector3.RIGHT)
-	side = side.normalized() * length * 0.22
-	var up := dir.cross(side).normalized() * length * 0.22
+	side = side.normalized()
+	var back := -dir.normalized() * length * 0.3
+	var half := side * length * 0.22
 	var arrow := PackedVector3Array([
 		base, tip,
-		tip, tip - side - up,
-		tip, tip + side - up,
+		tip, tip + back + half,
+		tip, tip + back - half,
 	])
 	var local := PackedVector3Array()
 	for p in arrow:

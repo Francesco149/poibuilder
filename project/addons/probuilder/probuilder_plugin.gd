@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.7"
+const VERSION := "0.9.8"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -558,7 +558,9 @@ func _on_operation_requested(op_name: String) -> void:
 		_perform_detach(mesh, selection.selected_faces.duplicate())
 		return
 
-	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"))
+	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
+	if logger:
+		cmd.logger = logger
 	var result: Dictionary
 	match op_name:
 		"extrude_faces":
@@ -1097,6 +1099,9 @@ func _restore_mesh_snapshot(mesh_id: int, snapshot: PBMeshData) -> void:
 	PBCommand.restore_mesh_data(mesh.pb_mesh_data, snapshot)
 	mesh.rebuild()
 	mesh.update_gizmos()
+	if logger:
+		logger.info("undo", "snapshot restored on %s: V=%d F=%d (render rebuilt)" % [
+			mesh.name, mesh.pb_mesh_data.positions.size(), mesh.pb_mesh_data.faces.size()])
 
 func _attach_detached(node: Node, parent: Node) -> void:
 	if parent == null or not is_instance_valid(parent):
