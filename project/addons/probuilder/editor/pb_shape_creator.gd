@@ -50,6 +50,12 @@ var plane_normal: Vector3 = Vector3.UP
 ## in-plane axis is plane_normal.cross(u_dir).
 var u_dir: Vector3 = Vector3.RIGHT
 
+## False until the first meaningful drag motion locks the width axis: on
+## axis-aligned surfaces u_dir then snaps to the nearest world axis
+## (ProBuilder behavior — shapes come out axis aligned); on arbitrary
+## surfaces it follows the drag direction in the surface plane.
+var _u_locked: bool = false
+
 ## First press point and current rect center, both on the plane.
 var base_start: Vector3 = Vector3.ZERO
 var rect_center: Vector3 = Vector3.ZERO
@@ -121,21 +127,30 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	u_size = 0.0
 	v_size = 0.0
 	height = 0.0
-	_apply_drag_extents(false)
+	_u_locked = false
+	_apply_drag_extents()
 
 ## Updates the base rect from a point ON the captured plane. Height-driven
 ## values are untouched here (the base stage doesn't know the height yet).
+## The first meaningful drag motion LOCKS the width axis: axis-aligned
+## surfaces snap it to the nearest world axis (shapes come out axis
+## aligned); arbitrary surfaces keep the drag direction in the plane.
 func update_base(point_on_plane: Vector3) -> void:
 	if state != State.BASE:
 		return
 	var drag := point_on_plane - base_start
+	if not _u_locked and drag.length() > 0.05:
+		var drag_in_plane := _project_on_plane(drag, plane_normal)
+		if drag_in_plane.length_squared() > 0.0001:
+			u_dir = _snap_axis(drag_in_plane)
+			_u_locked = true
 	var along_u := drag.dot(u_dir)
 	var v_dir := plane_normal.cross(u_dir).normalized()
 	var along_v := drag.dot(v_dir)
 	u_size = absf(along_u)
 	v_size = absf(along_v)
 	rect_center = base_start + drag * 0.5
-	_apply_drag_extents(false)
+	_apply_drag_extents()
 
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
 ## drag was too small to be intentional.
@@ -149,12 +164,28 @@ func end_base() -> bool:
 	return true
 
 ## Updates the height from a world point (already projected onto the
-## view-parallel plane by the caller).
+## view-parallel plane by the caller). On walls the normal extent maps to
+## the shape's DEPTH (the shape grows along the face normal); on floors it
+## maps to the height.
 func update_height_point(world_point: Vector3) -> void:
 	if state != State.HEIGHT:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
-	_apply_drag_extents(true)
+	_apply_drag_extents()
+
+## The dragged base rect's four corners IN WORLD SPACE (on the captured
+## plane) — the BASE-phase outline the gizmo draws while the mesh preview is
+## still hidden.
+func base_rect_corners() -> PackedVector3Array:
+	var v_dir := plane_normal.cross(u_dir).normalized()
+	var u := u_dir * (u_size * 0.5)
+	var v := v_dir * (v_size * 0.5)
+	return PackedVector3Array([
+		rect_center - u - v,
+		rect_center + u - v,
+		rect_center + u + v,
+		rect_center - u + v,
+	])
 
 ## LMB click in HEIGHT: keep the shape, open the params modal.
 func confirm_height() -> void:
@@ -185,19 +216,44 @@ func reset() -> void:
 	height = 0.0
 	u_size = 0.0
 	v_size = 0.0
+	_u_locked = false
 	preview_node = null
 
 # ── Geometry helpers ─────────────────────────────────────────────────────────
 
-func _apply_drag_extents(floor_mapping: bool) -> void:
+func _apply_drag_extents() -> void:
 	# A negative height means "base stage — height-driven values keep their
-	# current values" (the drag height only exists from HEIGHT on).
+	# current values" (the drag height only exists from HEIGHT on). One
+	# mapping fits every surface: u → width, v → depth, the normal extent →
+	# height (the placement basis points local Y along the face normal, so
+	# "height" grows along the normal on walls exactly like it grows up on
+	# floors).
 	var height_value: float = height if state >= State.HEIGHT else -1.0
-	# Floor/ceiling surfaces map the perpendicular extent to depth; walls map
-	# it to the shape's height.
-	var floor_style := absf(plane_normal.y) > 0.7
 	PBShapeParams.apply_drag_extents(values, maxf(u_size, MIN_EXTENT),
-		maxf(v_size, MIN_EXTENT), height_value, floor_style)
+		maxf(v_size, MIN_EXTENT), height_value)
+
+## Snaps an in-plane direction to the nearest world axis (keeping the drag's
+## sign) when the captured surface is axis aligned; arbitrary surfaces keep
+## the drag direction. This is what makes created shapes axis aligned
+## instead of camera aligned (ProBuilder behavior).
+func _snap_axis(direction: Vector3) -> Vector3:
+	for axis in [Vector3.RIGHT, Vector3.UP, Vector3.BACK]:
+		if absf(axis.dot(plane_normal)) > 0.999:
+			# The surface normal IS axis aligned → snap the drag to the
+			# nearest world axis orthogonal to the normal.
+			var best_axis := Vector3.ZERO
+			var best_dot := -1.0
+			for candidate in [Vector3.RIGHT, Vector3.UP, Vector3.BACK]:
+				if absf(candidate.dot(plane_normal)) > 0.5:
+					continue
+				var d := absf(direction.normalized().dot(candidate))
+				if d > best_dot:
+					best_dot = d
+					best_axis = candidate
+			if best_axis != Vector3.ZERO:
+				return best_axis * signf(direction.dot(best_axis))
+			return direction.normalized()
+	return direction.normalized()
 
 static func _project_on_plane(v: Vector3, normal: Vector3) -> Vector3:
 	return v - normal * v.dot(normal)

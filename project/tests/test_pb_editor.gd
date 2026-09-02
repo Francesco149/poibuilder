@@ -306,6 +306,28 @@ func test_editor_object_mode_persists_across_mesh_switch():
 	assert_eq(ed.select_mode, PBEditor.SelectMode.OBJECT,
 		"Explicit object mode survives switching to another mesh")
 
+func test_editor_explicit_object_mode_survives_deselect_and_reselect():
+	# #3: clicking OFF an object in object mode and clicking back must stay
+	# in object mode.
+	var ed := PBEditor.new()
+	var mesh := PBMesh.new()
+	add_child_autofree(mesh)
+
+	ed.active_mesh = mesh
+	ed.select_mode = PBEditor.SelectMode.OBJECT   # explicit (toolbar button)
+	ed.active_mesh = null
+	ed.active_mesh = mesh
+	assert_eq(ed.select_mode, PBEditor.SelectMode.OBJECT,
+		"An explicit object mode survives deselect + reselect")
+
+	# ...but an explicit element mode still comes back after object mode is
+	# re-entered and the user switches back to it.
+	ed.select_mode = PBEditor.SelectMode.EDGE
+	ed.active_mesh = null
+	ed.active_mesh = mesh
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE,
+		"The remembered element mode resumes when it was the last explicit choice")
+
 func test_editor_restore_element_mode():
 	var ed := PBEditor.new()
 	ed.select_mode = PBEditor.SelectMode.EDGE

@@ -63,8 +63,64 @@ func test_base_on_a_wall_stays_coplanar_with_the_wall():
 	# Drag on the wall: motion in the XY plane, z stays put.
 	creator.update_base(Vector3(2, 1, 3))
 	assert_almost_eq(creator.values["width"], 2.0, 0.0001)
-	assert_almost_eq(creator.values["height"], 1.0, 0.0001,
-		"On a wall the vertical drag extent maps to the shape height")
+	assert_almost_eq(creator.values["depth"], 1.0, 0.0001,
+		"The wall's vertical extent maps to the depth dim (local z lands vertical)")
+
+func test_height_stage_on_a_wall_grows_along_the_normal():
+	var creator := _armed_creator()
+	var wall := Vector3(0, 0, -1)
+	_begin_base(creator, Vector3(0, 0, 3), wall)
+	creator.update_base(Vector3(2, 1, 3))
+	creator.end_base()
+	# Phase 2: pull AWAY from the wall — the normal faces -Z, so away = z→0.
+	creator.update_height_point(Vector3(0, 0, 0))
+	assert_almost_eq(creator.height, 3.0, 0.0001, "Height reads along the wall normal")
+	assert_almost_eq(creator.values["height"], 3.0, 0.0001,
+		"The normal extent is the height param — the placement basis points local Y "
+		+ "along the face normal, so the shape grows ALONG the face")
+	assert_almost_eq(creator.values["depth"], 1.0, 0.0001,
+		"The wall-vertical extent from the base drag stays (local z lands vertical)")
+
+func test_base_drag_snaps_to_world_axes_on_aligned_surfaces():
+	var creator := _armed_creator()
+	_begin_base(creator, Vector3.ZERO)  # floor: axis aligned
+	creator.update_base(Vector3(2, 0, 1))  # mostly-X diagonal drag
+	assert_eq(creator.u_dir, Vector3.RIGHT,
+		"The drag axis snaps to the dominant world axis (axis-aligned creation)")
+	assert_almost_eq(creator.values["width"], 2.0, 0.0001)
+
+func test_arbitrary_surfaces_keep_the_drag_direction():
+	var creator := _armed_creator()
+	var tilted := Vector3(0.3, 0.8, 0.52).normalized()
+	creator.begin(Vector3.ZERO, tilted, Vector3(0, 0, -1))
+	var drag := _project(Vector3(2.0, 0, 0.7), tilted)
+	creator.update_base(creator.plane_point + drag)
+	assert_lt(absf(creator.u_dir.dot(tilted)), 0.001, "u stays in the plane")
+	assert_gt(absf(creator.u_dir.dot(drag.normalized())), 0.999,
+		"Non-axis-aligned faces follow the drag direction, not world axes")
+
+static func _project(v: Vector3, normal: Vector3) -> Vector3:
+	return v - normal * v.dot(normal)
+
+func test_base_rect_corners_frame_the_drag():
+	var creator := _armed_creator()
+	_begin_base(creator, Vector3.ZERO)
+	creator.update_base(Vector3(4, 0, 2))
+	var corners := creator.base_rect_corners()
+	assert_eq(corners.size(), 4)
+	for c in corners:
+		assert_almost_eq(c.y, 0.0, 0.0001, "Corners lie in the base plane")
+	var xs: Array = []
+	var zs: Array = []
+	for c in corners:
+		if not xs.has(c.x):
+			xs.append(c.x)
+		if not zs.has(c.z):
+			zs.append(c.z)
+	assert_eq(xs.size(), 2, "Two x extremes")
+	assert_almost_eq(absf(xs[0] - xs[1]), 4.0, 0.0001, "Rect spans the u extent")
+	assert_eq(zs.size(), 2, "Two z extremes")
+	assert_almost_eq(absf(zs[0] - zs[1]), 2.0, 0.0001, "Rect spans the v extent")
 
 func test_tiny_base_drag_aborts():
 	var creator := _armed_creator()

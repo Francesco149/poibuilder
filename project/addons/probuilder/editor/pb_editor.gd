@@ -105,6 +105,13 @@ var orientation_space: OrientationSpace = OrientationSpace.ELEMENT:
 ## instead of falling back to FACE, so the plugin "stays in" its mode.
 var _last_element_mode: SelectMode = SelectMode.FACE
 
+## True while OBJECT mode was chosen EXPLICITLY (toolbar button / mode set).
+## An explicit object mode survives deselect + reselect (clicking off an
+## object and back must not bounce the user into an element mode); the
+## IMPLICIT object mode (fresh editor, nothing chosen yet) still hands over
+## to the remembered element mode on first selection.
+var _object_mode_explicit: bool = false
+
 # ==============================================================================
 # Setters
 # ==============================================================================
@@ -116,6 +123,7 @@ func set_select_mode(value: SelectMode) -> void:
 	select_mode = value
 	if value != SelectMode.OBJECT:
 		_last_element_mode = value
+	_object_mode_explicit = value == SelectMode.OBJECT
 	if logger:
 		logger.info("editor", "Mode changed: %s → %s" % [SelectMode.keys()[old], SelectMode.keys()[value]])
 	select_mode_changed.emit(select_mode)
@@ -166,12 +174,12 @@ func set_active_mesh(value: PBMesh) -> void:
 		# back) re-enters the same mode.
 	else:
 		selection.set_mesh_data(active_mesh.pb_mesh_data)
-		if select_mode == SelectMode.OBJECT and previous == null:
-			# FIRST entry into any mesh (from nothing selected) lands in the
-			# remembered element mode. Switching BETWEEN meshes keeps the
-			# current mode — OBJECT stays OBJECT (it is a real mode: the
-			# plugin auto-picks an element under the click instead), and an
-			# element mode stays put.
+		if select_mode == SelectMode.OBJECT and previous == null and not _object_mode_explicit:
+			# FIRST entry into any mesh (from nothing selected, with no
+			# explicit mode choice yet) lands in the remembered element mode.
+			# An EXPLICIT object mode stays (clicking off and back must not
+			# bounce the user out of object mode), and switching BETWEEN
+			# meshes keeps whatever mode is current.
 			select_mode = _last_element_mode
 	# Connect new selection signal
 	selection.selection_changed.connect(_on_selection_changed)

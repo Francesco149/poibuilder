@@ -128,6 +128,16 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 			return PBShapeComplex.create_torus(inner, v["tube_radius"])
 	return null
 
+## True when the shape has parameters the creation drag cannot express
+## (steps, sides, thickness, sweep...). Simple size-only shapes (cube,
+## prism, plane, sprite) skip the placement modal entirely — the shape is
+## finalized at the confirming click; Edit Params can always be used later.
+static func needs_params_modal(shape_id: StringName) -> bool:
+	for def in get_param_defs(shape_id):
+		if not (def["name"] in ["width", "height", "depth", "radius", "outer_radius"]):
+			return true
+	return false
+
 ## The shape's facing direction in LOCAL space (the orange creation arrow),
 ## or Vector3.ZERO when the shape has no meaningful facing. Stairs rise
 ## toward +Z (their generator stacks steps along +Z).
@@ -138,28 +148,21 @@ static func facing_direction(shape_id: StringName) -> Vector3:
 	return Vector3.ZERO
 
 ## Maps a creation drag (base rect extents u/v in the surface plane + height
-## along the normal) onto the shape's parameter values. Size dims take the
-## matching extent directly; radius-style shapes use the larger base extent
-## (and the height when the shape is round in plan, so vertical dragging
-## grows them naturally). `floor_mapping`: floor/ceiling surfaces map
-## u→width, v→depth, normal→height; WALL surfaces map u→width, v→height,
-## normal→depth. `height < 0` means "base drag only" — height-driven values
-## (and the radius-from-height rule) keep their current defaults.
+## along the normal) onto the shape's parameter values. The mapping is the
+## same for EVERY surface because the placement basis already orients the
+## data: u → width (local x), v → depth (local z), the normal extent →
+## height (local y — along the face normal, horizontal on walls). Radius-
+## style shapes use the largest extent. `height < 0` means "base drag only"
+## — height-driven values keep their current values.
 static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
-		height: float, floor_mapping: bool = true) -> void:
+		height: float) -> void:
 	var height_known := height >= 0.0
 	if values.has("width"):
 		values["width"] = maxf(0.05, u_size)
 	if values.has("depth"):
-		var depth_extent: float = v_size if floor_mapping else (height if height_known else -1.0)
-		if depth_extent >= 0.0:
-			values["depth"] = maxf(0.05, depth_extent)
-	if values.has("height"):
-		if floor_mapping:
-			if height_known:
-				values["height"] = maxf(0.05, height)
-		else:
-			values["height"] = maxf(0.05, v_size)
+		values["depth"] = maxf(0.05, v_size)
+	if values.has("height") and height_known:
+		values["height"] = maxf(0.05, height)
 	if not values.has("height"):
 		# Round-in-plan shapes grow with the height drag too.
 		var largest := maxf(u_size, v_size)

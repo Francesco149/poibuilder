@@ -101,3 +101,16 @@ func test_count_params_are_int_steps():
 			if def["kind"] == PBShapeParams.KIND_COUNT:
 				assert_almost_eq(float(def["step"]), 1.0, 0.0001,
 					"%s count param '%s' steps by whole numbers" % [shape_id, def["name"]])
+
+func test_simple_shapes_skip_the_placement_modal():
+	# Size-only shapes finalize at the confirming click (no modal); the
+	# modal is for shapes with parameters the drag cannot express.
+	for simple in [&"cube", &"prism", &"plane", &"sprite"]:
+		assert_false(PBShapeParams.needs_params_modal(simple),
+			"%s needs no placement modal" % simple)
+
+func test_parameterized_shapes_open_the_placement_modal():
+	for parameterized in [&"stair", &"curved_stair", &"cylinder", &"cone", &"pipe",
+			&"door", &"arch", &"sphere", &"torus"]:
+		assert_true(PBShapeParams.needs_params_modal(parameterized),
+			"%s opens the params modal (steps/sides/thickness/...)" % parameterized)

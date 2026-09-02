@@ -48,6 +48,12 @@ const VERSION := "0.9.0"
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
 
+	# Receive 3D viewport input even with NOTHING selected: shape creation is
+	# armed from the New Shape menu and must work before any PBMesh is in the
+	# editing context (the engine otherwise only forwards viewport input to
+	# plugins whose _handles() matches the currently edited object).
+	set_input_event_forwarding_always_enabled()
+
 	# Wire up subsystems
 	editor.logger = logger
 	gizmo_plugin.editor = editor
@@ -552,7 +558,7 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 	new_node.transform = mesh.transform
 
 	var undo := get_undo_redo()
-	undo.create_action("Detach Faces")
+	undo.create_action("Detach Faces", UndoRedo.MERGE_DISABLE, mesh)
 	undo.add_do_method(self, "_restore_mesh_snapshot", mesh.get_instance_id(), after)
 	undo.add_do_method(self, "_attach_detached", new_node, mesh.get_parent())
 	undo.add_do_reference(new_node)
@@ -615,8 +621,15 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
 	shape_creator.arm(shape_id)
+	_set_creation_hint("%s — drag a base on any surface (Esc cancels)" % String(shape_id).capitalize())
 	if logger:
 		logger.info("plugin", "Creating '%s' — drag on a surface to draw the base" % shape_id)
+
+## Feeds the overlay's creation row so an armed/dragging session is never
+## invisible (a sticky armed state used to swallow clicks "silently").
+func _set_creation_hint(text: String) -> void:
+	if tool_overlay != null:
+		tool_overlay.set_creation_hint(text)
 
 func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
@@ -691,6 +704,7 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	if hit.is_empty():
 		return false
 	shape_creator.begin(hit["point"], hit["normal"], camera.global_transform.basis.z)
+	_set_creation_hint("release the mouse, then move to set the height")
 	_make_preview_node()
 	_refresh_preview()
 	return true
@@ -706,6 +720,9 @@ func _make_preview_node() -> void:
 	shape_creator.preview_node = node
 
 ## Rebuilds the preview mesh + placement from the creator's current values.
+## During the BASE phase the mesh stays HIDDEN — the gizmo draws only the
+## cyan base-rect outline; the solid shape appears when the height stage
+## starts (ProBuilder behavior).
 func _refresh_preview() -> void:
 	var node := shape_creator.preview_node
 	if node == null:
@@ -713,8 +730,12 @@ func _refresh_preview() -> void:
 	var data := shape_creator.build_data()
 	if data == null:
 		return
+	node.visible = shape_creator.state != PBShapeCreator.State.BASE
 	node.pb_mesh_data = data
 	node.transform = shape_creator.placement_transform(data)
+	# The creation overlays (bounds/outline) live on the node's gizmo — a
+	# rebuild alone never redraws it.
+	node.update_gizmos()
 
 func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
@@ -773,26 +794,47 @@ func _creation_end_base() -> void:
 	if not shape_creator.end_base():
 		# A stray click (no real drag) — ProBuilder creates nothing either.
 		_creation_abort("base drag too small")
+		return
+	_set_creation_hint("move to size it, then click to confirm")
 
 ## The confirming click (after the height drag): the shape exists from here
-## on (its node-add undo is registered now); the params modal opens on top.
+## on (its node-add undo is registered now). Parameterized shapes open the
+## params modal; simple size-only shapes finalize immediately (Edit Params
+## is always available afterwards).
 func _creation_confirm() -> void:
 	shape_creator.confirm_height()
 	var node := shape_creator.preview_node
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	var undo := get_undo_redo()
-	undo.create_action("Add %s" % String(shape_creator.shape_id).capitalize())
+	undo.create_action("Add %s" % String(shape_creator.shape_id).capitalize(),
+		UndoRedo.MERGE_DISABLE, node)
 	undo.add_do_method(self, "_attach_detached", node, scene_root)
 	undo.add_do_method(self, "_own_node", node)
 	undo.add_do_reference(node)
 	undo.add_undo_method(self, "_detach_node", node)
 	undo.commit_action()
+	_set_creation_hint("")
 
-	_params_session_kind = "create"
-	tool_overlay.open_params("%s Parameters" % String(shape_creator.shape_id).capitalize(),
-		PBShapeParams.get_param_defs(shape_creator.shape_id), shape_creator.values)
-	if logger:
-		logger.info("plugin", "Placed '%s' — adjust parameters, then Apply/Cancel" % node.name)
+	if PBShapeParams.needs_params_modal(shape_creator.shape_id):
+		_params_session_kind = "create"
+		tool_overlay.open_params("%s Parameters" % String(shape_creator.shape_id).capitalize(),
+			PBShapeParams.get_param_defs(shape_creator.shape_id), shape_creator.values)
+		if logger:
+			logger.info("plugin", "Placed '%s' — adjust parameters, then Apply/Cancel" % node.name)
+	else:
+		_finalize_created_shape(node)
+		_finish_creation_session(node)
+		if logger:
+			logger.info("plugin", "Created '%s'" % node.name)
+
+## Stamps the creation bookkeeping onto the node's data from the creator's
+## current values (shared by Apply and the no-modal fast path).
+func _finalize_created_shape(node: PBMesh) -> void:
+	if node == null or not is_instance_valid(node) or node.pb_mesh_data == null:
+		return
+	node.pb_mesh_data.shape_id = shape_creator.shape_id
+	node.pb_mesh_data.shape_params = shape_creator.values.duplicate()
+	node.pb_mesh_data.shape_edited = false
 
 func _creation_abort(reason: String) -> void:
 	var node := shape_creator.preview_node
@@ -803,6 +845,7 @@ func _creation_abort(reason: String) -> void:
 		node.get_parent().remove_child(node)
 		node.queue_free()
 	_clear_creation_hover()
+	_set_creation_hint("")
 	if logger:
 		logger.info("plugin", "Shape creation aborted (%s)" % reason)
 
@@ -812,9 +855,14 @@ func _creation_abort(reason: String) -> void:
 func _finish_creation_session(node: PBMesh) -> void:
 	shape_creator.reset()
 	_clear_creation_hover()
+	_set_creation_hint("")
 	tool_overlay.close_params()
 	_params_session_kind = ""
 	if node != null and is_instance_valid(node):
+		# A stray undo (or a corrupted session) could have detached the node —
+		# re-attach before selecting so add_node sees a live tree node.
+		if not node.is_inside_tree():
+			_attach_detached(node, get_editor_interface().get_edited_scene_root())
 		var editor_selection := get_editor_interface().get_selection()
 		editor_selection.clear()
 		editor_selection.add_node(node)
@@ -853,10 +901,7 @@ func _on_params_applied() -> void:
 	if _params_session_kind == "create":
 		var node := shape_creator.preview_node
 		shape_creator.values = tool_overlay.get_param_values()
-		if node != null and node.pb_mesh_data != null:
-			node.pb_mesh_data.shape_id = shape_creator.shape_id
-			node.pb_mesh_data.shape_params = shape_creator.values.duplicate()
-			node.pb_mesh_data.shape_edited = false
+		_finalize_created_shape(node)
 		_finish_creation_session(node)
 		if logger:
 			logger.info("plugin", "Shape parameters applied")
@@ -921,7 +966,8 @@ func _commit_edit_params() -> void:
 	var before := _params_edit_snapshot
 	var after := PBCommand.copy_mesh_data(data)
 	var undo := get_undo_redo()
-	undo.create_action("Edit %s Params" % String(data.shape_id).capitalize())
+	undo.create_action("Edit %s Params" % String(data.shape_id).capitalize(),
+		UndoRedo.MERGE_DISABLE, node)
 	undo.add_do_method(self, "_restore_mesh_snapshot", node.get_instance_id(), after)
 	undo.add_undo_method(self, "_restore_mesh_snapshot", node.get_instance_id(), before)
 	undo.commit_action()

@@ -442,7 +442,7 @@ class FakeUndoManager:
 	var actions: Array = []
 	var _current: Dictionary = {}
 
-	func create_action(_name: String, _merge: int = 0) -> void:
+	func create_action(_name: String, _merge: int = 0, _context: Object = null) -> void:
 		_current = {"name": _name, "do": PackedVector3Array(), "undo": PackedVector3Array(), "indices": PackedInt32Array()}
 
 	func add_do_method(_obj: Object, method: String, node_id: int, indices: PackedInt32Array, positions: PackedVector3Array) -> void:

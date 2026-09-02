@@ -239,7 +239,7 @@ func test_shift_move_edges_extrudes_fins():
 class GestureUndoSpy:
 	var snapshot_actions: Array = []
 
-	func create_action(name: String, _merge: int = 0) -> void:
+	func create_action(name: String, _merge: int = 0, _context: Object = null) -> void:
 		snapshot_actions.append({"name": name, "do_snapshot": null, "undo_snapshot": null})
 
 	func add_do_method(_obj: Object, method: String, node_id: int, snapshot: PBMeshData) -> void:

@@ -818,7 +818,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		_reset_drag_state()
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		if undo != null:
-			undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
+			undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
 			undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
 			undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
 			undo.commit_action()
@@ -853,7 +853,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	mesh_data.shape_edited = true
 
 	if undo != null:
-		undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
+		undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
 		undo.add_do_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), after)
 		undo.add_undo_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), before)
 		undo.commit_action()

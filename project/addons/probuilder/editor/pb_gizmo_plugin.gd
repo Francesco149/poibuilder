@@ -453,10 +453,25 @@ static func _add_points_mesh(gizmo, points: PackedVector3Array, material: Standa
 # Shape-creation overlays
 # ==============================================================================
 
-## The preview's cyan 3D box bounds (drawn on top — visible through the
-## object itself) plus the orange facing arrow at the base when the shape
-## has a facing direction (e.g. stairs).
+## Creation overlays for the preview node: during BASE only the cyan base
+## rect outline shows (the mesh itself is hidden — nothing solid appears
+## before the height stage); from HEIGHT on, the cyan 3D box bounds (drawn
+## on top — visible through the object itself) plus the orange facing arrow
+## when the shape has a facing direction.
 func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreator) -> void:
+	var node := gizmo.get_node_3d() as Node3D
+	if creator.state == PBShapeCreator.State.BASE:
+		if node == null:
+			return
+		var to_local := node.global_transform.affine_inverse()
+		var corners := creator.base_rect_corners()
+		var lines := PackedVector3Array()
+		for i in range(corners.size()):
+			lines.append(to_local * corners[i])
+			lines.append(to_local * corners[(i + 1) % corners.size()])
+		gizmo.add_lines(lines, get_material("pb_creation_edge", gizmo))
+		return
+
 	var aabb := PBShapeCreator._aabb_of(mesh_data)
 	var p0 := aabb.position
 	var p1 := aabb.end

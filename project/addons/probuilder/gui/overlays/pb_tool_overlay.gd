@@ -55,6 +55,8 @@ var _params_section: VBoxContainer
 var _params_title: Label
 var _params_grid: GridContainer
 var _params_hint: Label
+var _creation_row: HBoxContainer
+var _creation_label: Label
 
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
@@ -176,6 +178,19 @@ func _ensure_ui() -> void:
 	drag_value_label.text = "—"
 	_drag_row.add_child(drag_value_label)
 
+	# CREATION row: what the shape-creation session expects next. Only while
+	# a session is running (the plugin feeds the text).
+	_creation_row = HBoxContainer.new()
+	_creation_row.name = "CreationRow"
+	_creation_row.add_theme_constant_override("separation", 8)
+	_body.add_child(_creation_row)
+	_creation_row.add_child(_make_row_label("Create"))
+	_creation_label = _make_value_label()
+	_creation_label.name = "CreationValue"
+	_creation_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_creation_row.add_child(_creation_label)
+	_creation_row.visible = false
+
 	# PARAMS section: the shape-parameter modal.
 	_params_section = VBoxContainer.new()
 	_params_section.name = "ParamsSection"
@@ -278,6 +293,21 @@ func _on_collapse_pressed() -> void:
 func expand() -> void:
 	if _collapsed:
 		_on_collapse_pressed()
+
+# ==============================================================================
+# Creation hint (what the session expects next)
+# ==============================================================================
+
+## Shows/hides the creation guidance row. Empty text hides it and lets the
+## panel auto-hide again.
+func set_creation_hint(text: String) -> void:
+	_ensure_ui()
+	_creation_label.text = text
+	_creation_row.visible = text != ""
+	update_visibility()
+
+func has_creation_hint() -> bool:
+	return _ui_built and _creation_row.visible
 
 # ==============================================================================
 # Params session (modal)
@@ -418,14 +448,17 @@ func refresh() -> void:
 	update_visibility()
 
 ## The panel shows while a mesh is selected AND at least one of:
-## pinned, params modal open, elements selected, a drag running.
+## pinned, params modal open, elements selected, a drag running — or while
+## a shape-creation session is showing its hint (creation needs no mesh).
 func update_visibility() -> void:
+	var creation_hint := has_creation_hint()
 	if editor == null:
-		visible = params_open
+		visible = params_open or creation_hint
 		return
 	var mesh_selected := editor.active_mesh != null
-	visible = mesh_selected and (pinned or params_open or _has_selection() \
-		or (element_editor != null and element_editor.drag_active))
+	visible = (mesh_selected and (pinned or params_open or _has_selection() \
+		or (element_editor != null and element_editor.drag_active))) \
+		or creation_hint
 
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
