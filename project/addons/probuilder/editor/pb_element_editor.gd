@@ -76,12 +76,27 @@ var _drag_inset_bases: Array = []
 ## Latest inset amount applied this gesture (readout only).
 var _last_inset_amount: float = 0.0
 
+## EXTRUDE_MOVE bookkeeping for the live side-winding flip: when the cap is
+## dragged back through its base plane, the side quads (wound for the
+## original extrude direction at drag begin) would render inside-out —
+## "missing faces". The flip rewrites their index triples each update from
+## the drag-start snapshot (idempotent, like the position replay).
+var _drag_side_faces: Array[PBFace] = []
+var _drag_side_tris: Array = []  # PackedInt32Array per side face (original)
+var _drag_extrude_normal: Vector3 = Vector3.ZERO
+var _drag_sides_flipped: bool = false
+
 ## Center-handle drag state: screen-space radius ratio about the pivot, and
 ## the captured pivot/start point. Driven by PBGizmoPlugin handle callbacks.
 var _center_factor: float = 1.0
 var _center_start_screen: Vector2 = Vector2.ZERO
 var _center_pivot: Vector3 = Vector3.ZERO  # node-local
 var _center_has_start: bool = false
+
+## Rel cache for engine-delivered drags: identical rels (repeated deliveries
+## of the same motion) skip the full position recompute + rebuild.
+var _last_rel: Transform3D = Transform3D()
+var _last_rel_valid: bool = false
 
 ## Reads live modifier state. Editor-process only (headless tests inject
 ## shift directly into _decide_gesture).
@@ -611,6 +626,12 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_last_inset_amount = 0.0
 	_center_factor = 1.0
 	_center_has_start = false
+	_drag_side_faces = []
+	_drag_side_tris = []
+	_drag_extrude_normal = Vector3.ZERO
+	_drag_sides_flipped = false
+	_last_rel = Transform3D()
+	_last_rel_valid = false
 	for id in ids:
 		_drag_start_xf[id] = get_subgizmo_transform(mesh_data, node, id)
 
@@ -629,8 +650,26 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 
 ## Shift+move: extrude the selection at distance 0, then the drag translates
 ## only the new caps/fins (their lifted corners). Undo covers the whole
-## gesture via a full-mesh snapshot.
+## gesture via a full-mesh snapshot. Also records the created SIDE faces
+## (caps excluded) plus the pre-op region normal, so the drag can flip their
+## winding when the cap crosses back through the base plane.
 func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+	# Region normal over the PRE-op geometry (the extrude direction the side
+	# quads will be wound for). Must be captured BEFORE the op rewrites the
+	# faces array.
+	var normal_acc := Vector3.ZERO
+	if editor.select_mode != PBEditor.SelectMode.EDGE:
+		var positions := mesh_data.positions
+		for fi in ids:
+			if fi >= 0 and fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
+				var idxs := mesh_data.faces[fi].get_indexes()
+				for t in range(0, idxs.size() - 2, 3):
+					if idxs[t] < positions.size() and idxs[t + 1] < positions.size() \
+							and idxs[t + 2] < positions.size():
+						normal_acc += (positions[idxs[t + 1]] - positions[idxs[t]]) \
+							.cross(positions[idxs[t + 2]] - positions[idxs[t]])
+		_drag_extrude_normal = normal_acc.normalized()
+
 	var result: Dictionary
 	if editor.select_mode == PBEditor.SelectMode.EDGE:
 		result = PBMeshOps.extrude_edges(mesh_data, ids, 0.0, true)
@@ -641,11 +680,29 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 		# drag degrades to a plain move of the selection.
 		_drag_gesture = DragGesture.NORMAL
 		_drag_before_op = null
+		_drag_extrude_normal = Vector3.ZERO
 		return
+
 	# _drag_original_positions was captured PRE-op above; the gesture replays
 	# from the POST-op geometry, so re-snapshot now.
 	_drag_original_positions = mesh_data.positions.duplicate()
 	_drag_union_override = result["drag_positions"]
+
+	# Side faces = the op's new faces minus the caps (fins extruded from
+	# edges ARE the caps — edge gestures get no flip treatment).
+	_drag_side_faces = []
+	_drag_side_tris = []
+	if editor.select_mode != PBEditor.SelectMode.EDGE:
+		var caps: PackedInt32Array = result["cap_face_ids"]
+		var cap_set := {}
+		for fi in caps:
+			cap_set[fi] = true
+		for fi in result["new_face_ids"]:
+			if not cap_set.has(fi) and fi < mesh_data.faces.size() \
+					and mesh_data.faces[fi] != null:
+				_drag_side_faces.append(mesh_data.faces[fi])
+				_drag_side_tris.append(mesh_data.faces[fi].get_indexes().duplicate())
+	_drag_sides_flipped = false
 
 ## Center-handle inset (shift + center square on faces): seed a minimal
 ## inset (topology: inner face + ring per face), then the drag lerps each
@@ -730,13 +787,18 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	# every selected subgizmo's transform, so any id's rel is the gesture's
 	# node-space delta (translation / rotate-about-pivot / scale-about-pivot).
 	# Center-handle drags have no engine deliveries — they carry their own
-	# factor and skip this entirely.
-	var rel: Transform3D = Transform3D()
+	# factor and skip this entirely. Repeated identical rels (multi-id
+	# selections redeliver the same motion) skip the full recompute.
+	var rel: Transform3D = _last_rel
 	if _drag_gesture == DragGesture.NORMAL or _drag_gesture == DragGesture.EXTRUDE_MOVE:
 		if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) \
 				or not _drag_pending.has(_drag_latest_id):
 			return
 		rel = _drag_pending[_drag_latest_id] * _drag_start_xf[_drag_latest_id].affine_inverse()
+		if _last_rel_valid and rel.is_equal_approx(_last_rel):
+			return
+		_last_rel = rel
+		_last_rel_valid = true
 
 	var new_positions := _drag_original_positions.duplicate()
 	var pos_count: int = new_positions.size()
@@ -767,7 +829,42 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 			_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
 
 	mesh_data.positions = new_positions
-	mesh_data.invalidate_caches()
+
+	# EXTRUDE_MOVE: when the cap crosses back through its base plane, flip
+	# the side quads' winding so they stay outward-facing (a wound-for-+normal
+	# tube rendered at negative extrusion shows its backfaces — "missing
+	# faces"). Rewritten from the drag-start snapshot; idempotent.
+	var flipped_now := false
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
+			and _drag_extrude_normal.length_squared() > 0.5:
+		var crossed := rel.origin.dot(_drag_extrude_normal) < 0.0
+		if crossed != _drag_sides_flipped:
+			_drag_sides_flipped = crossed
+			flipped_now = true
+			for i in range(_drag_side_faces.size()):
+				var face: PBFace = _drag_side_faces[i]
+				var tris: PackedInt32Array = _drag_side_tris[i]
+				if crossed:
+					var flipped := PackedInt32Array()
+					flipped.resize(tris.size())
+					for t in range(0, tris.size() - 2, 3):
+						flipped[t] = tris[t + 2]
+						flipped[t + 1] = tris[t + 1]
+						flipped[t + 2] = tris[t]
+					face.set_indexes(flipped)
+				else:
+					face.set_indexes(tris.duplicate())
+
+	if flipped_now:
+		# A winding flip changes the side faces' normals too (including the
+		# base corners outside the drag union) — full recompute, once.
+		mesh_data.calculate_normals()
+	else:
+		# Position edits never change the common-edge list or weld groups
+		# (index pairs/groups), and only the drag union's normals change —
+		# incremental updates keep the per-motion cost flat instead of
+		# rebuilding every normal on each mouse move.
+		mesh_data.update_normals_for(union)
 	node.rebuild()
 
 # ==============================================================================
@@ -833,19 +930,18 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 			DragGesture.keys()[_drag_gesture], ids.size()])
 	return true
 
-## Applies the drag from the current screen point: a radius ratio about the
-## pivot's screen position drives either uniform scale or the inset amount.
+## Applies the drag from the current screen point: the HORIZONTAL screen
+## delta from the drag start drives uniform scale or inset (ProBuilder-style
+## center handle: drag right = smaller, drag left = bigger, 1% per pixel).
+## A pure screen delta (no radius ratio about the pivot) can never explode:
+## the old radius ratio divided by a near-zero start radius when the handle
+## was grabbed dead-on, jumping the factor to its clamp.
 func apply_center_drag(node: PBMesh, camera: Camera3D, screen_pos: Vector2) -> void:
 	if not center_drag_active() or node == null or camera == null:
 		return
 	if not _center_has_start:
 		return
-	var pivot_screen := camera.unproject_position(node.global_transform * _center_pivot)
-	var start_radius := _center_start_screen.distance_to(pivot_screen)
-	var radius := screen_pos.distance_to(pivot_screen)
-	if start_radius < 1.0:
-		return
-	_center_factor = clampf(radius / start_radius, 0.01, 10.0)
+	_center_factor = clampf(1.0 - (screen_pos.x - _center_start_screen.x) * 0.01, 0.01, 10.0)
 	_apply_drag(node, node.pb_mesh_data, PackedInt32Array())
 
 ## Commits (or cancels) a center-handle drag through the shared commit
@@ -987,6 +1083,12 @@ func _reset_drag_state() -> void:
 	_center_has_start = false
 	_center_pivot = Vector3.ZERO
 	_drag_ids = PackedInt32Array()
+	_drag_side_faces = []
+	_drag_side_tris = []
+	_drag_extrude_normal = Vector3.ZERO
+	_drag_sides_flipped = false
+	_last_rel = Transform3D()
+	_last_rel_valid = false
 
 const TRANSFORM_ACTION_NAME := "Transform Elements"
 

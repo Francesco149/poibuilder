@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.5"
+const VERSION := "0.9.6"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -347,6 +347,16 @@ func _on_selection_changed() -> void:
 		editor.active_mesh = pb_mesh
 	# Note: _make_visible(false) handles deselection
 
+	# Selecting something else while a params session is open closes it
+	# (auto-apply): the dialog must never sit over a node the user has moved
+	# on from. Re-entrant call from _finish_creation_session's own selection
+	# change is a no-op (the session kind is already cleared).
+	if _params_session_kind == "edit":
+		_on_params_applied()
+	elif _params_session_kind == "create" and pb_mesh != null \
+			and pb_mesh != shape_creator.preview_node:
+		_on_params_applied()
+
 # ==============================================================================
 # Editor State Callbacks
 # ==============================================================================
@@ -480,12 +490,19 @@ func _on_overlay_toggled(pinned: bool) -> void:
 	tool_overlay.pinned = pinned
 	tool_overlay.update_visibility()
 
+## Drag lifecycle signal. Hover is cleared when a drag STARTS; per-update
+## refreshes are deliberately NOT done here — the delivery path
+## (_set_subgizmo_transform) already redraws the gizmo every motion, and a
+## second full redraw per delivery halved the drag frame rate.
+var _drag_was_active: bool = false
+
 func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> void:
-	if active:
+	if active and not _drag_was_active:
 		editor.hover_id = -1
 		_hover_drawn_last = -1
 		if editor.active_mesh != null:
 			editor.active_mesh.update_gizmos()
+	_drag_was_active = active
 
 ## A shift+move / shift+scale gesture committed — face ids shifted, so the
 ## engine's subgizmo selection and our mirrors are stale. Clear and redraw
@@ -640,11 +657,12 @@ var _params_edit_snapshot: PBMeshData = null
 var _params_edit_values: Dictionary = {}
 
 ## A New Shape menu pick ARMS creation: nothing exists yet — the next LMB
-## drag on any surface (PBMesh face or grid plane) draws the base. A session
-## still in progress is closed first (abort before the confirming click —
-## nothing existed; apply after it — the shape stays).
+## drag on any surface (PBMesh face or grid plane) draws the base. Any open
+## params session is committed first (a create session in the modal applies;
+## an Edit Params session commits) so the new shape never replaces the node
+## a still-open dialog was editing.
 func _on_shape_requested(shape_id: StringName) -> void:
-	if shape_creator.state == PBShapeCreator.State.PARAMS:
+	if _params_session_kind != "":
 		_on_params_applied()
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
@@ -678,19 +696,32 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 				PBShapeCreator.State.HEIGHT:
 					_creation_confirm()
 					return AFTER_GUI_INPUT_STOP
+				PBShapeCreator.State.PARAMS:
+					# ANY viewport press auto-applies the open modal and
+					# falls through — the same click keeps acting on the
+					# scene (select a face of the placed shape, start the
+					# next shape, drag a new base...). No dead confirm step.
+					_on_params_applied()
+					return AFTER_GUI_INPUT_PASS
 		else:
 			if shape_creator.state == PBShapeCreator.State.BASE:
 				_creation_end_base()
 				return AFTER_GUI_INPUT_STOP
 
-	if event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == KEY_ESCAPE:
-		if shape_creator.state == PBShapeCreator.State.PARAMS:
-			_on_params_canceled()
-		else:
-			# ESC before the confirming click: nothing is created at all.
-			_creation_abort("cancelled with Escape")
-		return AFTER_GUI_INPUT_STOP
+	if event is InputEventKey and event.pressed and not event.echo:
+		if shape_creator.state == PBShapeCreator.State.PARAMS \
+				and event.keycode != KEY_ESCAPE:
+			# Typing anywhere else / pressing hotkeys dismisses the modal
+			# (applies) instead of leaving it stuck over a live editor.
+			_on_params_applied()
+			return AFTER_GUI_INPUT_PASS
+		if event.keycode == KEY_ESCAPE:
+			if shape_creator.state == PBShapeCreator.State.PARAMS:
+				_on_params_canceled()
+			else:
+				# ESC before the confirming click: nothing is created at all.
+				_creation_abort("cancelled with Escape")
+			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
 ## Nearest surface under the cursor: PBMesh faces (world space) with the
@@ -732,6 +763,9 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	if hit.is_empty():
 		return false
 	shape_creator.begin(hit["point"], hit["normal"], camera.global_transform.basis.z)
+	# The pressed face's hover highlight dies with the drag start (the base
+	# outline takes over); hover stays off until the HEIGHT stage.
+	_clear_creation_hover()
 	_set_creation_hint("release the mouse, then move to set the height")
 	_make_preview_node()
 	_refresh_preview()
@@ -784,13 +818,16 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 			if hit != PBShapeCreator.RAY_MISS:
 				shape_creator.update_base(hit)
 				_refresh_preview()
-			_update_creation_hover(camera, screen_pos)
+			# No hover highlight while the base drag is out — the cursor is
+			# busy drawing the rect, not picking a face.
 		PBShapeCreator.State.HEIGHT:
 			var ref := PBShapeCreator.height_reference_point(camera.global_position,
 				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
 			shape_creator.update_height_point(ref)
 			_refresh_preview()
 			_update_creation_hover(camera, screen_pos)
+		PBShapeCreator.State.PARAMS:
+			pass  # modal open — no preview updates, no hover
 		_:
 			_update_creation_hover(camera, screen_pos)
 
@@ -801,6 +838,7 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 	var best_t := INF
 	var best_node: PBMesh = null
 	var best_face := -1
+	var best_point := Vector3.ZERO
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
 		for node in _collect_pbmeshes(scene_root):
@@ -811,6 +849,7 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 				best_t = res.distance
 				best_node = node
 				best_face = res.face_index
+				best_point = res.hit_point
 	var prev_node := gizmo_plugin.creation_hover_node
 	if best_node != prev_node or best_face != gizmo_plugin.creation_hover_face:
 		gizmo_plugin.creation_hover_node = best_node
@@ -819,11 +858,14 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 			prev_node.update_gizmos()
 		if best_node != null:
 			best_node.update_gizmos()
+	# Always tracked (cheap): the ARMED cursor square sits at this point.
+	gizmo_plugin.creation_hover_point = best_point
 
 func _clear_creation_hover() -> void:
 	var prev_node := gizmo_plugin.creation_hover_node
 	gizmo_plugin.creation_hover_node = null
 	gizmo_plugin.creation_hover_face = -1
+	gizmo_plugin.creation_hover_point = Vector3.ZERO
 	if prev_node != null and is_instance_valid(prev_node):
 		prev_node.update_gizmos()
 
@@ -832,6 +874,10 @@ func _creation_end_base() -> void:
 		# A stray click (no real drag) — ProBuilder creates nothing either.
 		_creation_abort("base drag too small")
 		return
+	# Rebuild NOW: the solid preview appears immediately as a flat slab ON
+	# the surface (height 0) instead of popping in below it with a jump at
+	# the first mouse move.
+	_refresh_preview()
 	_set_creation_hint("move to size it, then click to confirm")
 
 ## The confirming click (after the height drag): the shape exists from here

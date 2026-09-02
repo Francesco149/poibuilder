@@ -103,11 +103,8 @@ func test_center_drag_uniform_scales_about_pivot():
 		"Center drag begins over a selection")
 	assert_true(logic.center_drag_active())
 
-	# Move the cursor to the OPPOSITE side at 2x the start radius → 2x scale.
-	var pivot_screen: Vector2 = _camera.unproject_position(mesh.global_transform * pivot)
-	var start_offset := Vector2(50, -20)
-	logic._center_start_screen = pivot_screen + start_offset
-	logic.apply_center_drag(mesh, _camera, pivot_screen + start_offset * -2.0)
+	# Drag LEFT 100px → factor 1 - (-100 * 0.01) = 2x scale.
+	logic.apply_center_drag(mesh, _camera, Vector2(100, 200))
 
 	var checked := 0
 	for idx in logic.element_indices(md, 0):
@@ -122,7 +119,7 @@ func test_center_drag_uniform_scales_about_pivot():
 	assert_true(logic.commit_center_drag(mesh, ids, false))
 	assert_eq(md.faces.size(), 6, "Uniform scale commit keeps topology")
 
-func test_center_drag_factor_tracks_screen_radius_ratio():
+func test_center_drag_factor_tracks_horizontal_delta():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
@@ -131,17 +128,28 @@ func test_center_drag_factor_tracks_screen_radius_ratio():
 
 	var ids := _ids([0])
 	var pivot := logic.center_pivot(md, ids)
-	var pivot_screen: Vector2 = _camera.unproject_position(mesh.global_transform * pivot)
-	# Start 10px from the pivot, end 30px away → factor 3.
-	logic.begin_center_drag(mesh, ids, false, pivot, pivot_screen + Vector2(10, 0))
-	logic.apply_center_drag(mesh, _camera, pivot_screen + Vector2(30, 0))
+	# Drag RIGHT 50px → factor 1 - (50 * 0.01) = 0.5 (half size).
+	logic.begin_center_drag(mesh, ids, false, pivot, Vector2(200, 200))
+	logic.apply_center_drag(mesh, _camera, Vector2(250, 200))
 
 	for idx in logic.element_indices(md, 0):
 		var before := start_positions[idx] - pivot
 		if before.length() > 0.0001:
 			var after: Vector3 = md.positions[idx] - pivot
-			assert_almost_eq(after.length() / before.length(), 3.0, 0.05,
-				"The factor is the screen-radius ratio (smooth, no engine rel math)")
+			assert_almost_eq(after.length() / before.length(), 0.5, 0.02,
+				"Drag right = smaller (ProBuilder center handle, 1% per pixel)")
+
+	# A fresh drag LEFT of the start grows the shape instead — and a drag
+	# starting dead-on the handle can never explode (no division involved).
+	logic.commit_center_drag(mesh, ids, true)
+	logic.begin_center_drag(mesh, ids, false, pivot, Vector2(200, 200))
+	logic.apply_center_drag(mesh, _camera, Vector2(100, 200))
+	for idx in logic.element_indices(md, 0):
+		var before := start_positions[idx] - pivot
+		if before.length() > 0.0001:
+			var after: Vector3 = md.positions[idx] - pivot
+			assert_almost_eq(after.length() / before.length(), 2.0, 0.02,
+				"Drag left = bigger")
 
 func test_center_drag_scale_commit_uses_position_undo():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
@@ -215,6 +223,43 @@ func test_shift_move_extrudes_faces_at_drag_begin():
 
 	logic.commit_subgizmos(mesh, ids, false)
 	assert_eq(md.faces.size(), faces_before + 4, "Commit keeps the extruded topology")
+
+func test_shift_move_crossing_zero_flips_side_winding():
+	# Dragging the cap back through its base plane must flip the side quads'
+	# winding (they were wound for the original extrude direction at drag
+	# begin), or they render inside-out — "missing faces".
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var ids := _ids([4])  # top face (y = +0.5)
+	var state := _gesture_state(s, ids, true)
+	# Extrude +Y, then reverse through the base and out the bottom.
+	var targets := [0.5, 1.0, 0.25, -0.3, -1.0, -1.6]
+	for t in targets:
+		for id in ids:
+			logic.set_subgizmo_transform_with_shift(mesh, ids, id,
+				state["start"][id].translated(Vector3(0, t, 0)), true)
+
+	var vol := _signed_volume(md)
+	assert_gt(vol, 0.5,
+		"Crossing zero keeps every side face outward-facing (signed volume stays positive)")
+
+	logic.commit_subgizmos(mesh, ids, false)
+
+## Divergence-theorem volume over the internal CCW triangles: positive for a
+## closed outward-oriented surface; inverted faces cancel it toward zero.
+static func _signed_volume(md: PBMeshData) -> float:
+	var p := md.positions
+	var vol := 0.0
+	for face in md.faces:
+		if face == null:
+			continue
+		var idxs := face.get_indexes()
+		for t in range(0, idxs.size() - 2, 3):
+			vol += p[idxs[t]].dot(p[idxs[t + 1]].cross(p[idxs[t + 2]]))
+	return vol / 6.0
 
 func test_shift_move_extrude_commit_uses_snapshot_undo():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
@@ -324,9 +369,10 @@ func test_center_drag_with_shift_insets_faces_uniformly():
 	assert_eq(md.faces.size(), faces_before + 4,
 		"The seeded inset adds one ring quad per face edge (6 → 10)")
 
-	# Radius ratio 0.5 → inset amount 0.5: the inner face's corners sit
-	# halfway to the centroid, ALL at the same radius (aspect ratio fixed).
-	logic.apply_center_drag(mesh, _camera, Vector2(200, 200) * 0.5 + pivot_screen_of(mesh, pivot) * 0.5)
+	# Drag RIGHT 50px → factor 0.5 → inset amount 0.5: the inner face's
+	# corners sit halfway to the centroid, ALL at the same radius (aspect
+	# ratio fixed).
+	logic.apply_center_drag(mesh, _camera, Vector2(250, 200))
 
 	var inner_positions: Array[Vector3] = []
 	for idx in logic._drag_union_override:
@@ -341,7 +387,7 @@ func test_center_drag_with_shift_insets_faces_uniformly():
 		assert_almost_eq((p - centroid).length(), first_radius, 0.01,
 			"Aspect ratio fixed: all corners sit at the same inset radius")
 	assert_almost_eq(first_radius, 0.7071 * 0.5, 0.03,
-		"A 0.5 radius ratio insets by 0.5 (halfway to the centroid)")
+		"A 50px right drag insets by 0.5 (halfway to the centroid)")
 
 	logic.commit_center_drag(mesh, ids, true)
 	assert_eq(md.faces.size(), faces_before, "Cancel un-insets completely")

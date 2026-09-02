@@ -339,6 +339,74 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.6 round complete ✓ — creation UX + extrude fixes from the third
+sign-off report:
+- PARAMS MODAL AUTO-DISMISS: any viewport press or key while the modal is
+  open APPLIES it and lets the same event pass through — the click keeps
+  acting on the scene (select a face of the placed shape, start the next
+  shape). ESC still cancels. A New Shape pick while an EDIT-params session
+  is open commits it; selecting a different node in any dock dismisses
+  too. No dead modal state can outlive the user's attention.
+- HOVER vs BASE DRAG: the cyan face highlight is cleared at base-drag
+  begin and never re-picked during BASE (the cursor is drawing the rect).
+- EXTRUDE: (a) SHIFT+press on an ALREADY-SELECTED element returns -1 from
+  _subgizmos_intersect_ray — the engine's shift-click toggle would erase
+  the selection and kill the shift+drag extrude gesture; returning -1
+  keeps the selection so the following drag extrudes (ProBuilder
+  semantics; trade-off: shift+click no longer deselects a selected
+  element). (b) CROSSING ZERO: extrude-drag side quads are wound for the
+  original direction, so dragging the cap back through its base plane
+  rendered them inside-out ("missing faces"); PBElementEditor now records
+  the side faces + region normal at gesture begin and flips their winding
+  live when the displacement along the normal goes negative (idempotent
+  replay from the drag-start snapshot). Verified in the GUI harness by a
+  signed-volume assertion (divergence theorem: inverted faces collapse it
+  toward zero — 1.65 → 0.55 before the fix, grows linearly after).
+- CENTER SCALE HANDLE: the factor is now a LINEAR horizontal screen delta
+  (1% per pixel: drag right = smaller, drag left = bigger) — the old
+  radius ratio divided by the press-to-pivot distance, which is ~0 when
+  the handle is grabbed dead-on, exploding the scale.
+- DRAG SMOOTHNESS (~45% faster per motion on a 400-face mesh; see
+  tests/bench_drag.gd): to_array_mesh() now uses get_normals() (the cache
+  was being ignored — normals re-ran on every rebuild); PBMeshData
+  update_normals_for(union) recomputes only the drag union's normals;
+  position-only drags keep the common-edge and weld caches hot (they are
+  index-based); the plugin's element_drag_updated handler redraws only on
+  the drag START transition (the delivery path already redraws per
+  motion); PBElementEditor caches the last rel and skips identical
+  redeliveries.
+- CREATION FLOW: releasing the base drag rebuilds the preview IMMEDIATELY
+  — a flat slab sitting ON the surface (height 0), no below-surface pop
+  at the first mouse move.
+- FACING ARROW + PLACEMENT BASIS: PBShapeCreator.facing is a world-space
+  in-plane direction following the heuristic "the dimension (u/v) that
+  received the biggest delta in the last significant movement, pointing
+  away from the drag start" (dead zone 0.04; lateral moves during the
+  HEIGHT stage re-point it — "nudge while placing"). The placement basis
+  orients local +Z along facing, so stairs rise toward the arrow; the
+  u/v→width/depth extent mapping swaps when the forward points along u.
+  The arrow draws during BASE (on the plane at rect_center) and
+  HEIGHT/PARAMS (local +Z from the AABB base center) for EVERY shape.
+- CREATION OVERLAYS DRAW ON TOP: create_material()'s variants are chosen
+  by the NODE'S selected state and the UNSELECTED variant renders at 30%
+  alpha with depth test ON — creation overlays on the unselected preview
+  came out faint and hidden behind geometry. The outline/arrow now use
+  direct StandardMaterial3Ds (unshaded, full alpha, no_depth_test,
+  max render priority) drawn as thick line stacks, plus YELLOW SQUARE
+  vertex gizmos (GL points): one under the cursor while ARMED (on the
+  hovered node's gizmo), drag start+end during BASE, and start+end+
+  lifted end during HEIGHT.
+- GUI HARNESS LESSONS (general): synthesized InputEventMouseMotion MUST
+  set button_mask while a button is held — without it the engine treats
+  every drag as released and ALL drag tests silently no-op (this masked
+  every drag test until now). Keyboard focus can sit in the SCENE DOCK
+  after programmatic node selection — H/J/K hotkeys sent before a
+  viewport click are lost. The 4.7.2 transform gizmo cannot be engaged by
+  synthesized clicks even at exact projected grabber positions (its
+  hit-test differs from the 4.8 sources); the extrude tests therefore
+  drive the plugin's delivery path directly against real click-made
+  selections.
+
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.
 

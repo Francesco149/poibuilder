@@ -59,6 +59,11 @@ var _normals: PackedVector3Array = PackedVector3Array()
 var _common_edges: Array[PBEdge] = []
 var _common_edges_valid: bool = false
 
+## Cached: position index -> owning face index (position privacy gives every
+## position exactly one owner). Used by the incremental normals update.
+var _position_face: Dictionary = {}
+var _position_face_valid: bool = false
+
 # ==============================================================================
 # Property Accessors (Computed, Read-Only)
 # ==============================================================================
@@ -128,7 +133,65 @@ func invalidate_caches() -> void:
 	invalidate_shared_vertex_lookup()
 	invalidate_shared_texture_lookup()
 	_common_edges_valid = false
+	_position_face_valid = false
 	_normals.clear()
+
+## Invalidates ONLY the geometry-derived caches (normals). Position edits
+## never change the common-edge list (pairs of indexes) or the weld groups,
+## so per-motion drags keep those caches hot instead of rebuilding them on
+## every mouse move.
+func invalidate_normals() -> void:
+	_normals.clear()
+
+## Recomputes normals only for the faces owning `union` positions — the
+## incremental path for drags, where exactly the drag union moves. Produces
+## the same values as calculate_normals() (per-face sequential triangle
+## scan, last triangle wins per position) at a fraction of the cost on
+## large meshes. Falls back to the full build when the array is stale.
+func update_normals_for(union: PackedInt32Array) -> void:
+	if positions.is_empty() or faces.is_empty():
+		return
+	if _normals.size() != positions.size():
+		calculate_normals()
+		return
+	var wanted := {}
+	for idx in union:
+		if idx >= 0 and idx < positions.size():
+			wanted[idx] = true
+	if wanted.is_empty():
+		return
+	if not _position_face_valid:
+		_position_face.clear()
+		for fi in range(faces.size()):
+			var face: PBFace = faces[fi]
+			if face == null:
+				continue
+			for idx in face.get_indexes():
+				_position_face[idx] = fi
+		_position_face_valid = true
+	var affected_faces := {}
+	for idx in wanted:
+		if _position_face.has(idx):
+			affected_faces[_position_face[idx]] = true
+	var pos_count: int = positions.size()
+	for fi in affected_faces:
+		var face: PBFace = faces[fi]
+		if face == null:
+			continue
+		var idxs := face.get_indexes()
+		for t in range(0, idxs.size() - 2, 3):
+			var i0: int = idxs[t]
+			var i1: int = idxs[t + 1]
+			var i2: int = idxs[t + 2]
+			if i0 >= pos_count or i1 >= pos_count or i2 >= pos_count:
+				continue
+			var cross_prod: Vector3 = (positions[i1] - positions[i0]) \
+				.cross(positions[i2] - positions[i0])
+			var normal: Vector3 = cross_prod.normalized() \
+				if not cross_prod.is_zero_approx() else Vector3.ZERO
+			_normals[i0] = normal
+			_normals[i1] = normal
+			_normals[i2] = normal
 
 ## Returns all unique edges as position-index pairs, deduplicated by shared
 ## vertex group pair, in stable face-scan order. Lazy-cached.
@@ -403,7 +466,9 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 	# a property of the geometry, so normals must NOT be negated.
 	# Ground truth: Godot's own BoxMesh stores CW tris whose cross(v1-v0,
 	# v2-v0) points inward, with attribute normals pointing outward.
-	var normals: PackedVector3Array = calculate_normals()
+	# get_normals() (not calculate_normals() directly): the cache may be hot
+	# (incremental drag updates keep it fresh) — recompute only when stale.
+	var normals: PackedVector3Array = get_normals()
 
 	# Group faces by submesh_index
 	var submesh_faces: Dictionary = {}

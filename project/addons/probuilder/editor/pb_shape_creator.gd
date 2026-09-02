@@ -67,6 +67,22 @@ var v_size: float = 0.0
 ## Signed extent along the plane normal (negative = grows below the surface).
 var height: float = 0.0
 
+## In-plane world-space unit direction the shape's LOCAL +Z ("forward": the
+## high side of stairs) points to. Follows the drag heuristic: the dimension
+## (u or v) that received the biggest delta in the last significant movement,
+## signed away from the drag start — so it can be nudged while placing.
+var facing: Vector3 = Vector3.ZERO
+
+## The corner of the base rect the cursor dragged out (world, on the plane):
+## one end of the base drag, kept for the creation vertex gizmos.
+var base_end: Vector3 = Vector3.ZERO
+
+## Last surface point seen (drag steps are measured against it).
+var _last_point: Vector3 = Vector3.ZERO
+
+## Steps smaller than this don't re-point the facing arrow (dead zone).
+const FACING_DEAD_ZONE := 0.04
+
 ## The live preview node (owned and managed by the plugin; the creator only
 ## supplies data + placement for it). Null while nothing is being drawn.
 var preview_node: PBMesh = null
@@ -80,6 +96,13 @@ func is_active() -> bool:
 func facing_direction() -> Vector3:
 	return PBShapeParams.facing_direction(shape_id)
 
+## The world-space direction the creation arrow points to (unit, in-plane).
+## Falls back to the shape's canonical facing before the drag starts.
+func arrow_direction() -> Vector3:
+	if facing.length_squared() > 0.5:
+		return facing.normalized()
+	return plane_normal.cross(u_dir).normalized()
+
 ## Builds the current shape data from the current values.
 func build_data() -> PBMeshData:
 	if shape_id == &"":
@@ -88,8 +111,12 @@ func build_data() -> PBMeshData:
 
 ## Node transform placing `data` so its base face (AABB face towards the
 ## plane, by height sign) lies IN the drag plane, centered on rect_center.
+## The basis orients local +Z along `facing` (the drag heuristic direction),
+## local +Y along the surface normal — so e.g. stairs rise toward the arrow.
 func placement_transform(data: PBMeshData) -> Transform3D:
-	var basis := Basis(u_dir, plane_normal, u_dir.cross(plane_normal))
+	var f := arrow_direction()
+	var x_axis := plane_normal.cross(f).normalized()
+	var basis := Basis(x_axis, plane_normal, f)
 	var aabb := _aabb_of(data)
 	var lift: float
 	if height >= 0.0:
@@ -128,6 +155,12 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	v_size = 0.0
 	height = 0.0
 	_u_locked = false
+	base_end = surface_point
+	_last_point = surface_point
+	# At rest the forward arrow sits along v (perpendicular to the drag seed)
+	# so the initial extent mapping matches "u → width, v → depth"; the first
+	# significant movement re-points it via the heuristic.
+	facing = plane_normal.cross(u_dir).normalized()
 	_apply_drag_extents()
 
 ## Updates the base rect from a point ON the captured plane. Height-driven
@@ -150,6 +183,8 @@ func update_base(point_on_plane: Vector3) -> void:
 	u_size = absf(along_u)
 	v_size = absf(along_v)
 	rect_center = base_start + drag * 0.5
+	base_end = point_on_plane
+	_update_facing(point_on_plane, v_dir)
 	_apply_drag_extents()
 
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
@@ -161,16 +196,19 @@ func end_base() -> bool:
 		reset()
 		return false
 	state = State.HEIGHT
+	height = 0.0
+	_apply_drag_extents()
 	return true
 
 ## Updates the height from a world point (already projected onto the
 ## view-parallel plane by the caller). On walls the normal extent maps to
 ## the shape's DEPTH (the shape grows along the face normal); on floors it
-## maps to the height.
+## maps to the height. Lateral motion re-points the facing arrow (nudge).
 func update_height_point(world_point: Vector3) -> void:
 	if state != State.HEIGHT:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
+	_update_facing(world_point, plane_normal.cross(u_dir).normalized())
 	_apply_drag_extents()
 
 ## The dragged base rect's four corners IN WORLD SPACE (on the captured
@@ -217,20 +255,48 @@ func reset() -> void:
 	u_size = 0.0
 	v_size = 0.0
 	_u_locked = false
+	facing = Vector3.ZERO
+	base_end = Vector3.ZERO
+	_last_point = Vector3.ZERO
 	preview_node = null
 
 # ── Geometry helpers ─────────────────────────────────────────────────────────
 
+## Facing-arrow heuristic: the in-plane dimension (u or v) that received the
+## biggest delta in the last SIGNIFICANT movement wins; the sign points away
+## from the drag start. Steps inside the dead zone never re-point it, so
+## placing (and nudging) feels stable.
+func _update_facing(point: Vector3, v_dir: Vector3) -> void:
+	var step := _project_on_plane(point - _last_point, plane_normal)
+	_last_point = point
+	if step.length() < FACING_DEAD_ZONE:
+		return
+	var cum := point - base_start
+	var du := step.dot(u_dir)
+	var dv := step.dot(v_dir)
+	if absf(du) >= absf(dv):
+		var su := signf(cum.dot(u_dir))
+		facing = u_dir * (su if su != 0.0 else signf(du))
+	else:
+		var sv := signf(cum.dot(v_dir))
+		facing = v_dir * (sv if sv != 0.0 else signf(dv))
+
 func _apply_drag_extents() -> void:
 	# A negative height means "base stage — height-driven values keep their
 	# current values" (the drag height only exists from HEIGHT on). One
-	# mapping fits every surface: u → width, v → depth, the normal extent →
-	# height (the placement basis points local Y along the face normal, so
-	# "height" grows along the normal on walls exactly like it grows up on
-	# floors).
+	# mapping fits every surface: the placement basis points local Y along
+	# the face normal and local +Z along `facing`, so "height" grows along
+	# the normal on walls exactly like it grows up on floors. The u/v extents
+	# map onto width/depth by where the facing points: forward along v keeps
+	# u → width and v → depth; forward along u swaps them (local Z then runs
+	# along u).
 	var height_value: float = height if state >= State.HEIGHT else -1.0
-	PBShapeParams.apply_drag_extents(values, maxf(u_size, MIN_EXTENT),
-		maxf(v_size, MIN_EXTENT), height_value)
+	var v_dir := plane_normal.cross(u_dir).normalized()
+	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))
+	var width := v_size if forward_along_u else u_size
+	var depth := u_size if forward_along_u else v_size
+	PBShapeParams.apply_drag_extents(values, maxf(width, MIN_EXTENT),
+		maxf(depth, MIN_EXTENT), height_value)
 
 ## Snaps an in-plane direction to the nearest world axis (keeping the drag's
 ## sign) when the captured surface is axis aligned; arbitrary surfaces keep

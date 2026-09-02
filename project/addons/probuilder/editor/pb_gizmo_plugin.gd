@@ -78,9 +78,28 @@ var shape_creator: PBShapeCreator = null
 var creation_hover_node: PBMesh = null
 var creation_hover_face: int = -1
 
+## The surface point under the cursor during creation (for the ARMED-stage
+## vertex square under the mouse).
+var creation_hover_point: Vector3 = Vector3.ZERO
+
 ## Verification counter (GUI harness): how many times the creation BASE
 ## outline branch actually drew lines.
 var creation_outline_draws: int = 0
+
+## Verification counter (GUI harness): subgizmo ray-cast invocations.
+var intersect_ray_calls: int = 0
+
+## Direct overlay materials for the creation outlines/arrow. The plugin-API
+## create_material() variants are NOT usable here: get_material() picks the
+## variant by the NODE's selected state, and the unselected variant draws at
+## 30% alpha with depth test ON — the outline came out faint and hidden
+## behind geometry. These are unshaded, full-alpha, depth-test-off, high
+## render priority: thicker-than-geometry overlays visible through anything.
+var _creation_edge_material: StandardMaterial3D
+var _creation_arrow_material: StandardMaterial3D
+## Yellow square vertex gizmos for the creation drag corners (points render
+## as squares — same language as the element-mode vertex dots).
+var _creation_vert_material: StandardMaterial3D
 
 ## Logger for diagnostics.
 var logger: PBLogger = null:
@@ -106,8 +125,6 @@ func _init() -> void:
 	create_material("pb_wireframe_edge", EDGE_MODE_WIREFRAME_COLOR, false, false)
 	create_material("pb_selected_edge", SELECTED_COLOR, false, true)
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
-	create_material("pb_creation_edge", CREATION_COLOR, false, true)
-	create_material("pb_creation_arrow", CREATION_ARROW_COLOR, false, true)
 	create_handle_material("pb_center_handle")
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
@@ -127,6 +144,17 @@ static func _make_point_material(color: Color, point_size: float) -> StandardMat
 	mat.no_depth_test = false
 	mat.use_point_size = true
 	mat.point_size = point_size
+	return mat
+
+## On-top overlay line material: unshaded, full alpha, depth test disabled.
+static func _make_overlay_material(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.render_priority = RenderingServer.MATERIAL_RENDER_PRIORITY_MAX
 	return mat
 
 func _make_face_fill_material(color: Color) -> StandardMaterial3D:
@@ -186,10 +214,17 @@ func _mesh_data_of(gizmo) -> PBMeshData:
 # ==============================================================================
 
 func _subgizmos_intersect_ray(gizmo, camera: Camera3D, screen_pos: Vector2) -> int:
+	intersect_ray_calls += 1
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null or camera == null or not is_editing_node(node):
 		return -1
 	var id := element_editor.pick_ray(node.pb_mesh_data, node.global_transform, camera, screen_pos)
+	# SHIFT+press on an ALREADY-SELECTED element must not reach the engine's
+	# toggle (it would erase the selection and kill the shift+drag extrude
+	# gesture). Returning -1 keeps the selection; the following drag then
+	# translates/extrudes it, exactly like ProBuilder's shift+face-drag.
+	if id >= 0 and Input.is_key_pressed(KEY_SHIFT) and gizmo.is_subgizmo_selected(id):
+		return -1
 	# Alt+click / double-click on an edge selects its whole loop (the engine
 	# selection stays the single seed id; dragging/highlighting expand it).
 	if id >= 0 and editor != null and editor.select_mode == PBEditor.SelectMode.EDGE:
@@ -547,26 +582,83 @@ static func _add_points_mesh(gizmo, points: PackedVector3Array, material: Standa
 # Shape-creation overlays
 # ==============================================================================
 
-## Creation overlays for the preview node: during BASE only the cyan base
-## rect outline shows (the mesh itself is hidden — nothing solid appears
-## before the height stage); from HEIGHT on, the cyan 3D box bounds (drawn
-## on top — visible through the object itself) plus the orange facing arrow
-## when the shape has a facing direction.
+## Lazily builds the direct creation overlay materials (see the field docs).
+func _creation_materials() -> void:
+	if _creation_edge_material == null:
+		_creation_edge_material = _make_overlay_material(CREATION_COLOR)
+	if _creation_arrow_material == null:
+		_creation_arrow_material = _make_overlay_material(CREATION_ARROW_COLOR)
+	if _creation_vert_material == null:
+		_creation_vert_material = _make_point_material(SELECTED_COLOR, 11.0)
+		_creation_vert_material.render_priority = RenderingServer.MATERIAL_RENDER_PRIORITY_MAX
+
+## Adds the orange facing arrow as thick on-top lines: a shaft from `base`
+## along `dir` plus a three-line barb. All inputs are world space.
+func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vector3,
+		length: float, plane_normal: Vector3) -> void:
+	var tip := base + dir * length
+	var side := dir.cross(plane_normal).normalized()
+	if side.length_squared() < 0.5:
+		side = dir.cross(Vector3.UP)
+		if side.length_squared() < 0.5:
+			side = dir.cross(Vector3.RIGHT)
+	side = side.normalized() * length * 0.22
+	var up := dir.cross(side).normalized() * length * 0.22
+	var arrow := PackedVector3Array([
+		base, tip,
+		tip, tip - side - up,
+		tip, tip + side - up,
+	])
+	var local := PackedVector3Array()
+	for p in arrow:
+		local.append(to_local * p)
+	_add_thick_lines(gizmo, local, _creation_arrow_material, THICK_LINE_OFFSET * 2.0)
+
+## Adds yellow square vertex gizmos (GL points) at the world-space points.
+func _add_vert_squares(gizmo, to_local: Transform3D, world_points: PackedVector3Array) -> void:
+	if world_points.is_empty():
+		return
+	var local := PackedVector3Array()
+	for p in world_points:
+		local.append(to_local * p)
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = local
+	var points_mesh := ArrayMesh.new()
+	points_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_POINTS, arrays)
+	gizmo.add_mesh(points_mesh, _creation_vert_material)
+
+## Creation overlays for the preview node. BASE: the cyan base-rect outline
+## (mesh still hidden) plus the orange facing arrow ON THE PLANE and yellow
+## vertex squares at the drag's start/end corners. HEIGHT/PARAMS: the cyan
+## 3D box bounds, the arrow (local +Z — the basis orients it along `facing`)
+## and squares at the drag start, drag end, and the lifted end corner. All
+## overlays draw thick and on top (visible through geometry).
 func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreator) -> void:
+	_creation_materials()
 	var node := gizmo.get_node_3d() as Node3D
+	if node == null:
+		return
+	var to_local := node.global_transform.affine_inverse()
+	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+
 	if creator.state == PBShapeCreator.State.BASE:
-		if node == null:
-			return
-		var to_local := node.global_transform.affine_inverse()
 		var corners := creator.base_rect_corners()
 		var lines := PackedVector3Array()
 		for i in range(corners.size()):
 			lines.append(to_local * corners[i])
 			lines.append(to_local * corners[(i + 1) % corners.size()])
-		gizmo.add_lines(lines, get_material("pb_creation_edge", gizmo))
+		_add_thick_lines(gizmo, lines, _creation_edge_material, creation_offset)
 		creation_outline_draws += 1
+		# Facing arrow on the base plane + the two drag-corner squares.
+		var arrow_len: float = clampf(maxf(creator.u_size, creator.v_size) * 0.6, 0.35, 2.0)
+		_add_creation_arrow(gizmo, to_local, creator.rect_center, creator.arrow_direction(),
+			arrow_len, creator.plane_normal)
+		_add_vert_squares(gizmo, to_local,
+			PackedVector3Array([creator.base_start, creator.base_end]))
 		return
 
+	# HEIGHT / PARAMS: box bounds around the live preview mesh.
 	var aabb := PBShapeCreator._aabb_of(mesh_data)
 	var p0 := aabb.position
 	var p1 := aabb.end
@@ -586,31 +678,27 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	for edge in edges:
 		lines.append(corners[edge[0]])
 		lines.append(corners[edge[1]])
-	gizmo.add_lines(lines, get_material("pb_creation_edge", gizmo))
+	_add_thick_lines(gizmo, lines, _creation_edge_material, creation_offset)
+	creation_outline_draws += 1
 
-	var facing := creator.facing_direction()
-	if facing == Vector3.ZERO:
-		return
-	var length: float = clampf(aabb.get_longest_axis_size() * 0.5, 0.3, 2.0)
+	# Facing arrow from the base center along local +Z (the placement basis
+	# points +Z along the creator's facing heuristic).
 	var base_center := Vector3(aabb.get_center().x, p0.y, aabb.get_center().z)
-	var tip := base_center + facing.normalized() * length
-	var arrow := PackedVector3Array([base_center, tip])
-	# Arrowhead: two barbs perpendicular to the facing dir in the base plane.
-	var side := facing.normalized().cross(Vector3.UP)
-	if side.length_squared() < 0.25:
-		side = facing.normalized().cross(Vector3.RIGHT)
-	side = side.normalized() * length * 0.25
-	var up := facing.normalized().cross(side).normalized() * length * 0.25
-	arrow.append(tip)
-	arrow.append(tip - side - up)
-	arrow.append(tip)
-	arrow.append(tip + side - up)
-	gizmo.add_lines(arrow, get_material("pb_creation_arrow", gizmo))
+	var arrow_len: float = clampf(aabb.get_longest_axis_size() * 0.5, 0.3, 2.0)
+	_add_creation_arrow(gizmo, Transform3D(), base_center, Vector3(0, 0, 1),
+		arrow_len, Vector3(0, 1, 0))
+
+	# Vertex squares: drag start, drag end, and the extruded end corner.
+	var lifted := creator.base_end + creator.plane_normal * creator.height
+	_add_vert_squares(gizmo, to_local,
+		PackedVector3Array([creator.base_start, creator.base_end, lifted]))
 
 ## The hovered surface face during creation: cyan translucent fill at the
-## selection opacity + its outline as thick cyan strokes (edge-mode select
-## language, cyan).
+## selection opacity + its outline as thick on-top cyan strokes. While the
+## session is still ARMED (no drag yet), also draws the yellow vertex square
+## under the cursor.
 func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
+	_creation_materials()
 	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
 	if fill != null:
 		if _creation_fill_material == null:
@@ -631,4 +719,11 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 			lines.append(positions[a])
 			lines.append(positions[b])
 	if lines.size() >= 2:
-		_add_thick_lines(gizmo, lines, get_material("pb_creation_edge", gizmo))
+		_add_thick_lines(gizmo, lines, _creation_edge_material, THICK_LINE_OFFSET * 1.5)
+
+	# ARMED: one square under the cursor (on the hovered surface point).
+	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
+		var node := gizmo.get_node_3d() as Node3D
+		if node != null:
+			var to_local := node.global_transform.affine_inverse()
+			_add_vert_squares(gizmo, to_local, PackedVector3Array([creation_hover_point]))

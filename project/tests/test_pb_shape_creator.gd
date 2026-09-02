@@ -52,9 +52,11 @@ func test_base_rect_grows_coplanar_with_the_plane():
 	assert_almost_eq(creator.u_size, 2.0, 0.0001)
 	assert_almost_eq(creator.v_size, 1.0, 0.0001)
 	assert_almost_eq(creator.rect_center.x, 1.0, 0.0001, "Rect center is the drag midpoint")
-	# The size params followed the drag (width/height/depth for a cube).
-	assert_almost_eq(creator.values["width"], 2.0, 0.0001)
-	assert_almost_eq(creator.values["depth"], 1.0, 0.0001)
+	# The size params follow the drag THROUGH THE FACING: the dominant drag
+	# dimension re-pointed the arrow along +X, so local Z (depth) runs along
+	# the drag and the lateral extent becomes the width.
+	assert_almost_eq(creator.values["depth"], 2.0, 0.0001)
+	assert_almost_eq(creator.values["width"], 1.0, 0.0001)
 
 func test_base_on_a_wall_stays_coplanar_with_the_wall():
 	var creator := _armed_creator()
@@ -62,9 +64,12 @@ func test_base_on_a_wall_stays_coplanar_with_the_wall():
 	_begin_base(creator, Vector3(0, 0, 3), wall)
 	# Drag on the wall: motion in the XY plane, z stays put.
 	creator.update_base(Vector3(2, 1, 3))
-	assert_almost_eq(creator.values["width"], 2.0, 0.0001)
-	assert_almost_eq(creator.values["depth"], 1.0, 0.0001,
-		"The wall's vertical extent maps to the depth dim (local z lands vertical)")
+	# Facing followed the dominant horizontal drag → depth = 2 along the
+	# wall; the wall-vertical extent (1) becomes the width (local X lands
+	# vertical: x = normal x facing).
+	assert_almost_eq(creator.values["depth"], 2.0, 0.0001)
+	assert_almost_eq(creator.values["width"], 1.0, 0.0001,
+		"The wall's vertical extent maps to the width dim (local x lands vertical)")
 
 func test_height_stage_on_a_wall_grows_along_the_normal():
 	var creator := _armed_creator()
@@ -78,8 +83,10 @@ func test_height_stage_on_a_wall_grows_along_the_normal():
 	assert_almost_eq(creator.values["height"], 3.0, 0.0001,
 		"The normal extent is the height param — the placement basis points local Y "
 		+ "along the face normal, so the shape grows ALONG the face")
-	assert_almost_eq(creator.values["depth"], 1.0, 0.0001,
-		"The wall-vertical extent from the base drag stays (local z lands vertical)")
+	assert_almost_eq(creator.values["depth"], 2.0, 0.0001,
+		"The wall-horizontal drag extent stays (local z runs along the wall)")
+	assert_almost_eq(creator.values["width"], 1.0, 0.0001,
+		"The wall-vertical extent from the base drag stays (local x lands vertical)")
 
 func test_base_drag_snaps_to_world_axes_on_aligned_surfaces():
 	var creator := _armed_creator()
@@ -87,7 +94,8 @@ func test_base_drag_snaps_to_world_axes_on_aligned_surfaces():
 	creator.update_base(Vector3(2, 0, 1))  # mostly-X diagonal drag
 	assert_eq(creator.u_dir, Vector3.RIGHT,
 		"The drag axis snaps to the dominant world axis (axis-aligned creation)")
-	assert_almost_eq(creator.values["width"], 2.0, 0.0001)
+	assert_almost_eq(creator.values["depth"], 2.0, 0.0001,
+		"The dominant drag extent is the depth (local z runs along the arrow)")
 
 func test_arbitrary_surfaces_keep_the_drag_direction():
 	var creator := _armed_creator()
@@ -230,6 +238,71 @@ func test_placement_basis_aligns_with_the_surface():
 	var basis_y: Vector3 = xf.basis.y
 	assert_almost_eq(basis_y.dot(wall), 1.0, 0.001,
 		"The shape's local up axis aligns with the surface normal")
+
+# ==============================================================================
+# Facing arrow heuristic + flat start (v0.9.6)
+# ==============================================================================
+
+func test_facing_follows_the_dominant_drag_dimension():
+	var creator := _armed_creator()
+	_begin_base(creator, Vector3.ZERO)
+	creator.update_base(Vector3(2, 0, 0.2))  # dominant +X step
+	assert_almost_eq(absf(creator.facing.normalized().dot(Vector3.RIGHT)), 1.0, 0.001,
+		"The facing arrow follows the dominant drag dimension")
+	assert_gt(creator.facing.dot(Vector3.RIGHT), 0.0,
+		"The arrow points away from the drag start")
+	# A lateral step bigger than the dead zone re-points it.
+	creator.update_base(Vector3(2.1, 0, 1.5))  # this step is dominated by +Z
+	assert_almost_eq(absf(creator.facing.normalized().dot(Vector3.BACK)), 1.0, 0.001,
+		"A dominant lateral step re-points the arrow")
+	# Tiny steps never flip it (dead zone).
+	creator.update_base(Vector3(2.1, 0, 1.52))
+	assert_almost_eq(creator.facing.normalized().dot(Vector3.BACK), 1.0, 0.001,
+		"Sub-dead-zone nudges keep the facing stable")
+
+func test_facing_nudges_during_height_stage():
+	var creator := _armed_creator()
+	_begin_base(creator, Vector3.ZERO)
+	creator.update_base(Vector3(2, 0, 0.2))
+	creator.end_base()
+	var before: Vector3 = creator.facing
+	creator.update_height_point(Vector3(3, 0.5, 0.2))  # mostly +X lateral
+	assert_almost_eq(creator.height, 0.5, 0.0001, "Height still reads along the normal")
+	creator.update_height_point(Vector3(-1.5, 1.5, 0.2))  # dominant lateral move
+	assert_gt(creator.facing.dot(Vector3.LEFT), 0.9,
+		"A dominant lateral move while placing re-points the arrow "
+		+ "(away from the drag start, which is now on the -X side)")
+	assert_ne(before, creator.facing)
+
+func test_end_base_starts_flat_on_the_surface():
+	var creator := _armed_creator()
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(-1, 0, 0))
+	creator.update_base(Vector3(2, 0, 2))
+	assert_true(creator.end_base())
+	assert_almost_eq(creator.height, 0.0, 0.0001, "Release lands at height 0")
+	assert_almost_eq(creator.values["height"], 0.05, 0.0001,
+		"The preview is a flat slab (min height), sitting ON the surface")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var min_y: float = data.positions[0].y
+	for p in data.positions:
+		min_y = minf(min_y, p.y)
+	assert_almost_eq((xf * Vector3(0, min_y, 0)).y, 0.0, 0.001,
+		"The flat preview's base lies IN the drag plane (no sub-surface start)")
+
+func test_placement_basis_points_z_along_facing():
+	var creator := _armed_creator()
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(-1, 0, 0))
+	creator.update_base(Vector3(2, 0, 0.2))  # dominant +X → facing ≈ +X
+	creator.end_base()
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	assert_almost_eq(xf.basis.z.dot(Vector3.RIGHT), 1.0, 0.001,
+		"Local +Z (the shape's forward, e.g. the stairs' high side) follows facing")
+	assert_almost_eq(xf.basis.y.dot(Vector3.UP), 1.0, 0.001,
+		"Local +Y stays on the surface normal")
+	assert_almost_eq(xf.basis.x.dot(Vector3.FORWARD), 1.0, 0.001,
+		"The basis stays right-handed: x = normal x facing")
 
 # ==============================================================================
 # Ray helpers
