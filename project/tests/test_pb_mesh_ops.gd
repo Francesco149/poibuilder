@@ -323,6 +323,67 @@ func test_edge_usage_counts_cube_is_manifold():
 	assert_eq(non_manifold, 0, "Every cube edge is shared by exactly 2 faces")
 
 # ==============================================================================
+# Insert edge loop (loop cut)
+# ==============================================================================
+
+func test_loop_cut_belt_around_cube():
+	var data := _cube()
+	# Common edge 2 = top-front rim: its ring runs front → bottom → back → top.
+	var result := PBMeshOps.insert_edge_loop(data, PackedInt32Array([2]))
+	assert_true(result["ok"], "Loop cut succeeds: " + str(result.get("error", "")))
+	assert_eq(data.faces.size(), 10, "6 - 4 split + 8 halves = 10")
+	assert_eq(result["new_face_ids"].size(), 8, "4 ring faces each split into 2")
+	assert_eq(data.shared_vertices.size(), 12, "8 corners + 4 edge midpoints")
+	_assert_watertight(data, "loop-cut cube")
+	# The cut ring runs vertically around the X axis (front → bottom → back →
+	# top); its 4 midpoints sit in the x = 0 plane.
+	var ring_midpoints: int = 0
+	for group in data.shared_vertices:
+		var p := data.positions[group.indices[0]]
+		if absf(p.x) < 0.0001:
+			ring_midpoints += 1
+	assert_eq(ring_midpoints, 4, "Four ring midpoints at x = 0")
+	_assert_compiled_convention(data, true, "loop-cut cube")
+
+func test_loop_cut_cylinder_barrel_ring():
+	var data := PBShapeCylinder.create_cylinder(0.5, 1.0, 8, 1, 1)
+	var faces_before: int = data.faces.size()
+	# Any barrel edge: with heightSegments=1 they sit at mid height.
+	var common := data.get_common_edges()
+	var seed: int = -1
+	for i in range(common.size()):
+		var mid: Vector3 = (data.positions[common[i].a] + data.positions[common[i].b]) * 0.5
+		if absf(mid.y) < 0.0001:
+			seed = i
+			break
+	assert_gt(seed, -1, "Found a barrel edge to seed the ring")
+	var result := PBMeshOps.insert_edge_loop(data, PackedInt32Array([seed]))
+	assert_true(result["ok"], "Cylinder loop cut: " + str(result.get("error", "")))
+	assert_eq(data.faces.size(), faces_before + 2,
+		"Ring crosses both barrel rows' quads at the seed rim and stops at the cap fans")
+	assert_eq(data.validate(), "", "Cut cylinder validates")
+	_assert_compiled_convention(data, false, "loop-cut cylinder")
+
+func test_loop_cut_invalid_input_fails():
+	var data := _cube()
+	assert_false(PBMeshOps.insert_edge_loop(data, PackedInt32Array())["ok"])
+	assert_false(PBMeshOps.insert_edge_loop(data, PackedInt32Array([99]))["ok"])
+	assert_eq(data.faces.size(), 6, "Failed loop cut never mutates")
+
+func test_loop_cut_undo_roundtrip():
+	var data := _cube()
+	var cmd := CmdMeshOp.new(data, "Insert Edge Loop")
+	var result := PBMeshOps.insert_edge_loop(data, PackedInt32Array([2]))
+	assert_true(result["ok"])
+	cmd.capture_after()
+	cmd.undo_it()
+	assert_eq(data.faces.size(), 6)
+	assert_eq(data.validate(), "")
+	cmd.do_it()
+	assert_eq(data.faces.size(), 10)
+	assert_eq(data.validate(), "")
+
+# ==============================================================================
 # Winding conventions (G1) on op results
 # ==============================================================================
 

@@ -154,6 +154,9 @@ v0.8.0 round complete ✓
   The overlay panel grew an OPERATIONS section (buttons enable per
   selection context; extrude distance + inset amount SpinBoxes); undo
   uses full-mesh snapshots (CmdMeshOp) since ops rewrite topology.
+  Insert edge loop (loop cut): PBTopology.get_edge_ring walk; faces with 2
+  opposite ring edges split at edge midpoints, 1-ring-edge faces (boundary /
+  fan caps) stay unsplit (T-junction expected), corner turns fail cleanly.
 
 POSITION-PRIVACY INVARIANT (mesh ops, locked by test_pb_mesh_ops.gd):
 every face owns its corner positions exclusively; faces meeting at a 3D
@@ -179,9 +182,10 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge, insert edge loop,
-merge/weld tools; then Phase 8 (UVs). After mesh-op rounds: human sign-off
-(human_test_phase6.tscn prints the updated checklist incl. items 20-27).
+Next: Phase 7 leftovers — bevel edges, connect, bridge, merge/weld tools;
+also shape placement UI (Phase 9-lite: create shapes from the toolbar).
+After mesh-op rounds: human sign-off (human_test_phase6.tscn prints the
+updated checklist incl. items 20-28).
 
 ## Key Conventions
 

@@ -416,6 +416,9 @@ func _on_operation_requested(op_name: String) -> void:
 		"extrude_edges":
 			var edge_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
 			result = PBMeshOps.extrude_edges(mesh_data, edge_ids, distance)
+		"insert_edge_loop":
+			var loop_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+			result = PBMeshOps.insert_edge_loop(mesh_data, loop_ids)
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
@@ -482,6 +485,7 @@ const OP_ACTION_NAMES := {
 	"delete_faces": "Delete Faces",
 	"detach_faces": "Detach Faces",
 	"extrude_edges": "Extrude Edges",
+	"insert_edge_loop": "Insert Edge Loop",
 }
 
 func _unique_detached_name(mesh: PBMesh) -> String:

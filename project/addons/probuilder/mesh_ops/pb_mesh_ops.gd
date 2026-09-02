@@ -243,6 +243,98 @@ static func detach_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> D
 # Edge operations
 # ==============================================================================
 
+## Inserts an edge loop through the ring of quads crossed by `edge_id`
+## (index into get_common_edges) — the "loop cut": each ring face is split
+## into two quads by connecting its two ring edges' midpoints.
+## Ring walking is PBTopology.get_edge_ring; faces with only ONE ring edge
+## (ring ends at a mesh boundary or a fan cap) are left unsplit (a T-junction
+## on the border edge is expected and watertight in the edge-usage sense);
+## non-quad or corner-turning ring faces fail the op cleanly (nothing is
+## mutated on failure).
+static func insert_edge_loop(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Insert edge loop: no mesh data")
+	if edge_ids.is_empty():
+		return _fail("Insert edge loop: no edge selected")
+	var common := mesh_data.get_common_edges()
+	for eid in edge_ids:
+		if eid < 0 or eid >= common.size():
+			return _fail("Insert edge loop: edge id %d out of range" % eid)
+
+	# Collect the ring(s) of all seeded edges as a set of common-edge keys.
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var ring_keys := {}
+	for eid in edge_ids:
+		var ring := PBTopology.get_edge_ring(mesh_data, [common[eid]])
+		if ring.is_empty():
+			return _fail("Insert edge loop: seed edge %d has no ring" % eid)
+		for ring_edge in ring:
+			ring_keys[_common_key(lookup, ring_edge.a, ring_edge.b)] = true
+
+	# Faces to split: those containing exactly two ring edges, opposite each
+	# other in a quad loop. One-ring-edge faces are boundary ends (unsplit).
+	var split_plan: Array = []  # [{face_index, entry}] (ordered loop)
+	for fi in range(mesh_data.faces.size()):
+		var face := mesh_data.faces[fi]
+		if face == null:
+			continue
+		var loop := _ordered_loop(face)
+		var hits: Array = []
+		for i in range(loop.size()):
+			var key := _common_key(lookup, loop[i], loop[(i + 1) % loop.size()])
+			if ring_keys.has(key):
+				hits.append(i)
+		if hits.is_empty():
+			continue
+		if hits.size() == 1:
+			continue  # ring ends here (mesh boundary or fan cap) — unsplit
+		if loop.size() != 4:
+			return _fail("Insert edge loop: ring face %d is not a quad" % fi)
+		if hits.size() != 2:
+			return _fail("Insert edge loop: face %d touches %d ring edges (expected 2)" % [fi, hits.size()])
+		# The two hits must be opposite perimeter edges (i and i+2).
+		if (hits[0] + 1) % 4 == hits[1] or (hits[1] + 1) % 4 == hits[0]:
+			return _fail("Insert edge loop: ring turns a corner in face %d (non-opposite edges)" % fi)
+		split_plan.append({"face_index": fi, "entry": hits[0]})
+
+	if split_plan.is_empty():
+		return _fail("Insert edge loop: no quads to split")
+
+	# Split each planned face. Winding: ordered quad (v0..v3) with entry edge
+	# (v0,v1) and exit (v2,v3) splits into (v0, m01, m23, v3) and
+	# (m01, v1, v2, m23) — both follow the perimeter (CCW preserved).
+	var new_faces: Array[PBFace] = []
+	var removed := {}
+	for plan: Dictionary in split_plan:
+		var fi: int = plan["face_index"]
+		var face := mesh_data.faces[fi]
+		var loop := _ordered_loop(face)
+		var e: int = plan["entry"]
+		var v0: int = loop[e]
+		var v1: int = loop[(e + 1) % 4]
+		var v2: int = loop[(e + 2) % 4]
+		var v3: int = loop[(e + 3) % 4]
+		var m01 := _dup_position_at(mesh_data,
+			mesh_data.positions[v0].lerp(mesh_data.positions[v1], 0.5), v0)
+		var m23 := _dup_position_at(mesh_data,
+			mesh_data.positions[v2].lerp(mesh_data.positions[v3], 0.5), v2)
+		# Each new quad duplicates every corner (position privacy).
+		for quad: Array in [[v0, m01, m23, v3], [m01, v1, v2, m23]]:
+			var qa := _dup_position(mesh_data, quad[0], Vector3.ZERO)
+			var qb := _dup_position(mesh_data, quad[1], Vector3.ZERO)
+			var qc := _dup_position(mesh_data, quad[2], Vector3.ZERO)
+			var qd := _dup_position(mesh_data, quad[3], Vector3.ZERO)
+			var f := PBFace.new(PackedInt32Array([
+				qa, qb, qc,
+				qc, qd, qa,
+			]))
+			f.submesh_index = face.submesh_index
+			new_faces.append(f)
+		removed[fi] = true
+
+	return _replace_faces(mesh_data, removed, new_faces, [])
+
+
 ## Extrudes each selected edge along the average normal of its adjacent faces
 ## by `distance`, adding one quad per edge (an open "fin" — edges have no
 ## opposite boundary to close, matching ProBuilder's edge extrude).

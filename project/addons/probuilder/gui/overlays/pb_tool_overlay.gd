@@ -50,6 +50,7 @@ var faces_value_label: Label
 ## Operations section controls
 var extrude_faces_btn: Button
 var extrude_edges_btn: Button
+var loop_cut_btn: Button
 var inset_btn: Button
 var subdivide_btn: Button
 var delete_btn: Button
@@ -198,8 +199,13 @@ func _ensure_ui() -> void:
 	ops_grid.add_child(face_ops_row)
 
 	ops_grid.add_child(_make_row_label("Edges"))
+	var edge_ops_row := HBoxContainer.new()
+	edge_ops_row.add_theme_constant_override("separation", 2)
 	extrude_edges_btn = _make_op_button("Extrude", "extrude_edges", "Extrude the selected edges along their faces' average normal")
-	ops_grid.add_child(extrude_edges_btn)
+	loop_cut_btn = _make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge")
+	edge_ops_row.add_child(extrude_edges_btn)
+	edge_ops_row.add_child(loop_cut_btn)
+	ops_grid.add_child(edge_ops_row)
 
 	ops_grid.add_child(_make_row_label("Distance"))
 	extrude_distance_spin = SpinBox.new()
@@ -380,3 +386,4 @@ func refresh() -> void:
 	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, delete_btn, detach_btn]:
 		btn.disabled = not faces_selected
 	extrude_edges_btn.disabled = not edges_selected
+	loop_cut_btn.disabled = not edges_selected
