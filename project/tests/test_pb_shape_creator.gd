@@ -260,19 +260,18 @@ func test_facing_follows_the_dominant_drag_dimension():
 	assert_almost_eq(creator.facing.normalized().dot(Vector3.BACK), 1.0, 0.001,
 		"Sub-dead-zone nudges keep the facing stable")
 
-func test_facing_nudges_during_height_stage():
+func test_facing_locks_at_base_release():
 	var creator := _armed_creator()
 	_begin_base(creator, Vector3.ZERO)
 	creator.update_base(Vector3(2, 0, 0.2))
 	creator.end_base()
 	var before: Vector3 = creator.facing
-	creator.update_height_point(Vector3(3, 0.5, 0.2))  # mostly +X lateral
-	assert_almost_eq(creator.height, 0.5, 0.0001, "Height still reads along the normal")
-	creator.update_height_point(Vector3(-1.5, 1.5, 0.2))  # dominant lateral move
-	assert_gt(creator.facing.dot(Vector3.LEFT), 0.9,
-		"A dominant lateral move while placing re-points the arrow "
-		+ "(away from the drag start, which is now on the -X side)")
-	assert_ne(before, creator.facing)
+	# Height-stage motion must NOT re-point the arrow (locked at release).
+	creator.update_height_point(Vector3(3, 0.5, 0.2))
+	creator.update_height_point(Vector3(-1.5, 1.5, 0.2))
+	assert_almost_eq(creator.height, 1.5, 0.0001, "Height still reads along the normal")
+	assert_eq(creator.facing, before,
+		"The facing arrow locks once the base drag is released")
 
 func test_end_base_starts_flat_on_the_surface():
 	var creator := _armed_creator()

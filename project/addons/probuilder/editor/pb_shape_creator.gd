@@ -203,12 +203,12 @@ func end_base() -> bool:
 ## Updates the height from a world point (already projected onto the
 ## view-parallel plane by the caller). On walls the normal extent maps to
 ## the shape's DEPTH (the shape grows along the face normal); on floors it
-## maps to the height. Lateral motion re-points the facing arrow (nudge).
+## maps to the height. The facing arrow LOCKS at the base release — height
+## motion must not re-point it.
 func update_height_point(world_point: Vector3) -> void:
 	if state != State.HEIGHT:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
-	_update_facing(world_point, plane_normal.cross(u_dir).normalized())
 	_apply_drag_extents()
 
 ## The dragged base rect's four corners IN WORLD SPACE (on the captured

@@ -339,6 +339,27 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.10 round complete ✓ — from the second LOGGED sign-off (the v0.9.9 log
+proved the engine rel now tracks the cursor exactly on the element-space
+normal-axis drag — the in-place cap fix worked; the remaining reports
+were the inset hole and the arrow):
+- INSET RING HOLE (the "additional faces not visible"): the ring faces'
+  INNER corners are separate position duplicates of the pulled corners;
+  they were NOT in the drag union, so once the drag shrank the inner face
+  past the seed amount a HOLE opened between the ring and the inner face
+  (screenshot: inner face floating with a dark gap). _begin_inset now
+  maps every ring corner to the base/pre-corner it mirrors (position
+  match at seed), and both inset gestures lerp the ring corners with the
+  same amount. Regression tests: edge_usage_counts must be 2 everywhere
+  mid-drag (no boundary edges) for CENTER_INSET and INSET_SCALE.
+- ARROW LOCK: the facing arrow stops re-pointing at the base release
+  (update_height_point no longer runs the nudge heuristic) — height
+  motion must not rotate the shape's facing. Test updated.
+- FACE ORIENTATION AUDIT: every topology-gesture commit logs
+  `[PB/audit] face orientation: F/V/signed_volume/inward_wound_faces` —
+  a concrete per-face inversion answer for any future "missing faces"
+  report (negative outwardness dot = wound inward).
+
 v0.9.9 round complete ✓ — the user's v0.9.8 log proved the engine rel
 INVERTS mid-drag (rel −0.63 vs cursor +0.65) and the center handle was
 undetectable; both root causes found and fixed:

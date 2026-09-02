@@ -399,6 +399,14 @@ func test_shift_scale_on_faces_insets():
 	assert_lt(first_radius, 0.71 * 0.75,
 		"A 0.5 dominant scale shrinks the inner face (halfway to the centroid)")
 
+	var counts := PBMeshOps.edge_usage_counts(md)
+	var boundary := 0
+	for k in counts:
+		if counts[k] != 2:
+			boundary += 1
+	assert_eq(boundary, 0,
+		"No boundary edges: the ring's inner corners follow the inner face (no hole)")
+
 	logic.commit_subgizmos(mesh, ids, false)
 	assert_eq(md.faces.size(), faces_before + 4, "Commit keeps the inset topology")
 
@@ -435,6 +443,13 @@ func test_center_drag_with_shift_insets_faces_uniformly():
 	assert_almost_eq(first_radius, 0.7071 * 0.5, 0.03,
 		"A 50px right drag insets by 0.5 (halfway to the centroid)")
 
+	var counts_ci := PBMeshOps.edge_usage_counts(md)
+	var boundary_ci := 0
+	for k in counts_ci:
+		if counts_ci[k] != 2:
+			boundary_ci += 1
+	assert_eq(boundary_ci, 0,
+		"Center inset: ring corners follow the inner face (no hole mid-drag)")
 	logic.commit_center_drag(mesh, ids, true)
 	assert_eq(md.faces.size(), faces_before, "Cancel un-insets completely")
 

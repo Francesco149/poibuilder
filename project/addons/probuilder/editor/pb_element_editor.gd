@@ -74,6 +74,12 @@ var _drag_before_op: PBMeshData = null
 ## (the centroid is invariant under uniform lerp, so idempotent replay works).
 var _drag_inset_bases: Array = []
 
+## Ring faces' INNER corners (separate duplicates of the pulled corners):
+## they must follow the inner face's lerp or a hole opens between the ring
+## and the shrinking inner face. Entries: {idx, base, k} — corner position
+## index and the inset base/pre-corner it mirrors.
+var _drag_ring_bases: Array = []
+
 ## Latest inset amount applied this gesture (readout only).
 var _last_inset_amount: float = 0.0
 
@@ -660,6 +666,7 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_drag_union_override = PackedInt32Array()
 	_drag_before_op = null
 	_drag_inset_bases = []
+	_drag_ring_bases = []
 	_last_inset_amount = 0.0
 	_center_factor = 1.0
 	_center_has_start = false
@@ -872,6 +879,38 @@ func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 		})
 	_drag_union_override = union
 
+	# The ring faces' inner corners are SEPARATE duplicates of the pulled
+	# corners; they must follow the inner face's lerp exactly, or a hole
+	# opens between the ring and the shrinking inner face ("additional
+	# faces not visible"). Map each ring corner to the base/pre-corner it
+	# mirrors (match by seed position — the pulled coordinate).
+	var pulled: Array[Vector3] = []
+	var pull_ref: Array = []
+	for b_i in range(_drag_inset_bases.size()):
+		var base: Dictionary = _drag_inset_bases[b_i]
+		var pre_corners: PackedVector3Array = base["pre"]
+		var cen: Vector3 = base["centroid"]
+		for k in range(pre_corners.size()):
+			pulled.append(pre_corners[k].lerp(cen, 0.01))
+			pull_ref.append({"base": b_i, "k": k})
+	var ring_ids: PackedInt32Array = result["new_face_ids"]
+	var cap_set := {}
+	for ci in cap_ids:
+		cap_set[ci] = true
+	for fi in ring_ids:
+		if cap_set.has(fi) or fi >= mesh_data.faces.size() or mesh_data.faces[fi] == null:
+			continue
+		for cidx in mesh_data.faces[fi].get_distinct_indexes():
+			var p: Vector3 = mesh_data.positions[cidx]
+			for j in range(pulled.size()):
+				if p.distance_squared_to(pulled[j]) < 1e-8:
+					_drag_ring_bases.append({
+						"idx": cidx,
+						"base": pull_ref[j]["base"],
+						"k": pull_ref[j]["k"],
+					})
+					break
+
 ## Applies the latest pending transform to ALL selected elements' vertices.
 ## Deliberately recomputes the full result from the drag-start snapshot every
 ## call: the engine calls set_subgizmo_transform once per selected id per
@@ -932,6 +971,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					var idx: int = idxs[i]
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_apply_ring_lerp(new_positions, pos_count, amount)
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.INSET_SCALE:
 			# The engine delivers a per-axis scale about the subgizmo origin;
@@ -947,6 +987,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					var idx: int = idxs[i]
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_apply_ring_lerp(new_positions, pos_count, amount)
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.INSET_SCALE:
 			# The engine delivers a per-axis scale about the subgizmo origin;
@@ -962,6 +1003,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					var idx: int = idxs[i]
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_apply_ring_lerp(new_positions, pos_count, amount)
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.CENTER_SCALE:
 			var pivot := _center_pivot
@@ -1202,6 +1244,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		var after := PBCommand.copy_mesh_data(mesh_data)
 		var before := _drag_before_op
 		mesh_data.shape_edited = true
+		_log_face_orientation_audit(mesh_data)
 		_reset_drag_state()
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		if undo != null:
@@ -1250,6 +1293,45 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 
 ## Undo/redo payload for topology gestures: swap a node's whole data from a
 ## snapshot (node looked up by instance id, skipped silently when freed).
+## Commit-time audit for topology gestures: signed volume + per-face
+## outwardness (face normal vs direction from the mesh centroid). A
+## negative dot means the face is wound INWARD - the concrete "which faces
+## are inverted" answer when the render shows missing faces.
+func _log_face_orientation_audit(mesh_data: PBMeshData) -> void:
+	if logger == null or mesh_data.positions.is_empty():
+		return
+	var p := mesh_data.positions
+	var cen := Vector3.ZERO
+	for pos in p:
+		cen += pos
+	cen /= float(p.size())
+	var vol := 0.0
+	var inverted: Array[int] = []
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var idxs := face.get_indexes()
+		var fvol := 0.0
+		var fnorm := Vector3.ZERO
+		for t in range(0, idxs.size() - 2, 3):
+			if idxs[t] >= p.size() or idxs[t + 1] >= p.size() or idxs[t + 2] >= p.size():
+				continue
+			fvol += p[idxs[t]].dot(p[idxs[t + 1]].cross(p[idxs[t + 2]]))
+			fnorm += (p[idxs[t + 1]] - p[idxs[t]]).cross(p[idxs[t + 2]] - p[idxs[t]])
+		vol += fvol
+		var fcen := Vector3.ZERO
+		var n := 0
+		for idx in face.get_distinct_indexes():
+			if idx < p.size():
+				fcen += p[idx]
+				n += 1
+		if n > 0:
+			fcen /= float(n)
+		if fnorm.length_squared() > 0.000000001 and fnorm.normalized().dot((fcen - cen).normalized()) < -0.05:
+			inverted.append(fi)
+	logger.info("audit", "face orientation: F=%d V=%d signed_volume=%.3f inward_wound_faces=%s" % [mesh_data.faces.size(), p.size(), vol, str(inverted)])
+
 func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
 	var mesh_node: PBMesh = instance_from_id(node_id) as PBMesh
 	if mesh_node == null or mesh_node.pb_mesh_data == null:
@@ -1294,6 +1376,7 @@ func _reset_drag_state() -> void:
 	_drag_union_override = PackedInt32Array()
 	_drag_before_op = null
 	_drag_inset_bases = []
+	_drag_ring_bases = []
 	_last_inset_amount = 0.0
 	_center_factor = 1.0
 	_center_has_start = false
@@ -1457,6 +1540,20 @@ func drag_readout() -> String:
 	if not _last_drag_scale.is_equal_approx(Vector3.ONE):
 		return "Scale: %s" % _fmt_vec(_last_drag_scale)
 	return "Delta: %s" % _fmt_vec(_last_drag_translation)
+
+## Lerps the ring faces' inner corners with the SAME amount as the inner
+## faces (they are duplicates of the pulled corners) — keeps the ring
+## welded to the shrinking inner face (no hole).
+func _apply_ring_lerp(new_positions: PackedVector3Array, pos_count: int,
+		amount: float) -> void:
+	for rc in _drag_ring_bases:
+		var idx: int = rc["idx"]
+		if idx < 0 or idx >= pos_count:
+			continue
+		var base: Dictionary = _drag_inset_bases[rc["base"]]
+		var pre: PackedVector3Array = base["pre"]
+		var centroid: Vector3 = base["centroid"]
+		new_positions[idx] = pre[rc["k"]].lerp(centroid, amount)
 
 ## The basis scale component furthest from 1 — the axis the user is
 ## dragging on a scale-handle gesture.
