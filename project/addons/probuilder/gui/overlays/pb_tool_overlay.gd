@@ -51,6 +51,7 @@ var faces_value_label: Label
 var extrude_faces_btn: Button
 var extrude_edges_btn: Button
 var loop_cut_btn: Button
+var weld_vertices_btn: Button
 var inset_btn: Button
 var subdivide_btn: Button
 var delete_btn: Button
@@ -208,6 +209,11 @@ func _ensure_ui() -> void:
 	edge_ops_row.add_child(extrude_edges_btn)
 	edge_ops_row.add_child(loop_cut_btn)
 	ops_grid.add_child(edge_ops_row)
+
+	ops_grid.add_child(_make_row_label("Vertices"))
+	weld_vertices_btn = _make_op_button("Weld", "weld_vertices",
+		"Weld the selected vertices together at their centroid")
+	ops_grid.add_child(weld_vertices_btn)
 
 	ops_grid.add_child(_make_row_label("Distance"))
 	extrude_distance_spin = SpinBox.new()
@@ -389,3 +395,4 @@ func refresh() -> void:
 		btn.disabled = not faces_selected
 	extrude_edges_btn.disabled = not edges_selected
 	loop_cut_btn.disabled = not edges_selected
+	weld_vertices_btn.disabled = sel.selected_vertex_count() < 2

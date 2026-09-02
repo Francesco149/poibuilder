@@ -416,6 +416,8 @@ func _on_operation_requested(op_name: String) -> void:
 			result = PBMeshOps.merge_faces(mesh_data, selection.selected_faces.duplicate())
 		"delete_faces":
 			result = PBMeshOps.delete_faces(mesh_data, selection.selected_faces.duplicate())
+		"weld_vertices":
+			result = PBMeshOps.weld_vertices(mesh_data, selection.selected_vertices.duplicate())
 		"extrude_edges":
 			var edge_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
 			result = PBMeshOps.extrude_edges(mesh_data, edge_ids, distance)
@@ -490,6 +492,7 @@ const OP_ACTION_NAMES := {
 	"detach_faces": "Detach Faces",
 	"extrude_edges": "Extrude Edges",
 	"insert_edge_loop": "Insert Edge Loop",
+	"weld_vertices": "Weld Vertices",
 }
 
 # ==============================================================================

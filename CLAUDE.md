@@ -160,6 +160,8 @@ v0.8.0 round complete ✓
   Merge faces: coplanar + edge-adjacent selected faces collapse into one
   n-gon per region (fan-triangulated; T-junction collinear corners are
   KEPT — collapsing them is a future vertex-weld op).
+  Weld vertices: selected shared-vertex groups snap to their centroid and
+  collapse into one group (positions move, indexes don't — no remap).
 - Shape creation (Phase 9-lite): the persistent toolbar's New Shape menu
   (ALWAYS enabled — creation needs no selection) emits shape_requested; the
   plugin builds via PBShapeFactory, places a new PBMesh 3m in front of the
@@ -189,9 +191,9 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge, vertex weld/
-collapse. After mesh-op rounds: human sign-off (human_test_phase6.tscn
-prints the updated checklist incl. items 20-32).
+Next: Phase 7 leftovers — bevel edges, connect, bridge. After this:
+human sign-off (human_test_phase6.tscn prints the updated checklist
+incl. items 20-34).
 
 ## Key Conventions
 

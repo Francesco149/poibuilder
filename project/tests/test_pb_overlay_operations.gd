@@ -21,7 +21,8 @@ func test_operations_controls_exist():
 	var overlay: PBToolOverlay = _make_overlay_with_selection()[0]
 	for btn: Button in [overlay.extrude_faces_btn, overlay.inset_btn,
 			overlay.subdivide_btn, overlay.merge_btn, overlay.delete_btn,
-			overlay.detach_btn, overlay.extrude_edges_btn]:
+			overlay.detach_btn, overlay.extrude_edges_btn,
+			overlay.weld_vertices_btn]:
 		assert_not_null(btn, "Op button must exist")
 		assert_true(btn is Button)
 	assert_not_null(overlay.extrude_distance_spin, "Extrude distance SpinBox must exist")
@@ -55,6 +56,7 @@ func test_face_ops_enable_only_with_face_selection():
 			overlay.detach_btn]:
 		assert_true(btn.disabled, "%s must be disabled with an empty selection" % btn.name)
 	assert_true(overlay.extrude_edges_btn.disabled, "Edge extrude disabled without edges")
+	assert_true(overlay.weld_vertices_btn.disabled, "Weld disabled without vertices")
 
 	editor.selection.set_faces(PackedInt32Array([0, 4]))
 	overlay.refresh()
@@ -94,11 +96,25 @@ func test_op_buttons_emit_operation_requested():
 	overlay.detach_btn.pressed.emit()
 	overlay.extrude_edges_btn.pressed.emit()
 	overlay.loop_cut_btn.pressed.emit()
+	overlay.weld_vertices_btn.pressed.emit()
 
 	assert_eq(received, ["extrude_faces", "inset_faces", "subdivide_faces",
 		"merge_faces", "delete_faces", "detach_faces", "extrude_edges",
-		"insert_edge_loop"] as Array,
+		"insert_edge_loop", "weld_vertices"] as Array,
 		"Each button emits its op name")
+
+func test_weld_enables_with_two_vertex_selection():
+	var setup := _make_overlay_with_selection()
+	var overlay: PBToolOverlay = setup[0]
+	var editor: PBEditor = setup[1]
+
+	editor.select_mode = PBEditor.SelectMode.VERTEX
+	editor.selection.set_vertices(PackedInt32Array([0, 1]))
+	overlay.refresh()
+	assert_false(overlay.weld_vertices_btn.disabled, "Weld enables with 2+ vertices")
+	editor.selection.set_vertices(PackedInt32Array([0]))
+	overlay.refresh()
+	assert_true(overlay.weld_vertices_btn.disabled, "Weld stays disabled for one vertex")
 
 # ==============================================================================
 # MeshOp plumbing behind the buttons (selection → op → selection reset)

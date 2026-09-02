@@ -278,6 +278,47 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 
 	return _replace_faces(mesh_data, removed, merged_faces, [])
 
+## Welds (merges) the selected shared-vertex groups: every position in the
+## selected groups snaps to their common centroid and the groups collapse
+## into one (rebuilt from coincidence). `vertex_ids` are shared-vertex GROUP
+## indexes — the subgizmo ids used by VERTEX-mode selection.
+## Unlike ProBuilder's radius weld there is no distance gate: the user
+## explicitly multi-selected the corners to join.
+static func weld_vertices(mesh_data: PBMeshData, vertex_ids: PackedInt32Array) -> Dictionary:
+	if mesh_data == null or mesh_data.shared_vertices.is_empty():
+		return _fail("Weld vertices: no mesh data")
+	if vertex_ids.size() < 2:
+		return _fail("Weld vertices: select at least two vertices to merge")
+	for vid in vertex_ids:
+		if vid < 0 or vid >= mesh_data.shared_vertices.size():
+			return _fail("Weld vertices: vertex id %d out of range" % vid)
+
+	var centroid := Vector3.ZERO
+	var count: int = 0
+	var seen := {}
+	for vid in vertex_ids:
+		var sv: PBSharedVertex = mesh_data.shared_vertices[vid]
+		if sv == null:
+			continue
+		for idx in sv.indices:
+			if idx < 0 or idx >= mesh_data.positions.size() or seen.has(idx):
+				continue
+			seen[idx] = true
+			centroid += mesh_data.positions[idx]
+			count += 1
+	if count < 2:
+		return _fail("Weld vertices: selection resolves to a single position")
+
+	centroid /= float(count)
+	for idx in seen:
+		mesh_data.positions[idx] = centroid
+	_rebuild_welds(mesh_data)
+
+	# Group count after the rebuild tells the user how many corners remain.
+	var result := {"ok": true, "new_face_ids": PackedInt32Array(),
+		"cap_face_ids": PackedInt32Array(), "vertex_groups": mesh_data.shared_vertices.size()}
+	return result
+
 # ==============================================================================
 # Edge operations
 # ==============================================================================
