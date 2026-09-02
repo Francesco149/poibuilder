@@ -28,7 +28,7 @@ func _get_plugin_name() -> String:
 	return "ProBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.6.7"
+const VERSION := "0.6.8"
 
 func _enter_tree():
 	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
@@ -160,13 +160,22 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				node.pb_mesh_data, node.global_transform, camera, event.position)
 			if id != -1:
 				var gizmo := gizmo_plugin.gizmo_for_node(node)
-				if gizmo != null:
-					# 4.7 signature takes the start transform explicitly (the
-					# engine snapshots it as the drag baseline).
-					var start_xf: Transform3D = gizmo_plugin.element_editor.get_subgizmo_transform(
-						node.pb_mesh_data, node, id)
-					node.set_subgizmo_selection(gizmo, id, start_xf)
-					return AFTER_GUI_INPUT_STOP
+				if gizmo == null:
+					if logger:
+						logger.error("selection",
+							"Element pick hit but no PB gizmo is attached to '%s' — pass-through" % node.name)
+				else:
+					var current: PackedInt32Array = gizmo.get_subgizmo_selection()
+					# Re-clicking the sole selected element passes through so
+					# the transform gizmo's rings stay draggable around it.
+					var already_sole: bool = current.size() == 1 and current[0] == id
+					if not already_sole:
+						# 4.7 signature takes the start transform explicitly
+						# (the engine snapshots it as the drag baseline).
+						var start_xf: Transform3D = gizmo_plugin.element_editor.get_subgizmo_transform(
+							node.pb_mesh_data, node, id)
+						node.set_subgizmo_selection(gizmo, id, start_xf)
+						return AFTER_GUI_INPUT_STOP
 
 	# Element mode hotkeys (matching ProBuilder: H vertex, J edge, K face,
 	# X cycles gizmo space). Godot's own Q/W/E/R already switch
