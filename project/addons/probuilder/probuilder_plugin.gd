@@ -412,6 +412,8 @@ func _on_operation_requested(op_name: String) -> void:
 			result = PBMeshOps.inset_faces(mesh_data, selection.selected_faces.duplicate(), amount)
 		"subdivide_faces":
 			result = PBMeshOps.subdivide_faces(mesh_data, selection.selected_faces.duplicate())
+		"merge_faces":
+			result = PBMeshOps.merge_faces(mesh_data, selection.selected_faces.duplicate())
 		"delete_faces":
 			result = PBMeshOps.delete_faces(mesh_data, selection.selected_faces.duplicate())
 		"extrude_edges":
@@ -483,6 +485,7 @@ const OP_ACTION_NAMES := {
 	"extrude_faces": "Extrude Faces",
 	"inset_faces": "Inset Faces",
 	"subdivide_faces": "Subdivide Faces",
+	"merge_faces": "Merge Faces",
 	"delete_faces": "Delete Faces",
 	"detach_faces": "Detach Faces",
 	"extrude_edges": "Extrude Edges",

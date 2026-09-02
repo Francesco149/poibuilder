@@ -55,6 +55,7 @@ var inset_btn: Button
 var subdivide_btn: Button
 var delete_btn: Button
 var detach_btn: Button
+var merge_btn: Button
 var extrude_distance_spin: SpinBox
 var inset_amount_spin: SpinBox
 
@@ -192,9 +193,10 @@ func _ensure_ui() -> void:
 	extrude_faces_btn = _make_op_button("Extrude", "extrude_faces", "Extrude the selected faces along their normal")
 	inset_btn = _make_op_button("Inset", "inset_faces", "Inset the selected faces (planar ring)")
 	subdivide_btn = _make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4")
+	merge_btn = _make_op_button("Merge", "merge_faces", "Merge coplanar edge-adjacent selected faces into one")
 	delete_btn = _make_op_button("Del", "delete_faces", "Delete the selected faces")
 	detach_btn = _make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh")
-	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, delete_btn, detach_btn]:
+	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, merge_btn, delete_btn, detach_btn]:
 		face_ops_row.add_child(btn)
 	ops_grid.add_child(face_ops_row)
 
@@ -383,7 +385,7 @@ func refresh() -> void:
 	# 4. Operation buttons enable per selection context (mode + counts).
 	var faces_selected: bool = sel.selected_face_count() > 0
 	var edges_selected: bool = sel.selected_edge_count() > 0
-	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, delete_btn, detach_btn]:
+	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, merge_btn, delete_btn, detach_btn]:
 		btn.disabled = not faces_selected
 	extrude_edges_btn.disabled = not edges_selected
 	loop_cut_btn.disabled = not edges_selected

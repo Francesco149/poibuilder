@@ -239,6 +239,45 @@ static func detach_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> D
 	result["new_face_ids"] = PackedInt32Array()
 	return result
 
+## Merges coplanar, edge-adjacent selected faces into single n-gon faces
+## (ProBuilder "Merge Faces"): interior edges disappear, one face per
+## coplanar connected region. Selected faces that are isolated (no coplanar
+## neighbor in the selection) are left untouched. Non-convex regions may fan
+## badly (v1 fan-triangulates from the loop start — documented limitation).
+static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Dictionary:
+	if not _faces_valid(mesh_data, face_ids):
+		return _fail("Merge faces: invalid selection")
+
+	var regions := _coplanar_regions(mesh_data, face_ids)
+	var merged_faces: Array[PBFace] = []
+	var removed := {}
+	var any_merged := false
+
+	for region in regions:
+		if region.size() < 2:
+			continue
+		var cycle := _region_boundary_cycle(mesh_data, region)
+		if cycle.is_empty():
+			return _fail("Merge faces: region boundary is not a clean cycle (holes?)")
+
+		# Fan-triangulate the ordered loop; single face owns the loop's raw
+		# positions exclusively (they belonged to the removed faces).
+		var face := PBFace.new(PackedInt32Array())
+		var idxs := PackedInt32Array()
+		for i in range(1, cycle.size() - 1):
+			idxs.append_array(PackedInt32Array([cycle[0], cycle[i], cycle[i + 1]]))
+		face.set_indexes(idxs)
+		face.submesh_index = mesh_data.faces[region[0]].submesh_index
+		merged_faces.append(face)
+		for fi in region:
+			removed[fi] = true
+		any_merged = true
+
+	if not any_merged:
+		return _fail("Merge faces: no coplanar edge-adjacent faces in selection")
+
+	return _replace_faces(mesh_data, removed, merged_faces, [])
+
 # ==============================================================================
 # Edge operations
 # ==============================================================================
@@ -450,6 +489,83 @@ static func edge_usage_counts(mesh_data: PBMeshData) -> Dictionary:
 
 static func _fail(reason: String) -> Dictionary:
 	return {"ok": false, "error": reason}
+
+## Connected groups of selected faces that are coplanar AND edge-adjacent.
+static func _coplanar_regions(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Array:
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var planes := {}  # face index -> {normal, d}
+	var selected := PackedInt32Array()
+	for fi in face_ids:
+		var n := _face_area_normal(mesh_data, mesh_data.faces[fi])
+		if n.length_squared() < 0.000000001:
+			continue
+		var normal := n.normalized()
+		var d: float = normal.dot(mesh_data.positions[mesh_data.faces[fi].get_indexes()[0]])
+		planes[fi] = {"normal": normal, "d": d}
+		selected.append(fi)
+
+	# common-edge key -> selected faces using it
+	var edge_faces := {}
+	for fi in selected:
+		for edge in mesh_data.faces[fi].get_edges():
+			var key := _common_key(lookup, edge.a, edge.b)
+			if not edge_faces.has(key):
+				edge_faces[key] = PackedInt32Array()
+			edge_faces[key].append(fi)
+
+	var visited := {}
+	var regions: Array = []
+	for fi in selected:
+		if visited.has(fi):
+			continue
+		var region := PackedInt32Array()
+		var queue := PackedInt32Array([fi])
+		visited[fi] = true
+		while not queue.is_empty():
+			var cur: int = queue[queue.size() - 1]
+			queue.remove_at(queue.size() - 1)
+			region.append(cur)
+			for edge in mesh_data.faces[cur].get_edges():
+				for nf in edge_faces.get(_common_key(lookup, edge.a, edge.b), PackedInt32Array()):
+					if visited.has(nf) or not _planes_match(planes[cur], planes[nf]):
+						continue
+					visited[nf] = true
+					queue.append(nf)
+		regions.append(region)
+	return regions
+
+static func _planes_match(a: Dictionary, b: Dictionary) -> bool:
+	if a == null or b == null:
+		return false
+	if (a["normal"] as Vector3).dot(b["normal"]) < 0.9999:
+		return false
+	return absf(a["d"] - b["d"]) < 0.0005
+
+## Walks the directed boundary edges of a face region into one ordered cycle
+## of raw position indexes (following shared-group keys). Returns [] when the
+## boundary does not close into a single cycle (e.g. a region with a hole).
+static func _region_boundary_cycle(mesh_data: PBMeshData, region: PackedInt32Array) -> PackedInt32Array:
+	var boundary := _region_boundary_edges(mesh_data, region)
+	if boundary.is_empty():
+		return PackedInt32Array()
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var by_start := {}  # group key of start -> {a, b}
+	for edge in boundary:
+		by_start[_common_key(lookup, edge["a"], edge["a"])] = edge
+
+	var cycle := PackedInt32Array([boundary[0]["a"], boundary[0]["b"]])
+	var guard: int = boundary.size() + 1
+	while cycle.size() < guard:
+		var tail: int = cycle[cycle.size() - 1]
+		var tail_key := _common_key(lookup, tail, tail)
+		if not by_start.has(tail_key):
+			return PackedInt32Array()
+		var nxt: Dictionary = by_start[tail_key]
+		var nb: int = nxt["b"]
+		if _common_key(lookup, nb, nb) == _common_key(lookup, cycle[0], cycle[0]):
+			return cycle  # closed
+		cycle.append(nb)
+	return PackedInt32Array()
 
 static func _faces_valid(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> bool:
 	if mesh_data == null or face_ids.is_empty():

@@ -384,6 +384,59 @@ func test_loop_cut_undo_roundtrip():
 	assert_eq(data.validate(), "")
 
 # ==============================================================================
+# Merge faces (weld coplanar)
+# ==============================================================================
+
+func test_merge_subdivided_face_back_to_one_face():
+	var data := _cube()
+	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
+	assert_true(result["ok"])
+	var quads: PackedInt32Array = result["new_face_ids"]
+	assert_eq(quads.size(), 4)
+	var merge := PBMeshOps.merge_faces(data, quads)
+	assert_true(merge["ok"], "Merge succeeds: " + str(merge.get("error", "")))
+	assert_eq(data.faces.size(), 6, "Four sub-quads become one face again")
+	assert_eq(data.validate(), "", "Re-merged cube validates")
+	# The center vertex orphans away; the 4 rim midpoints REMAIN as collinear
+	# corners of the merged face (an octagon) — T-junctions against the
+	# neighbor faces are expected; collapsing them is a future weld op.
+	assert_eq(data.positions.size(), 28, "29 - the orphaned center vertex")
+	assert_eq(data.shared_vertices.size(), 12, "8 corners + 4 rim midpoints")
+	# The merged face is planar +Y: every one of its corners sits at y = +0.5.
+	var merged: int = merge["new_face_ids"][0]
+	var merged_loop := data.faces[merged].get_distinct_indexes()
+	assert_eq(merged_loop.size(), 8, "The merged face keeps the ring midpoints (octagon)")
+	for idx in merged_loop:
+		assert_almost_eq(data.positions[idx].y, 0.5, 0.0001, "Merged face is planar +Y")
+
+func test_merge_two_halves_from_loop_cut():
+	var data := _cube()
+	var cut := PBMeshOps.insert_edge_loop(data, PackedInt32Array([2]))
+	assert_true(cut["ok"])
+	# The two front halves are the first two new faces (ring order).
+	var halves: PackedInt32Array = cut["new_face_ids"].slice(0, 2)
+	var merge := PBMeshOps.merge_faces(data, halves)
+	assert_true(merge["ok"])
+	assert_eq(data.faces.size(), 9, "10 - 2 halves + 1 merged front")
+	_assert_watertight(data, "half-merged cube")
+
+func test_merge_non_coplanar_faces_fails():
+	var data := _cube()
+	var result := PBMeshOps.merge_faces(data, PackedInt32Array([0, 4]))  # front + top
+	assert_false(result["ok"], "Adjacent but non-coplanar faces cannot merge")
+	assert_eq(data.faces.size(), 6, "Failed merge never mutates")
+
+func test_merge_unrelated_faces_fails():
+	var data := _cube()
+	var result := PBMeshOps.merge_faces(data, PackedInt32Array([0, 2]))
+	assert_false(result["ok"], "Non-adjacent selection has nothing to merge")
+
+func test_merge_single_face_fails():
+	var data := _cube()
+	assert_false(PBMeshOps.merge_faces(data, PackedInt32Array([4]))["ok"],
+		"A lone face has no coplanar neighbor")
+
+# ==============================================================================
 # Winding conventions (G1) on op results
 # ==============================================================================
 
