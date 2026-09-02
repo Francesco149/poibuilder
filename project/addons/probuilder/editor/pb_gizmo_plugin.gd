@@ -57,6 +57,9 @@ var logger: PBLogger = null:
 var _vertex_dot_material: StandardMaterial3D
 var _vertex_dot_selected_material: StandardMaterial3D
 
+## Cached depth-tested face fill material (built lazily).
+var _face_fill_material: StandardMaterial3D
+
 # ==============================================================================
 # Lifecycle
 # ==============================================================================
@@ -86,7 +89,7 @@ func _make_face_fill_material() -> StandardMaterial3D:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = FACE_FILL_COLOR
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.no_depth_test = true
+	mat.no_depth_test = false
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
@@ -140,7 +143,7 @@ func _subgizmos_intersect_frustum(gizmo, camera: Camera3D, frustum_planes: Array
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null or camera == null or not is_editing_node(node):
 		return PackedInt32Array()
-	return element_editor.pick_frustum(node.pb_mesh_data, node.global_transform, frustum_planes)
+	return element_editor.pick_frustum(node.pb_mesh_data, node.global_transform, frustum_planes, camera)
 
 # ==============================================================================
 # Subgizmo transforms (called by the editor during native gizmo drags)
@@ -229,38 +232,28 @@ func _mirror_engine_selection(gizmo, node: PBMesh, mesh_data: PBMeshData) -> voi
 		return
 	element_editor.mirror_engine_selection(editor.selection, mesh_data, gizmo.get_subgizmo_selection())
 
-## Selected faces as a translucent triangle fill mesh (on top).
+## Selected faces as a translucent n-gon fill, slightly offset along the face
+## normal and DEPTH-TESTED so it never draws through the mesh (a depth-test-off
+## fill pokes its triangle boundary through non-planar faces, reading as a
+## phantom "diagonal edge" where no edge exists).
 func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
-	var positions := mesh_data.positions
-	var tris := PackedVector3Array()
+	var fill_meshes: Array[Mesh] = []
 	var selected_any: bool = false
 	for fi in range(mesh_data.faces.size()):
 		if not gizmo.is_subgizmo_selected(fi):
 			continue
 		selected_any = true
-		var face: PBFace = mesh_data.faces[fi]
-		if face == null:
-			continue
-		var indexes := face.get_indexes()
-		for tri_i in range(0, indexes.size() - 2, 3):
-			var i0: int = indexes[tri_i]
-			var i1: int = indexes[tri_i + 1]
-			var i2: int = indexes[tri_i + 2]
-			if i0 >= 0 and i0 < positions.size() and i1 >= 0 and i1 < positions.size() and i2 >= 0 and i2 < positions.size():
-				tris.append(positions[i0])
-				tris.append(positions[i1])
-				tris.append(positions[i2])
+		var fill := element_editor.build_face_fill_mesh(mesh_data, fi)
+		if fill != null:
+			fill_meshes.append(fill)
 
 	if not selected_any:
 		return
 
-	if tris.size() >= 3:
-		var arrays: Array = []
-		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = tris
-		var fill_mesh := ArrayMesh.new()
-		fill_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		gizmo.add_mesh(fill_mesh, _make_face_fill_material())
+	if _face_fill_material == null:
+		_face_fill_material = _make_face_fill_material()
+	for fill in fill_meshes:
+		gizmo.add_mesh(fill, _face_fill_material)
 
 ## Selected edges as bright on-top lines.
 func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:

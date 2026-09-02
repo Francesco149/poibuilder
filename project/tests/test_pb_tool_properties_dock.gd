@@ -14,7 +14,8 @@ func test_default_null_editor_does_not_crash():
 	dock.refresh()
 
 	assert_not_null(dock.title_label, "Title label must exist")
-	assert_eq(dock.title_label.text, "ProBuilder", "Title must be 'ProBuilder'")
+	assert_true(dock.title_label.text.begins_with("ProBuilder v"),
+		"Title must show the versioned plugin name so stale builds are detectable")
 
 	assert_not_null(dock.mode_label, "Mode label must exist")
 	assert_true(dock.mode_label.text.contains("Object"), "Default mode label must show Object")

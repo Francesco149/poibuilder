@@ -27,8 +27,11 @@ var toolbar: PBToolbar
 func _get_plugin_name() -> String:
 	return "ProBuilder"
 
+## Bump when behavior changes so stale-build testing is detectable.
+const VERSION := "0.6.4"
+
 func _enter_tree():
-	logger.info("plugin", "ProBuilder plugin entering tree")
+	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
 
 	# Wire up subsystems
 	editor.logger = logger
@@ -190,6 +193,19 @@ func _on_selection_changed() -> void:
 
 func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	if mesh != null:
+		# Heal missing/partial weld groups before any element interaction:
+		# broken welds make element ids resolve to raw position pairs, which
+		# tears corners apart on drag (the "moved those 2 verts" failure).
+		if mesh.pb_mesh_data != null and mesh.pb_mesh_data.ensure_welds():
+			mesh.rebuild()
+			if logger:
+				logger.warn("editor", "Mesh '%s' had missing weld groups — rebuilt from coincident positions" % mesh.name)
+		if logger:
+			var md: PBMeshData = mesh.pb_mesh_data
+			if md != null:
+				logger.info("editor", "Mesh '%s': V=%d F=%d weld_groups=%d edges=%d" % [
+					mesh.name, md.positions.size(), md.faces.size(),
+					md.shared_vertices.size(), md.get_common_edges().size()])
 		toolbar.activate()
 		mesh.update_gizmos()
 	else:

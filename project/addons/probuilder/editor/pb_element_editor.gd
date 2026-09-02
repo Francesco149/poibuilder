@@ -252,7 +252,7 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 ## All element ids whose representative point lies inside the frustum planes.
 func pick_frustum(mesh_data: PBMeshData, mesh_transform: Transform3D,
-		frustum_planes: Array) -> PackedInt32Array:
+		frustum_planes: Array, camera: Camera3D = null) -> PackedInt32Array:
 	var result := PackedInt32Array()
 	if mesh_data == null or mesh_data.positions.is_empty():
 		return result
@@ -264,17 +264,63 @@ func pick_frustum(mesh_data: PBMeshData, mesh_transform: Transform3D,
 	match editor.select_mode:
 		PBEditor.SelectMode.FACE:
 			for fi in range(mesh_data.faces.size()):
-				if _point_in_frustum(mesh_transform * element_origin(mesh_data, fi), planes):
-					result.append(fi)
+				var origin := mesh_transform * element_origin(mesh_data, fi)
+				if not _point_in_frustum(origin, planes):
+					continue
+				if camera != null and _point_occluded(mesh_data, mesh_transform, camera, origin, fi):
+					continue
+				result.append(fi)
 		PBEditor.SelectMode.EDGE:
-			for ei in range(mesh_data.get_common_edges().size()):
-				if _point_in_frustum(mesh_transform * element_origin(mesh_data, ei), planes):
-					result.append(ei)
+			var edges := mesh_data.get_common_edges()
+			for ei in range(edges.size()):
+				var origin := mesh_transform * element_origin(mesh_data, ei)
+				if not _point_in_frustum(origin, planes):
+					continue
+				if camera != null and _point_occluded(mesh_data, mesh_transform, camera, origin, -1, edges[ei]):
+					continue
+				result.append(ei)
 		PBEditor.SelectMode.VERTEX:
 			for sv_idx in range(mesh_data.shared_vertices.size()):
-				if _point_in_frustum(mesh_transform * element_origin(mesh_data, sv_idx), planes):
-					result.append(sv_idx)
+				var origin := mesh_transform * element_origin(mesh_data, sv_idx)
+				if not _point_in_frustum(origin, planes):
+					continue
+				if camera != null:
+					var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
+					if _point_occluded(mesh_data, mesh_transform, camera, origin, -1, null, sv):
+						continue
+				result.append(sv_idx)
 	return result
+
+## True when the first mesh surface between the camera and `point` belongs to
+## a face the element is not part of — i.e. the element is hidden behind the
+## mesh from this viewpoint. Box/rubber-band selection then matches what the
+## user sees (an edge-on cube's far corners are not grabbed through it).
+func _point_occluded(mesh_data: PBMeshData, mesh_transform: Transform3D,
+		camera: Camera3D, point: Vector3, face_id: int = -1,
+		edge: PBEdge = null, sv: PBSharedVertex = null) -> bool:
+	var cam_pos: Vector3 = camera.global_position
+	var to_point: Vector3 = point - cam_pos
+	var distance: float = to_point.length()
+	if distance < 0.001:
+		return false
+	var dir: Vector3 = to_point / distance
+
+	var hit := PBPicking._first_ray_hit(mesh_data, mesh_transform, cam_pos, dir)
+	var hit_face: int = hit["face"]
+	if hit_face == -1:
+		return false
+
+	var own: bool
+	if face_id != -1:
+		own = hit_face == face_id
+	elif edge != null:
+		own = PBPicking._face_contains_common_edge(mesh_data, mesh_data.faces[hit_face], edge)
+	else:
+		own = PBPicking._face_contains_common_vertex(mesh_data, mesh_data.faces[hit_face], sv)
+	if own:
+		return false
+
+	return hit["t"] + PBPicking.OCCLUSION_EPSILON < distance - PBPicking.OCCLUSION_EPSILON
 
 func _common_edge_index(mesh_data: PBMeshData, edge: PBEdge) -> int:
 	var common: PBEdge = mesh_data.get_common_edge(edge)
@@ -518,6 +564,60 @@ static func _int_arrays_equal(a: PackedInt32Array, b: PackedInt32Array) -> bool:
 		if a[i] != b[i]:
 			return false
 	return true
+
+# ==============================================================================
+# Rendering helpers (runtime-safe so they are testable)
+# ==============================================================================
+
+const FACE_FILL_DEPTH_OFFSET: float = 0.004
+
+## Builds the selected-face highlight as an n-gon centroid fan, offset slightly
+## along the face's average normal. The offset lets the fill be DEPTH-TESTED
+## (no z-fighting) so it can never poke through the mesh on non-planar faces
+## — the old depth-test-off fill drew its triangle boundary through the
+## surface, reading as a "diagonal edge where there is no edge".
+static func build_face_fill_mesh(mesh_data: PBMeshData, face_index: int,
+		offset: float = FACE_FILL_DEPTH_OFFSET) -> ArrayMesh:
+	if mesh_data == null or face_index < 0 or face_index >= mesh_data.faces.size():
+		return null
+	var face: PBFace = mesh_data.faces[face_index]
+	if face == null:
+		return null
+
+	var positions := mesh_data.positions
+	var loop := face.get_distinct_indexes()
+	if loop.size() < 3:
+		return null
+
+	var centroid := Vector3.ZERO
+	var count: int = 0
+	for idx in loop:
+		if idx >= 0 and idx < positions.size():
+			centroid += positions[idx]
+			count += 1
+	if count < 3:
+		return null
+	centroid /= float(count)
+
+	var normal := PBMath.normal_from_positions(positions, face.get_indexes())
+	var shift := normal * offset
+
+	var tris := PackedVector3Array()
+	for i in range(count):
+		var a: int = loop[i]
+		var b: int = loop[(i + 1) % count]
+		if a < 0 or a >= positions.size() or b < 0 or b >= positions.size():
+			return null
+		tris.append(centroid + shift)
+		tris.append(positions[a] + shift)
+		tris.append(positions[b] + shift)
+
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	var fill_mesh := ArrayMesh.new()
+	fill_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return fill_mesh
 
 # ==============================================================================
 # Drag readout (for the Tool Properties dock)

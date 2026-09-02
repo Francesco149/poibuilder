@@ -9,12 +9,18 @@ extends Node3D
 
 
 func _enter_tree() -> void:
+	# ALWAYS reset to a pristine cube on load: earlier sessions of this scene
+	# were mangled by since-fixed bugs, and testing picking/behavior on a
+	# deformed mesh produces misleading results.
 	if has_node("PBCube"):
-		return
-	var cube: PBMesh = PBMesh.create_cube(1.0)
-	cube.name = "PBCube"
-	add_child(cube)
-	cube.owner = get_tree().edited_scene_root if Engine.is_editor_hint() else self
+		var existing: PBMesh = get_node("PBCube")
+		existing.pb_mesh_data = PBMeshData.create_cube(1.0)
+	else:
+		var cube: PBMesh = PBMesh.create_cube(1.0)
+		cube.name = "PBCube"
+		add_child(cube)
+		cube.owner = get_tree().edited_scene_root if Engine.is_editor_hint() else self
+	print("[Phase6] Cube reset to pristine unit cube (expect V=24 F=6 groups=8 edges=12)")
 
 
 func _ready() -> void:

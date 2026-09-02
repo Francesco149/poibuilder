@@ -218,6 +218,62 @@ func get_common_edge(edge: PBEdge) -> PBEdge:
 	return PBEdge.new(ca, cb)
 
 # ==============================================================================
+# Weld Integrity
+# ==============================================================================
+
+## Ensures shared vertex groups exist and cover every position referenced by
+## the faces. Missing or partial welds make edge/vertex element ids resolve to
+## raw position pairs — drags then tear corners apart ("moved those 2 verts").
+## Rebuilds welds from coincident positions when damaged; returns true if the
+## groups were rebuilt. Never merges groups that already exist (explicit
+## unwelds are preserved) — it only heals ABSENT coverage.
+func ensure_welds(tolerance: float = 0.0001) -> bool:
+	var referenced := {}
+	for face in faces:
+		if face == null:
+			continue
+		for idx in face.get_indexes():
+			if idx >= 0 and idx < positions.size():
+				referenced[idx] = true
+	if referenced.is_empty():
+		return false
+
+	if shared_vertices.is_empty():
+		shared_vertices = PBMeshData.build_welds_from_positions(positions, tolerance)
+		invalidate_caches()
+		return true
+
+	var lookup := get_shared_vertex_lookup()
+	for idx in referenced.keys():
+		if not lookup.has(idx):
+			shared_vertices = PBMeshData.build_welds_from_positions(positions, tolerance)
+			invalidate_caches()
+			return true
+	return false
+
+## Groups position indices whose coordinates coincide within tolerance.
+static func build_welds_from_positions(positions: PackedVector3Array,
+		tolerance: float = 0.0001) -> Array[PBSharedVertex]:
+	var tol_sq: float = tolerance * tolerance
+	var representatives: PackedVector3Array = PackedVector3Array()
+	var groups: Array[PackedInt32Array] = []
+	for i in range(positions.size()):
+		var assigned: int = -1
+		for g in range(representatives.size()):
+			if representatives[g].distance_squared_to(positions[i]) <= tol_sq:
+				assigned = g
+				break
+		if assigned == -1:
+			representatives.append(positions[i])
+			groups.append(PackedInt32Array([i]))
+		else:
+			groups[assigned].append(i)
+	var result: Array[PBSharedVertex] = []
+	for g in groups:
+		result.append(PBSharedVertex.new(g))
+	return result
+
+# ==============================================================================
 # Data Setters
 # ==============================================================================
 

@@ -47,7 +47,7 @@ func _ensure_ui() -> void:
 	# Title
 	title_label = Label.new()
 	title_label.name = "TitleLabel"
-	title_label.text = "ProBuilder"
+	title_label.text = "ProBuilder v%s" % PBEditor.PLUGIN_VERSION
 	title_label.add_theme_font_size_override("font_size", 14)
 	add_child(title_label)
 

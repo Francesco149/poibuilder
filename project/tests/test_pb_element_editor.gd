@@ -700,3 +700,121 @@ func test_visible_border_edges_still_pickable_from_either_side():
 	assert_true(result.edge != null, "Clicking exactly on a border edge must pick it")
 	if result.edge != null:
 		assert_true(_is_top_edge(md, result.edge), "The picked edge must be the border edge")
+
+# ==============================================================================
+# Regression: box-select occlusion + weld integrity (round 4)
+# ==============================================================================
+
+func test_frustum_select_excludes_hidden_far_elements():
+	## Two stacked quads (far listed first) under an orthogonal camera looking
+	## down -Z project identically. A frustum covering both must select ONLY
+	## the near quad's elements — box select must match what the user sees.
+	var ed := PBEditor.new()
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+
+	var md := PBMeshData.new()
+	md.positions = PackedVector3Array([
+		Vector3(-0.5, -0.5, -1), Vector3(0.5, -0.5, -1), Vector3(0.5, 0.5, -1), Vector3(-0.5, 0.5, -1),
+		Vector3(-0.5, -0.5, 1), Vector3(0.5, -0.5, 1), Vector3(0.5, 0.5, 1), Vector3(-0.5, 0.5, 1),
+	])
+	var faces: Array[PBFace] = []
+	for base in [0, 4]:
+		faces.append(PBFace.new(PackedInt32Array([
+			base + 0, base + 1, base + 2,
+			base + 2, base + 3, base + 0,
+		])))
+	md.faces = faces
+	var groups: Array[PBSharedVertex] = []
+	for i in range(8):
+		groups.append(PBSharedVertex.new(PackedInt32Array([i])))
+	md.shared_vertices = groups
+	md.invalidate_caches()
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = md
+	add_child_autofree(mesh)
+
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.size = 4.0
+	_viewport.add_child(cam)
+	cam.position = Vector3(0, 0, 5)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Frustum that covers the whole silhouette (both quads)
+	var planes: Array[Plane] = [
+		Plane(Vector3(1, 0, 0), 2), Plane(Vector3(-1, 0, 0), 2),
+		Plane(Vector3(0, 1, 0), 2), Plane(Vector3(0, -1, 0), 2),
+		Plane(Vector3(0, 0, 1), 20), Plane(Vector3(0, 0, -1), 20),
+	]
+
+	ed.select_mode = PBEditor.SelectMode.FACE
+	var face_ids: PackedInt32Array = logic.pick_frustum(md, mesh.global_transform, planes, cam)
+	assert_eq(face_ids.size(), 1, "Box select must return only the NEAR (visible) face")
+	assert_eq(face_ids[0], 1, "The visible face is quad B (far quad is occluded)")
+
+	ed.select_mode = PBEditor.SelectMode.EDGE
+	var edge_ids: PackedInt32Array = logic.pick_frustum(md, mesh.global_transform, planes, cam)
+	assert_eq(edge_ids.size(), 4, "Only the near quad's 4 edges are selectable")
+	for ei in edge_ids:
+		var e: PBEdge = md.get_common_edges()[ei]
+		assert_gt((md.positions[e.a].z + md.positions[e.b].z) * 0.5, 0.0,
+			"Selected edges must be on the near quad")
+
+	ed.select_mode = PBEditor.SelectMode.VERTEX
+	var vert_ids: PackedInt32Array = logic.pick_frustum(md, mesh.global_transform, planes, cam)
+	assert_eq(vert_ids.size(), 4, "Only the near quad's 4 corners are selectable")
+
+	# Without a camera (occlusion off) the old behavior is available: 8 elements
+	ed.select_mode = PBEditor.SelectMode.FACE
+	var all_ids: PackedInt32Array = logic.pick_frustum(md, mesh.global_transform, planes)
+	assert_eq(all_ids.size(), 2, "Occlusion-off path still sees both quads")
+
+func test_ensure_welds_rebuilds_missing_groups():
+	## A mesh with stripped weld groups (stale serialization, external edit)
+	## must self-heal on activation, or edge drags tear corners apart.
+	var md := PBMeshData.create_cube(1.0)
+	md.shared_vertices = []
+	md.invalidate_caches()
+
+	assert_true(md.ensure_welds(), "Empty welds must be rebuilt")
+	assert_eq(md.shared_vertices.size(), 8, "Cube must heal to 8 corner groups")
+
+	# After healing, dragging one edge moves exactly 6 positions (2 corners)
+	var edges := md.get_common_edges()
+	assert_eq(edges.size(), 12, "Healed cube must dedupe to 12 perimeter edges")
+	var e0 := edges[0]
+	var moved := {}
+	for g in md.shared_vertices:
+		if g.indices.has(e0.a) or g.indices.has(e0.b):
+			for idx in g.indices:
+				moved[idx] = true
+	assert_eq(moved.size(), 6, "An edge drag must move 2 full welded corners")
+
+	# Second call is a no-op (welds are healthy)
+	assert_false(md.ensure_welds(), "Healthy welds must not be rebuilt")
+
+func test_ensure_welds_rebuilds_partial_coverage():
+	var md := PBMeshData.create_cube(1.0)
+	# Simulate partial damage: keep only the first group
+	md.shared_vertices = [md.shared_vertices[0]]
+	md.invalidate_caches()
+	assert_true(md.ensure_welds(), "Partial coverage must be detected as damage")
+	assert_eq(md.shared_vertices.size(), 8)
+
+func test_face_fill_mesh_is_offset_centroid_fan():
+	## The selected-face highlight must be a centroid fan offset along the
+	## face normal (depth-testable) — not a raw triangle list that draws its
+	## triangulation diagonal through the surface.
+	var md := PBMeshData.create_cube(1.0)
+	var fill := PBElementEditor.build_face_fill_mesh(md, 0)
+	assert_not_null(fill)
+
+	var arrays := fill.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	assert_eq(verts.size(), 12, "Quad fan = 4 triangles = 12 vertices")
+
+	# Every vertex is offset off the face plane (z = -0.5 face → z < -0.5)
+	for v in verts:
+		assert_lt(v.z, -0.5, "Fill vertices must sit just above the surface")
