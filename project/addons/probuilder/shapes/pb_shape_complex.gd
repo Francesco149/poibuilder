@@ -1,4 +1,4 @@
-## PBShapeComplex — Generator for complex ProBuilder shape primitives.
+## PBShapeComplex — Generator for complex PoiBuilder shape primitives.
 ##
 ## Provides procedural generation methods for Sphere (Icosphere), Torus,
 ## Arch, Stairs, and Door primitives returning valid PBMeshData instances.

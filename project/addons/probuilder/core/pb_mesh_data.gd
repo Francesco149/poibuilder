@@ -1,4 +1,4 @@
-## PBMeshData — Core editable mesh data container for ProBuilder.
+## PBMeshData — Core editable mesh data container for PoiBuilder.
 ##
 ## Stores vertex positions, per-vertex attributes (UV0, colors, tangents),
 ## faces (PBFace), and shared vertex/texture topological groups.

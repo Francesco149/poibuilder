@@ -16,7 +16,7 @@ func test_default_null_editor_does_not_crash():
 	overlay.refresh()
 
 	assert_not_null(overlay.title_label, "Title label must exist")
-	assert_true(overlay.title_label.text.begins_with("ProBuilder v"),
+	assert_true(overlay.title_label.text.begins_with("PoiBuilder v"),
 		"Title must show the versioned plugin name so stale builds are detectable")
 
 	assert_not_null(overlay.mode_value_label, "Mode value label must exist")

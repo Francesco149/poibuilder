@@ -1,4 +1,4 @@
-## PBShapeCylinder — Procedural cylindrical mesh generators for ProBuilder.
+## PBShapeCylinder — Procedural cylindrical mesh generators for PoiBuilder.
 ##
 ## Provides static factory methods to generate:
 ## - Cylinder (with optional height subdivisions and smoothing)

@@ -1,6 +1,6 @@
-## PBLogger — Ring buffer logger for ProBuilder debug/telemetry
+## PBLogger — Ring buffer logger for PoiBuilder debug/telemetry
 ##
-## All ProBuilder subsystems log through this. Entries are kept in a ring
+## All PoiBuilder subsystems log through this. Entries are kept in a ring
 ## buffer and can be dumped to file or displayed in the debug dock.
 ##
 ## NOTE: The method is named `info()` not `log()` because GDScript reserves

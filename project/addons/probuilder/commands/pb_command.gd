@@ -1,4 +1,4 @@
-## PBCommand — Base class for all undoable ProBuilder editing commands.
+## PBCommand — Base class for all undoable PoiBuilder editing commands.
 ##
 ## Mesh editing operations extend PBCommand and implement do_it() and undo_it().
 ## Commands follow the "snapshot-once" pattern:
@@ -15,7 +15,7 @@ class_name PBCommand
 extends RefCounted
 
 ## Human-readable action name displayed in the editor Undo/Redo history.
-var command_name: String = "ProBuilder Command"
+var command_name: String = "PoiBuilder Command"
 
 ## Optional logger for telemetry and debugging undo operations.
 var logger: PBLogger = null

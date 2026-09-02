@@ -1,6 +1,6 @@
 ## PBMesh — MeshInstance3D wrapper node that holds a PBMeshData resource and compiles it to ArrayMesh.
 ##
-## This is the primary scene-tree node in ProBuilder. It holds the editable geometry
+## This is the primary scene-tree node in PoiBuilder. It holds the editable geometry
 ## data in a PBMeshData resource and synchronizes it with its own MeshInstance3D.mesh (an ArrayMesh).
 @tool
 class_name PBMesh

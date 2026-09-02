@@ -1,4 +1,4 @@
-## PBShapeGenerators — Procedural mesh generation primitives for ProBuilder.
+## PBShapeGenerators — Procedural mesh generation primitives for PoiBuilder.
 ##
 ## Provides static factory methods to generate common geometric shapes (Box, Plane, Sprite, Prism)
 ## as PBMeshData instances with valid topologies, UVs, and shared vertex groupings.

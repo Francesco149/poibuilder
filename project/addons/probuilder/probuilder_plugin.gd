@@ -1,6 +1,6 @@
 @tool
 extends EditorPlugin
-class_name ProBuilderPlugin
+class_name PoiBuilderPlugin
 
 # ==============================================================================
 # Core Systems
@@ -32,13 +32,13 @@ var _toolbar_anchor: Control = null
 # ==============================================================================
 
 func _get_plugin_name() -> String:
-	return "ProBuilder"
+	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.7.1"
+const VERSION := "0.8.0"
 
 func _enter_tree():
-	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
+	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
 
 	# Wire up subsystems
 	editor.logger = logger
@@ -98,11 +98,11 @@ func _enter_tree():
 	var selection: EditorSelection = get_editor_interface().get_selection()
 	selection.selection_changed.connect(_on_selection_changed)
 
-	logger.info("plugin", "ProBuilder plugin initialized")
+	logger.info("plugin", "PoiBuilder plugin initialized")
 
 func _exit_tree():
 	if logger:
-		logger.info("plugin", "ProBuilder plugin exiting tree")
+		logger.info("plugin", "PoiBuilder plugin exiting tree")
 
 	# Disconnect selection
 	var selection: EditorSelection = get_editor_interface().get_selection()
@@ -333,8 +333,16 @@ func _on_element_selection_changed() -> void:
 		tool_overlay.refresh()
 
 func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
-	# Re-fetch subgizmo transforms so the editor re-renders the transform
-	# gizmo with the new axis orientation.
+	# The engine's transform gizmo only adopts a subgizmo's basis while its
+	# own local-coords toggle is on (update_transform_gizmo in the engine
+	# source) — the bridge flips that toggle, and the engine's `toggled`
+	# handler then re-orients the gizmo over the selected subgizmos itself.
+	tool_bridge.editor_space = editor.orientation_space
+	if editor.is_editing() and tool_bridge.is_ready():
+		var applied: bool = tool_bridge.apply_orientation_space(editor.orientation_space)
+		if not applied and logger:
+			logger.warn("plugin", "Engine local-coords toggle not found — gizmo space cannot be applied")
+	# Re-fetch subgizmo transforms so our own gizmo redraw matches too.
 	if editor.active_mesh != null:
 		editor.active_mesh.update_gizmos()
 
@@ -358,6 +366,8 @@ func _update_editing_context() -> void:
 	if tool_bridge.is_ready():
 		tool_bridge.set_editing_active(editing)
 		if editing:
+			tool_bridge.editor_space = editor.orientation_space
+			tool_bridge.apply_orientation_space(editor.orientation_space)
 			tool_bridge.apply_tool(editor.tool_mode)
 
 func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> void:

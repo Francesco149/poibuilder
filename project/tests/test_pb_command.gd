@@ -73,7 +73,7 @@ class FakeUndo extends RefCounted:
 ## 1. Default PBCommand contract
 func test_default_pb_command() -> void:
 	var cmd := PBCommand.new()
-	assert_eq(cmd.command_name, "ProBuilder Command", "Default command_name should be 'ProBuilder Command'")
+	assert_eq(cmd.command_name, "PoiBuilder Command", "Default command_name should be 'PoiBuilder Command'")
 	assert_null(cmd.logger, "Default logger should be null")
 
 	# Virtual do_it and undo_it should be callable without error

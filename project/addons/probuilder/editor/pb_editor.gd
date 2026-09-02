@@ -1,4 +1,4 @@
-## PBEditor — Central editor state for ProBuilder.
+## PBEditor — Central editor state for PoiBuilder.
 ##
 ## Manages the active PBMesh, element selection mode (Object/Vertex/Edge/Face),
 ## element selection state, and the gizmo orientation space.
@@ -12,7 +12,7 @@ extends RefCounted
 
 ## Plugin version, shown in the dock and logged at startup so a stale build
 ## is immediately obvious when behavior "doesn't match" what was fixed.
-const PLUGIN_VERSION := "0.7.1"
+const PLUGIN_VERSION := "0.8.0"
 
 # ==============================================================================
 # Selection Mode
@@ -33,7 +33,7 @@ enum OrientationSpace {
 	WORLD,    ## Axes aligned to world XYZ
 }
 
-## The plugin's OWN transform tool, shown by the ProBuilder toolbar. While
+## The plugin's OWN transform tool, shown by the PoiBuilder toolbar. While
 ## editing we never follow the editor's Q/V (universal/select) tool state —
 ## one of these three is always active, so the engine's transform gizmo over
 ## the elements always shows exactly move arrows, rotate rings, or scale

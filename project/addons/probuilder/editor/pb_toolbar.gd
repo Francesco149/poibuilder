@@ -1,4 +1,4 @@
-## PBToolbar — ProBuilder's persistent toolbar row.
+## PBToolbar — PoiBuilder's persistent toolbar row.
 ##
 ## Lives as its own full-width row directly BELOW the 3D scene toolbar (not
 ## inside it) and stays visible at all times. When no PBMesh is selected the
@@ -67,7 +67,7 @@ func _build_ui() -> void:
 	_logo.custom_minimum_size = Vector2(18, 18)
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_logo.tooltip_text = "ProBuilder"
+	_logo.tooltip_text = "PoiBuilder"
 	add_child(_logo)
 
 	_label_space()

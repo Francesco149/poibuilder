@@ -1,6 +1,6 @@
 ## PBGizmoPlugin — Native editor integration via EditorNode3DGizmoPlugin subgizmos.
 ##
-## This is THE integration layer between ProBuilder and the Godot 3D editor.
+## This is THE integration layer between PoiBuilder and the Godot 3D editor.
 ## Instead of hand-rolling viewport input (which fights the editor's own
 ## selection, transform gizmo, and rubber-band handling), this plugin exposes
 ## each mesh element (vertex group / edge / face) as a native editor SUBGIZMO:
@@ -33,10 +33,11 @@ extends EditorNode3DGizmoPlugin
 
 const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 1.0)
 const EDGE_MODE_WIREFRAME_COLOR := Color(0.02, 0.02, 0.02, 1.0)
-const SELECTED_COLOR := Color(0.0, 0.824, 0.937, 1.0)
-const FACE_FILL_COLOR := Color(0.0, 0.824, 0.937, 0.35)
-## Hover highlight: yellow (selection stays cyan), slightly more transparent
-## than the fully selected state.
+## Selection is YELLOW, slightly more opaque than the hover state so a
+## selected element reads more solid than the one under the cursor.
+const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.85)
+const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.32)
+## Hover highlight: the same yellow as selection, just more transparent.
 const HOVER_COLOR := Color(1.0, 0.9, 0.2, 0.7)
 const HOVER_FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.22)
 const VERTEX_COLOR := Color(0.05, 0.05, 0.05, 1.0)
@@ -49,7 +50,7 @@ const VERTEX_DOT_HOVER_SIZE: float = 9.0
 const THICK_LINE_OFFSET: float = 0.006
 
 # ==============================================================================
-# Wiring (set by ProBuilderPlugin on registration)
+# Wiring (set by PoiBuilderPlugin on registration)
 # ==============================================================================
 
 ## Shared editor state (active mesh, select mode, orientation space, selection).
@@ -118,7 +119,7 @@ func _has_gizmo(for_node_3d: Node3D) -> bool:
 	return for_node_3d is PBMesh
 
 func _get_gizmo_name() -> String:
-	return "ProBuilderMesh"
+	return "PoiBuilderMesh"
 
 func _get_priority() -> int:
 	return 1
@@ -313,8 +314,8 @@ func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 	for fill in fill_meshes:
 		gizmo.add_mesh(fill, _face_fill_material)
 
-## The hovered (not selected) face as a translucent yellow fill — same style
-## as the selection, just yellow and slightly more transparent.
+## The hovered (not selected) face as a translucent yellow fill — same yellow
+## as the selection, just slightly more transparent.
 func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
 	if hover_id < 0 or hover_id >= mesh_data.faces.size():
@@ -360,8 +361,8 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	_add_thick_lines(gizmo, PackedVector3Array([positions[edge.a], positions[edge.b]]),
 		get_material("pb_hover_edge", gizmo))
 
-## All shared vertices as gray dots, selected ones as cyan dots, the hovered
-## one (when not selected) as a yellow dot.
+## All shared vertices as gray dots, selected ones as opaque yellow dots, the
+## hovered one (when not selected) as a slightly more transparent yellow dot.
 func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 	var positions := mesh_data.positions
 	var unselected := PackedVector3Array()

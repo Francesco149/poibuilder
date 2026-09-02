@@ -1,8 +1,14 @@
-# ProBuilder Godot Clone
+# PoiBuilder (Godot ProBuilder clone)
 
 A Godot 4.3+ editor plugin reimplementing Unity ProBuilder's mesh editing
 capabilities. Built from a 37k-line specification extracted from ProBuilder
 v6.1.2 source code.
+
+Naming: the plugin is **PoiBuilder** (renamed from ProBuilder in v0.8.0).
+The `PB*`/`pb_*` prefix and the `addons/probuilder/` folder+file names are
+kept on purpose (they pre-date the rename and res:// paths / .uid files
+reference them). Comments citing "ProBuilder" behavior/math refer to Unity's
+ProBuilder — the spec source — and are intentional.
 
 ## Quick Start
 
@@ -49,9 +55,11 @@ Plugin: `project/addons/probuilder/`
   changes), the plugin's OWN tool mode (Move/Rotate/Scale — the editor's
   universal gizmo is never used), orientation space, hover id, selection.
 - `editor/pb_tool_bridge.gd` — Presses the engine's Move/Rotate/Scale tool
-  buttons to mirror OUR tool onto the engine's transform gizmo, and DISABLES
-  the engine's Transform(Q, universal)/Select(V) buttons while editing (a
-  disabled button also ignores its shortcut). Headless-testable decisions.
+  buttons to mirror OUR tool onto the engine's transform gizmo, DISABLES
+  the engine's Transform(Q)/Select(V) buttons while editing (a disabled
+  button also ignores its shortcut), and drives the engine's local-coords
+  toggle (T) to implement the orientation space (below). Headless-testable
+  decisions.
 - `editor/pb_toolbar.gd` — Persistent toolbar row BELOW the 3D scene toolbar.
   PLACEMENT IS VERSION-SENSITIVE: Node3DEditor must be located by walking the
   anchor's real ancestor path — in 4.7 the Node3DEditor IS the layout VBox
@@ -74,8 +82,20 @@ Plugin: `project/addons/probuilder/`
 
 Hover highlights: `_forward_3d_gui_input` observes mouse motion (never
 consumes), picks the element under the cursor into `PBEditor.hover_id`, and
-redraws the gizmo; hovered elements render YELLOW and slightly more
-transparent than the cyan selected state (faces/edges/verts).
+redraws the gizmo; selection AND hover are both YELLOW — selection slightly
+more opaque (reads more solid), hover more transparent (faces/edges/verts).
+
+Orientation space (Element/Object/World, X key or Space button): the engine's
+transform gizmo only adopts a subgizmo's basis while the editor's own
+local-coords toggle ("Use Local Space", T) is ON — otherwise its basis stays
+identity (world axes). There is no other script-accessible hook
+(`update_transform_gizmo()` in node_3d_editor_plugin.cpp). So PBToolBridge
+finds that toggle button (shortcut identity, fallback physical T) and presses
+it: WORLD → OFF, ELEMENT/OBJECT → ON. The engine's `toggled` handler then
+calls its own update_transform_gizmo() and also pre-converts drag motion
+through the gizmo basis, so element_basis() becomes live for display AND
+drag math. While editing the toggle is DISABLED (like Q/V) so T can't fight
+the plugin; a stray external flip is re-asserted via the `toggled` listener.
 
 Tests: `project/tests/` (GUT framework, headless-capable).
 NEVER claim "tests pass" without run_tests.sh output — GUT silently skips
@@ -112,11 +132,20 @@ Phase 7 UX round (v0.7.0, after Phase 6 sign-off) complete ✓
 - Element mode persistence: clicking off the object (or selecting another
   node) and coming back re-enters the last element mode.
 - Yellow hover highlights for faces/edges/verts, slightly more transparent
-  than the cyan selected state.
+  than the selected state.
 - Click priority: the transform gizmo outranks element picking (the Phase 6
   click-interception was removed; the engine's native order applies).
 - The docked panels are gone: tool info lives in a floating overlay panel in
   the viewport (bottom-left); logging is console-only via PBLogger.
+
+v0.8.0 round complete ✓
+- The orientation space ACTUALLY works now (it previously only changed
+  PBElementEditor.element_basis, which the engine ignored for gizmo
+  display unless the editor's local-coords toggle was on — the user-visible
+  symptom was "always world space"). See the Orientation space paragraph
+  above for the engine contract.
+- Selection is YELLOW, slightly more opaque than hover (was cyan).
+- Plugin renamed to PoiBuilder (see naming note at top).
 
 Known limitation: programmatic multi-element selection (select-all / grow /
 shrink / invert) is NOT exposed to gizmo drags — the engine's script-side
@@ -132,8 +161,9 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 (Core Mesh Operations) — after human sign-off of this UX round
-(human_test_phase6.tscn prints the updated checklist).
+Next: Phase 7 (Core Mesh Operations) — extrude/inset/connect/subdivide/
+delete etc. as headless-testable pure ops + undo commands + an OPERATIONS
+section in the overlay panel.
 
 ## Key Conventions
 

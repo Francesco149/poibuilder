@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ProBuilder test runner — hardened against GUT's silent-skip hole.
+# PoiBuilder test runner — hardened against GUT's silent-skip hole.
 #
 # A test script that fails to PARSE is skipped by GUT with the suite still
 # green (this is exactly how the Phase 6 normals bug reached a human: the
