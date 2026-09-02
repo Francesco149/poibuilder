@@ -28,7 +28,7 @@ func _get_plugin_name() -> String:
 	return "ProBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.6.6"
+const VERSION := "0.6.7"
 
 func _enter_tree():
 	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
@@ -143,6 +143,30 @@ func _make_visible(visible: bool) -> void:
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
+
+	# Element click-pick interception: a plain left press that hits an element
+	# is consumed HERE and applied via set_subgizmo_selection. Without this,
+	# the engine's transform-gizmo hit test (which runs before subgizmo
+	# picking) swallows presses anywhere in the gizmo's ring/arrow footprint —
+	# edges near the gizmo were unselectable and clicks "dragged the selected
+	# edge" instead. Shift/ctrl presses pass through for native toggle
+	# semantics; misses pass through for gizmo grabs and rubber-band select.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+			and event.pressed and not event.shift_pressed and not event.ctrl_pressed \
+			and not event.alt_pressed:
+		var node := editor.active_mesh
+		if node != null and node.pb_mesh_data != null:
+			var id: int = gizmo_plugin.element_editor.pick_ray(
+				node.pb_mesh_data, node.global_transform, camera, event.position)
+			if id != -1:
+				var gizmo := gizmo_plugin.gizmo_for_node(node)
+				if gizmo != null:
+					# 4.7 signature takes the start transform explicitly (the
+					# engine snapshots it as the drag baseline).
+					var start_xf: Transform3D = gizmo_plugin.element_editor.get_subgizmo_transform(
+						node.pb_mesh_data, node, id)
+					node.set_subgizmo_selection(gizmo, id, start_xf)
+					return AFTER_GUI_INPUT_STOP
 
 	# Element mode hotkeys (matching ProBuilder: H vertex, J edge, K face,
 	# X cycles gizmo space). Godot's own Q/W/E/R already switch
