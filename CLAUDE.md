@@ -223,18 +223,38 @@ v0.9.0 round complete ✓ (sign-off fixes + ProBuilder creation UX)
 - Manipulator gizmo size halved by default (EditorSettings
   editors/3d/manipulator_gizmo_size 80→40, applied only while untouched).
 - ProBuilder-style shape creation (#12): New Shape arms PBShapeCreator (NOTHING
-  spawns). LMB-drag on any PBMesh face (or the y=0 grid as fallback) draws a
-  base coplanar with the pressed plane; release, move to set the height
-  along the normal (negative grows below); LMB click confirms; the overlay
-  opens the shape's PARAMS modal (live preview; Apply commits, Cancel
-  restores placement values; either way the node is selected and the plugin
-  returns to the remembered element mode). ESC before the confirm aborts
-  with nothing created. During creation: hovered faces highlight cyan
-  (thick edges + fill at selection opacity), the preview draws a cyan box
-  bounds (on-top) and an ORANGE facing arrow for stairs (+Z local).
-  Wall surfaces map the drag's vertical extent to shape height, floors to
-  depth. Undo registers at the confirming click (do = own/attach, undo =
-  detach).
+  spawns; the overlay shows a guidance hint row, since a sticky armed session
+  otherwise swallows clicks invisibly). LMB-drag on any PBMesh face (or the
+  y=0 grid as fallback) draws a base coplanar with the pressed plane — BASE
+  phase shows only the cyan base-rect outline, the mesh stays hidden; the
+  drag axis LOCKS on first motion, snapping to the nearest world axis on
+  axis-aligned surfaces (axis-aligned creation; arbitrary faces follow the
+  drag in their plane). Release, move to set the height along the normal
+  (negative grows below); LMB click confirms. ONE extent mapping for every
+  surface: u → width, v → depth, the normal extent → the height param — the
+  placement basis points local Y along the face normal, so phase 2 grows
+  ALONG the face on walls exactly like it grows up on floors. The params
+  modal only opens for shapes with drag-inexpressible parameters
+  (PBShapeParams.needs_params_modal; cube/prism/plane/sprite finalize at the
+  click — Edit Params covers later changes); for parameterized shapes it is
+  a live-preview modal (Apply commits, Cancel restores placement values;
+  either way the node is selected and the plugin returns to the remembered
+  element mode). ESC before the confirm aborts with nothing created. During
+  creation: hovered faces highlight cyan (thick edges + fill at selection
+  opacity), the preview draws cyan box bounds (on-top) and an ORANGE facing
+  arrow for stairs (+Z local). Undo registers at the confirming click (do =
+  own/attach, undo = detach) WITH a custom context node — see below.
+- EditorUndoRedoManager: every action that touches scene nodes MUST pass the
+  custom_context object to create_action (plugin + element editor do) —
+  without it actions land in the GLOBAL history and add_do_reference errors
+  with "UndoRedo history mismatch" while Ctrl+Z never removes created nodes.
+- The plugin calls set_input_event_forwarding_always_enabled() so
+  _forward_3d_gui_input runs with NOTHING selected (creation is armed from
+  the menu; the engine otherwise only forwards viewport input to plugins
+  whose _handles() matches the currently edited object).
+- PBEditor tracks _object_mode_explicit: an EXPLICIT object mode survives
+  deselect + reselect; only the implicit fresh-editor OBJECT mode hands over
+  to the remembered element mode on first selection.
 - PBMeshData gained serialized shape bookkeeping: shape_id, shape_params,
   shape_edited (copied/restored with every snapshot; set by any committed
   element edit or mesh op). PBShapeParams rebuilds data from a values dict.
@@ -269,6 +289,18 @@ test_scenes/human_test_phase6.tscn for the v0.9.0 human pass.
 
 ## Key Conventions
 
+- COMMIT SIGNING (mandatory): every commit must end with a blank line plus
+  a `Co-authored-by` trailer naming the model that produced it, in the
+  format used across the history:
+  `Co-authored-by: <provider-slug>/<model-slug> <<provider-slug>+<model-slug>@users.noreply.github.com>`
+  e.g. `Co-authored-by: zai-coding-plan/glm-5.3-flash <zai-coding-plan+glm-5.3-flash@users.noreply.github.com>`.
+  Derive the slugs from YOUR OWN model id (lowercase, provider path prefix);
+  never reuse another model's trailer.
+- The README.md is a purely HUMAN-FACING doc: do not read it for context and
+  do not factor it into how you work on the project. The ONLY exception is
+  updating the feature checklist when features are completed, when
+  explicitly asked to edit it. Everything an agent needs lives here in
+  CLAUDE.md, SPECIFICATION.md, and IMPLEMENTATION.md.
 - Internal mesh data uses CCW-from-outside winding (Unity convention) —
   PBMath.cross-based normals point OUTWARD.
 - Godot renders CW front faces. to_array_mesh() reverses each triangle's
