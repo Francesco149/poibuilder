@@ -1,19 +1,18 @@
-## PBToolOverlay — Floating in-viewport tool panel.
+## PBToolOverlay — Floating in-viewport readout / parameter panel.
 ##
-## Replaces the docked panels: a small PanelContainer parented to the 3D
-## editor's viewport (bottom-left) that uses standard panel language —
-## section headers and label/value rows with real controls, ready to grow
-## tool/shape parameter sections (e.g. stair parameters after placing
-## stairs). It only occupies its own rect — clicks on it are consumed,
-## everything else passes to the scene. It appears only while a PBMesh is
-## being edited (visibility is managed by the plugin).
+## COMPACT BY DEFAULT: the panel only shows when it has something useful to
+## say —
+## - SELECTION info while elements are selected (active mode + count),
+## - the live manipulation readout while a gizmo drag runs,
+## - the shape-parameter MODAL (after creating a shape, or via Edit Params):
+##   live-updating parameter controls with Apply/Cancel.
+## Otherwise it hides itself, unless pinned via the toolbar's Panel toggle.
+## Mesh-op buttons live in the persistent toolbar, NOT here.
 ##
-## Sections:
-## - TOOL: transform tool buttons, orientation space picker, live drag readout
-## - SELECTION: element mode and selection counts
-## - OPERATIONS: mesh ops (extrude/inset/subdivide/delete/detach) acting on
-##   the current selection, with numeric params (extrude distance, inset
-##   amount). Buttons enable per selection context — see refresh().
+## The panel can be dragged by its header and collapsed to just the header.
+## It only occupies its own rect — clicks on it are consumed, everything
+## else passes to the scene. Standard panel language: section headers and
+## label/value rows.
 @tool
 class_name PBToolOverlay
 extends PanelContainer
@@ -30,43 +29,50 @@ var editor: PBEditor = null:
 var element_editor: PBElementEditor = null:
 	set = set_element_editor
 
-## Emitted when the user clicks a mesh operation button. The plugin performs
-## the op — selection reading and undo live there.
-signal operation_requested(op_name: String)
+## Emitted on every parameter control change while a params session is open
+## (the plugin live-rebuilds the preview mesh).
+signal param_changed(param_name: String, value: float)
 
-## Header
+## Emitted when the user presses Apply in the params modal.
+signal params_applied
+
+## Emitted when the user presses Cancel in the params modal.
+signal params_canceled
+
+# ==============================================================================
+# UI
+# ==============================================================================
+
 var title_label: Label
-## Tool section controls
-var _btn_move: Button
-var _btn_rotate: Button
-var _btn_scale: Button
-var space_option: OptionButton
+var _collapse_btn: Button
+var _body: VBoxContainer
+var _selection_row: HBoxContainer
+var _selection_mode_label: Label
+var _selection_count_label: Label
+var _drag_row: HBoxContainer
 var drag_value_label: Label
-## Selection section controls
-var mode_value_label: Label
-var vertices_value_label: Label
-var edges_value_label: Label
-var faces_value_label: Label
-## Operations section controls
-var extrude_faces_btn: Button
-var extrude_edges_btn: Button
-var loop_cut_btn: Button
-var weld_vertices_btn: Button
-var inset_btn: Button
-var subdivide_btn: Button
-var delete_btn: Button
-var detach_btn: Button
-var merge_btn: Button
-var extrude_distance_spin: SpinBox
-var inset_amount_spin: SpinBox
+var _params_section: VBoxContainer
+var _params_title: Label
+var _params_grid: GridContainer
+var _params_hint: Label
 
-## Numeric params read by the plugin when performing ops.
-var extrude_distance: float:
-	get: return extrude_distance_spin.value if extrude_distance_spin != null else 0.25
-var inset_amount: float:
-	get: return inset_amount_spin.value if inset_amount_spin != null else 0.25
+## param name -> SpinBox (rebuilt per params session)
+var _param_spinboxes: Dictionary = {}
 
-var _tool_group: ButtonGroup = ButtonGroup.new()
+## Pin state (toolbar Panel toggle). Pinned = always visible while a mesh
+## is selected; unpinned = auto-hide when there is nothing to show.
+var pinned: bool = false:
+	set(value):
+		pinned = value
+		update_visibility()
+
+## True while a params session (modal) is open.
+var params_open: bool = false
+
+## Header drag state.
+var _panel_dragging: bool = false
+var _panel_drag_offset: Vector2 = Vector2.ZERO
+var _collapsed: bool = false
 
 var _ui_built: bool = false
 
@@ -98,20 +104,16 @@ func _ensure_ui() -> void:
 
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
-	var margin := MarginContainer.new()
-	for side in ["margin_left", "margin_right"]:
-		margin.add_theme_constant_override(side, 10)
-	margin.add_theme_constant_override("margin_top", 6)
-	margin.add_theme_constant_override("margin_bottom", 8)
-	add_child(margin)
-
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
-	margin.add_child(vbox)
+	add_child(vbox)
 
-	# ── Header ────────────────────────────────────────────────────────────────
+	# ── Header: logo + title + collapse (the drag handle) ────────────────────
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 6)
+	header.mouse_filter = Control.MOUSE_FILTER_STOP
+	header.gui_input.connect(_on_header_gui_input)
+	header.mouse_default_cursor_shape = Control.CURSOR_MOVE
 	vbox.add_child(header)
 
 	var logo := TextureRect.new()
@@ -119,126 +121,115 @@ func _ensure_ui() -> void:
 	logo.custom_minimum_size = Vector2(16, 16)
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	header.add_child(logo)
 
 	title_label = Label.new()
 	title_label.name = "TitleLabel"
 	title_label.text = "PoiBuilder v%s" % PBEditor.PLUGIN_VERSION
 	title_label.add_theme_font_size_override("font_size", 13)
+	title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	header.add_child(title_label)
 
-	# ── Tool section ──────────────────────────────────────────────────────────
-	vbox.add_child(_make_section_label("Tool"))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(spacer)
 
-	var tool_grid := _make_grid(vbox)
+	_collapse_btn = Button.new()
+	_collapse_btn.name = "CollapseButton"
+	_collapse_btn.flat = true
+	_collapse_btn.focus_mode = Control.FOCUS_NONE
+	_collapse_btn.text = "▾"
+	_collapse_btn.tooltip_text = "Collapse / expand the panel"
+	_collapse_btn.pressed.connect(_on_collapse_pressed)
+	header.add_child(_collapse_btn)
 
-	tool_grid.add_child(_make_row_label("Transform"))
-	var tool_row := HBoxContainer.new()
-	tool_row.add_theme_constant_override("separation", 2)
-	_btn_move = _make_tool_button("Move", PBEditor.ToolMode.MOVE, "icon_move.svg")
-	_btn_rotate = _make_tool_button("Rotate", PBEditor.ToolMode.ROTATE, "icon_rotate.svg")
-	_btn_scale = _make_tool_button("Scale", PBEditor.ToolMode.SCALE, "icon_scale.svg")
-	tool_row.add_child(_btn_move)
-	tool_row.add_child(_btn_rotate)
-	tool_row.add_child(_btn_scale)
-	tool_grid.add_child(tool_row)
+	# ── Body (hidden when collapsed) ─────────────────────────────────────────
+	_body = VBoxContainer.new()
+	_body.name = "Body"
+	_body.add_theme_constant_override("separation", 4)
+	vbox.add_child(_body)
 
-	tool_grid.add_child(_make_row_label("Space"))
-	space_option = OptionButton.new()
-	space_option.name = "SpaceOption"
-	for space_name in PBEditor.OrientationSpace.keys():
-		space_option.add_item(String(space_name).capitalize())
-	space_option.selected = 0
-	space_option.item_selected.connect(_on_space_selected)
-	tool_grid.add_child(space_option)
+	# SELECTION row: active mode + count, only while something is selected.
+	_selection_row = HBoxContainer.new()
+	_selection_row.name = "SelectionRow"
+	_selection_row.add_theme_constant_override("separation", 8)
+	_body.add_child(_selection_row)
+	var mode_caption := _make_row_label("Selection")
+	_selection_row.add_child(mode_caption)
+	_selection_mode_label = _make_value_label()
+	_selection_mode_label.name = "ModeValue"
+	_selection_row.add_child(_selection_mode_label)
+	_selection_count_label = _make_value_label()
+	_selection_count_label.name = "CountValue"
+	_selection_row.add_child(_selection_count_label)
 
-	tool_grid.add_child(_make_row_label("Last Drag"))
+	# DRAG row: live manipulation readout, only while a gizmo drag runs.
+	_drag_row = HBoxContainer.new()
+	_drag_row.name = "DragRow"
+	_drag_row.add_theme_constant_override("separation", 8)
+	_body.add_child(_drag_row)
+	_drag_row.add_child(_make_row_label("Drag"))
 	drag_value_label = _make_value_label()
 	drag_value_label.name = "DragValue"
 	drag_value_label.text = "—"
-	tool_grid.add_child(drag_value_label)
+	_drag_row.add_child(drag_value_label)
 
-	# ── Selection section ─────────────────────────────────────────────────────
-	vbox.add_child(_make_section_label("Selection"))
+	# PARAMS section: the shape-parameter modal.
+	_params_section = VBoxContainer.new()
+	_params_section.name = "ParamsSection"
+	_params_section.add_theme_constant_override("separation", 4)
+	_body.add_child(_params_section)
+	_params_title = Label.new()
+	_params_title.name = "ParamsTitle"
+	_params_title.text = "SHAPE PARAMETERS"
+	_params_title.add_theme_font_size_override("font_size", 11)
+	_params_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_params_section.add_child(_params_title)
 
-	var sel_grid := _make_grid(vbox)
+	_params_grid = GridContainer.new()
+	_params_grid.name = "ParamsGrid"
+	_params_grid.columns = 2
+	_params_grid.add_theme_constant_override("h_separation", 10)
+	_params_grid.add_theme_constant_override("v_separation", 3)
+	_params_section.add_child(_params_grid)
 
-	sel_grid.add_child(_make_row_label("Mode"))
-	mode_value_label = _make_value_label()
-	mode_value_label.name = "ModeValue"
-	sel_grid.add_child(mode_value_label)
+	_params_hint = Label.new()
+	_params_hint.name = "ParamsHint"
+	_params_hint.text = "Changes preview live"
+	_params_hint.add_theme_font_size_override("font_size", 10)
+	_params_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+	_params_section.add_child(_params_hint)
 
-	sel_grid.add_child(_make_row_label("Vertices"))
-	vertices_value_label = _make_value_label()
-	vertices_value_label.name = "VerticesValue"
-	sel_grid.add_child(vertices_value_label)
+	var buttons_row := HBoxContainer.new()
+	buttons_row.alignment = BoxContainer.ALIGNMENT_END
+	buttons_row.add_theme_constant_override("separation", 6)
+	_params_section.add_child(buttons_row)
 
-	sel_grid.add_child(_make_row_label("Edges"))
-	edges_value_label = _make_value_label()
-	edges_value_label.name = "EdgesValue"
-	sel_grid.add_child(edges_value_label)
+	var apply_btn := Button.new()
+	apply_btn.name = "ApplyParams"
+	apply_btn.text = "Apply"
+	apply_btn.focus_mode = Control.FOCUS_NONE
+	apply_btn.pressed.connect(func(): params_applied.emit())
+	buttons_row.add_child(apply_btn)
 
-	sel_grid.add_child(_make_row_label("Faces"))
-	faces_value_label = _make_value_label()
-	faces_value_label.name = "FacesValue"
-	sel_grid.add_child(faces_value_label)
+	var cancel_btn := Button.new()
+	cancel_btn.name = "CancelParams"
+	cancel_btn.text = "Cancel"
+	cancel_btn.focus_mode = Control.FOCUS_NONE
+	cancel_btn.pressed.connect(func(): params_canceled.emit())
+	buttons_row.add_child(cancel_btn)
 
-	# ── Operations section ────────────────────────────────────────────────────
-	vbox.add_child(_make_section_label("Operations"))
-
-	var ops_grid := _make_grid(vbox)
-
-	ops_grid.add_child(_make_row_label("Faces"))
-	var face_ops_row := HBoxContainer.new()
-	face_ops_row.add_theme_constant_override("separation", 2)
-	extrude_faces_btn = _make_op_button("Extrude", "extrude_faces", "Extrude the selected faces along their normal")
-	inset_btn = _make_op_button("Inset", "inset_faces", "Inset the selected faces (planar ring)")
-	subdivide_btn = _make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4")
-	merge_btn = _make_op_button("Merge", "merge_faces", "Merge coplanar edge-adjacent selected faces into one")
-	delete_btn = _make_op_button("Del", "delete_faces", "Delete the selected faces")
-	detach_btn = _make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh")
-	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, merge_btn, delete_btn, detach_btn]:
-		face_ops_row.add_child(btn)
-	ops_grid.add_child(face_ops_row)
-
-	ops_grid.add_child(_make_row_label("Edges"))
-	var edge_ops_row := HBoxContainer.new()
-	edge_ops_row.add_theme_constant_override("separation", 2)
-	extrude_edges_btn = _make_op_button("Extrude", "extrude_edges", "Extrude the selected edges along their faces' average normal")
-	loop_cut_btn = _make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge")
-	edge_ops_row.add_child(extrude_edges_btn)
-	edge_ops_row.add_child(loop_cut_btn)
-	ops_grid.add_child(edge_ops_row)
-
-	ops_grid.add_child(_make_row_label("Vertices"))
-	weld_vertices_btn = _make_op_button("Weld", "weld_vertices",
-		"Weld the selected vertices together at their centroid")
-	ops_grid.add_child(weld_vertices_btn)
-
-	ops_grid.add_child(_make_row_label("Distance"))
-	extrude_distance_spin = SpinBox.new()
-	extrude_distance_spin.name = "ExtrudeDistance"
-	extrude_distance_spin.min_value = 0.01
-	extrude_distance_spin.max_value = 100.0
-	extrude_distance_spin.step = 0.05
-	extrude_distance_spin.value = 0.25
-	extrude_distance_spin.suffix = "m"
-	ops_grid.add_child(extrude_distance_spin)
-
-	ops_grid.add_child(_make_row_label("Inset"))
-	inset_amount_spin = SpinBox.new()
-	inset_amount_spin.name = "InsetAmount"
-	inset_amount_spin.min_value = 0.01
-	inset_amount_spin.max_value = 0.95
-	inset_amount_spin.step = 0.05
-	inset_amount_spin.value = 0.25
-	ops_grid.add_child(inset_amount_spin)
+	_params_section.visible = false
+	_selection_row.visible = false
+	_drag_row.visible = false
 
 func _apply_anchor() -> void:
 	if not is_inside_tree():
 		return
 	# Bottom-left of the host viewport, 12px in from the corner, growing up
-	# and right from there.
+	# and right from there. The header drag repositions freely from here.
 	set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 12)
 	grow_vertical = Control.GROW_DIRECTION_BEGIN
 	grow_horizontal = Control.GROW_DIRECTION_END
@@ -250,21 +241,6 @@ static func _load_icon(icon_name: String) -> Texture2D:
 	if ResourceLoader.exists(path):
 		return load(path)
 	return null
-
-func _make_section_label(text: String) -> Label:
-	var label := Label.new()
-	label.text = text.to_upper()
-	label.add_theme_font_size_override("font_size", 11)
-	label.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
-	return label
-
-func _make_grid(parent: Control) -> GridContainer:
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 3)
-	parent.add_child(grid)
-	return grid
 
 func _make_row_label(text: String) -> Label:
 	var label := Label.new()
@@ -278,27 +254,91 @@ func _make_value_label() -> Label:
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return label
 
-func _make_tool_button(text: String, tool: PBEditor.ToolMode, icon_name: String) -> Button:
-	var btn := Button.new()
-	btn.name = "Tool" + text
-	btn.icon = _load_icon(icon_name)
-	if btn.icon == null:
-		btn.text = text
-	btn.toggle_mode = true
-	btn.flat = true
-	btn.button_group = _tool_group
-	btn.tooltip_text = "%s tool (%s)" % [text, ["W", "E", "R"][tool]]
-	btn.pressed.connect(_on_tool_button_pressed.bind(tool))
-	return btn
+# ── Header drag + collapse ────────────────────────────────────────────────────
 
-func _make_op_button(text: String, op_name: String, tooltip: String) -> Button:
-	var btn := Button.new()
-	btn.name = "Op" + text
-	btn.text = text
-	btn.tooltip_text = tooltip
-	btn.focus_mode = Control.FOCUS_NONE
-	btn.pressed.connect(func(): operation_requested.emit(op_name))
-	return btn
+func _on_header_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_panel_dragging = event.pressed
+		if event.pressed:
+			_panel_drag_offset = get_global_mouse_position() - global_position
+	elif event is InputEventMouseMotion and _panel_dragging:
+		var target := get_global_mouse_position() - _panel_drag_offset
+		# Keep the panel (at least its header) inside the host control.
+		var parent_ctl := get_parent() as Control
+		if parent_ctl != null:
+			target.x = clampf(target.x, 0.0, maxf(0.0, parent_ctl.size.x - size.x))
+			target.y = clampf(target.y, 0.0, maxf(0.0, parent_ctl.size.y - size.y))
+		global_position = target
+
+func _on_collapse_pressed() -> void:
+	_collapsed = not _collapsed
+	_body.visible = not _collapsed
+	_collapse_btn.text = "▸" if _collapsed else "▾"
+
+func expand() -> void:
+	if _collapsed:
+		_on_collapse_pressed()
+
+# ==============================================================================
+# Params session (modal)
+# ==============================================================================
+
+## Opens a shape-parameter session: one row per `def`
+## ({name, label, min, max, step, suffix}) seeded from `values`.
+## Changes emit param_changed live (the plugin rebuilds the preview).
+func open_params(title: String, defs: Array, values: Dictionary) -> void:
+	_ensure_ui()
+	_params_title.text = title.to_upper()
+	for child in _params_grid.get_children():
+		child.queue_free()
+	_param_spinboxes.clear()
+
+	for def in defs:
+		var caption := _make_row_label(str(def.get("label", def.get("name", "?"))))
+		_params_grid.add_child(caption)
+		var spin := SpinBox.new()
+		spin.name = "Param" + str(def.get("name", ""))
+		spin.min_value = float(def.get("min", 0.01))
+		spin.max_value = float(def.get("max", 1000.0))
+		spin.step = float(def.get("step", 0.1))
+		spin.suffix = str(def.get("suffix", ""))
+		spin.value = float(values.get(def.get("name", ""), def.get("min", 0.01)))
+		spin.value_changed.connect(_on_param_value_changed.bind(str(def.get("name", ""))))
+		_params_grid.add_child(spin)
+		_param_spinboxes[str(def.get("name", ""))] = spin
+
+	params_open = true
+	_params_section.visible = true
+	expand()  # the modal must be visible even if the body was collapsed
+	refresh()
+
+## Updates several param values without emitting param_changed (used to
+## snap back on cancel).
+func set_param_values(values: Dictionary) -> void:
+	for param_name in _param_spinboxes:
+		if values.has(param_name):
+			var spin: SpinBox = _param_spinboxes[param_name]
+			spin.set_value_no_signal(float(values[param_name]))
+
+## Snapshot of all param values currently in the controls.
+func get_param_values() -> Dictionary:
+	var out := {}
+	for param_name in _param_spinboxes:
+		out[param_name] = _param_spinboxes[param_name].value
+	return out
+
+func close_params() -> void:
+	params_open = false
+	if _ui_built:
+		_params_section.visible = false
+	for child in _params_grid.get_children():
+		child.queue_free()
+	_param_spinboxes.clear()
+	refresh()
+
+func _on_param_value_changed(value: float, param_name: String) -> void:
+	if params_open:
+		param_changed.emit(param_name, value)
 
 # ==============================================================================
 # Editor Binding
@@ -339,60 +379,57 @@ func set_element_editor(value: PBElementEditor) -> void:
 func _on_editor_changed(_arg = null, _arg2 = null, _arg3 = null, _arg4 = null) -> void:
 	refresh()
 
-func _on_space_selected(index: int) -> void:
-	if editor != null:
-		editor.orientation_space = index as PBEditor.OrientationSpace
-
-func _on_tool_button_pressed(tool: PBEditor.ToolMode) -> void:
-	if editor != null:
-		editor.tool_mode = tool
-		var current: Button = [_btn_move, _btn_rotate, _btn_scale][tool]
-		current.set_pressed_no_signal(true)
-
 # ==============================================================================
-# Refresh Logic
+# Refresh + visibility
 # ==============================================================================
 
-## Refreshes all readouts and control states from the current editor state.
+## Refreshes all readouts and re-evaluates the panel's visibility.
 func refresh() -> void:
 	_ensure_ui()
 
+	var has_selection := false
+	if editor != null and editor.selection != null:
+		var sel := editor.selection
+		var mesh_data: PBMeshData = editor.active_mesh.pb_mesh_data if editor.active_mesh != null else null
+		var count := 0
+		var total := 0
+		match editor.select_mode:
+			PBEditor.SelectMode.FACE:
+				count = sel.selected_face_count()
+				total = mesh_data.faces.size() if mesh_data != null else 0
+			PBEditor.SelectMode.EDGE:
+				count = sel.selected_edge_count()
+				total = mesh_data.get_common_edges().size() if mesh_data != null else 0
+			PBEditor.SelectMode.VERTEX:
+				count = sel.selected_vertex_count()
+				total = mesh_data.shared_vertices.size() if mesh_data != null else 0
+			_:
+				pass
+		has_selection = count > 0
+		_selection_mode_label.text = PBEditor.mode_name(editor.select_mode)
+		_selection_count_label.text = "%d / %d" % [count, total]
+	_selection_row.visible = has_selection
+
+	var dragging := element_editor != null and element_editor.drag_active
+	_drag_row.visible = dragging
+	if dragging:
+		drag_value_label.text = element_editor.drag_readout()
+
+	update_visibility()
+
+## The panel shows while a mesh is selected AND at least one of:
+## pinned, params modal open, elements selected, a drag running.
+func update_visibility() -> void:
 	if editor == null:
-		mode_value_label.text = "Object"
-		vertices_value_label.text = "0 / 0"
-		edges_value_label.text = "0 / 0"
-		faces_value_label.text = "0 / 0"
-		drag_value_label.text = "—"
+		visible = params_open
 		return
+	var mesh_selected := editor.active_mesh != null
+	visible = mesh_selected and (pinned or params_open or _has_selection() \
+		or (element_editor != null and element_editor.drag_active))
 
-	# 1. Mode, transform tool buttons, orientation space
-	mode_value_label.text = PBEditor.mode_name(editor.select_mode)
-	_btn_move.set_pressed_no_signal(editor.tool_mode == PBEditor.ToolMode.MOVE)
-	_btn_rotate.set_pressed_no_signal(editor.tool_mode == PBEditor.ToolMode.ROTATE)
-	_btn_scale.set_pressed_no_signal(editor.tool_mode == PBEditor.ToolMode.SCALE)
-	space_option.selected = editor.orientation_space
-
-	# 2. Selection counts against the mesh's element totals
-	var sel := editor.selection
-	var totals := {"v": 0, "e": 0, "f": 0}
-	var mesh_data: PBMeshData = editor.active_mesh.pb_mesh_data if editor.active_mesh != null else null
-	if mesh_data != null:
-		totals.v = mesh_data.shared_vertices.size()
-		totals.e = mesh_data.get_common_edges().size()
-		totals.f = mesh_data.faces.size()
-	if sel != null:
-		vertices_value_label.text = "%d / %d" % [sel.selected_vertex_count(), totals.v]
-		edges_value_label.text = "%d / %d" % [sel.selected_edge_count(), totals.e]
-		faces_value_label.text = "%d / %d" % [sel.selected_face_count(), totals.f]
-
-	# 3. Live transform readout while the native gizmo drags elements
-	drag_value_label.text = element_editor.drag_readout() if element_editor != null else "—"
-
-	# 4. Operation buttons enable per selection context (mode + counts).
-	var faces_selected: bool = sel.selected_face_count() > 0
-	var edges_selected: bool = sel.selected_edge_count() > 0
-	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, merge_btn, delete_btn, detach_btn]:
-		btn.disabled = not faces_selected
-	extrude_edges_btn.disabled = not edges_selected
-	loop_cut_btn.disabled = not edges_selected
-	weld_vertices_btn.disabled = sel.selected_vertex_count() < 2
+func _has_selection() -> bool:
+	if editor == null or editor.selection == null:
+		return false
+	return editor.selection.selected_face_count() > 0 \
+		or editor.selection.selected_edge_count() > 0 \
+		or editor.selection.selected_vertex_count() > 0

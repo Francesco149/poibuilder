@@ -36,6 +36,68 @@ var logger: PBLogger = null
 ## active=false is emitted on commit/cancel with zeroed values.
 signal element_drag_updated(active: bool, translation: Vector3, rotation_deg: Vector3, scale: Vector3)
 
+## Emitted when a committed drag rewrote TOPOLOGY (shift+move extrude,
+## shift+scale inset): face ids are stale, so the plugin must clear the
+## engine subgizmo selection + mirrors and redraw.
+signal drag_topology_committed(node: PBMesh)
+
+# ==============================================================================
+# Drag gestures (tool + modifier keys decide how a drag applies)
+# ==============================================================================
+
+enum DragGesture {
+	NORMAL,        ## Raw rel transform from the engine (move/free scale/rotate)
+	UNIFORM_SCALE, ## Scale locked to one factor about the pivot (shift frees)
+	EXTRUDE_MOVE,  ## Shift+move: extrude the selection at drag begin, drag the caps
+	INSET_SCALE,   ## Shift+scale on faces: uniform per-face inset driven by the drag
+}
+
+## What the current drag does (decided once at begin_drag from the tool and
+## shift state — mid-drag modifier flaps do not re-decide it).
+var _drag_gesture: DragGesture = DragGesture.NORMAL
+
+## Positions a topology-creating gesture drags (caps/fins' lifted corners or
+## inset inner faces). Empty for NORMAL/UNIFORM_SCALE — the union then comes
+## from the element ids.
+var _drag_union_override: PackedInt32Array = PackedInt32Array()
+
+## Full-mesh snapshot taken BEFORE a gesture's begin-op (extrude/inset).
+## Non-null makes commit/cancel swap whole-mesh snapshots instead of
+## per-position payloads (topology changed, indexes don't correspond).
+var _drag_before_op: PBMeshData = null
+
+## Per-face inset bases: [{idxs: PackedInt32Array, centroid: Vector3,
+## pre: PackedVector3Array}] — pre-op corner positions and their centroid
+## (the centroid is invariant under uniform lerp, so idempotent replay works).
+var _drag_inset_bases: Array = []
+
+## Latest inset amount applied this gesture (readout only).
+var _last_inset_amount: float = 0.0
+
+## Reads live modifier state. Editor-process only (headless tests inject
+## shift directly into _decide_gesture).
+static func shift_held() -> bool:
+	return Input.is_key_pressed(KEY_SHIFT)
+
+## Pure decision (testable): tool + shift → gesture.
+func _decide_gesture(shift: bool) -> DragGesture:
+	if editor == null:
+		return DragGesture.NORMAL
+	match editor.tool_mode:
+		PBEditor.ToolMode.MOVE:
+			if shift and editor.select_mode == PBEditor.SelectMode.FACE:
+				return DragGesture.EXTRUDE_MOVE
+			if shift and editor.select_mode == PBEditor.SelectMode.EDGE:
+				return DragGesture.EXTRUDE_MOVE
+		PBEditor.ToolMode.SCALE:
+			if shift and editor.select_mode == PBEditor.SelectMode.FACE:
+				return DragGesture.INSET_SCALE
+			if not shift:
+				return DragGesture.UNIFORM_SCALE
+		_:
+			pass
+	return DragGesture.NORMAL
+
 # ==============================================================================
 # Drag state (one native drag gesture at a time)
 # ==============================================================================
@@ -61,9 +123,25 @@ var _drag_latest_id: int = -1
 ## adjacent faces.
 var pick_side_faces: Dictionary = {}
 
-## Clears recorded pick-side faces (mode switch / selection cleared).
+## Edge-loop selection (alt+click / double-click on an edge): engine edge id
+## → the ids of ALL common edges in its ring. Selected ids expand to their
+## loop for dragging, highlight, and the PBSelection mirror; a plain click
+## (no alt) drops back to the single edge.
+var selected_loops: Dictionary = {}
+
+## Double-click tracking for the click path only (hover never reaches it).
+var _last_click_msec: int = -10000
+var _last_click_id: int = -1
+var _last_click_alt: bool = false
+
+## Clears recorded pick-side faces and loop selections (mode switch /
+## selection cleared / post-op).
 func reset_side_faces() -> void:
 	pick_side_faces.clear()
+	selected_loops.clear()
+	_last_click_msec = -10000
+	_last_click_id = -1
+	_last_click_alt = false
 
 ## The mesh node being dragged.
 var _drag_mesh: PBMesh = null
@@ -109,7 +187,10 @@ func element_indices(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 			var edges := mesh_data.get_common_edges()
 			if id >= edges.size():
 				return PackedInt32Array()
-			return mesh_data.get_coincident_vertices_from_edges([edges[id]])
+			var edge_objs: Array[PBEdge] = []
+			for eid in expand_edge_ids(mesh_data, PackedInt32Array([id])):
+				edge_objs.append(edges[eid])
+			return mesh_data.get_coincident_vertices_from_edges(edge_objs)
 		PBEditor.SelectMode.FACE:
 			return mesh_data.get_coincident_vertices_from_faces(PackedInt32Array([id]))
 		_:
@@ -260,9 +341,12 @@ func _faces_touching_vertex(mesh_data: PBMeshData, sv: PBSharedVertex) -> Array:
 # ==============================================================================
 
 ## Nearest element id under a camera ray through screen_pos, or -1.
-## Records the face under the cursor for side-aware gizmo orientation.
+## `record_side`: only the CLICK path may write the pick-side face — the
+## gizmo must stay locked to the side the element was selected from; hover
+## passes false so merely moving the cursor over the other side never
+## re-orients the gizmo mid-usage.
 func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
-		camera: Camera3D, screen_pos: Vector2) -> int:
+		camera: Camera3D, screen_pos: Vector2, record_side: bool = true) -> int:
 	if mesh_data == null or mesh_data.positions.is_empty() or camera == null:
 		return -1
 	match editor.select_mode:
@@ -270,7 +354,7 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
 			var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
 			var fi: int = PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir).face_index
-			if fi >= 0:
+			if fi >= 0 and record_side:
 				pick_side_faces[fi] = fi
 			return fi
 		PBEditor.SelectMode.EDGE:
@@ -278,12 +362,12 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			if result.edge == null:
 				return -1
 			var id := _common_edge_index(mesh_data, result.edge)
-			if id >= 0 and result.face_index >= 0:
+			if id >= 0 and result.face_index >= 0 and record_side:
 				pick_side_faces[id] = result.face_index
 			return id
 		PBEditor.SelectMode.VERTEX:
 			var vresult: PBPicking.VertexPickResult = PBPicking.pick_vertex(mesh_data, mesh_transform, screen_pos, camera)
-			if vresult.common_index >= 0 and vresult.face_index >= 0:
+			if vresult.common_index >= 0 and vresult.face_index >= 0 and record_side:
 				pick_side_faces[vresult.common_index] = vresult.face_index
 			return vresult.common_index
 	return -1
@@ -390,6 +474,79 @@ static func _point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 	return true
 
 # ==============================================================================
+# Edge-loop selection (alt+click / double-click)
+# ==============================================================================
+
+## Call from the CLICK path only (engine _subgizmos_intersect_ray) after an
+## EDGE-mode pick. When the click asks for a loop (alt held, or a
+## double-click on the same edge — two rapid PLAIN clicks), records and
+## returns the ring ids; a plain click returns empty and drops any loop
+## recorded for `id`.
+func record_edge_click(mesh_data: PBMeshData, id: int, alt_held: bool) -> PackedInt32Array:
+	if mesh_data == null or id < 0:
+		return PackedInt32Array()
+	var now := Time.get_ticks_msec()
+	var double_click := id == _last_click_id and not alt_held and not _last_click_alt \
+		and now - _last_click_msec <= DOUBLE_CLICK_MS
+	_last_click_msec = now
+	_last_click_id = id
+	_last_click_alt = alt_held
+	if not alt_held and not double_click:
+		selected_loops.erase(id)
+		return PackedInt32Array()
+	var loop := edge_loop_ids(mesh_data, id)
+	if loop.size() > 1:
+		selected_loops[id] = loop
+		return loop
+	return PackedInt32Array()
+
+## All common-edge ids in the ring through common edge `id` (seed included).
+## Rings can close early at non-quad faces (PBTopology.get_edge_ring walks
+## quads only) — whatever the walk returns is the selection.
+func edge_loop_ids(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
+	var edges := mesh_data.get_common_edges()
+	if id < 0 or id >= edges.size():
+		return PackedInt32Array()
+	var ring := PBTopology.get_edge_ring(mesh_data, [edges[id]])
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var id_of_key := {}
+	for i in range(edges.size()):
+		id_of_key[_edge_key(lookup, edges[i].a, edges[i].b)] = i
+	var ids := PackedInt32Array()
+	for e in ring:
+		var eid: int = id_of_key.get(_edge_key(lookup, e.a, e.b), -1)
+		if eid >= 0:
+			ids.append(eid)
+	return ids
+
+## Expands engine-selected edge ids through recorded loops (stable order,
+## deduplicated). Non-loop ids pass through unchanged.
+func expand_edge_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt32Array:
+	if selected_loops.is_empty() or ids.is_empty():
+		return ids
+	var out := PackedInt32Array()
+	var seen := {}
+	for eid in ids:
+		var loop: PackedInt32Array = selected_loops.get(eid, PackedInt32Array())
+		if loop.is_empty():
+			if not seen.has(eid):
+				seen[eid] = true
+				out.append(eid)
+		else:
+			for lid in loop:
+				if not seen.has(lid):
+					seen[lid] = true
+					out.append(lid)
+	return out
+
+static func _edge_key(lookup: Dictionary, a: int, b: int) -> Vector2i:
+	var ca: int = lookup.get(a, a)
+	var cb: int = lookup.get(b, b)
+	return Vector2i(mini(ca, cb), maxi(ca, cb))
+
+const DOUBLE_CLICK_MS := 400
+
+# ==============================================================================
 # Subgizmo transforms (engine drag protocol)
 # ==============================================================================
 
@@ -403,6 +560,13 @@ func get_subgizmo_transform(mesh_data: PBMeshData, node: PBMesh, id: int) -> Tra
 ## `ids` is the engine's current subgizmo selection (all elements the gizmo
 ## moves); it is delivered fresh so the logic never holds a stale selection.
 func set_subgizmo_transform(node: PBMesh, ids: PackedInt32Array, id: int, transform: Transform3D) -> void:
+	set_subgizmo_transform_with_shift(node, ids, id, transform, shift_held())
+
+## Shift-aware entry point: the editor path passes live modifier state, the
+## gesture decision and every gesture path are testable headlessly by
+## injecting `shift` directly.
+func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: int,
+		transform: Transform3D, shift: bool) -> void:
 	if node == null or not is_editing_node(node):
 		return
 	var mesh_data: PBMeshData = node.pb_mesh_data
@@ -410,27 +574,121 @@ func set_subgizmo_transform(node: PBMesh, ids: PackedInt32Array, id: int, transf
 		return
 
 	if not drag_active:
-		_begin_drag(node, ids)
+		_begin_drag(node, ids, shift)
 
 	_drag_pending[id] = transform
 	_drag_latest_id = id
 	_apply_drag(node, mesh_data, ids)
 
-## Begins a drag gesture: snapshot positions and start transforms.
-func _begin_drag(node: PBMesh, ids: PackedInt32Array) -> void:
+## Begins a drag gesture: decide the gesture from tool+shift, snapshot
+## positions and start transforms, then run any begin-time topology op
+## (extrude for shift+move, inset for shift+scale). `shift` is injected by
+## the caller (live modifier state in the editor; explicit in tests).
+func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	var mesh_data: PBMeshData = node.pb_mesh_data
 	if mesh_data == null:
 		return
 	drag_active = true
 	_drag_mesh = node
+	_drag_gesture = _decide_gesture(shift)
 	_drag_original_positions = mesh_data.positions.duplicate()
 	_drag_start_xf.clear()
 	_drag_pending.clear()
 	_drag_latest_id = -1
+	_drag_union_override = PackedInt32Array()
+	_drag_before_op = null
+	_drag_inset_bases = []
+	_last_inset_amount = 0.0
 	for id in ids:
 		_drag_start_xf[id] = get_subgizmo_transform(mesh_data, node, id)
+
+	# Topology-creating gestures undo via whole-mesh snapshots — capture the
+	# pre-op state before mutating.
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE or _drag_gesture == DragGesture.INSET_SCALE:
+		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
+
+	match _drag_gesture:
+		DragGesture.EXTRUDE_MOVE:
+			_begin_extrude_move(mesh_data, ids)
+		DragGesture.INSET_SCALE:
+			_begin_inset(mesh_data, ids)
+
 	if logger != null:
-		logger.info("tools", "Drag begun: %d element(s)" % ids.size())
+		logger.info("tools", "Drag begun: %s, %d element(s)" % [
+			DragGesture.keys()[_drag_gesture], ids.size()])
+
+## Shift+move: extrude the selection at distance 0, then the drag translates
+## only the new caps/fins (their lifted corners). Undo covers the whole
+## gesture via a full-mesh snapshot.
+func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+	var result: Dictionary
+	if editor.select_mode == PBEditor.SelectMode.EDGE:
+		result = PBMeshOps.extrude_edges(mesh_data, ids, 0.0, true)
+	else:
+		result = PBMeshOps.extrude_faces(mesh_data, ids, 0.0, true)
+	if not result.get("ok", false):
+		# Nothing extrudable under the gesture (degenerate normals) — the
+		# drag degrades to a plain move of the selection.
+		_drag_gesture = DragGesture.NORMAL
+		_drag_before_op = null
+		return
+	# _drag_original_positions was captured PRE-op above; the gesture replays
+	# from the POST-op geometry, so re-snapshot now.
+	_drag_original_positions = mesh_data.positions.duplicate()
+	_drag_union_override = result["drag_positions"]
+
+## Shift+scale on faces: seed a minimal inset (topology: inner face + ring
+## per face), then the drag lerps each inner face's corners between the
+## pre-op outline and its centroid. Uniform amount — aspect ratio locked.
+## The inset op REMAPS position indexes (replace + compact), so the per-face
+## bases must bind the POST-op inner-face indexes to the PRE-op corner
+## positions — matched by per-face order (duplicate_face preserves the
+## index sequence).
+func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+	var pre := mesh_data.positions.duplicate()
+	var face_bases: Array = []
+	for id in ids:
+		if id < 0 or id >= mesh_data.faces.size() or mesh_data.faces[id] == null:
+			_drag_gesture = DragGesture.NORMAL
+			_drag_before_op = null
+			_drag_inset_bases = []
+			return
+		var loop := mesh_data.faces[id].get_distinct_indexes()
+		if loop.size() < 3:
+			_drag_gesture = DragGesture.NORMAL
+			_drag_before_op = null
+			_drag_inset_bases = []
+			return
+		var centroid := Vector3.ZERO
+		var corners := PackedVector3Array()
+		for idx in loop:
+			centroid += pre[idx]
+			corners.append(pre[idx])
+		centroid /= float(loop.size())
+		face_bases.append({"centroid": centroid, "pre": corners})
+
+	var result := PBMeshOps.inset_faces(mesh_data, ids, 0.01)
+	if not result.get("ok", false):
+		_drag_gesture = DragGesture.NORMAL
+		_drag_before_op = null
+		_drag_inset_bases = []
+		return
+	_drag_original_positions = mesh_data.positions.duplicate()
+
+	# Union = the inner faces' corners only (the rings stay put); the bases
+	# bind those (post-op) indexes to the (pre-op) outline + centroid.
+	var union := PackedInt32Array()
+	var cap_ids: PackedInt32Array = result["cap_face_ids"]
+	for i in range(cap_ids.size()):
+		var idxs := mesh_data.faces[cap_ids[i]].get_distinct_indexes()
+		for idx in idxs:
+			union.append(idx)
+		_drag_inset_bases.append({
+			"idxs": idxs,
+			"centroid": face_bases[i]["centroid"],
+			"pre": face_bases[i]["pre"],
+		})
+	_drag_union_override = union
 
 ## Applies the latest pending transform to ALL selected elements' vertices.
 ## Deliberately recomputes the full result from the drag-start snapshot every
@@ -441,14 +699,18 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	if not drag_active or _drag_start_xf.is_empty():
 		return
 
-	# Union of coincident-expanded indices over the whole engine selection.
+	# Topology-creating gestures move exactly their reported drag positions;
+	# plain gestures move the coincident-expanded union of the selection.
 	var union := PackedInt32Array()
-	var seen := {}
-	for id in ids:
-		for idx in element_indices(mesh_data, id):
-			if not seen.has(idx):
-				seen[idx] = true
-				union.append(idx)
+	if not _drag_union_override.is_empty():
+		union = _drag_union_override
+	else:
+		var seen := {}
+		for id in ids:
+			for idx in element_indices(mesh_data, id):
+				if not seen.has(idx):
+					seen[idx] = true
+					union.append(idx)
 	if union.is_empty():
 		return
 
@@ -462,15 +724,52 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 
 	var new_positions := _drag_original_positions.duplicate()
 	var pos_count: int = new_positions.size()
-	for idx in union:
-		if idx >= 0 and idx < pos_count:
-			new_positions[idx] = rel * _drag_original_positions[idx]
+
+	match _drag_gesture:
+		DragGesture.INSET_SCALE:
+			var amount := _gesture_scale_factor(rel)
+			amount = clampf(1.0 - amount, -1.0, 0.95)
+			_last_inset_amount = amount
+			for base in _drag_inset_bases:
+				var idxs: PackedInt32Array = base["idxs"]
+				var centroid: Vector3 = base["centroid"]
+				var pre: PackedVector3Array = base["pre"]
+				for i in range(idxs.size()):
+					var idx: int = idxs[i]
+					if idx >= 0 and idx < pos_count:
+						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
+		DragGesture.UNIFORM_SCALE:
+			var s := _gesture_scale_factor(rel)
+			var pivot: Vector3 = _drag_start_xf[_drag_latest_id].origin
+			var uniform := Transform3D(Basis.from_scale(Vector3.ONE * s), pivot - pivot * s)
+			for idx in union:
+				if idx >= 0 and idx < pos_count:
+					new_positions[idx] = uniform * _drag_original_positions[idx]
+			_emit_drag_update(true, uniform.origin, Vector3.ZERO, Vector3.ONE * s)
+		_:
+			for idx in union:
+				if idx >= 0 and idx < pos_count:
+					new_positions[idx] = rel * _drag_original_positions[idx]
+			_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
 
 	mesh_data.positions = new_positions
 	mesh_data.invalidate_caches()
 	node.rebuild()
 
-	_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
+## The gesture's scale factor from a scale-mode rel: the stretch applied to
+## the gizmo's own x-axis (exact for the engine's scale-in-gizmo-frame
+## delivery, incl. rotated element bases). Signed by the determinant so a
+## drag through zero mirrors.
+func _gesture_scale_factor(rel: Transform3D) -> float:
+	if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id):
+		return 1.0
+	var gizmo_x: Vector3 = _drag_start_xf[_drag_latest_id].basis.x.normalized()
+	if gizmo_x.length_squared() < 0.5:
+		return 1.0
+	var stretched: Vector3 = rel.basis * gizmo_x
+	var det_sign := signf(rel.basis.determinant())
+	return stretched.length() * det_sign if det_sign != 0.0 else stretched.length()
 
 ## Commit (drag released) or cancel (Escape) — called by the editor adapter.
 ## `restores` are the start transforms the engine snapshotted; on cancel the
@@ -485,15 +784,48 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 
 	if cancel:
 		if drag_active:
-			mesh_data.positions = _drag_original_positions.duplicate()
-			mesh_data.invalidate_caches()
-			node.rebuild()
+			if _drag_before_op != null:
+				# The gesture rewrote topology — restore the whole snapshot.
+				PBCommand.restore_mesh_data(mesh_data, _drag_before_op)
+				mesh_data.invalidate_caches()
+				node.rebuild()
+			else:
+				mesh_data.positions = _drag_original_positions.duplicate()
+				mesh_data.invalidate_caches()
+				node.rebuild()
 		_reset_drag_state()
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		return false
 
 	if not drag_active:
 		return false
+
+	var action_name := TRANSFORM_ACTION_NAME
+	match _drag_gesture:
+		DragGesture.EXTRUDE_MOVE:
+			action_name = "Extrude (Shift+Move)"
+		DragGesture.INSET_SCALE:
+			action_name = "Inset (Shift+Scale)"
+		DragGesture.UNIFORM_SCALE:
+			action_name = "Scale Elements (Uniform)"
+
+	if _drag_before_op != null:
+		# Topology gesture: undo/redo swap whole-mesh snapshots (face ids
+		# shifted, per-position payloads don't correspond).
+		var after := PBCommand.copy_mesh_data(mesh_data)
+		var before := _drag_before_op
+		mesh_data.shape_edited = true
+		_reset_drag_state()
+		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+		if undo != null:
+			undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
+			undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
+			undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
+			undo.commit_action()
+			if logger != null:
+				logger.info("undo", "%s committed (topology)" % action_name)
+		drag_topology_committed.emit(node)
+		return true
 
 	# Undo payload: only the affected (coincident-expanded) positions.
 	var union := PackedInt32Array()
@@ -517,14 +849,27 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	if not changed:
 		return false
 
+	# Any committed geometry edit invalidates "Edit Params" regeneration.
+	mesh_data.shape_edited = true
+
 	if undo != null:
-		undo.create_action(TRANSFORM_ACTION_NAME, UndoRedo.MERGE_DISABLE)
+		undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
 		undo.add_do_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), after)
 		undo.add_undo_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), before)
 		undo.commit_action()
 		if logger != null:
-			logger.info("undo", "%s committed: %d vertices" % [TRANSFORM_ACTION_NAME, union.size()])
+			logger.info("undo", "%s committed: %d vertices" % [action_name, union.size()])
 	return true
+
+## Undo/redo payload for topology gestures: swap a node's whole data from a
+## snapshot (node looked up by instance id, skipped silently when freed).
+func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
+	var mesh_node: PBMesh = instance_from_id(node_id) as PBMesh
+	if mesh_node == null or mesh_node.pb_mesh_data == null:
+		return
+	PBCommand.restore_mesh_data(mesh_node.pb_mesh_data, snapshot)
+	mesh_node.pb_mesh_data.invalidate_caches()
+	mesh_node.rebuild()
 
 ## Reapplies a position subset by node instance id (undo/redo payload).
 ## Instance id survives history replay; missing nodes are skipped silently.
@@ -549,6 +894,11 @@ func _reset_drag_state() -> void:
 	_drag_start_xf.clear()
 	_drag_pending.clear()
 	_drag_latest_id = -1
+	_drag_gesture = DragGesture.NORMAL
+	_drag_union_override = PackedInt32Array()
+	_drag_before_op = null
+	_drag_inset_bases = []
+	_last_inset_amount = 0.0
 
 const TRANSFORM_ACTION_NAME := "Transform Elements"
 
@@ -580,11 +930,16 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		PBEditor.SelectMode.VERTEX:
 			differs = not _int_arrays_equal(selection.selected_vertices, engine_ids)
 		PBEditor.SelectMode.EDGE:
-			differs = selection.selected_edges.size() != engine_ids.size()
+			# Loops whose seed left the engine selection die with it.
+			for seed in selected_loops.keys():
+				if not engine_ids.has(seed):
+					selected_loops.erase(seed)
+			var expanded := expand_edge_ids(mesh_data, engine_ids)
+			differs = selection.selected_edges.size() != expanded.size()
 			if not differs:
 				var edges := mesh_data.get_common_edges()
-				for i in range(engine_ids.size()):
-					var eid: int = engine_ids[i]
+				for i in range(expanded.size()):
+					var eid: int = expanded[i]
 					if eid < 0 or eid >= edges.size() or not selection.is_edge_selected(edges[eid]):
 						differs = true
 						break
@@ -602,7 +957,7 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
 			var selected: Array[PBEdge] = []
-			for eid in engine_ids:
+			for eid in expand_edge_ids(mesh_data, engine_ids):
 				if eid >= 0 and eid < edges.size():
 					selected.append(edges[eid])
 			selection.set_edges(selected)
@@ -682,15 +1037,20 @@ func _emit_drag_update(active: bool, translation: Vector3, rotation_deg: Vector3
 	_last_drag_scale = scale
 	element_drag_updated.emit(active, translation, rotation_deg, scale)
 
-## Human-readable live drag readout for the Tool Properties dock.
+## Human-readable live drag readout for the overlay panel.
 func drag_readout() -> String:
 	if not _last_drag_active:
 		return "—"
+	if _drag_gesture == DragGesture.INSET_SCALE and _drag_active():
+		return "Inset: %.2f" % _last_inset_amount
 	if not _last_drag_rotation_deg.is_equal_approx(Vector3.ZERO):
 		return "Rotation: %s deg" % _fmt_vec(_last_drag_rotation_deg)
 	if not _last_drag_scale.is_equal_approx(Vector3.ONE):
 		return "Scale: %s" % _fmt_vec(_last_drag_scale)
 	return "Delta: %s" % _fmt_vec(_last_drag_translation)
+
+func _drag_active() -> bool:
+	return drag_active
 
 static func _rel_rotation_deg(rel: Transform3D) -> Vector3:
 	var euler: Vector3 = rel.basis.get_euler()

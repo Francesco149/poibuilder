@@ -32,14 +32,16 @@ extends EditorNode3DGizmoPlugin
 # ==============================================================================
 
 const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 1.0)
-const EDGE_MODE_WIREFRAME_COLOR := Color(0.02, 0.02, 0.02, 1.0)
-## Selection is YELLOW, slightly more opaque than the hover state so a
-## selected element reads more solid than the one under the cursor.
+## EDGE-mode base wireframe: cyan, drawn slightly thinner than hover/select
+## strokes (half offset, one stack pair instead of two).
+const EDGE_MODE_WIREFRAME_COLOR := Color(0.2, 0.9, 1.0, 0.8)
+## Selection is YELLOW (thick strokes for edges / solid-ish fills for faces).
 const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.85)
 const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.32)
-## Hover highlight: the same yellow as selection, just more transparent.
-const HOVER_COLOR := Color(1.0, 0.9, 0.2, 0.7)
-const HOVER_FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.22)
+## Hover highlight: CYAN — the same language ProBuilder uses to say "this is
+## under your cursor, not selected". Selected stays yellow.
+const HOVER_COLOR := Color(0.2, 0.9, 1.0, 0.75)
+const HOVER_FACE_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.22)
 const VERTEX_COLOR := Color(0.05, 0.05, 0.05, 1.0)
 const VERTEX_DOT_SIZE: float = 7.0
 const VERTEX_DOT_SELECTED_SIZE: float = 11.0
@@ -48,6 +50,14 @@ const VERTEX_DOT_HOVER_SIZE: float = 9.0
 ## World-space offset between the sub-lines of a "thick" edge. Godot lines are
 ## always 1px; stacking parallel lines fakes ProBuilder-style thickness.
 const THICK_LINE_OFFSET: float = 0.006
+
+## Shape-creation language: cyan everywhere (same cyan as hover — creation
+## highlights and hovers share the "cursor preview" meaning), orange for the
+## facing arrow. Bounds/arrow draw ON TOP (show through the object); the
+## hovered face fill is depth-tested at the selection opacity.
+const CREATION_COLOR := Color(0.2, 0.9, 1.0, 1.0)
+const CREATION_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.32)
+const CREATION_ARROW_COLOR := Color(1.0, 0.55, 0.1, 1.0)
 
 # ==============================================================================
 # Wiring (set by PoiBuilderPlugin on registration)
@@ -58,6 +68,15 @@ var editor: PBEditor = null
 
 ## Runtime-safe element logic (drag state, math, undo payload).
 var element_editor: PBElementEditor = PBElementEditor.new()
+
+## Shape-creation session (ARMED/BASE/HEIGHT/PARAMS) — while active, the
+## plugin pauses element interaction and this plugin draws the creation
+## overlays instead. May be null (creation never started).
+var shape_creator: PBShapeCreator = null
+
+## The face currently hovered during shape creation (cyan highlight).
+var creation_hover_node: PBMesh = null
+var creation_hover_face: int = -1
 
 ## Logger for diagnostics.
 var logger: PBLogger = null:
@@ -72,6 +91,7 @@ var _vertex_dot_hover_material: StandardMaterial3D
 ## Cached depth-tested face fill materials (built lazily).
 var _face_fill_material: StandardMaterial3D
 var _face_hover_fill_material: StandardMaterial3D
+var _creation_fill_material: StandardMaterial3D
 
 # ==============================================================================
 # Lifecycle
@@ -82,6 +102,8 @@ func _init() -> void:
 	create_material("pb_wireframe_edge", EDGE_MODE_WIREFRAME_COLOR, false, false)
 	create_material("pb_selected_edge", SELECTED_COLOR, false, true)
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
+	create_material("pb_creation_edge", CREATION_COLOR, false, true)
+	create_material("pb_creation_arrow", CREATION_ARROW_COLOR, false, true)
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
@@ -162,7 +184,12 @@ func _subgizmos_intersect_ray(gizmo, camera: Camera3D, screen_pos: Vector2) -> i
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null or camera == null or not is_editing_node(node):
 		return -1
-	return element_editor.pick_ray(node.pb_mesh_data, node.global_transform, camera, screen_pos)
+	var id := element_editor.pick_ray(node.pb_mesh_data, node.global_transform, camera, screen_pos)
+	# Alt+click / double-click on an edge selects its whole loop (the engine
+	# selection stays the single seed id; dragging/highlighting expand it).
+	if id >= 0 and editor != null and editor.select_mode == PBEditor.SelectMode.EDGE:
+		element_editor.record_edge_click(node.pb_mesh_data, id, Input.is_key_pressed(KEY_ALT))
+	return id
 
 func _subgizmos_intersect_frustum(gizmo, camera: Camera3D, frustum_planes: Array) -> PackedInt32Array:
 	var node := gizmo.get_node_3d() as PBMesh
@@ -212,6 +239,19 @@ func _redraw(gizmo) -> void:
 	if mesh_data == null or mesh_data.positions.is_empty():
 		return
 
+	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
+	# and the cyan hover highlight on the surface under the cursor. Checked
+	# BEFORE the selected-node early-out (preview/hover nodes are usually not
+	# in the editor selection at all).
+	if shape_creator != null and shape_creator.is_active():
+		if shape_creator.preview_node == node:
+			_draw_creation_preview(gizmo, mesh_data, shape_creator)
+			return
+		if creation_hover_node == node and creation_hover_face >= 0 \
+				and creation_hover_face < mesh_data.faces.size():
+			_draw_creation_hover(gizmo, mesh_data, creation_hover_face)
+			return
+
 	if not _node_selected(node):
 		return
 
@@ -230,7 +270,10 @@ func _redraw(gizmo) -> void:
 	if wire_points.size() >= 2:
 		if editor != null and editor.select_mode == PBEditor.SelectMode.EDGE \
 				and is_editing_node(node):
-			_add_thick_lines(gizmo, wire_points, get_material("pb_wireframe_edge", gizmo))
+			# EDGE mode base wireframe: slightly thinner cyan (hover/select
+			# strokes drawn on top stay full-thick).
+			_add_thick_lines(gizmo, wire_points, get_material("pb_wireframe_edge", gizmo),
+				THICK_LINE_OFFSET * 0.5, 1)
 		else:
 			gizmo.add_lines(wire_points, get_material("pb_wireframe", gizmo))
 
@@ -247,10 +290,14 @@ func _redraw(gizmo) -> void:
 		PBEditor.SelectMode.VERTEX:
 			_draw_vertex_dots(gizmo, mesh_data)
 
-## Draws each input line (a pair of points) as a center line plus four
-## parallel offset lines, approximating a thick stroke from any angle.
-static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material) -> void:
-	var o := THICK_LINE_OFFSET
+## Draws each input line (a pair of points) as a center line plus parallel
+## offset lines, approximating a thick stroke from any angle. `offset` is the
+## world-space distance between sub-lines; `stacks` is how many offset
+## directions are drawn (2 = the full five-line stroke, 1 = a thinner
+## center+±perp1 stroke).
+static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material,
+		offset: float = THICK_LINE_OFFSET, stacks: int = 2) -> void:
+	var o := offset
 	var i: int = 0
 	while i + 1 < pairs.size():
 		var a: Vector3 = pairs[i]
@@ -266,8 +313,9 @@ static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Materia
 			gizmo.add_lines(PackedVector3Array([a, b]), material)
 			gizmo.add_lines(PackedVector3Array([a + perp1, b + perp1]), material)
 			gizmo.add_lines(PackedVector3Array([a - perp1, b - perp1]), material)
-			gizmo.add_lines(PackedVector3Array([a + perp2, b + perp2]), material)
-			gizmo.add_lines(PackedVector3Array([a - perp2, b - perp2]), material)
+			if stacks >= 2:
+				gizmo.add_lines(PackedVector3Array([a + perp2, b + perp2]), material)
+				gizmo.add_lines(PackedVector3Array([a - perp2, b - perp2]), material)
 		else:
 			gizmo.add_lines(PackedVector3Array([a, b]), material)
 		i += 2
@@ -329,14 +377,18 @@ func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 		_face_hover_fill_material = _make_face_fill_material(HOVER_FACE_FILL_COLOR)
 	gizmo.add_mesh(fill, _face_hover_fill_material)
 
-## Selected edges as bright on-top strokes (thick in EDGE mode).
+## Selected edges as bright on-top strokes (thick in EDGE mode). Loop
+## selections (alt+click) highlight their whole ring.
 func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
 	var positions := mesh_data.positions
 	var edges := mesh_data.get_common_edges()
+	var selected := {}
+	for eid in element_editor.expand_edge_ids(mesh_data, gizmo.get_subgizmo_selection()):
+		selected[eid] = true
 	var lines := PackedVector3Array()
 	var selected_any: bool = false
 	for ei in range(edges.size()):
-		if not gizmo.is_subgizmo_selected(ei):
+		if not selected.has(ei):
 			continue
 		selected_any = true
 		var edge: PBEdge = edges[ei]
@@ -396,3 +448,77 @@ static func _add_points_mesh(gizmo, points: PackedVector3Array, material: Standa
 	var points_mesh := ArrayMesh.new()
 	points_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_POINTS, arrays)
 	gizmo.add_mesh(points_mesh, material)
+
+# ==============================================================================
+# Shape-creation overlays
+# ==============================================================================
+
+## The preview's cyan 3D box bounds (drawn on top — visible through the
+## object itself) plus the orange facing arrow at the base when the shape
+## has a facing direction (e.g. stairs).
+func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreator) -> void:
+	var aabb := PBShapeCreator._aabb_of(mesh_data)
+	var p0 := aabb.position
+	var p1 := aabb.end
+	var c := [p0.x, p1.x]
+	var d := [p0.y, p1.y]
+	var e := [p0.z, p1.z]
+	var corners: Array[Vector3] = []
+	for xi in c:
+		for yi in d:
+			for zi in e:
+				corners.append(Vector3(xi, yi, zi))
+	# Corner order above: index bits (x:4, y:2, z:1). The 12 box edges join
+	# pairs differing in exactly one axis bit.
+	var edges := [[0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3],
+		[2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7]]
+	var lines := PackedVector3Array()
+	for edge in edges:
+		lines.append(corners[edge[0]])
+		lines.append(corners[edge[1]])
+	gizmo.add_lines(lines, get_material("pb_creation_edge", gizmo))
+
+	var facing := creator.facing_direction()
+	if facing == Vector3.ZERO:
+		return
+	var length: float = clampf(aabb.get_longest_axis_size() * 0.5, 0.3, 2.0)
+	var base_center := Vector3(aabb.get_center().x, p0.y, aabb.get_center().z)
+	var tip := base_center + facing.normalized() * length
+	var arrow := PackedVector3Array([base_center, tip])
+	# Arrowhead: two barbs perpendicular to the facing dir in the base plane.
+	var side := facing.normalized().cross(Vector3.UP)
+	if side.length_squared() < 0.25:
+		side = facing.normalized().cross(Vector3.RIGHT)
+	side = side.normalized() * length * 0.25
+	var up := facing.normalized().cross(side).normalized() * length * 0.25
+	arrow.append(tip)
+	arrow.append(tip - side - up)
+	arrow.append(tip)
+	arrow.append(tip + side - up)
+	gizmo.add_lines(arrow, get_material("pb_creation_arrow", gizmo))
+
+## The hovered surface face during creation: cyan translucent fill at the
+## selection opacity + its outline as thick cyan strokes (edge-mode select
+## language, cyan).
+func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
+	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
+	if fill != null:
+		if _creation_fill_material == null:
+			_creation_fill_material = _make_face_fill_material(CREATION_FILL_COLOR)
+		gizmo.add_mesh(fill, _creation_fill_material)
+
+	var face := mesh_data.faces[face_index]
+	if face == null:
+		return
+	var positions := mesh_data.positions
+	var loop := face.get_distinct_indexes()
+	var lines := PackedVector3Array()
+	var n := loop.size()
+	for i in range(n):
+		var a: int = loop[i]
+		var b: int = loop[(i + 1) % n]
+		if a >= 0 and a < positions.size() and b >= 0 and b < positions.size():
+			lines.append(positions[a])
+			lines.append(positions[b])
+	if lines.size() >= 2:
+		_add_thick_lines(gizmo, lines, get_material("pb_creation_edge", gizmo))

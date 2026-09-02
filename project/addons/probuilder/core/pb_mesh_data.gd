@@ -31,6 +31,15 @@ extends Resource
 ## Shared texture groups — groups of vertex indices that share continuous UV coordinates.
 @export var shared_textures: Array[PBSharedVertex] = []
 
+## Shape creation bookkeeping: the factory shape id this mesh was generated
+## from (empty when the mesh is not a pristine shape), the parameter values
+## it was generated with, and whether geometry was edited beyond those
+## params (element drags, mesh ops). "Edit Params" only works while
+## `shape_edited` is false — regenerating would wipe manual edits.
+@export var shape_id: StringName = &""
+@export var shape_params: Dictionary = {}
+@export var shape_edited: bool = false
+
 # ==============================================================================
 # Non-Serialized / Cached Fields
 # ==============================================================================

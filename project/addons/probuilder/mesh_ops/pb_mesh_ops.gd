@@ -40,16 +40,22 @@ const WELD_TOLERANCE := 0.0001
 ## are removed, translated copies ("caps") plus side quads across each region
 ## boundary edge are added — ProBuilder semantics (a cube stays 6 faces after
 ## extruding its top into a taller box).
+## `allow_zero` permits distance 0 (caps coincide with the originals) — the
+## shift+move gesture extrudes at 0 then drags the caps with the gesture.
 static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
-		distance: float) -> Dictionary:
+		distance: float, allow_zero: bool = false) -> Dictionary:
 	if not _faces_valid(mesh_data, face_ids):
 		return _fail("Extrude faces: invalid selection")
-	if distance == 0.0:
+	if distance == 0.0 and not allow_zero:
 		return _fail("Extrude faces: zero distance")
 
 	var caps: Array[PBFace] = []
 	var sides: Array[PBFace] = []
 	var removed := {}
+	# Positions a follow-up translate/scale gesture should move: cap corners
+	# plus the sides' LIFTED corners only (the sides' base dups weld to the
+	# untouched mesh — moving them would drag the neighbors along).
+	var drag_positions := PackedInt32Array()
 
 	for region: PackedInt32Array in _face_regions(mesh_data, face_ids):
 		var dir := _region_normal(mesh_data, region)
@@ -68,6 +74,8 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 			for idx in face.get_indexes():
 				remapped.append(local[idx])
 			cap.set_indexes(remapped)
+			for idx in face.get_distinct_indexes():
+				drag_positions.append(local[idx])
 			caps.append(cap)
 			removed[fi] = true
 
@@ -85,8 +93,12 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 			]))
 			side.submesh_index = submesh
 			sides.append(side)
+			drag_positions.append(qa2)
+			drag_positions.append(qb2)
 
-	return _replace_faces(mesh_data, removed, caps, sides)
+	var result := _replace_faces(mesh_data, removed, caps, sides)
+	result["drag_positions"] = drag_positions
+	return result
 
 ## Insets each selected face independently: the face is replaced by a shrunken
 ## inner face plus a ring of side quads, ALL COPLANAR with the original face
@@ -239,16 +251,20 @@ static func detach_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> D
 	result["new_face_ids"] = PackedInt32Array()
 	return result
 
-## Merges coplanar, edge-adjacent selected faces into single n-gon faces
-## (ProBuilder "Merge Faces"): interior edges disappear, one face per
-## coplanar connected region. Selected faces that are isolated (no coplanar
-## neighbor in the selection) are left untouched. Non-convex regions may fan
-## badly (v1 fan-triangulates from the loop start — documented limitation).
+## Merges edge-adjacent selected faces into single n-gon faces (ProBuilder
+## "Merge Faces"): interior edges disappear, one face per connected region.
+## Non-coplanar faces merge too — the n-gon then acts as ONE face in face
+## mode (moving it keeps the region rigid) while its edges and vertices stay
+## individually editable; the surface renders fan-triangulated across the
+## bend, exactly like ProBuilder. Selected faces that are isolated (no
+## edge-adjacent neighbor in the selection) are left untouched. Non-convex
+## regions may fan badly (v1 fan-triangulates from the loop start —
+## documented limitation).
 static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Dictionary:
 	if not _faces_valid(mesh_data, face_ids):
 		return _fail("Merge faces: invalid selection")
 
-	var regions := _coplanar_regions(mesh_data, face_ids)
+	var regions := _face_regions(mesh_data, face_ids)
 	var merged_faces: Array[PBFace] = []
 	var removed := {}
 	var any_merged := false
@@ -274,7 +290,7 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 		any_merged = true
 
 	if not any_merged:
-		return _fail("Merge faces: no coplanar edge-adjacent faces in selection")
+		return _fail("Merge faces: no edge-adjacent faces in selection")
 
 	return _replace_faces(mesh_data, removed, merged_faces, [])
 
@@ -418,15 +434,16 @@ static func insert_edge_loop(mesh_data: PBMeshData, edge_ids: PackedInt32Array) 
 ## Extrudes each selected edge along the average normal of its adjacent faces
 ## by `distance`, adding one quad per edge (an open "fin" — edges have no
 ## opposite boundary to close, matching ProBuilder's edge extrude).
-## `edge_ids` index into mesh_data.get_common_edges().
+## `edge_ids` index into mesh_data.get_common_edges(). `allow_zero` permits
+## distance 0 (the shift+move gesture extrudes at 0 then drags the fins).
 static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
-		distance: float) -> Dictionary:
+		distance: float, allow_zero: bool = false) -> Dictionary:
 	if mesh_data == null or mesh_data.faces.is_empty():
 		return _fail("Extrude edges: no mesh data")
 	var common := mesh_data.get_common_edges()
 	if edge_ids.is_empty():
 		return _fail("Extrude edges: no edges selected")
-	if distance == 0.0:
+	if distance == 0.0 and not allow_zero:
 		return _fail("Extrude edges: zero distance")
 	for eid in edge_ids:
 		if eid < 0 or eid >= common.size():
@@ -434,6 +451,9 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 
 	var lookup := mesh_data.get_shared_vertex_lookup()
 	var new_faces: Array[PBFace] = []
+	# Positions a follow-up translate gesture should move: the fins' LIFTED
+	# corners only (the base dups weld to the untouched mesh).
+	var drag_positions := PackedInt32Array()
 
 	for eid in edge_ids:
 		var edge := common[eid]
@@ -477,6 +497,8 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		]))
 		fin.submesh_index = submesh
 		new_faces.append(fin)
+		drag_positions.append(qa2)
+		drag_positions.append(qb2)
 
 	if new_faces.is_empty():
 		return _fail("Extrude edges: no extrudable edges (degenerate normals)")
@@ -488,7 +510,8 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 	var base: int = mesh_data.faces.size() - new_faces.size()
 	for i in range(new_faces.size()):
 		new_ids.append(base + i)
-	return {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids}
+	return {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids,
+		"drag_positions": drag_positions}
 
 # ==============================================================================
 # Selection helpers
@@ -530,57 +553,6 @@ static func edge_usage_counts(mesh_data: PBMeshData) -> Dictionary:
 
 static func _fail(reason: String) -> Dictionary:
 	return {"ok": false, "error": reason}
-
-## Connected groups of selected faces that are coplanar AND edge-adjacent.
-static func _coplanar_regions(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Array:
-	var lookup := mesh_data.get_shared_vertex_lookup()
-	var planes := {}  # face index -> {normal, d}
-	var selected := PackedInt32Array()
-	for fi in face_ids:
-		var n := _face_area_normal(mesh_data, mesh_data.faces[fi])
-		if n.length_squared() < 0.000000001:
-			continue
-		var normal := n.normalized()
-		var d: float = normal.dot(mesh_data.positions[mesh_data.faces[fi].get_indexes()[0]])
-		planes[fi] = {"normal": normal, "d": d}
-		selected.append(fi)
-
-	# common-edge key -> selected faces using it
-	var edge_faces := {}
-	for fi in selected:
-		for edge in mesh_data.faces[fi].get_edges():
-			var key := _common_key(lookup, edge.a, edge.b)
-			if not edge_faces.has(key):
-				edge_faces[key] = PackedInt32Array()
-			edge_faces[key].append(fi)
-
-	var visited := {}
-	var regions: Array = []
-	for fi in selected:
-		if visited.has(fi):
-			continue
-		var region := PackedInt32Array()
-		var queue := PackedInt32Array([fi])
-		visited[fi] = true
-		while not queue.is_empty():
-			var cur: int = queue[queue.size() - 1]
-			queue.remove_at(queue.size() - 1)
-			region.append(cur)
-			for edge in mesh_data.faces[cur].get_edges():
-				for nf in edge_faces.get(_common_key(lookup, edge.a, edge.b), PackedInt32Array()):
-					if visited.has(nf) or not _planes_match(planes[cur], planes[nf]):
-						continue
-					visited[nf] = true
-					queue.append(nf)
-		regions.append(region)
-	return regions
-
-static func _planes_match(a: Dictionary, b: Dictionary) -> bool:
-	if a == null or b == null:
-		return false
-	if (a["normal"] as Vector3).dot(b["normal"]) < 0.9999:
-		return false
-	return absf(a["d"] - b["d"]) < 0.0005
 
 ## Walks the directed boundary edges of a face region into one ordered cycle
 ## of raw position indexes (following shared-group keys). Returns [] when the

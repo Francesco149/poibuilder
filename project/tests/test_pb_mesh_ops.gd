@@ -384,7 +384,7 @@ func test_loop_cut_undo_roundtrip():
 	assert_eq(data.validate(), "")
 
 # ==============================================================================
-# Merge faces (weld coplanar)
+# Merge faces (region weld — coplanar or bent)
 # ==============================================================================
 
 func test_merge_subdivided_face_back_to_one_face():
@@ -420,21 +420,36 @@ func test_merge_two_halves_from_loop_cut():
 	assert_eq(data.faces.size(), 9, "10 - 2 halves + 1 merged front")
 	_assert_watertight(data, "half-merged cube")
 
-func test_merge_non_coplanar_faces_fails():
+func test_merge_non_coplanar_faces_succeeds():
+	# ProBuilder parity: non-coplanar edge-adjacent faces merge too — the
+	# n-gon then acts as ONE face in face mode while its edges/vertices stay
+	# individually editable.
 	var data := _cube()
 	var result := PBMeshOps.merge_faces(data, PackedInt32Array([0, 4]))  # front + top
-	assert_false(result["ok"], "Adjacent but non-coplanar faces cannot merge")
-	assert_eq(data.faces.size(), 6, "Failed merge never mutates")
+	assert_true(result["ok"], "Adjacent non-coplanar faces merge: " + str(result.get("error", "")))
+	assert_eq(data.faces.size(), 5, "Two faces become one n-gon")
+	assert_eq(data.validate(), "", "Merged cube validates")
+	_assert_watertight(data, "non-coplanar-merged cube")
+	# The n-gon's perimeter: 4 front + 4 top corners - 2 shared = 6 corners,
+	# and it bends along the former shared edge (not planar).
+	var merged: int = result["new_face_ids"][0]
+	var loop := data.faces[merged].get_distinct_indexes()
+	assert_eq(loop.size(), 6, "Merged n-gon has 6 perimeter corners")
+	var ys: Array = []
+	for idx in loop:
+		if not ys.has(data.positions[idx].y):
+			ys.append(data.positions[idx].y)
+	assert_eq(ys.size(), 2, "The merged face spans two heights (bent, non-planar)")
 
 func test_merge_unrelated_faces_fails():
 	var data := _cube()
-	var result := PBMeshOps.merge_faces(data, PackedInt32Array([0, 2]))
+	var result := PBMeshOps.merge_faces(data, PackedInt32Array([0, 1]))  # front + back
 	assert_false(result["ok"], "Non-adjacent selection has nothing to merge")
 
 func test_merge_single_face_fails():
 	var data := _cube()
 	assert_false(PBMeshOps.merge_faces(data, PackedInt32Array([4]))["ok"],
-		"A lone face has no coplanar neighbor")
+		"A lone face has no edge-adjacent partner in the selection")
 
 # ==============================================================================
 # Winding conventions (G1) on op results

@@ -22,6 +22,14 @@ var toolbar: PBToolbar
 ## update_gizmos calls on every motion event).
 var _hover_drawn_last: int = -1
 
+## Last cursor position + camera seen in the 3D viewport (presses AND motion).
+## Lets a selection change (clicking another object) auto-pick the element
+## under the exact click position.
+var _last_mouse_pos: Vector2 = Vector2.ZERO
+var _last_mouse_camera: Camera3D = null
+## Time of the last press seen in the viewport, for click-recency checks.
+var _last_press_msec: int = -10000
+
 ## Invisible anchor used to locate the 3D editor's toolbar containers; added
 ## to CONTAINER_SPATIAL_EDITOR_MENU, walked for the placement below, then
 ## removed again.
@@ -35,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.8.0"
+const VERSION := "0.9.0"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -46,6 +54,7 @@ func _enter_tree():
 	gizmo_plugin.logger = logger
 	gizmo_plugin.element_editor.editor = editor
 	gizmo_plugin.element_editor.undo = get_undo_redo()
+	gizmo_plugin.shape_creator = shape_creator
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
 
@@ -56,6 +65,7 @@ func _enter_tree():
 	editor.orientation_space_changed.connect(_on_orientation_space_changed)
 	editor.tool_mode_changed.connect(_on_tool_mode_changed)
 	gizmo_plugin.element_editor.element_drag_updated.connect(_on_drag_updated)
+	gizmo_plugin.element_editor.drag_topology_committed.connect(_on_drag_topology_committed)
 
 	# Register custom type
 	add_custom_type(
@@ -75,16 +85,30 @@ func _enter_tree():
 	toolbar.editor = editor
 	toolbar.set_editing_active(false)
 	toolbar.shape_requested.connect(_on_shape_requested)
+	toolbar.operation_requested.connect(_on_operation_requested)
+	toolbar.edit_params_requested.connect(_on_edit_params_requested)
+	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	_add_toolbar_row_below_3d_toolbar()
 
-	# Tool overlay panel floating in the 3D viewport (replaces the docks;
-	# logging goes to the Godot console via PBLogger).
+	# Tool overlay panel floating in the 3D viewport (readouts + params
+	# modal; logging goes to the Godot console via PBLogger).
 	tool_overlay = PBToolOverlay.new()
 	tool_overlay.editor = editor
 	tool_overlay.element_editor = gizmo_plugin.element_editor
 	tool_overlay.visible = false
-	tool_overlay.operation_requested.connect(_on_operation_requested)
+	tool_overlay.params_applied.connect(_on_params_applied)
+	tool_overlay.params_canceled.connect(_on_params_canceled)
+	tool_overlay.param_changed.connect(_on_param_changed)
 	_add_overlay_to_3d_viewport(tool_overlay)
+
+	# Half-size manipulator gizmos by default (the engine default of 80px is
+	# huge next to PoiBuilder's element work). Respect user customization:
+	# only applied while the setting still sits at the engine default.
+	var editor_settings: EditorSettings = get_editor_interface().get_editor_settings()
+	if editor_settings != null and editor_settings.has_setting("editors/3d/manipulator_gizmo_size") \
+			and int(editor_settings.get_setting("editors/3d/manipulator_gizmo_size")) == 80:
+		editor_settings.set_setting("editors/3d/manipulator_gizmo_size", 40)
+		logger.info("plugin", "Manipulator gizmo size set 80 → 40 (Editor Settings > Editors > 3D to change)")
 
 	# Bridge onto the editor's tool buttons (own tool modes; never the
 	# universal gizmo). Needs the Node3DEditor, located via the toolbar walk.
@@ -105,6 +129,14 @@ func _enter_tree():
 func _exit_tree():
 	if logger:
 		logger.info("plugin", "PoiBuilder plugin exiting tree")
+
+	# Drop a half-created shape preview (it never entered the undo history).
+	if shape_creator.is_active():
+		var node := shape_creator.preview_node
+		shape_creator.reset()
+		if node != null and is_instance_valid(node) and node.get_parent() != null:
+			node.get_parent().remove_child(node)
+			node.queue_free()
 
 	# Disconnect selection
 	var selection: EditorSelection = get_editor_interface().get_selection()
@@ -232,8 +264,20 @@ func _make_visible(visible: bool) -> void:
 ## fall through to subgizmo selection / rubber-band. Interception here is what
 ## broke gizmo drags in earlier rounds.
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
+	# Shape creation owns the mouse while armed/dragging/modal (checked even
+	# when nothing is selected — creation needs no editing context).
+	if shape_creator.is_active():
+		return _creation_input(camera, event)
+
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
+
+	# Remember press positions: a following selection change (clicking another
+	# object) auto-picks the element under this exact position.
+	if event is InputEventMouseButton and event.pressed:
+		_last_mouse_pos = event.position
+		_last_mouse_camera = camera
+		_last_press_msec = Time.get_ticks_msec()
 
 	# Hover highlight: observe motion WITHOUT consuming it. The engine keeps
 	# processing (camera nav, marquee, gizmo drags). Picking is skipped while
@@ -242,8 +286,12 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 			and not gizmo_plugin.element_editor.drag_active:
 		var node := editor.active_mesh
 		if node != null and node.pb_mesh_data != null:
+			_last_mouse_pos = event.position
+			_last_mouse_camera = camera
+			# Hover must never re-record the pick-side face (the element gizmo
+			# stays locked to the side it was selected from).
 			var id: int = gizmo_plugin.element_editor.pick_ray(
-				node.pb_mesh_data, node.global_transform, camera, event.position)
+				node.pb_mesh_data, node.global_transform, camera, event.position, false)
 			editor.hover_id = id
 			if editor.hover_id != _hover_drawn_last:
 				_hover_drawn_last = editor.hover_id
@@ -313,9 +361,29 @@ func _on_active_mesh_changed(mesh: PBMesh) -> void:
 					mesh.name, md.positions.size(), md.faces.size(),
 					md.shared_vertices.size(), md.get_common_edges().size()])
 		mesh.update_gizmos()
+		# Clicking ANOTHER object while in an element mode lands directly on
+		# the element under the cursor — no transient whole-object gizmo.
+		# (Deferred: the engine is still finishing its own selection change.)
+		if editor.is_editing() and _last_mouse_camera != null \
+				and Time.get_ticks_msec() - _last_press_msec < 500:
+			_auto_pick_element.call_deferred(mesh)
 	else:
 		editor.hover_id = -1
 	_update_editing_context()
+
+## Selects the element under the last click position on `mesh` (single-id
+## subgizmo selection — the engine's script API) so the element gizmo shows
+## up immediately instead of the whole-object one.
+func _auto_pick_element(mesh: PBMesh) -> void:
+	if not editor.is_editing() or editor.active_mesh != mesh:
+		return
+	var gizmo := gizmo_plugin.gizmo_for_node(mesh)
+	var id: int = gizmo_plugin.element_editor.pick_ray(
+		mesh.pb_mesh_data, mesh.global_transform, _last_mouse_camera, _last_mouse_pos)
+	if id >= 0 and gizmo != null:
+		mesh.set_subgizmo_selection(gizmo, id,
+			gizmo_plugin.element_editor.get_subgizmo_transform(mesh.pb_mesh_data, mesh, id))
+	mesh.update_gizmos()
 
 func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 	# Clear element selection when mode changes (ProBuilder behavior).
@@ -362,15 +430,21 @@ func _on_engine_tool_selected(tool: int) -> void:
 ## engine tool buttons (universal/select disabled while editing, our tool
 ## forced active), and the overlay panel visibility.
 func _update_editing_context() -> void:
+	var mesh_selected := editor.active_mesh != null
 	var editing := editor.is_editing()
-	toolbar.set_editing_active(editing)
-	tool_overlay.visible = editor.active_mesh != null
+	toolbar.set_editing_active(mesh_selected)
+	tool_overlay.update_visibility()
 	if tool_bridge.is_ready():
 		tool_bridge.set_editing_active(editing)
 		if editing:
 			tool_bridge.editor_space = editor.orientation_space
 			tool_bridge.apply_orientation_space(editor.orientation_space)
 			tool_bridge.apply_tool(editor.tool_mode)
+
+## Toolbar Panel toggle → overlay pin (and back, keeping both in sync).
+func _on_overlay_toggled(pinned: bool) -> void:
+	tool_overlay.pinned = pinned
+	tool_overlay.update_visibility()
 
 func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> void:
 	if active:
@@ -379,11 +453,28 @@ func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> vo
 		if editor.active_mesh != null:
 			editor.active_mesh.update_gizmos()
 
+## A shift+move / shift+scale gesture committed — face ids shifted, so the
+## engine's subgizmo selection and our mirrors are stale. Clear and redraw
+## (same dance as an explicit mesh op).
+func _on_drag_topology_committed(mesh: PBMesh) -> void:
+	editor.hover_id = -1
+	_hover_drawn_last = -1
+	editor.selection.clear_all()
+	gizmo_plugin.element_editor.reset_side_faces()
+	mesh.clear_subgizmo_selection()
+	mesh.update_gizmos()
+
 # ==============================================================================
 # Mesh Operations (overlay OPERATIONS section)
 # ==============================================================================
 
-## Performs a mesh op from the overlay on the current selection. Face-mode
+## Numeric params for the toolbar op buttons. The LIVE equivalents are the
+## gestures: Shift+Move extrudes, Shift+Scale insets (both drag-driven);
+## these buttons use the session defaults.
+const OP_EXTRUDE_DISTANCE := 0.25
+const OP_INSET_AMOUNT := 0.25
+
+## Performs a mesh op from the toolbar on the current selection. Face-mode
 ## ops read the selected faces; edge extrude reads the selected edges. Undo
 ## goes through full-mesh snapshots (CmdMeshOp) — ops rewrite topology, so
 ## per-index payloads don't apply.
@@ -395,8 +486,8 @@ func _on_operation_requested(op_name: String) -> void:
 	if mesh_data == null:
 		return
 
-	var distance: float = tool_overlay.extrude_distance
-	var amount: float = tool_overlay.inset_amount
+	var distance := OP_EXTRUDE_DISTANCE
+	var amount := OP_INSET_AMOUNT
 	var selection := editor.selection
 
 	if op_name == "detach_faces":
@@ -455,6 +546,10 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 	var new_node := PBMesh.new()
 	new_node.name = _unique_detached_name(mesh)
 	new_node.pb_mesh_data = result["detached"]
+	# The detached positions are in the SOURCE's local space — copying the
+	# source transform keeps the new object exactly where the faces were
+	# (position, rotation, and scale), instead of snapping to identity.
+	new_node.transform = mesh.transform
 
 	var undo := get_undo_redo()
 	undo.create_action("Detach Faces")
@@ -479,6 +574,8 @@ func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int) -> void
 	mesh.clear_subgizmo_selection()
 	mesh.rebuild()
 	mesh.update_gizmos()
+	if mesh.pb_mesh_data != null:
+		mesh.pb_mesh_data.shape_edited = true
 	if logger:
 		logger.info("mesh_ops", "%s: %d new face(s)" % [op_name, new_face_count])
 
@@ -496,44 +593,233 @@ const OP_ACTION_NAMES := {
 }
 
 # ==============================================================================
-# Shape Creation (toolbar New Shape menu)
+# Shape Creation (drag base → height → params, ProBuilder-style)
 # ==============================================================================
 
-## Creates a new PBMesh from a factory shape id, places it in front of the
-## editor camera, registers a node-level undo action, and selects it. Works
-## with nothing selected — creation needs no editing context.
+var shape_creator: PBShapeCreator = PBShapeCreator.new()
+
+## What the overlay params modal is editing: "create" (a just-placed shape)
+## or "edit" (Edit Params on a pristine factory shape).
+var _params_session_kind: String = ""
+var _params_edit_node: PBMesh = null
+var _params_edit_snapshot: PBMeshData = null
+var _params_edit_values: Dictionary = {}
+
+## A New Shape menu pick ARMS creation: nothing exists yet — the next LMB
+## drag on any surface (PBMesh face or grid plane) draws the base. A session
+## still in progress is closed first (abort before the confirming click —
+## nothing existed; apply after it — the shape stays).
 func _on_shape_requested(shape_id: StringName) -> void:
-	var data := PBShapeFactory.create_shape(shape_id)
-	if data == null:
-		if logger:
-			logger.warn("plugin", "Unknown shape id: %s" % shape_id)
-		return
+	if shape_creator.state == PBShapeCreator.State.PARAMS:
+		_on_params_applied()
+	elif shape_creator.is_active():
+		_creation_abort("a new shape was picked")
+	shape_creator.arm(shape_id)
+	if logger:
+		logger.info("plugin", "Creating '%s' — drag on a surface to draw the base" % shape_id)
+
+func _creation_input(camera: Camera3D, event: InputEvent) -> int:
+	if event is InputEventMouseMotion:
+		_last_mouse_pos = event.position
+		_last_mouse_camera = camera
+		_creation_motion(camera, event.position)
+		return AFTER_GUI_INPUT_PASS
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			match shape_creator.state:
+				PBShapeCreator.State.ARMED:
+					if _creation_begin_from_surface(camera, event.position):
+						# Consume the press so the engine never starts a
+						# marquee / selection under the creation drag.
+						return AFTER_GUI_INPUT_STOP
+					return AFTER_GUI_INPUT_PASS
+				PBShapeCreator.State.HEIGHT:
+					_creation_confirm()
+					return AFTER_GUI_INPUT_STOP
+		else:
+			if shape_creator.state == PBShapeCreator.State.BASE:
+				_creation_end_base()
+				return AFTER_GUI_INPUT_STOP
+
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_ESCAPE:
+		if shape_creator.state == PBShapeCreator.State.PARAMS:
+			_on_params_canceled()
+		else:
+			# ESC before the confirming click: nothing is created at all.
+			_creation_abort("cancelled with Escape")
+		return AFTER_GUI_INPUT_STOP
+	return AFTER_GUI_INPUT_PASS
+
+## Nearest surface under the cursor: PBMesh faces (world space) with the
+## editor grid plane (y=0) as the fallback, like ProBuilder dragging on the
+## grid. Returns {point, normal} or {} on a miss.
+func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	var best_t := INF
+	var best := {}
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root != null:
+		for node in _collect_pbmeshes(scene_root):
+			if node == shape_creator.preview_node or node.pb_mesh_data == null:
+				continue
+			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+			if res.face_index >= 0 and res.distance < best_t:
+				var normal := PBMath.normal_from_positions(
+					node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
+				best_t = res.distance
+				best = {"point": res.hit_point,
+					"normal": (node.global_transform.basis * normal).normalized()}
+	if best.is_empty():
+		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, Vector3.ZERO, Vector3.UP)
+		if hit != PBShapeCreator.RAY_MISS:
+			best = {"point": hit, "normal": Vector3.UP}
+	return best
+
+func _collect_pbmeshes(root: Node) -> Array[PBMesh]:
+	var out: Array[PBMesh] = []
+	if root is PBMesh:
+		out.append(root)
+	for child in root.get_children():
+		out.append_array(_collect_pbmeshes(child))
+	return out
+
+func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool:
+	var hit := _pick_creation_surface(camera, screen_pos)
+	if hit.is_empty():
+		return false
+	shape_creator.begin(hit["point"], hit["normal"], camera.global_transform.basis.z)
+	_make_preview_node()
+	_refresh_preview()
+	return true
+
+func _make_preview_node() -> void:
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root == null:
-		if logger:
-			logger.warn("plugin", "No edited scene — shape not created")
+		_creation_abort("no edited scene")
 		return
-
 	var node := PBMesh.new()
-	node.name = _unique_shape_name(scene_root, shape_id)
-	node.pb_mesh_data = data
-	node.global_transform = _placement_transform()
+	node.name = _unique_shape_name(scene_root, shape_creator.shape_id)
+	scene_root.add_child(node)
+	shape_creator.preview_node = node
 
+## Rebuilds the preview mesh + placement from the creator's current values.
+func _refresh_preview() -> void:
+	var node := shape_creator.preview_node
+	if node == null:
+		return
+	var data := shape_creator.build_data()
+	if data == null:
+		return
+	node.pb_mesh_data = data
+	node.transform = shape_creator.placement_transform(data)
+
+func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	match shape_creator.state:
+		PBShapeCreator.State.BASE:
+			var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d,
+				shape_creator.plane_point, shape_creator.plane_normal)
+			if hit != PBShapeCreator.RAY_MISS:
+				shape_creator.update_base(hit)
+				_refresh_preview()
+			_update_creation_hover(camera, screen_pos)
+		PBShapeCreator.State.HEIGHT:
+			var ref := PBShapeCreator.height_reference_point(camera.global_position,
+				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
+			shape_creator.update_height_point(ref)
+			_refresh_preview()
+			_update_creation_hover(camera, screen_pos)
+		_:
+			_update_creation_hover(camera, screen_pos)
+
+## Cyan face highlight under the cursor while creating (skips the preview).
+func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	var best_t := INF
+	var best_node: PBMesh = null
+	var best_face := -1
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root != null:
+		for node in _collect_pbmeshes(scene_root):
+			if node == shape_creator.preview_node or node.pb_mesh_data == null:
+				continue
+			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+			if res.face_index >= 0 and res.distance < best_t:
+				best_t = res.distance
+				best_node = node
+				best_face = res.face_index
+	var prev_node := gizmo_plugin.creation_hover_node
+	if best_node != prev_node or best_face != gizmo_plugin.creation_hover_face:
+		gizmo_plugin.creation_hover_node = best_node
+		gizmo_plugin.creation_hover_face = best_face
+		if prev_node != null and is_instance_valid(prev_node):
+			prev_node.update_gizmos()
+		if best_node != null:
+			best_node.update_gizmos()
+
+func _clear_creation_hover() -> void:
+	var prev_node := gizmo_plugin.creation_hover_node
+	gizmo_plugin.creation_hover_node = null
+	gizmo_plugin.creation_hover_face = -1
+	if prev_node != null and is_instance_valid(prev_node):
+		prev_node.update_gizmos()
+
+func _creation_end_base() -> void:
+	if not shape_creator.end_base():
+		# A stray click (no real drag) — ProBuilder creates nothing either.
+		_creation_abort("base drag too small")
+
+## The confirming click (after the height drag): the shape exists from here
+## on (its node-add undo is registered now); the params modal opens on top.
+func _creation_confirm() -> void:
+	shape_creator.confirm_height()
+	var node := shape_creator.preview_node
+	var scene_root := get_editor_interface().get_edited_scene_root()
 	var undo := get_undo_redo()
-	undo.create_action("Add %s" % String(shape_id).capitalize())
+	undo.create_action("Add %s" % String(shape_creator.shape_id).capitalize())
 	undo.add_do_method(self, "_attach_detached", node, scene_root)
+	undo.add_do_method(self, "_own_node", node)
 	undo.add_do_reference(node)
 	undo.add_undo_method(self, "_detach_node", node)
 	undo.commit_action()
 
-	# Select the new shape so element editing starts immediately (not part
-	# of the undo action — selection state is the user's to change).
-	var editor_selection := get_editor_interface().get_selection()
-	editor_selection.clear()
-	editor_selection.add_node(node)
-
+	_params_session_kind = "create"
+	tool_overlay.open_params("%s Parameters" % String(shape_creator.shape_id).capitalize(),
+		PBShapeParams.get_param_defs(shape_creator.shape_id), shape_creator.values)
 	if logger:
-		logger.info("plugin", "Created shape '%s' (%s)" % [node.name, shape_id])
+		logger.info("plugin", "Placed '%s' — adjust parameters, then Apply/Cancel" % node.name)
+
+func _creation_abort(reason: String) -> void:
+	var node := shape_creator.preview_node
+	shape_creator.reset()
+	if node != null and is_instance_valid(node) and node.get_parent() != null:
+		# The preview never entered the undo history — removing it fully
+		# un-creates the shape.
+		node.get_parent().remove_child(node)
+		node.queue_free()
+	_clear_creation_hover()
+	if logger:
+		logger.info("plugin", "Shape creation aborted (%s)" % reason)
+
+## Ends a "create" params session: the node stays either way (Apply keeps the
+## edited params, Cancel restored the pre-modal ones), and the plugin hands
+## the node over to element editing.
+func _finish_creation_session(node: PBMesh) -> void:
+	shape_creator.reset()
+	_clear_creation_hover()
+	tool_overlay.close_params()
+	_params_session_kind = ""
+	if node != null and is_instance_valid(node):
+		var editor_selection := get_editor_interface().get_selection()
+		editor_selection.clear()
+		editor_selection.add_node(node)
+		editor.restore_element_mode()
+	_update_editing_context()
 
 func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
 	var base := "Shape_%s" % String(shape_id).capitalize().replace(" ", "")
@@ -544,15 +830,108 @@ func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
 		i += 1
 	return "%s%d" % [base, i]
 
-## 3m in front of the first 3D editor viewport's camera (origin as fallback).
-func _placement_transform() -> Transform3D:
-	var viewport: SubViewport = get_editor_interface().get_editor_viewport_3d(0)
-	if viewport != null:
-		var cam: Camera3D = viewport.get_camera_3d()
-		if cam != null:
-			var pos: Vector3 = cam.global_position - cam.global_transform.basis.z * 3.0
-			return Transform3D(Basis.IDENTITY, pos)
-	return Transform3D.IDENTITY
+# ==============================================================================
+# Shape Params modal (create + edit sessions)
+# ==============================================================================
+
+func _on_param_changed(param_name: String, value: float) -> void:
+	if _params_session_kind == "create":
+		shape_creator.set_param(param_name, value)
+		_refresh_preview()
+	elif _params_session_kind == "edit" and _params_edit_node != null \
+			and is_instance_valid(_params_edit_node):
+		_params_edit_values[param_name] = value
+		var data := _params_edit_node.pb_mesh_data
+		var rebuilt := PBShapeParams.build(data.shape_id, _params_edit_values)
+		if rebuilt != null:
+			rebuilt.shape_id = data.shape_id
+			rebuilt.shape_params = _params_edit_values.duplicate()
+			rebuilt.shape_edited = false
+			_params_edit_node.pb_mesh_data = rebuilt
+
+func _on_params_applied() -> void:
+	if _params_session_kind == "create":
+		var node := shape_creator.preview_node
+		shape_creator.values = tool_overlay.get_param_values()
+		if node != null and node.pb_mesh_data != null:
+			node.pb_mesh_data.shape_id = shape_creator.shape_id
+			node.pb_mesh_data.shape_params = shape_creator.values.duplicate()
+			node.pb_mesh_data.shape_edited = false
+		_finish_creation_session(node)
+		if logger:
+			logger.info("plugin", "Shape parameters applied")
+	elif _params_session_kind == "edit":
+		_commit_edit_params()
+
+func _on_params_canceled() -> void:
+	if _params_session_kind == "create":
+		var node := shape_creator.preview_node
+		shape_creator.cancel_params()
+		var data := shape_creator.build_data()
+		if node != null and data != null:
+			data.shape_id = shape_creator.shape_id
+			data.shape_params = shape_creator.values.duplicate()
+			node.pb_mesh_data = data
+			node.transform = shape_creator.placement_transform(data)
+		_finish_creation_session(node)
+		if logger:
+			logger.info("plugin", "Shape parameters reverted to placement values")
+	elif _params_session_kind == "edit":
+		if _params_edit_node != null and is_instance_valid(_params_edit_node) \
+				and _params_edit_snapshot != null:
+			PBCommand.restore_mesh_data(_params_edit_node.pb_mesh_data, _params_edit_snapshot)
+			_params_edit_node.rebuild()
+			_params_edit_node.update_gizmos()
+		tool_overlay.close_params()
+		_params_session_kind = ""
+		_params_edit_node = null
+		_params_edit_snapshot = null
+		_params_edit_values = {}
+		if logger:
+			logger.info("plugin", "Shape parameters edit cancelled")
+
+## Edit Params on a pristine factory shape: live param rebuilds; Apply
+## commits a snapshot undo, Cancel restores the pre-session data. Ignored
+## while another params session is running.
+func _on_edit_params_requested() -> void:
+	if _params_session_kind != "":
+		return
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var data: PBMeshData = mesh.pb_mesh_data
+	if data.shape_id == &"" or data.shape_edited:
+		if logger:
+			logger.warn("plugin", "Edit Params needs an unedited factory shape")
+		return
+	_params_session_kind = "edit"
+	_params_edit_node = mesh
+	_params_edit_snapshot = PBCommand.copy_mesh_data(data)
+	_params_edit_values = data.shape_params.duplicate()
+	tool_overlay.open_params("%s Parameters" % String(data.shape_id).capitalize(),
+		PBShapeParams.get_param_defs(data.shape_id), _params_edit_values)
+
+func _commit_edit_params() -> void:
+	var node := _params_edit_node
+	if node == null or not is_instance_valid(node) or node.pb_mesh_data == null:
+		return
+	var data := node.pb_mesh_data
+	data.shape_params = _params_edit_values.duplicate()
+	data.shape_edited = false
+	var before := _params_edit_snapshot
+	var after := PBCommand.copy_mesh_data(data)
+	var undo := get_undo_redo()
+	undo.create_action("Edit %s Params" % String(data.shape_id).capitalize())
+	undo.add_do_method(self, "_restore_mesh_snapshot", node.get_instance_id(), after)
+	undo.add_undo_method(self, "_restore_mesh_snapshot", node.get_instance_id(), before)
+	undo.commit_action()
+	tool_overlay.close_params()
+	_params_session_kind = ""
+	_params_edit_node = null
+	_params_edit_snapshot = null
+	_params_edit_values = {}
+	if logger:
+		logger.info("plugin", "Shape parameters committed")
 
 func _unique_detached_name(mesh: PBMesh) -> String:
 	var parent := mesh.get_parent()
@@ -576,8 +955,16 @@ func _restore_mesh_snapshot(mesh_id: int, snapshot: PBMeshData) -> void:
 func _attach_detached(node: Node, parent: Node) -> void:
 	if parent == null or not is_instance_valid(parent):
 		return
+	if node.get_parent() == parent:
+		return  # already attached (creation finalize commits against a live preview)
 	parent.add_child(node)
 	node.owner = get_editor_interface().get_edited_scene_root()
+
+## Undo "do" half for creation: the preview node is already in the tree when
+## the action commits — only ownership is missing.
+func _own_node(node: Node) -> void:
+	if node != null and is_instance_valid(node):
+		node.owner = get_editor_interface().get_edited_scene_root()
 
 ## Undo of detach: remove the node WITHOUT freeing it — the undo history's
 ## do-reference keeps it alive so redo can re-attach it.

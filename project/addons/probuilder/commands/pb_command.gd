@@ -77,6 +77,12 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 			new_st.append(null)
 	copy.shared_textures = new_st
 
+	# Shape bookkeeping travels with snapshots so undo/redo never loses the
+	# shape identity / editability of a factory-created mesh.
+	copy.shape_id = source.shape_id
+	copy.shape_params = source.shape_params.duplicate()
+	copy.shape_edited = source.shape_edited
+
 	copy.invalidate_caches()
 	return copy
 
@@ -114,5 +120,9 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 		else:
 			new_st.append(null)
 	target.shared_textures = new_st
+
+	target.shape_id = snapshot.shape_id
+	target.shape_params = snapshot.shape_params.duplicate()
+	target.shape_edited = snapshot.shape_edited
 
 	target.invalidate_caches()

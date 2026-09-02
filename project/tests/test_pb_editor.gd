@@ -211,9 +211,9 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Logo, sep, Move/Rotate/Scale, sep, Vertex/Edge/Face, sep, Space,
-	# sep, New Shape menu
-	assert_eq(tb.get_child_count(), 13, "Toolbar should have 13 children")
+	# Logo, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
+	# sep, 8 op buttons, sep, New Shape, Edit Params, sep, Panel toggle.
+	assert_eq(tb.get_child_count(), 26, "Toolbar should have 26 children")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 
@@ -223,7 +223,7 @@ func test_toolbar_icons_present():
 
 	# Icons come from imported SVGs; after an editor import run they must be
 	# loaded (text fallbacks only exist for fresh checkouts).
-	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_object, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
 		assert_true(btn is Button, "Toolbar buttons must exist")
 		if tb._logo.texture != null:
 			assert_ne(btn.icon, null, "Toolbar buttons use SVG icons when icons are imported")
@@ -235,7 +235,8 @@ func test_toolbar_editor_binding_modes():
 
 	tb.editor = ed
 
-	# Default is OBJECT mode — no element buttons pressed
+	# Default is OBJECT mode — the Object button is pressed
+	assert_true(tb._btn_object.button_pressed, "Object button pressed in default OBJECT mode")
 	assert_false(tb._btn_vertex.button_pressed)
 	assert_false(tb._btn_edge.button_pressed)
 	assert_false(tb._btn_face.button_pressed)
@@ -279,12 +280,42 @@ func test_toolbar_set_editing_active_disables_not_hides():
 
 	tb.set_editing_active(false)
 	assert_true(tb.visible, "The toolbar row is persistent — never hidden")
-	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space,
+			tb._btn_object, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
 		assert_true(btn.disabled, "Buttons must be disabled outside editing context")
 
 	tb.set_editing_active(true)
-	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
+	for btn in [tb._btn_move, tb._btn_rotate, tb._btn_scale, tb._btn_space,
+			tb._btn_object, tb._btn_vertex, tb._btn_edge, tb._btn_face]:
 		assert_false(btn.disabled, "Buttons must be enabled while editing")
+
+func test_editor_object_mode_persists_across_mesh_switch():
+	# #9: OBJECT is its own mode. Switching between meshes keeps it (the
+	# plugin auto-picks an element under the click instead of bouncing the
+	# user back into an element mode).
+	var ed := PBEditor.new()
+	var mesh := PBMesh.new()
+	add_child_autofree(mesh)
+	var mesh2 := PBMesh.new()
+	add_child_autofree(mesh2)
+
+	ed.active_mesh = mesh           # first entry → element mode
+	assert_eq(ed.select_mode, PBEditor.SelectMode.FACE)
+	ed.select_mode = PBEditor.SelectMode.OBJECT
+	ed.active_mesh = mesh2
+	assert_eq(ed.select_mode, PBEditor.SelectMode.OBJECT,
+		"Explicit object mode survives switching to another mesh")
+
+func test_editor_restore_element_mode():
+	var ed := PBEditor.new()
+	ed.select_mode = PBEditor.SelectMode.EDGE
+	ed.select_mode = PBEditor.SelectMode.OBJECT
+	ed.restore_element_mode()
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE,
+		"restore_element_mode leaves OBJECT into the remembered element mode")
+	ed.restore_element_mode()
+	assert_eq(ed.select_mode, PBEditor.SelectMode.EDGE,
+		"Calling it in an element mode is a no-op")
 
 func test_toolbar_mode_button_signal():
 	var tb := PBToolbar.new()

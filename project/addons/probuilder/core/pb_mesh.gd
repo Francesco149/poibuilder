@@ -41,13 +41,16 @@ func set_pb_mesh_data(value: PBMeshData) -> void:
 		rebuild()
 
 ## Compiles pb_mesh_data into an ArrayMesh and assigns it to self.mesh.
+## A FRESH ArrayMesh is built every time: mutating the previous mesh in place
+## (clear_surfaces + add_surface) does not refresh the MeshInstance3D — the
+## render kept showing pre-undo geometry until something else touched the
+## node. Reassigning a new mesh resource forces the re-upload.
 func rebuild() -> void:
 	if pb_mesh_data == null:
 		mesh = null
 		_needs_rebuild = false
 		return
-	var array_mesh: ArrayMesh = pb_mesh_data.to_array_mesh(mesh as ArrayMesh if mesh is ArrayMesh else null)
-	mesh = array_mesh
+	mesh = pb_mesh_data.to_array_mesh()
 	_needs_rebuild = false
 
 # ==============================================================================

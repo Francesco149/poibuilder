@@ -12,7 +12,7 @@ extends RefCounted
 
 ## Plugin version, shown in the dock and logged at startup so a stale build
 ## is immediately obvious when behavior "doesn't match" what was fixed.
-const PLUGIN_VERSION := "0.8.0"
+const PLUGIN_VERSION := "0.9.0"
 
 # ==============================================================================
 # Selection Mode
@@ -153,6 +153,7 @@ func cycle_orientation_space() -> void:
 func set_active_mesh(value: PBMesh) -> void:
 	if active_mesh == value:
 		return
+	var previous := active_mesh
 	# Disconnect old selection signal
 	if selection.selection_changed.is_connected(_on_selection_changed):
 		selection.selection_changed.disconnect(_on_selection_changed)
@@ -165,8 +166,12 @@ func set_active_mesh(value: PBMesh) -> void:
 		# back) re-enters the same mode.
 	else:
 		selection.set_mesh_data(active_mesh.pb_mesh_data)
-		if select_mode == SelectMode.OBJECT:
-			# First entry (or an explicit OBJECT set) → last element mode.
+		if select_mode == SelectMode.OBJECT and previous == null:
+			# FIRST entry into any mesh (from nothing selected) lands in the
+			# remembered element mode. Switching BETWEEN meshes keeps the
+			# current mode — OBJECT stays OBJECT (it is a real mode: the
+			# plugin auto-picks an element under the click instead), and an
+			# element mode stays put.
 			select_mode = _last_element_mode
 	# Connect new selection signal
 	selection.selection_changed.connect(_on_selection_changed)
@@ -182,6 +187,13 @@ func set_active_mesh(value: PBMesh) -> void:
 ## Returns true if we are in any element editing mode (not Object).
 func is_editing() -> bool:
 	return active_mesh != null and select_mode != SelectMode.OBJECT
+
+## Leaves OBJECT mode into the remembered element mode (e.g. after a shape
+## creation session hands the new node over — the user can immediately
+## select edges/faces/verts).
+func restore_element_mode() -> void:
+	if select_mode == SelectMode.OBJECT:
+		select_mode = _last_element_mode
 
 ## Returns the display name for a given mode.
 static func mode_name(mode: SelectMode) -> String:

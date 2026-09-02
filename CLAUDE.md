@@ -69,12 +69,28 @@ Plugin: `project/addons/probuilder/`
   sibling AFTER the engine's toolbar MarginContainer; the engine's own VBox
   layout then sizes the row and pushes the viewports down. Icon buttons (SVGs
   in icons/), disabled when no PBMesh is selected; the row never hides.
+  Carries: tools (Move/Rotate/Scale), modes (Object/Vertex/Edge/Face), space
+  cycler, ALL mesh-op buttons (enable per selection context), New Shape menu,
+  Edit Params (pristine factory shapes only), and the Panel (overlay pin)
+  toggle.
 - `gui/overlays/pb_tool_overlay.gd` — Floating in-viewport PanelContainer
-  (bottom-left of the editor viewport) in standard panel language: TOOL
-  section (transform tool buttons, orientation space OptionButton, live drag
-  readout) and SELECTION section (mode, counts against mesh totals). Grows
-  contextual sections later (e.g. shape params after placing shapes). NO
-  docks: debug logging goes to the Godot console via PBLogger.
+  (bottom-left) in standard panel language. COMPACT BY DEFAULT: carries NO
+  op buttons and NO tool/space controls (toolbar has them) — it shows the
+  SELECTION readout only while something is selected, the live drag readout
+  only while a drag runs, and the shape-params MODAL (Apply/Cancel, live
+  preview). Auto-hides otherwise; draggable by its header, collapsible to
+  the header, pinned via the toolbar Panel toggle. Clicks on it are
+  consumed; everything else passes to the scene. NO docks: debug logging
+  goes to the Godot console via PBLogger.
+- `editor/pb_shape_creator.gd` — Drag-to-create state machine (runtime-safe,
+  headless-testable): ARMED → BASE (LMB drag on any surface, coplanar to the
+  pressed plane; floor vs wall extent mapping) → HEIGHT (mouse adjusts the
+  3rd dimension along the normal, LMB click confirms) → PARAMS (overlay
+  modal; Cancel restores session values). ESC before the confirming click
+  aborts with NOTHING created (the preview node never enters undo).
+- `shapes/pb_shape_params.gd` — Per-shape parameter defs (name/label/min/
+  max/step/default/kind), defaults, build() dispatch to the generators, and
+  apply_drag_extents() mapping the base drag + height onto size dims.
 - `editor/pb_picking.gd` — Pure-logic ray/screen picking.
 - `commands/` — Undo/redo command pattern (CmdMove/Rotate/ScaleElements)
 - `shapes/` — Primitive shape generators
@@ -82,8 +98,8 @@ Plugin: `project/addons/probuilder/`
 
 Hover highlights: `_forward_3d_gui_input` observes mouse motion (never
 consumes), picks the element under the cursor into `PBEditor.hover_id`, and
-redraws the gizmo; selection AND hover are both YELLOW — selection slightly
-more opaque (reads more solid), hover more transparent (faces/edges/verts).
+redraws the gizmo; hover is CYAN and selection YELLOW (since v0.9.0) —
+yellow reads as "selected", cyan as "under your cursor".
 
 Orientation space (Element/Object/World, X key or Space button): the engine's
 transform gizmo only adopts a subgizmo's basis while the editor's own
@@ -167,6 +183,62 @@ v0.8.0 round complete ✓
   plugin builds via PBShapeFactory, places a new PBMesh 3m in front of the
   editor camera, undo via add_do_reference node pattern, auto-selects it.
 
+v0.9.0 round complete ✓ (sign-off fixes + ProBuilder creation UX)
+- Undo renders immediately: PBMesh.rebuild() builds a FRESH ArrayMesh every
+  time (mutating the old one in place left the MeshInstance3D stale until
+  something touched the node — "undo doesn't visually un-extrude").
+- The edge/element gizmo side is locked at CLICK time: pick_ray records the
+  pick-side face only from the click path; hover passes record_side=false
+  and can never re-orient the gizmo.
+- Hover is CYAN, selection YELLOW (faces, edges, vertices); the EDGE-mode
+  base wireframe is a thinner cyan stroke (half offset, one stack pair).
+- Edge-loop select (#14): alt+click or double-click an edge selects its
+  whole ring. The ENGINE selection stays the seed id (script API is
+  single-id); PBElementEditor.selected_loops expands it for dragging,
+  highlight, and the PBSelection mirror. Two rapid PLAIN clicks = double
+  click; a plain re-click drops the loop.
+- Drag gestures (PBElementEditor.DragGesture, decided once at drag begin
+  from tool+shift):
+  - SCALE without shift = UNIFORM_SCALE (locked aspect ratio; the factor is
+    the stretch of the gizmo's own x-axis under the conjugated rel).
+    Shift+scale on edges/verts stays free (the override).
+  - SHIFT+MOVE on faces/edges = EXTRUDE_MOVE: PBMeshOps.extrude_*(0,
+    allow_zero) runs at drag begin (results carry "drag_positions" — caps +
+    lifted corners only, never the welded originals); commit/cancel swap
+    WHOLE-MESH snapshots (signal drag_topology_committed → plugin clears the
+    stale subgizmo selection).
+  - SHIFT+SCALE on faces = INSET_SCALE: a minimal inset(0.01) seeds real
+    topology at begin; the drag lerps each inner face's corners toward the
+    pre-op centroid — UNIFORM amount (aspect fixed, #13). Bases bind POST-op
+    inner-face indexes to PRE-op corners (the op remaps indexes!).
+- OBJECT is its own mode (#9): toolbar Object button; explicit OBJECT
+  persists across mesh switches; set_active_mesh only auto-enters the
+  element mode when coming from NOTHING selected. Clicking another mesh in
+  an element mode auto-picks the element under the cursor (deferred
+  _auto_pick_element → set_subgizmo_selection, single-id engine API) — no
+  transient whole-object gizmo.
+- Ops moved from the overlay to the persistent toolbar; the toolbar also
+  gained Edit Params (enabled only while the selected mesh's data has
+  shape_id and not shape_edited) and the Panel toggle.
+- Manipulator gizmo size halved by default (EditorSettings
+  editors/3d/manipulator_gizmo_size 80→40, applied only while untouched).
+- ProBuilder-style shape creation (#12): New Shape arms PBShapeCreator (NOTHING
+  spawns). LMB-drag on any PBMesh face (or the y=0 grid as fallback) draws a
+  base coplanar with the pressed plane; release, move to set the height
+  along the normal (negative grows below); LMB click confirms; the overlay
+  opens the shape's PARAMS modal (live preview; Apply commits, Cancel
+  restores placement values; either way the node is selected and the plugin
+  returns to the remembered element mode). ESC before the confirm aborts
+  with nothing created. During creation: hovered faces highlight cyan
+  (thick edges + fill at selection opacity), the preview draws a cyan box
+  bounds (on-top) and an ORANGE facing arrow for stairs (+Z local).
+  Wall surfaces map the drag's vertical extent to shape height, floors to
+  depth. Undo registers at the confirming click (do = own/attach, undo =
+  detach).
+- PBMeshData gained serialized shape bookkeeping: shape_id, shape_params,
+  shape_edited (copied/restored with every snapshot; set by any committed
+  element edit or mesh op). PBShapeParams rebuilds data from a values dict.
+
 POSITION-PRIVACY INVARIANT (mesh ops, locked by test_pb_mesh_ops.gd):
 every face owns its corner positions exclusively; faces meeting at a 3D
 corner are connected by weld groups, NEVER by shared position indexes.
@@ -191,9 +263,9 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge. After this:
-human sign-off (human_test_phase6.tscn prints the updated checklist
-incl. items 20-34).
+Next: Phase 7 leftovers — bevel edges, connect, bridge. Sign-off items
+addressed in v0.9.0; re-run the printed checklist in
+test_scenes/human_test_phase6.tscn for the v0.9.0 human pass.
 
 ## Key Conventions
 
