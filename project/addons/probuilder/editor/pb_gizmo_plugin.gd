@@ -78,6 +78,10 @@ var shape_creator: PBShapeCreator = null
 var creation_hover_node: PBMesh = null
 var creation_hover_face: int = -1
 
+## Verification counter (GUI harness): how many times the creation BASE
+## outline branch actually drew lines.
+var creation_outline_draws: int = 0
+
 ## Logger for diagnostics.
 var logger: PBLogger = null:
 	set = set_logger
@@ -560,6 +564,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 			lines.append(to_local * corners[i])
 			lines.append(to_local * corners[(i + 1) % corners.size()])
 		gizmo.add_lines(lines, get_material("pb_creation_edge", gizmo))
+		creation_outline_draws += 1
 		return
 
 	var aabb := PBShapeCreator._aabb_of(mesh_data)

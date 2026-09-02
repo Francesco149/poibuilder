@@ -176,6 +176,13 @@ func _run() -> void:
 			_mouse_button(end, false)
 			await _frames(5)
 
+			# The preview MUST have a gizmo during BASE — without one nothing
+			# (outline, box, picking) can exist. Regression guard for the
+			# ownerless-preview bug.
+			var pv = plugin.shape_creator.preview_node
+			if pv == null or plugin.gizmo_plugin.gizmo_for_node(pv) == null:
+				_fail("CREATE: preview node has no gizmo during BASE (ownerless?)")
+
 			if plugin.shape_creator.state != PBShapeCreator.State.HEIGHT:
 				_fail("CREATE: expected HEIGHT state after base drag, got %d"
 					% plugin.shape_creator.state)
@@ -204,6 +211,61 @@ func _run() -> void:
 				_fail("CREATE: creator still active after confirm")
 				plugin._creation_abort("test cleanup")
 
+	# ── Test 3: ELEMENT picking — face click, hover, edge click ─────────────
+	# The user's broken layer: builder modes must select elements and hover
+	# must show overlays. Model the scene-graph path: select B explicitly.
+	sel.clear()
+	sel.add_node(b)
+	await _frames(10)
+	await _press_and_release_key(KEY_K)  # FACE mode
+	await _frames(10)
+
+	var gizmo = plugin.gizmo_plugin.gizmo_for_node(b)
+	if gizmo == null:
+		_fail("ELEMENT: no PoiBuilder gizmo on GuiTestB")
+	else:
+		# Hover B's camera-facing face center → hover_id must be set.
+		var face_center := _window_pos(vp, host, b.global_position + Vector3(0, 0, 0.5))
+		_mouse_motion(face_center)
+		await _frames(6)
+		if plugin.editor.hover_id >= 0:
+			_pass("ELEMENT: hover picks a face (hover_id=%d)" % plugin.editor.hover_id)
+		else:
+			_fail("ELEMENT: hover picks nothing (hover_id=-1)")
+
+		# Click that face → engine subgizmo selection must be non-empty.
+		await _click(face_center)
+		await _frames(15)
+		var subgizmos: PackedInt32Array = gizmo.get_subgizmo_selection()
+		if subgizmos.size() > 0 and plugin.editor.selection.selected_face_count() > 0:
+			_pass("ELEMENT: face click selects (ids=%s, mirror=%d)" % [
+				str(subgizmos), plugin.editor.selection.selected_face_count()])
+		else:
+			_fail("ELEMENT: face click selects nothing (engine=%s mirror=%d)" % [
+				str(subgizmos), plugin.editor.selection.selected_face_count()])
+
+		# EDGE mode: click the vertical edge nearest the camera.
+		await _press_and_release_key(KEY_J)
+		await _frames(10)
+		var edge_mid := _window_pos(vp, host, b.global_position + Vector3(0.5, 0, 0.5))
+		_mouse_motion(edge_mid)
+		await _frames(6)
+		var hover_edge: int = plugin.editor.hover_id
+		await _click(edge_mid)
+		await _frames(15)
+		var edge_ids: PackedInt32Array = gizmo.get_subgizmo_selection()
+		if edge_ids.size() > 0 and plugin.editor.selection.selected_edge_count() > 0:
+			_pass("ELEMENT: edge click selects (hover=%d ids=%s)" % [hover_edge, str(edge_ids)])
+		else:
+			_fail("ELEMENT: edge click selects nothing (hover=%d engine=%s mirror=%d)" % [
+				hover_edge, str(edge_ids), plugin.editor.selection.selected_edge_count()])
+
+	# ── Test 4: creation BASE outline actually DREW lines ────────────────────
+	if plugin.gizmo_plugin.creation_outline_draws > 0:
+		_pass("CREATE: BASE outline drew %d time(s)" % plugin.gizmo_plugin.creation_outline_draws)
+	else:
+		_fail("CREATE: BASE outline branch never drew")
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
@@ -221,3 +283,7 @@ func _press_key(keycode: Key) -> void:
 	up.physical_keycode = keycode
 	up.pressed = false
 	Input.parse_input_event(up)
+
+func _press_and_release_key(keycode: Key) -> void:
+	_press_key(keycode)
+	await _frames(2)

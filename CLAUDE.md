@@ -256,6 +256,17 @@ v0.9.0 round complete ✓ (sign-off fixes + ProBuilder creation UX)
   therefore adds collision triangles (node.mesh.generate_triangle_mesh) on
   every redraw (skipped mid-drag). Removing that block makes every PBMesh
   except the initially-selected one unpickable by clicking.
+- GIZMOS ATTACH ONLY TO OWNED NODES (Node3DEditor::_request_gizmo:
+  `sp->get_owner() && edited_scene->is_ancestor_of(sp)`), and Node3D caches
+  `gizmos_requested` after the FIRST attempt — a node that enters the tree
+  ownerless NEVER gets gizmos, even after owner is set later. No gizmo
+  means: no overlays, no collision triangles (unpickable by click), no
+  subgizmos (uneditable), and clicks fall through to the engine's deselect
+  path. THE PREVIEW NODE THEREFORE GETS owner AT CREATION
+  (_make_preview_node), and _on_active_mesh_changed self-heals gizmo-less
+  PBMeshes by re-firing the editor's deferred group call
+  `_spatial_editor_group` / `_request_gizmo_for_id`. This was the root
+  cause of three rounds of "selection/creation broken" reports.
 - ENGINE-TOOL POLICY (_update_engine_tool, the single place that drives the
   engine's tool buttons): OBJECT mode → our Move/Rotate/Scale drives the
   whole-node gizmo (toolbar tool buttons must switch it visibly). Element
@@ -319,6 +330,14 @@ load — verify the overlay title)
 - Collision triangles are cached per mesh instance in node meta
   (pb_pick_mesh_id / pb_pick_tmesh) — hover-frequency redraws no longer
   rebuild the TriangleMesh.
+
+v0.9.5 round complete ✓ — ROOT CAUSE of "selection/creation broken" found
+via the extended GUI harness: the creation preview entered the scene tree
+WITHOUT an owner, and the editor never attaches gizmos to ownerless nodes
+(and never re-requests after owner is set). Owner is now set at preview
+creation; gizmo-less active meshes self-heal on selection. Harness now
+also covers ELEMENT picking (hover, face click, edge click) and asserts
+the BASE outline actually drew (creation_outline_draws counter).
 
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.

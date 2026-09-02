@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.4"
+const VERSION := "0.9.5"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -366,6 +366,12 @@ func _on_active_mesh_changed(mesh: PBMesh) -> void:
 				logger.info("editor", "Mesh '%s': V=%d F=%d weld_groups=%d edges=%d" % [
 					mesh.name, md.positions.size(), md.faces.size(),
 					md.shared_vertices.size(), md.get_common_edges().size()])
+		if gizmo_plugin.gizmo_for_node(mesh) == null:
+			# A gizmo-less PBMesh can never be picked or element-edited (its
+			# first gizmo request ran before it had an owner). Re-request via
+			# the editor's own deferred group call.
+			get_tree().call_group_flags(SceneTree.GROUP_CALL_DEFERRED,
+				"_spatial_editor_group", "_request_gizmo_for_id", mesh.get_instance_id())
 		mesh.update_gizmos()
 		# Clicking ANOTHER object while in an element mode lands directly on
 		# the element under the cursor — no transient whole-object gizmo.
@@ -739,6 +745,12 @@ func _make_preview_node() -> void:
 	var node := PBMesh.new()
 	node.name = _unique_shape_name(scene_root, shape_creator.shape_id)
 	scene_root.add_child(node)
+	# THE OWNER MUST BE SET BEFORE ANYTHING DRAWS: the editor attaches node
+	# gizmos only to OWNED nodes, and a node whose first gizmo request ran
+	# ownerless never re-requests them (Node3D caches gizmos_requested).
+	# Without this, the preview has no gizmo — no outline, no picking, no
+	# element editing — for its whole life.
+	node.owner = scene_root
 	shape_creator.preview_node = node
 
 ## Rebuilds the preview mesh + placement from the creator's current values.
