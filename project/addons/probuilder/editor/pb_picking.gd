@@ -28,6 +28,10 @@ const MAX_EDGE_PICK_DISTANCE: float = 15.0
 ## face" report).
 const PICK_DEPTH_TIE_BREAK_PIXELS: float = 6.0
 
+## Slack (world units along the ray) for the occlusion test. Smaller than any
+## realistic face spacing, large enough to absorb float noise on grazing rays.
+const OCCLUSION_EPSILON: float = 0.05
+
 ## Minimum epsilon for ray distance comparisons.
 const PICK_EPSILON: float = 0.0001
 
@@ -148,9 +152,12 @@ static func pick_faces_all(mesh_data: PBMeshData, mesh_transform: Transform3D,
 # ==============================================================================
 
 ## Picks the nearest edge to a screen position.
-## camera_transform + projection_matrix are used to project edge endpoints to screen.
-## Candidates within the pixel radius are tie-broken by camera distance, so a
-## visible edge wins over a hidden far-side edge projecting nearby.
+## Candidates within the pixel radius are tie-broken by camera distance, and
+## edges hidden behind the mesh surface (relative to the cursor ray) are
+## occluded and not pickable — clicking the interior of a face can no longer
+## select a far-side edge whose on-top highlight draws across it like a
+## diagonal. Surface-adjacent edges (the visible border of the hit face)
+## remain pickable.
 ## Returns EdgePickResult with edge != null on hit, or null edge on miss.
 static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> EdgePickResult:
@@ -161,6 +168,10 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
 	var cam_pos: Vector3 = camera.global_position
 	var cam_fwd: Vector3 = -camera.global_basis.z
+
+	var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var ray_hit := _first_ray_hit(mesh_data, mesh_transform, ray_origin, ray_dir)
 
 	# Collect all candidates within the pixel radius: [dist, depth, edge, face]
 	var candidates: Array = []
@@ -186,6 +197,15 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 			# Check if both points are behind the camera
 			if (world_a - cam_pos).dot(cam_fwd) < 0 and (world_b - cam_pos).dot(cam_fwd) < 0:
+				continue
+
+			# Occlusion: skip edges behind the first surface the cursor ray hits
+			# (edges belonging to the hit face stay pickable).
+			var edge_t: float = _ray_closest_approach_t(ray_origin, ray_dir, world_a, world_b)
+			var hit_face: int = ray_hit["face"]
+			var own := hit_face != -1 and _face_contains_common_edge(
+				mesh_data, mesh_data.faces[hit_face], edge)
+			if _is_occluded(ray_hit, edge_t, own):
 				continue
 
 			var screen_a: Vector2 = camera.unproject_position(world_a)
@@ -223,8 +243,9 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 # ==============================================================================
 
 ## Picks the nearest vertex to a screen position.
-## Candidates within the pixel radius are tie-broken by camera distance, so a
-## visible vertex wins over a hidden far-side vertex projecting nearby.
+## Candidates within the pixel radius are tie-broken by camera distance;
+## vertices hidden behind the mesh surface (relative to the cursor ray) are
+## occluded and not pickable.
 ## Returns VertexPickResult with common_index >= 0 on hit, or -1 on miss.
 static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> VertexPickResult:
@@ -235,7 +256,11 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 	var cam_pos: Vector3 = camera.global_position
 	var cam_fwd: Vector3 = -camera.global_basis.z
 
-	var candidates: Array = [] # [dist, depth, common_index]
+	var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var ray_hit := _first_ray_hit(mesh_data, mesh_transform, ray_origin, ray_dir)
+
+	var candidates: Array = [] # [dist, depth, common_index, local_idx]
 
 	for sv_idx in range(mesh_data.shared_vertices.size()):
 		var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
@@ -249,6 +274,15 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 		# Check if behind camera
 		if (world_pos - cam_pos).dot(cam_fwd) < 0:
+			continue
+
+		# Occlusion: skip vertices behind the first surface the ray hits
+		# (vertices of the hit face stay pickable).
+		var vertex_t: float = _ray_closest_approach_t(ray_origin, ray_dir, world_pos, world_pos)
+		var hit_face: int = ray_hit["face"]
+		var own := hit_face != -1 and _face_contains_common_vertex(
+			mesh_data, mesh_data.faces[hit_face], sv)
+		if _is_occluded(ray_hit, vertex_t, own):
 			continue
 
 		var screen_pt: Vector2 = camera.unproject_position(world_pos)
@@ -274,6 +308,104 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			best = VertexPickResult.new(c[2], c[3], c[0])
 
 	return best
+
+# ==============================================================================
+# Occlusion Helpers
+# ==============================================================================
+
+## Nearest ray/mesh intersection: returns { "face": int (index, -1 on miss),
+## "t": float (distance along the ray) }.
+static func _first_ray_hit(mesh_data: PBMeshData, mesh_transform: Transform3D,
+		ray_origin: Vector3, ray_dir: Vector3) -> Dictionary:
+	var positions := mesh_data.positions
+	var nearest_face: int = -1
+	var nearest_t: float = INF
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var indexes := face.get_indexes()
+		for tri_i in range(0, indexes.size() - 2, 3):
+			var i0: int = indexes[tri_i]
+			var i1: int = indexes[tri_i + 1]
+			var i2: int = indexes[tri_i + 2]
+			if i0 < 0 or i0 >= positions.size() or i1 < 0 or i1 >= positions.size() or i2 < 0 or i2 >= positions.size():
+				continue
+			var result: Dictionary = PBMath.ray_intersects_triangle(
+				ray_origin, ray_dir,
+				mesh_transform * positions[i0],
+				mesh_transform * positions[i1],
+				mesh_transform * positions[i2])
+			if result.get("hit", false) and result["distance"] < nearest_t:
+				nearest_t = result["distance"]
+				nearest_face = fi
+	return { "face": nearest_face, "t": nearest_t }
+
+## True when the face's perimeter contains an edge equivalent (by shared
+## vertex group pair) to the given edge.
+static func _face_contains_common_edge(mesh_data: PBMeshData, face: PBFace, edge: PBEdge) -> bool:
+	if face == null or edge == null:
+		return false
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var target := Vector2i(
+		mini(lookup.get(edge.a, -1), lookup.get(edge.b, -1)),
+		maxi(lookup.get(edge.a, -1), lookup.get(edge.b, -1)))
+	for fe in face.get_edges():
+		var ca: int = lookup.get(fe.a, -1)
+		var cb: int = lookup.get(fe.b, -1)
+		if Vector2i(mini(ca, cb), maxi(ca, cb)) == target:
+			return true
+	return false
+
+## True when the face contains any position of the shared vertex group.
+static func _face_contains_common_vertex(mesh_data: PBMeshData, face: PBFace, sv: PBSharedVertex) -> bool:
+	if face == null or sv == null:
+		return false
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	for idx in face.get_distinct_indexes():
+		if lookup.get(idx, -1) in sv.indices:
+			return true
+	return false
+
+## Ray parameter t at the closest approach of the ray to segment (a, b).
+static func _ray_closest_approach_t(ray_origin: Vector3, ray_dir: Vector3,
+		a: Vector3, b: Vector3) -> float:
+	var dir_sq: float = ray_dir.length_squared()
+	if dir_sq < PICK_EPSILON:
+		return INF
+	var seg: Vector3 = b - a
+	var seg_len_sq: float = seg.length_squared()
+	var r: Vector3 = ray_origin - a
+	if seg_len_sq < PICK_EPSILON:
+		# Degenerate segment (a point)
+		return -r.dot(ray_dir) / dir_sq
+	var dd: float = ray_dir.dot(seg)
+	var cc: float = ray_dir.dot(r)
+	var ff: float = seg.dot(r)
+	var denom: float = dir_sq * seg_len_sq - dd * dd
+	var s: float = 0.0
+	if absf(denom) > PICK_EPSILON * dir_sq * seg_len_sq:
+		s = clampf((dir_sq * ff - dd * cc) / denom, 0.0, 1.0)
+	# Recompute t from the clamped s (correct near segment endpoints and for
+	# near-parallel ray/segment cases).
+	var closest_on_seg: Vector3 = a + seg * s
+	return (closest_on_seg - ray_origin).dot(ray_dir) / dir_sq
+
+## An element is occluded only when the FIRST surface along the cursor ray
+## belongs to a face the element is NOT part of, and that surface is in front
+## of the element. Elements lying on the hit surface (the clicked face's own
+## border edges and corner vertices) stay pickable; hidden elements behind the
+## clicked face (bottom/far edges whose on-top highlight draws across the face
+## like a diagonal) become unpickable.
+static func _is_occluded(hit: Dictionary, element_t: float, hit_face_is_own: bool) -> bool:
+	var hit_face: int = hit["face"]
+	if hit_face == -1:
+		return false
+	if hit_face_is_own:
+		return false
+	if is_inf(element_t):
+		return true
+	return hit["t"] + OCCLUSION_EPSILON < element_t
 
 # ==============================================================================
 # Rectangle Selection (Screen-Space Containment)

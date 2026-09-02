@@ -593,3 +593,110 @@ func test_face_edges_are_perimeter_no_diagonals():
 	for fi in range(md.faces.size()):
 		assert_eq(md.faces[fi].get_edges().size(), 4,
 			"Quad face %d must expose exactly 4 perimeter edges" % fi)
+
+# ==============================================================================
+# Regression: occlusion (the "selects the diagonal on a planar face" bug)
+# ==============================================================================
+
+func _is_top_edge(md: PBMeshData, edge: PBEdge) -> bool:
+	return md.positions[edge.a].y > 0.4 and md.positions[edge.b].y > 0.4
+
+func test_edge_pick_over_top_face_never_returns_hidden_edges():
+	## Screenshot regression: camera looking down at a planar top face; clicking
+	## in/near the face must only ever return the visible TOP edges. Bottom and
+	## far-side edges project across the face but are hidden — their on-top
+	## highlight used to draw across the face like a "diagonal".
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var cam := Camera3D.new()
+	_viewport.add_child(cam)
+	cam.position = Vector3(2.2, 3.2, 2.6) # high front-left, like the report
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Sample a grid of world points across the whole top face
+	var hidden_returns := 0
+	var top_returns := 0
+	for gx in range(11):
+		for gz in range(11):
+			var wx: float = lerpf(-0.48, 0.48, gx / 10.0)
+			var wz: float = lerpf(-0.48, 0.48, gz / 10.0)
+			var screen: Vector2 = cam.unproject_position(Vector3(wx, 0.5, wz))
+			var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
+				md, mesh.global_transform, screen, cam)
+			if result.edge != null:
+				if _is_top_edge(md, result.edge):
+					top_returns += 1
+				else:
+					hidden_returns += 1
+	assert_eq(hidden_returns, 0,
+		"No click on the top face may select a hidden bottom/side edge")
+	assert_gt(top_returns, 0, "Border clicks near top edges must still find them")
+
+func test_edge_pick_at_explicit_hidden_edge_projection_returns_nothing_hidden():
+	## Clicking exactly where a bottom edge projects (inside the top face
+	## silhouette) must not select that hidden bottom edge.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var cam := Camera3D.new()
+	_viewport.add_child(cam)
+	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Bottom-back edge midpoint projects inside the top face region
+	var screen: Vector2 = cam.unproject_position(Vector3(0, -0.5, -0.5))
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
+		md, mesh.global_transform, screen, cam)
+	if result.edge != null:
+		assert_true(_is_top_edge(md, result.edge),
+			"Click over the face interior must not select the hidden bottom edge")
+
+func test_vertex_pick_over_top_face_never_returns_hidden_vertices():
+	var s := _make_setup(PBEditor.SelectMode.VERTEX)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var cam := Camera3D.new()
+	_viewport.add_child(cam)
+	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	for gx in range(11):
+		for gz in range(11):
+			var wx: float = lerpf(-0.48, 0.48, gx / 10.0)
+			var wz: float = lerpf(-0.48, 0.48, gz / 10.0)
+			var screen: Vector2 = cam.unproject_position(Vector3(wx, 0.5, wz))
+			var result: PBPicking.VertexPickResult = PBPicking.pick_vertex(
+				md, mesh.global_transform, screen, cam)
+			if result.common_index != -1:
+				var group: PackedInt32Array = md.shared_vertices[result.common_index].indices
+				assert_gt(md.positions[group[0]].y, 0.0,
+					"Click over the top face must not select a hidden bottom vertex")
+
+func test_visible_border_edges_still_pickable_from_either_side():
+	## Occlusion must not over-reject: an edge shared with the face the ray
+	## hits stays pickable even when the cursor approaches from the other face.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var cam := Camera3D.new()
+	_viewport.add_child(cam)
+	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	# Top-front edge midpoint: click exactly on it, and 3px toward the face
+	var edge_mid := Vector3(0, 0.5, -0.5)
+	var screen: Vector2 = cam.unproject_position(edge_mid)
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
+		md, mesh.global_transform, screen, cam)
+	assert_true(result.edge != null, "Clicking exactly on a border edge must pick it")
+	if result.edge != null:
+		assert_true(_is_top_edge(md, result.edge), "The picked edge must be the border edge")
