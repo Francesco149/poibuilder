@@ -11,6 +11,9 @@
 ## Sections:
 ## - TOOL: transform tool buttons, orientation space picker, live drag readout
 ## - SELECTION: element mode and selection counts
+## - OPERATIONS: mesh ops (extrude/inset/subdivide/delete/detach) acting on
+##   the current selection, with numeric params (extrude distance, inset
+##   amount). Buttons enable per selection context — see refresh().
 @tool
 class_name PBToolOverlay
 extends PanelContainer
@@ -27,6 +30,10 @@ var editor: PBEditor = null:
 var element_editor: PBElementEditor = null:
 	set = set_element_editor
 
+## Emitted when the user clicks a mesh operation button. The plugin performs
+## the op — selection reading and undo live there.
+signal operation_requested(op_name: String)
+
 ## Header
 var title_label: Label
 ## Tool section controls
@@ -40,6 +47,21 @@ var mode_value_label: Label
 var vertices_value_label: Label
 var edges_value_label: Label
 var faces_value_label: Label
+## Operations section controls
+var extrude_faces_btn: Button
+var extrude_edges_btn: Button
+var inset_btn: Button
+var subdivide_btn: Button
+var delete_btn: Button
+var detach_btn: Button
+var extrude_distance_spin: SpinBox
+var inset_amount_spin: SpinBox
+
+## Numeric params read by the plugin when performing ops.
+var extrude_distance: float:
+	get: return extrude_distance_spin.value if extrude_distance_spin != null else 0.25
+var inset_amount: float:
+	get: return inset_amount_spin.value if inset_amount_spin != null else 0.25
 
 var _tool_group: ButtonGroup = ButtonGroup.new()
 
@@ -158,6 +180,46 @@ func _ensure_ui() -> void:
 	faces_value_label.name = "FacesValue"
 	sel_grid.add_child(faces_value_label)
 
+	# ── Operations section ────────────────────────────────────────────────────
+	vbox.add_child(_make_section_label("Operations"))
+
+	var ops_grid := _make_grid(vbox)
+
+	ops_grid.add_child(_make_row_label("Faces"))
+	var face_ops_row := HBoxContainer.new()
+	face_ops_row.add_theme_constant_override("separation", 2)
+	extrude_faces_btn = _make_op_button("Extrude", "extrude_faces", "Extrude the selected faces along their normal")
+	inset_btn = _make_op_button("Inset", "inset_faces", "Inset the selected faces (planar ring)")
+	subdivide_btn = _make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4")
+	delete_btn = _make_op_button("Del", "delete_faces", "Delete the selected faces")
+	detach_btn = _make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh")
+	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, delete_btn, detach_btn]:
+		face_ops_row.add_child(btn)
+	ops_grid.add_child(face_ops_row)
+
+	ops_grid.add_child(_make_row_label("Edges"))
+	extrude_edges_btn = _make_op_button("Extrude", "extrude_edges", "Extrude the selected edges along their faces' average normal")
+	ops_grid.add_child(extrude_edges_btn)
+
+	ops_grid.add_child(_make_row_label("Distance"))
+	extrude_distance_spin = SpinBox.new()
+	extrude_distance_spin.name = "ExtrudeDistance"
+	extrude_distance_spin.min_value = 0.01
+	extrude_distance_spin.max_value = 100.0
+	extrude_distance_spin.step = 0.05
+	extrude_distance_spin.value = 0.25
+	extrude_distance_spin.suffix = "m"
+	ops_grid.add_child(extrude_distance_spin)
+
+	ops_grid.add_child(_make_row_label("Inset"))
+	inset_amount_spin = SpinBox.new()
+	inset_amount_spin.name = "InsetAmount"
+	inset_amount_spin.min_value = 0.01
+	inset_amount_spin.max_value = 0.95
+	inset_amount_spin.step = 0.05
+	inset_amount_spin.value = 0.25
+	ops_grid.add_child(inset_amount_spin)
+
 func _apply_anchor() -> void:
 	if not is_inside_tree():
 		return
@@ -213,6 +275,15 @@ func _make_tool_button(text: String, tool: PBEditor.ToolMode, icon_name: String)
 	btn.button_group = _tool_group
 	btn.tooltip_text = "%s tool (%s)" % [text, ["W", "E", "R"][tool]]
 	btn.pressed.connect(_on_tool_button_pressed.bind(tool))
+	return btn
+
+func _make_op_button(text: String, op_name: String, tooltip: String) -> Button:
+	var btn := Button.new()
+	btn.name = "Op" + text
+	btn.text = text
+	btn.tooltip_text = tooltip
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.pressed.connect(func(): operation_requested.emit(op_name))
 	return btn
 
 # ==============================================================================
@@ -302,3 +373,10 @@ func refresh() -> void:
 
 	# 3. Live transform readout while the native gizmo drags elements
 	drag_value_label.text = element_editor.drag_readout() if element_editor != null else "—"
+
+	# 4. Operation buttons enable per selection context (mode + counts).
+	var faces_selected: bool = sel.selected_face_count() > 0
+	var edges_selected: bool = sel.selected_edge_count() > 0
+	for btn: Button in [extrude_faces_btn, inset_btn, subdivide_btn, delete_btn, detach_btn]:
+		btn.disabled = not faces_selected
+	extrude_edges_btn.disabled = not edges_selected

@@ -146,6 +146,24 @@ v0.8.0 round complete ✓
   above for the engine contract.
 - Selection is YELLOW, slightly more opaque than hover (was cyan).
 - Plugin renamed to PoiBuilder (see naming note at top).
+- Phase 7 mesh ops (PBMeshOps, headless-static): extrude faces (region-
+  based, ProBuilder semantics: originals removed + caps + side quads),
+  extrude edges (fins along adjacent average normal), inset (planar ring),
+  subdivide quads (4 sub-quads), delete faces (orphan compaction), detach
+  faces (spawns a sibling PBMesh with full node undo via add_do_reference).
+  The overlay panel grew an OPERATIONS section (buttons enable per
+  selection context; extrude distance + inset amount SpinBoxes); undo
+  uses full-mesh snapshots (CmdMeshOp) since ops rewrite topology.
+
+POSITION-PRIVACY INVARIANT (mesh ops, locked by test_pb_mesh_ops.gd):
+every face owns its corner positions exclusively; faces meeting at a 3D
+corner are connected by weld groups, NEVER by shared position indexes.
+New faces duplicate every corner. Sharing positions across faces with
+different normals corrupts flat normals (calculate_normals writes per
+position — the last face wins). Consequence: new faces multiply positions
+(an extruded cube face = 20 originals + 4 cap + 16 side positions); weld
+groups keep dragging correct. Post-op topology repair: compact orphans +
+rebuild welds from coincident positions (PBMeshOps._rebuild_topology).
 
 Known limitation: programmatic multi-element selection (select-all / grow /
 shrink / invert) is NOT exposed to gizmo drags — the engine's script-side
@@ -161,9 +179,9 @@ re-creates it, and a zero custom AABB breaks mesh culling. It already hugs
 the edited mesh (the child-node overlay inflation was removed in the P6
 rewrite). An upstream engine flag would be the proper fix.
 
-Next: Phase 7 (Core Mesh Operations) — extrude/inset/connect/subdivide/
-delete etc. as headless-testable pure ops + undo commands + an OPERATIONS
-section in the overlay panel.
+Next: Phase 7 leftovers — bevel edges, connect, bridge, insert edge loop,
+merge/weld tools; then Phase 8 (UVs). After mesh-op rounds: human sign-off
+(human_test_phase6.tscn prints the updated checklist incl. items 20-27).
 
 ## Key Conventions
 

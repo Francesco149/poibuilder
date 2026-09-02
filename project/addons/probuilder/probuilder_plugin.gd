@@ -82,6 +82,7 @@ func _enter_tree():
 	tool_overlay.editor = editor
 	tool_overlay.element_editor = gizmo_plugin.element_editor
 	tool_overlay.visible = false
+	tool_overlay.operation_requested.connect(_on_operation_requested)
 	_add_overlay_to_3d_viewport(tool_overlay)
 
 	# Bridge onto the editor's tool buttons (own tool modes; never the
@@ -376,3 +377,140 @@ func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> vo
 		_hover_drawn_last = -1
 		if editor.active_mesh != null:
 			editor.active_mesh.update_gizmos()
+
+# ==============================================================================
+# Mesh Operations (overlay OPERATIONS section)
+# ==============================================================================
+
+## Performs a mesh op from the overlay on the current selection. Face-mode
+## ops read the selected faces; edge extrude reads the selected edges. Undo
+## goes through full-mesh snapshots (CmdMeshOp) — ops rewrite topology, so
+## per-index payloads don't apply.
+func _on_operation_requested(op_name: String) -> void:
+	if not editor.is_editing() or editor.active_mesh == null:
+		return
+	var mesh := editor.active_mesh
+	var mesh_data: PBMeshData = mesh.pb_mesh_data
+	if mesh_data == null:
+		return
+
+	var distance: float = tool_overlay.extrude_distance
+	var amount: float = tool_overlay.inset_amount
+	var selection := editor.selection
+
+	if op_name == "detach_faces":
+		_perform_detach(mesh, selection.selected_faces.duplicate())
+		return
+
+	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"))
+	var result: Dictionary
+	match op_name:
+		"extrude_faces":
+			result = PBMeshOps.extrude_faces(mesh_data, selection.selected_faces.duplicate(), distance)
+		"inset_faces":
+			result = PBMeshOps.inset_faces(mesh_data, selection.selected_faces.duplicate(), amount)
+		"subdivide_faces":
+			result = PBMeshOps.subdivide_faces(mesh_data, selection.selected_faces.duplicate())
+		"delete_faces":
+			result = PBMeshOps.delete_faces(mesh_data, selection.selected_faces.duplicate())
+		"extrude_edges":
+			var edge_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+			result = PBMeshOps.extrude_edges(mesh_data, edge_ids, distance)
+		_:
+			if logger:
+				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
+			return
+
+	if not result["ok"]:
+		if logger:
+			logger.warn("mesh_ops", "%s failed: %s" % [op_name, result.get("error", "?")])
+		return
+
+	cmd.capture_after()
+	if not cmd.is_noop():
+		cmd.add_to_undo_manager(get_undo_redo())
+	_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()))
+
+## Detach is special: besides mutating the source mesh it spawns a new PBMesh
+## sibling holding the extracted faces. One undo action covers both (the new
+## node is registered as a do-reference so undo keeps it alive for redo).
+func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
+	var mesh_data: PBMeshData = mesh.pb_mesh_data
+	var before := PBCommand.copy_mesh_data(mesh_data)
+	var result := PBMeshOps.detach_faces(mesh_data, face_ids)
+	if not result["ok"]:
+		if logger:
+			logger.warn("mesh_ops", "detach failed: %s" % result.get("error", "?"))
+		return
+	var after := PBCommand.copy_mesh_data(mesh_data)
+
+	var new_node := PBMesh.new()
+	new_node.name = _unique_detached_name(mesh)
+	new_node.pb_mesh_data = result["detached"]
+
+	var undo := get_undo_redo()
+	undo.create_action("Detach Faces")
+	undo.add_do_method(self, "_restore_mesh_snapshot", mesh.get_instance_id(), after)
+	undo.add_do_method(self, "_attach_detached", new_node, mesh.get_parent())
+	undo.add_do_reference(new_node)
+	undo.add_undo_method(self, "_detach_node", new_node)
+	undo.add_undo_method(self, "_restore_mesh_snapshot", mesh.get_instance_id(), before)
+	undo.commit_action()
+
+	_finish_mesh_op(mesh, "detach_faces", int(result["new_face_ids"].size()))
+	if logger:
+		logger.info("mesh_ops", "Detached faces into new node '%s'" % new_node.name)
+
+## Shared tail of every op: element ids changed, so the engine's subgizmo
+## selection and our mirror are both stale — clear them and re-render.
+func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int) -> void:
+	editor.hover_id = -1
+	_hover_drawn_last = -1
+	editor.selection.clear_all()
+	gizmo_plugin.element_editor.reset_side_faces()
+	mesh.clear_subgizmo_selection()
+	mesh.rebuild()
+	mesh.update_gizmos()
+	if logger:
+		logger.info("mesh_ops", "%s: %d new face(s)" % [op_name, new_face_count])
+
+## Undo-history display names per overlay op.
+const OP_ACTION_NAMES := {
+	"extrude_faces": "Extrude Faces",
+	"inset_faces": "Inset Faces",
+	"subdivide_faces": "Subdivide Faces",
+	"delete_faces": "Delete Faces",
+	"detach_faces": "Detach Faces",
+	"extrude_edges": "Extrude Edges",
+}
+
+func _unique_detached_name(mesh: PBMesh) -> String:
+	var parent := mesh.get_parent()
+	var base := mesh.name + "_Detached"
+	if parent == null or parent.get_node_or_null(NodePath(base)) == null:
+		return base
+	var i := 2
+	while parent.get_node_or_null(NodePath("%s%d" % [base, i])) != null:
+		i += 1
+	return "%s%d" % [base, i]
+
+## Undo/redo payload: swap a mesh's whole data from a snapshot.
+func _restore_mesh_snapshot(mesh_id: int, snapshot: PBMeshData) -> void:
+	var mesh := instance_from_id(mesh_id) as PBMesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	PBCommand.restore_mesh_data(mesh.pb_mesh_data, snapshot)
+	mesh.rebuild()
+	mesh.update_gizmos()
+
+func _attach_detached(node: Node, parent: Node) -> void:
+	if parent == null or not is_instance_valid(parent):
+		return
+	parent.add_child(node)
+	node.owner = get_editor_interface().get_edited_scene_root()
+
+## Undo of detach: remove the node WITHOUT freeing it — the undo history's
+## do-reference keeps it alive so redo can re-attach it.
+func _detach_node(node: Node) -> void:
+	if node != null and is_instance_valid(node) and node.get_parent() != null:
+		node.get_parent().remove_child(node)
