@@ -339,6 +339,41 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.7 round complete ✓ — extrude workflow + center-handle fixes from the
+fourth sign-off:
+- EXTRUDE IS MOUSE-DRIVEN: PBElementEditor.track_mouse() is fed every
+  viewport motion by the plugin; EXTRUDE_MOVE computes the cap distance as
+  the cursor travel projected onto the extrude normal's screen axis
+  (px-per-world measured along that axis). This is the guaranteed workflow
+  (element gizmo, shift+grab the normal axis → the cap follows the cursor
+  along the normal), is identical in every orientation space, and bypasses
+  the engine's transform composition entirely — 4.7.2 delivers a
+  basis-relative composition for subgizmo drags that does not track the
+  mouse on permuted/flipped element bases. The mouse path engages only
+  after a real motion event during the drag; synthetic deliveries (tests)
+  fall back to the engine rel. Move-family gestures apply rel.origin ONLY
+  (pure translation) and log a loud REL BASIS NOT IDENTITY warning when
+  the engine's composition carries a basis — the smoking-gun detector for
+  composition mismatches.
+- RICH DEBUG LOGGING (console, [PB/drag|handle|pick|plugin] tags): drag
+  BEGIN line (gesture, mode, tool, space, per-id start origins/bases),
+  first delivery (id, target origin/basis, shift), per-apply motion lines,
+  extrude seed details (node+world normal, caps/sides/union,
+  px-per-world), REL BASIS warnings, crossing-flip events, center-handle
+  drawn/grabbed/factor/committed lines, shift-press suppressions, and
+  params-modal auto-dismiss reasons. When a viewport bug report arrives,
+  ASK FOR THE CONSOLE LOG — the drag trace identifies the broken layer.
+- CENTER HANDLE DETECTION: switching the tool did not redraw the element
+  gizmo, so the center square handle did not exist after MOVE↔SCALE until
+  an unrelated hover change forced a redraw. _on_tool_mode_changed now
+  refreshes the gizmo. Harness-verified: grab, uniform face scaling
+  (corners shrink toward the face centroid — the mesh bbox CANNOT show it),
+  and shift+center inset (faces 6→10) all work end-to-end.
+- EXTRUDE-UNDO STALE VIEW: not reproducible in the GUI harness — a new
+  pixel-diff test (Ctrl+Z through synthesized keys, screenshot diff)
+  proves the view refreshes with the data restore (941 px change). The
+  logging above will capture whatever differs on the reporter's machine.
+
 v0.9.6 round complete ✓ — creation UX + extrude fixes from the third
 sign-off report:
 - PARAMS MODAL AUTO-DISMISS: any viewport press or key while the modal is

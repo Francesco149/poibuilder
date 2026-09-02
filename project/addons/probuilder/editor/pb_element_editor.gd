@@ -85,6 +85,33 @@ var _drag_side_faces: Array[PBFace] = []
 var _drag_side_tris: Array = []  # PackedInt32Array per side face (original)
 var _drag_extrude_normal: Vector3 = Vector3.ZERO
 var _drag_sides_flipped: bool = false
+var _extrude_constrained: bool = false
+
+## Live mouse feed (editor only): the plugin forwards every viewport motion
+## so the extrude gesture can drive the cap distance from the CURSOR instead
+## of trusting the engine's transform composition (4.7.2 delivers a
+## basis-relative composition for subgizmo drags whose origin does not track
+## the mouse on permuted/flipped element bases — "backwards, doesn't follow
+## the mouse"). The mouse-driven path only engages once a REAL motion event
+## arrives during the drag; synthetic deliveries (tests) keep the rel path.
+var mouse_camera: Camera3D = null
+var mouse_screen: Vector2 = Vector2.ZERO
+var mouse_has: bool = false
+var drag_mouse_active: bool = false
+var _extrude_mouse_start: Vector2 = Vector2.ZERO
+var _extrude_pivot_world: Vector3 = Vector3.ZERO
+var _extrude_normal_world: Vector3 = Vector3.ZERO
+var _extrude_px_per_world: float = 0.0
+var _drag_mouse_driven: bool = false
+
+## Called by the plugin on every viewport motion event (cheap; always on).
+func track_mouse(camera: Camera3D, screen_pos: Vector2) -> void:
+	mouse_camera = camera
+	mouse_screen = screen_pos
+	mouse_has = camera != null
+	if drag_active:
+		# A real mouse move while a drag runs — the cursor is live.
+		drag_mouse_active = true
 
 ## Center-handle drag state: screen-space radius ratio about the pivot, and
 ## the captured pivot/start point. Driven by PBGizmoPlugin handle callbacks.
@@ -599,6 +626,9 @@ func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: 
 
 	if not drag_active:
 		_begin_drag(node, ids, shift)
+		if logger != null:
+			logger.info("drag", "first delivery: id=%d target_origin=%s target_basis_z=%s shift=%s" % [
+				id, str(transform.origin), str(transform.basis.z), str(shift)])
 
 	_drag_pending[id] = transform
 	_drag_latest_id = id
@@ -630,6 +660,9 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_drag_side_tris = []
 	_drag_extrude_normal = Vector3.ZERO
 	_drag_sides_flipped = false
+	_extrude_constrained = false
+	_drag_mouse_driven = false
+	drag_mouse_active = false
 	_last_rel = Transform3D()
 	_last_rel_valid = false
 	for id in ids:
@@ -645,30 +678,65 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 			_begin_extrude_move(mesh_data, ids)
 
 	if logger != null:
-		logger.info("tools", "Drag begun: %s, %d element(s)" % [
-			DragGesture.keys()[_drag_gesture], ids.size()])
+		var start_summary := ""
+		for id in ids:
+			var xf: Transform3D = _drag_start_xf.get(id, Transform3D())
+			start_summary += "[%d] o=%s z=%s " % [id, str(xf.origin),
+				str(xf.basis.z)]
+		logger.info("drag", "BEGIN %s: mode=%s tool=%s space=%s ids=%d %s" % [
+			DragGesture.keys()[_drag_gesture],
+			PBEditor.SelectMode.keys()[editor.select_mode] if editor != null else "?",
+			PBEditor.ToolMode.keys()[editor.tool_mode] if editor != null else "?",
+			PBEditor.OrientationSpace.keys()[editor.orientation_space] if editor != null else "?",
+			ids.size(), start_summary])
 
 ## Shift+move: extrude the selection at distance 0, then the drag translates
-## only the new caps/fins (their lifted corners). Undo covers the whole
-## gesture via a full-mesh snapshot. Also records the created SIDE faces
-## (caps excluded) plus the pre-op region normal, so the drag can flip their
-## winding when the cap crosses back through the base plane.
+## only the new caps/fins (their lifted corners), CONSTRAINED to the region
+## normal (ProBuilder semantics — screen motion projects onto the normal).
+## Undo covers the whole gesture via a full-mesh snapshot. Also records the
+## created SIDE faces (caps excluded) plus the pre-op region normal, so the
+## drag can flip their winding when the cap crosses back through the base
+## plane.
 func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
-	# Region normal over the PRE-op geometry (the extrude direction the side
-	# quads will be wound for). Must be captured BEFORE the op rewrites the
-	# faces array.
+	# Region normal(s) over the PRE-op geometry (the extrude direction the
+	# side quads will be wound for). Must be captured BEFORE the op rewrites
+	# the faces array.
 	var normal_acc := Vector3.ZERO
-	if editor.select_mode != PBEditor.SelectMode.EDGE:
-		var positions := mesh_data.positions
+	var face_normals: Array[Vector3] = []
+	if editor.select_mode == PBEditor.SelectMode.EDGE:
+		# Faces adjacent to any selected edge (their average drives the fin
+		# direction in the op).
+		var common := mesh_data.get_common_edges()
+		var lookup := mesh_data.get_shared_vertex_lookup()
+		var wanted := {}
+		for eid in ids:
+			if eid >= 0 and eid < common.size():
+				wanted[_edge_key(lookup, common[eid].a, common[eid].b)] = true
+		for fi in range(mesh_data.faces.size()):
+			var face: PBFace = mesh_data.faces[fi]
+			if face == null:
+				continue
+			for fe in face.get_edges():
+				if wanted.has(_edge_key(lookup, fe.a, fe.b)):
+					face_normals.append(_face_area_normal(mesh_data, face))
+					break
+	else:
 		for fi in ids:
 			if fi >= 0 and fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
-				var idxs := mesh_data.faces[fi].get_indexes()
-				for t in range(0, idxs.size() - 2, 3):
-					if idxs[t] < positions.size() and idxs[t + 1] < positions.size() \
-							and idxs[t + 2] < positions.size():
-						normal_acc += (positions[idxs[t + 1]] - positions[idxs[t]]) \
-							.cross(positions[idxs[t + 2]] - positions[idxs[t]])
-		_drag_extrude_normal = normal_acc.normalized()
+				face_normals.append(_face_area_normal(mesh_data, mesh_data.faces[fi]))
+	for n in face_normals:
+		normal_acc += n
+	_drag_extrude_normal = normal_acc.normalized()
+
+	# Normal constraint: only when every extruded face shares (roughly) the
+	# same normal — a single region. Multi-normal regions keep the free drag.
+	_extrude_constrained = false
+	if _drag_extrude_normal.length_squared() > 0.5 and not face_normals.is_empty():
+		_extrude_constrained = true
+		for n in face_normals:
+			if n.normalized().dot(_drag_extrude_normal) < 0.98:
+				_extrude_constrained = false
+				break
 
 	var result: Dictionary
 	if editor.select_mode == PBEditor.SelectMode.EDGE:
@@ -681,6 +749,9 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 		_drag_gesture = DragGesture.NORMAL
 		_drag_before_op = null
 		_drag_extrude_normal = Vector3.ZERO
+		if logger != null:
+			logger.warn("drag", "Extrude begin FAILED (%s) — degrading to plain move" %
+				str(result.get("error", "?")))
 		return
 
 	# _drag_original_positions was captured PRE-op above; the gesture replays
@@ -703,6 +774,41 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 				_drag_side_faces.append(mesh_data.faces[fi])
 				_drag_side_tris.append(mesh_data.faces[fi].get_indexes().duplicate())
 	_drag_sides_flipped = false
+
+	# Mouse-driven extrusion baseline: the cursor position at gesture begin,
+	# the cap pivot in world space, and the extrude normal in world space
+	# (rotated out of node space so the space setting cannot skew it).
+	_drag_mouse_driven = false
+	if mouse_has and mouse_camera != null and _drag_mesh != null \
+			and not _drag_union_override.is_empty():
+		_extrude_mouse_start = mouse_screen
+		_extrude_pivot_world = _drag_mesh.global_transform \
+			* mesh_data.positions[_drag_union_override[0]]
+		_extrude_normal_world = (_drag_mesh.global_transform.basis
+			* _drag_extrude_normal).normalized()
+		var d1: Vector2 = mouse_camera.unproject_position(_extrude_pivot_world)
+		var d2: Vector2 = mouse_camera.unproject_position(
+			_extrude_pivot_world + _extrude_normal_world * 1.0)
+		_extrude_px_per_world = (d2 - d1).length()
+
+	if logger != null:
+		logger.info("drag", "Extrude seed ok: normal(node)=%s normal(world)=%s "
+			+ "constrained=%s caps=%d sides=%d union=%d px_per_world=%.1f" % [
+			str(_drag_extrude_normal), str(_extrude_normal_world),
+			str(_extrude_constrained),
+			result["cap_face_ids"].size(), _drag_side_faces.size(),
+			_drag_union_override.size(), _extrude_px_per_world])
+
+## Area-weighted normal of one face (pre-op geometry helper).
+static func _face_area_normal(mesh_data: PBMeshData, face: PBFace) -> Vector3:
+	var acc := Vector3.ZERO
+	var idxs := face.get_indexes()
+	var p := mesh_data.positions
+	for t in range(0, idxs.size() - 2, 3):
+		if idxs[t] >= p.size() or idxs[t + 1] >= p.size() or idxs[t + 2] >= p.size():
+			continue
+		acc += (p[idxs[t + 1]] - p[idxs[t]]).cross(p[idxs[t + 2]] - p[idxs[t]])
+	return acc
 
 ## Center-handle inset (shift + center square on faces): seed a minimal
 ## inset (topology: inner face + ring per face), then the drag lerps each
@@ -802,6 +908,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 
 	var new_positions := _drag_original_positions.duplicate()
 	var pos_count: int = new_positions.size()
+	var applied_motion := Vector3.ZERO
 
 	match _drag_gesture:
 		DragGesture.CENTER_INSET:
@@ -818,15 +925,70 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.CENTER_SCALE:
 			var pivot := _center_pivot
+			if logger != null:
+				logger.debug("drag", "CENTER_SCALE apply: factor=%.3f union=%d pivot=%s" % [
+					_center_factor, union.size(), str(pivot)])
 			for idx in union:
 				if idx >= 0 and idx < pos_count:
 					new_positions[idx] = pivot + (_drag_original_positions[idx] - pivot) * _center_factor
 			_emit_drag_update(true, pivot - pivot * _center_factor, Vector3.ZERO, Vector3.ONE * _center_factor)
 		_:
-			for idx in union:
-				if idx >= 0 and idx < pos_count:
-					new_positions[idx] = rel * _drag_original_positions[idx]
-			_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
+			# Move gestures are PURE TRANSLATIONS: apply the origin only.
+			# The engine composes axis/view-plane drags as translations, so
+			# the basis must be identity — if it is not, the engine's
+			# delivered composition does not match our start snapshot, and
+			# applying the full rel would shear/rotate the mesh ("twisted
+			# geometry"). Log loudly: that mismatch is exactly what the
+			# debug log is for. ROTATE/SCALE still apply the full rel.
+			var origin_only: bool = _drag_gesture == DragGesture.EXTRUDE_MOVE \
+				or (_drag_gesture == DragGesture.NORMAL \
+					and editor != null and editor.tool_mode == PBEditor.ToolMode.MOVE)
+			var motion := rel.origin
+			if origin_only:
+				if not rel.basis.is_equal_approx(Basis()) and logger != null:
+					logger.warn("drag", "REL BASIS NOT IDENTITY on a %s gesture — "
+						+ "engine composition mismatch? origin=%s (positions use "
+						+ "the origin only)" % [
+						DragGesture.keys()[_drag_gesture], str(rel.origin)])
+				# EXTRUDE_MOVE with a live cursor: drive the cap distance from
+				# the MOUSE projected onto the extrude normal's screen axis.
+				# This is the workflow guarantee (element gizmo, shift+grab
+				# the normal axis → the cap follows the cursor along the
+				# normal) and it is independent of the orientation space and
+				# of the engine's transform composition.
+				if _drag_gesture == DragGesture.EXTRUDE_MOVE and drag_mouse_active \
+						and mouse_has and mouse_camera != null \
+						and _extrude_px_per_world > 2.0:
+					var axis_screen: Vector2 = (
+						mouse_camera.unproject_position(
+							_extrude_pivot_world + _extrude_normal_world)
+						- mouse_camera.unproject_position(_extrude_pivot_world)
+					).normalized()
+					var world_dist: float = (mouse_screen - _extrude_mouse_start) \
+						.dot(axis_screen) / _extrude_px_per_world
+					motion = _drag_extrude_normal * world_dist
+					if not _drag_mouse_driven and logger != null:
+						logger.info("drag", "extrude is MOUSE-driven: axis_screen=%s "
+							+ "px_per_world=%.1f" % [str(axis_screen), _extrude_px_per_world])
+					_drag_mouse_driven = true
+				# Spec (VertexManipulationTool.cs): shift+move extrudes at
+				# begin, then ApplyTranslation pulls the new faces along the
+				# translation delta — the cap follows the cursor.
+				applied_motion = motion
+				for idx in union:
+					if idx >= 0 and idx < pos_count:
+						new_positions[idx] = _drag_original_positions[idx] + motion
+				if logger != null:
+					logger.debug("drag", "apply %s: rel_origin=%s motion=%s union=%d "
+						+ "mouse_driven=%s" % [
+						DragGesture.keys()[_drag_gesture], str(rel.origin), str(motion),
+						union.size(), str(_drag_mouse_driven)])
+				_emit_drag_update(true, motion, Vector3.ZERO, Vector3.ONE)
+			else:
+				for idx in union:
+					if idx >= 0 and idx < pos_count:
+						new_positions[idx] = rel * _drag_original_positions[idx]
+				_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
 
 	mesh_data.positions = new_positions
 
@@ -837,7 +999,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	var flipped_now := false
 	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
 			and _drag_extrude_normal.length_squared() > 0.5:
-		var crossed := rel.origin.dot(_drag_extrude_normal) < 0.0
+		var crossed := applied_motion.dot(_drag_extrude_normal) < 0.0
 		if crossed != _drag_sides_flipped:
 			_drag_sides_flipped = crossed
 			flipped_now = true
@@ -926,8 +1088,9 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 		_drag_gesture = DragGesture.CENTER_SCALE
 
 	if logger != null:
-		logger.info("tools", "Center drag begun: %s, %d element(s)" % [
-			DragGesture.keys()[_drag_gesture], ids.size()])
+		logger.info("drag", "CENTER drag begun: %s, %d element(s), pivot=%s start_screen=%s inset=%s" % [
+			DragGesture.keys()[_drag_gesture], ids.size(), str(pivot),
+			str(start_screen), str(inset)])
 	return true
 
 ## Applies the drag from the current screen point: the HORIZONTAL screen
@@ -942,6 +1105,9 @@ func apply_center_drag(node: PBMesh, camera: Camera3D, screen_pos: Vector2) -> v
 	if not _center_has_start:
 		return
 	_center_factor = clampf(1.0 - (screen_pos.x - _center_start_screen.x) * 0.01, 0.01, 10.0)
+	if logger != null:
+		logger.debug("drag", "center apply: screen_dx=%.1f factor=%.3f" % [
+			screen_pos.x - _center_start_screen.x, _center_factor])
 	_apply_drag(node, node.pb_mesh_data, PackedInt32Array())
 
 ## Commits (or cancels) a center-handle drag through the shared commit
@@ -1087,6 +1253,9 @@ func _reset_drag_state() -> void:
 	_drag_side_tris = []
 	_drag_extrude_normal = Vector3.ZERO
 	_drag_sides_flipped = false
+	_extrude_constrained = false
+	_drag_mouse_driven = false
+	drag_mouse_active = false
 	_last_rel = Transform3D()
 	_last_rel_valid = false
 

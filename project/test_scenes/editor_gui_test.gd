@@ -74,6 +74,37 @@ func _mouse_button(pos: Vector2, pressed: bool, shift: bool = false) -> void:
 		ev.button_mask = MOUSE_BUTTON_MASK_LEFT
 	Input.parse_input_event(ev)
 
+## Sends Ctrl+Z through the input pipeline (the editor's undo shortcut).
+func _press_undo() -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = KEY_Z
+	ev.physical_keycode = KEY_Z
+	ev.ctrl_pressed = true
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _frames(2)
+	var up := InputEventKey.new()
+	ev.keycode = KEY_Z
+	ev.physical_keycode = KEY_Z
+	ev.ctrl_pressed = true
+	ev.pressed = false
+	Input.parse_input_event(up)
+
+## Count pixels whose RGB channels differ by more than 8 between two images.
+static func _img_diff(a: Image, b: Image) -> int:
+	if a == null or b == null or a.get_size() != b.get_size():
+		return -1
+	var da := a.get_data()
+	var db := b.get_data()
+	var px: int = a.get_width() * a.get_height()
+	var diff := 0
+	for i in range(px):
+		var o := i * 4
+		if abs(da[o] - db[o]) > 8 or abs(da[o + 1] - db[o + 1]) > 8 \
+				or abs(da[o + 2] - db[o + 2]) > 8:
+			diff += 1
+	return diff
+
 ## Holds/releases the SHIFT key at the Input level (drives
 ## Input.is_key_pressed, which the plugin's gesture decision reads).
 func _shift_down(down: bool) -> void:
@@ -486,6 +517,121 @@ func _run() -> void:
 			else:
 				_pass("CROSSZERO: sides stayed outward after crossing zero (vol=%.2f, was %.2f)"
 					% [vol, vol_before])
+
+	# ── Test 7: center scale handle — detection, uniform scale, inset ────────
+	# Fresh cube, FACE mode, select the top face, switch to the SCALE tool.
+	# The ProBuilder-style CENTER square (our gizmo handle) must be drawn at
+	# the element pivot, grabbable by a click there, scale uniformly with a
+	# rightward drag (right = smaller), and INSET with shift.
+	b.pb_mesh_data = PBMeshData.create_cube(1.0)
+	b.position = Vector3(3, 0, 0)
+	await _frames(8)
+	sel.clear()
+	sel.add_node(b)
+	await _frames(5)
+	# Viewport click first so hotkeys/clicks land (focus), then re-select.
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
+	await _frames(8)
+	plugin.editor.tool_mode = PBEditor.ToolMode.SCALE
+	await _frames(10)
+	# Re-click the top face under the SCALE tool so the handle draws over a
+	# live subgizmo selection.
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
+	await _frames(12)
+
+	var gh = plugin.gizmo_plugin
+	var sx7: float = host.size.x / float(vp.size.x)
+	if not gh._center_handle_drawn:
+		_fail("CENTER: center scale handle was not drawn (tool switch did not refresh the gizmo)")
+	else:
+		var pivot_world: Vector3 = gh._center_handle_world
+		var center_screen := _window_pos(vp, host, pivot_world)
+		# Drag RIGHT 50px → factor 0.5 (half size, uniform).
+		var ed7 = plugin.gizmo_plugin.element_editor
+		var pre_positions: PackedVector3Array = b.pb_mesh_data.positions.duplicate()
+		var face_centroid: Vector3 = ed7.element_origin(b.pb_mesh_data, 4)
+		_mouse_button(center_screen, true, false)
+		await _frames(3)
+		var mid_active: bool = ed7.center_drag_active()
+		for i in range(1, 6):
+			_mouse_motion(center_screen + Vector2(10.0 * i * sx7, 0), false, true)
+			await _frames(2)
+		_mouse_button(center_screen + Vector2(50.0 * sx7, 0), false, false)
+		await _frames(10)
+		# Scaling a selected FACE shrinks ITS corners toward ITS centroid —
+		# assert uniform shrinkage of the face's corner radius (the mesh
+		# bbox cannot show it: the other five faces keep the cube bounds).
+		var ratios: Array[float] = []
+		for idx in ed7.element_indices(b.pb_mesh_data, 4):
+			var before: float = (pre_positions[idx] - face_centroid).length()
+			var after: float = (b.pb_mesh_data.positions[idx] - face_centroid).length()
+			if before > 0.0001:
+				ratios.append(after / before)
+		var ok_uniform: bool = b.pb_mesh_data.faces.size() == 6 and ratios.size() > 0
+		for r in ratios:
+			if r < 0.45 or r > 0.75:
+				ok_uniform = false
+		if ok_uniform:
+			_pass("CENTER: handle detected, face scaled uniformly toward its centroid "
+				+ "(%d corners, ratio %.2f)" % [ratios.size(), ratios[0]])
+		else:
+			_fail("CENTER: handle drag did not scale the face uniformly "
+				+ "(ratios=%s)" % str(ratios))
+
+	# ── Test 8: shift + center handle = uniform INSET ────────────────────────
+	b.pb_mesh_data = PBMeshData.create_cube(1.0)
+	b.position = Vector3(3, 0, 0)
+	await _frames(8)
+	plugin.editor.tool_mode = PBEditor.ToolMode.SCALE
+	await _frames(5)
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
+	await _frames(12)
+	if not gh._center_handle_drawn:
+		_fail("INSET: center scale handle was not drawn")
+	else:
+		var center_screen2 := _window_pos(vp, host, gh._center_handle_world)
+		_shift_down(true)
+		await _frames(2)
+		_mouse_button(center_screen2, true, true)
+		await _frames(3)
+		for i in range(1, 4):
+			_mouse_motion(center_screen2 + Vector2(10.0 * i * sx7, 0), true, true)
+			await _frames(2)
+		_mouse_button(center_screen2 + Vector2(30.0 * sx7, 0), false, true)
+		await _frames(2)
+		_shift_down(false)
+		await _frames(10)
+		var md8: PBMeshData = b.pb_mesh_data
+		if md8.faces.size() != 10:
+			_fail("INSET: shift+center did not seed the inset topology (faces=%d, want 10)"
+				% md8.faces.size())
+		else:
+			_pass("INSET: shift + center handle insets the face (faces=10)")
+
+	# ── Test 9: undo of an extrude drag must refresh the VIEW immediately ────
+	# State from Test 6: b carries a committed crossing-extrude (40 positions).
+	var pre_undo_img := vp.get_texture().get_image()
+	var pre_undo_pos: int = b.pb_mesh_data.positions.size()
+	await _mouse_motion(_window_pos(vp, host, Vector3(0.5, 0.4, 2.5)))
+	await _frames(6)
+	var shot_pre := vp.get_texture().get_image()
+	await _press_undo()
+	await _frames(15)
+	var post_undo_img := vp.get_texture().get_image()
+	var post_pos: int = b.pb_mesh_data.positions.size()
+	var vol_undo := _mesh_signed_volume(b.pb_mesh_data)
+	await _mouse_motion(_window_pos(vp, host, Vector3(0.5, 0.4, 2.5)))
+	await _frames(6)
+	var shot_post := vp.get_texture().get_image()
+	var diff := _img_diff(shot_pre, shot_post)
+	print("[GUI TEST] DEBUG undo: positions %d→%d vol=%.2f pixel_diff=%d" % [
+		pre_undo_pos, post_pos, vol_undo, diff])
+	if post_pos != 24:
+		_fail("UNDO: data was not restored (positions=%d)" % post_pos)
+	elif diff < 50:
+		_fail("UNDO: view did not refresh — mesh still renders extruded (pixel_diff=%d)" % diff)
+	else:
+		_pass("UNDO: view refreshed immediately after undo (pixel_diff=%d)" % diff)
 
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()

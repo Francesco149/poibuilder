@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.6"
+const VERSION := "0.9.7"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -270,6 +270,11 @@ func _make_visible(visible: bool) -> void:
 ## fall through to subgizmo selection / rubber-band. Interception here is what
 ## broke gizmo drags in earlier rounds.
 func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
+	# Feed the live cursor to the element editor — the extrude gesture drives
+	# the cap distance from the mouse (see PBElementEditor.track_mouse).
+	if event is InputEventMouseMotion:
+		gizmo_plugin.element_editor.track_mouse(camera, event.position)
+
 	# Shape creation owns the mouse while armed/dragging/modal (checked even
 	# when nothing is selected — creation needs no editing context).
 	if shape_creator.is_active():
@@ -352,9 +357,12 @@ func _on_selection_changed() -> void:
 	# on from. Re-entrant call from _finish_creation_session's own selection
 	# change is a no-op (the session kind is already cleared).
 	if _params_session_kind == "edit":
+		if logger:
+			logger.info("plugin", "Edit Params session committed (selection changed)")
 		_on_params_applied()
-	elif _params_session_kind == "create" and pb_mesh != null \
-			and pb_mesh != shape_creator.preview_node:
+	elif _params_session_kind == "create" and pb_mesh != shape_creator.preview_node:
+		if logger:
+			logger.info("plugin", "Params modal auto-applied (selection changed)")
 		_on_params_applied()
 
 # ==============================================================================
@@ -443,6 +451,11 @@ func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 
 func _on_tool_mode_changed(_tool: PBEditor.ToolMode) -> void:
 	_update_engine_tool()
+	# The center scale handle lives on the ELEMENT gizmo, which only renders
+	# on a redraw — switching MOVE↔SCALE must refresh it or the handle simply
+	# does not exist until some unrelated hover change triggers a redraw.
+	if editor.active_mesh != null:
+		editor.active_mesh.update_gizmos()
 
 ## The user switched the engine tool itself (W/E/R or its toolbar buttons)
 ## while editing — mirror it into the plugin's own tool state.
@@ -701,6 +714,8 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 					# falls through — the same click keeps acting on the
 					# scene (select a face of the placed shape, start the
 					# next shape, drag a new base...). No dead confirm step.
+					if logger:
+						logger.info("plugin", "Params modal auto-applied (viewport press)")
 					_on_params_applied()
 					return AFTER_GUI_INPUT_PASS
 		else:
@@ -713,6 +728,8 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 				and event.keycode != KEY_ESCAPE:
 			# Typing anywhere else / pressing hotkeys dismisses the modal
 			# (applies) instead of leaving it stuck over a live editor.
+			if logger:
+				logger.info("plugin", "Params modal auto-applied (key press)")
 			_on_params_applied()
 			return AFTER_GUI_INPUT_PASS
 		if event.keycode == KEY_ESCAPE:

@@ -224,6 +224,10 @@ func _subgizmos_intersect_ray(gizmo, camera: Camera3D, screen_pos: Vector2) -> i
 	# gesture). Returning -1 keeps the selection; the following drag then
 	# translates/extrudes it, exactly like ProBuilder's shift+face-drag.
 	if id >= 0 and Input.is_key_pressed(KEY_SHIFT) and gizmo.is_subgizmo_selected(id):
+		if logger != null:
+			logger.info("pick", "shift-press on selected %s id=%d suppressed "
+				+ "(kept selection for the drag; toggle-off is disabled)" % [
+				PBEditor.SelectMode.keys()[editor.select_mode], id])
 		return -1
 	# Alt+click / double-click on an edge selects its whole loop (the engine
 	# selection stays the single seed id; dragging/highlighting expand it).
@@ -272,6 +276,7 @@ func _commit_subgizmos(gizmo, ids: PackedInt32Array, _restores: Array, cancel: b
 
 func _redraw(gizmo) -> void:
 	gizmo.clear()
+	_center_handle_drawn = false
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null:
 		return
@@ -367,8 +372,22 @@ func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
 		count += 1
 	if count == 0:
 		return
-	gizmo.add_handles(PackedVector3Array([acc / float(count)]),
+	var pivot := acc / float(count)
+	gizmo.add_handles(PackedVector3Array([pivot]),
 		get_material("pb_center_handle", gizmo), PackedInt32Array([0]), true)
+	# Track for the GUI harness + debug logging (did the handle exist, where).
+	var node := gizmo.get_node_3d() as Node3D
+	var world: Vector3 = node.global_transform * pivot if node != null else pivot
+	if not _center_handle_drawn or _center_handle_world.distance_to(world) > 0.001:
+		if logger != null:
+			logger.debug("handle", "center handle drawn at world %s (tool=%s selection=%d)"
+				% [str(world), PBEditor.ToolMode.keys()[editor.tool_mode], selected.size()])
+	_center_handle_drawn = true
+	_center_handle_world = world
+
+## Whether the center scale handle was drawn in the last _redraw, and where.
+var _center_handle_drawn: bool = false
+var _center_handle_world: Vector3 = Vector3.ZERO
 
 ## The center handle's id in our gizmo (single handle, id 0).
 const CENTER_HANDLE_ID := 0
@@ -396,6 +415,10 @@ func _set_handle(gizmo, handle_id: int, secondary: bool, camera: Camera3D,
 	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
 	if selected.is_empty():
 		return
+	if logger != null and not element_editor.center_drag_active():
+		logger.info("handle", "center handle GRABbed at screen %s shift=%s mode=%s" % [
+			str(screen_pos), str(Input.is_key_pressed(KEY_SHIFT)),
+			PBEditor.SelectMode.keys()[editor.select_mode]])
 
 	if not element_editor.center_drag_active():
 		# First motion of the gesture: decide uniform scale vs inset.
@@ -416,6 +439,9 @@ func _commit_handle(gizmo, handle_id: int, secondary: bool, restore: Variant,
 	if node == null:
 		return
 	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if logger != null:
+		logger.info("handle", "center handle %s (factor was %.3f)" % [
+			"CANCELLED" if cancel else "COMMITTED", element_editor._center_factor])
 	element_editor.commit_center_drag(node, selected, cancel)
 	node.update_gizmos()
 

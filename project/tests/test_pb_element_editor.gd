@@ -240,6 +240,7 @@ func test_multi_face_translate_welds_shared_vertices():
 
 func test_rotate_drag_rotates_face_about_its_pivot():
 	var s := _make_setup(PBEditor.SelectMode.FACE)
+	s["ed"].tool_mode = PBEditor.ToolMode.ROTATE
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
 	var md: PBMeshData = mesh.pb_mesh_data
