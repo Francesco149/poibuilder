@@ -28,7 +28,7 @@ func _get_plugin_name() -> String:
 	return "ProBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.6.8"
+const VERSION := "0.6.9"
 
 func _enter_tree():
 	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)

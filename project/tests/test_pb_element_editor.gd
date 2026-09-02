@@ -980,3 +980,77 @@ func test_edge_pick_projection_matches_selected_edge_highlight():
 	assert_lt(origin.distance_to(target), 0.001,
 		"The selected edge's origin must be the clicked edge's midpoint — " +
 		"if not, the highlight draws somewhere the user never clicked")
+
+# ==============================================================================
+# Regression: raw-vs-group edge id mapping (round 9 — unselectable edges)
+# ==============================================================================
+
+func test_every_edge_maps_from_pick_to_correct_subgizmo_id():
+	## ROOT CAUSE of "X-perpendicular edges unselectable": _common_edge_index
+	## canonicalized the picked edge to a GROUP pair and compared it against
+	## RAW position pairs with .equals() — matching only when the numbers
+	## coincided (the 4 X-running cube edges), returning -1 for the other 8.
+	## End-to-end: from two opposite corners (so every edge is visible from
+	## at least one), clicking an edge's midpoint must select THAT edge.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var checked := {}
+	for cam_pos in [Vector3(2.2, 2.9, 2.6), Vector3(-2.2, -2.9, -2.6)]:
+		var cam := Camera3D.new()
+		_viewport.add_child(cam)
+		cam.position = cam_pos
+		cam.look_at(Vector3.ZERO, Vector3.UP)
+		await get_tree().process_frame
+
+		var edges := md.get_common_edges()
+		for ei in range(edges.size()):
+			var e: PBEdge = edges[ei]
+			if checked.has(ei):
+				continue
+			var mid := (md.positions[e.a] + md.positions[e.b]) * 0.5
+			var world_mid := mesh.global_transform * mid
+			if logic._point_occluded(md, mesh.global_transform, cam, world_mid, -1, e):
+				continue # hidden from this camera; covered by the opposite one
+			var screen: Vector2 = cam.unproject_position(world_mid)
+			var hit: int = logic.pick_ray(md, mesh.global_transform, cam, screen)
+			assert_eq(hit, ei,
+				"Clicking edge %d's midpoint must select edge %d itself" % [ei, ei])
+			if hit == ei:
+				var origin: Vector3 = logic.element_origin(md, hit)
+				assert_lt(origin.distance_to(world_mid), 0.001,
+					"Selected edge %d's gizmo origin must be its midpoint" % ei)
+			checked[ei] = true
+	assert_eq(checked.size(), 12, "All 12 edges must have been verified visible from the two corners")
+
+func test_common_edge_index_maps_every_face_perimeter_edge():
+	## Pure mapping test, camera-independent: every face's perimeter edge must
+	## resolve to a common-edge id holding the same PHYSICAL edge (welded
+	## corners share coordinates, whichever face contributed the entry).
+	var md := PBMeshData.create_cube(1.0)
+	var edges := md.get_common_edges()
+	var mapped := {}
+	for fi in range(md.faces.size()):
+		for edge in md.faces[fi].get_edges():
+			var id: int = logic_common_edge_index(md, edge)
+			assert_gte(id, 0,
+				"Perimeter edge (%d,%d) must map to a subgizmo id" % [edge.a, edge.b])
+			if id >= 0:
+				var stored: PBEdge = edges[id]
+				var same: bool = (md.positions[stored.a].is_equal_approx(md.positions[edge.a]) \
+					and md.positions[stored.b].is_equal_approx(md.positions[edge.b])) \
+					or (md.positions[stored.a].is_equal_approx(md.positions[edge.b]) \
+					and md.positions[stored.b].is_equal_approx(md.positions[edge.a]))
+				assert_true(same,
+					"Mapped id %d must hold the same physical edge" % id)
+				mapped[id] = true
+	assert_eq(mapped.size(), 12, "All 12 cube edges must be reachable via mapping")
+
+func logic_common_edge_index(md: PBMeshData, edge: PBEdge) -> int:
+	var logic := PBElementEditor.new()
+	logic.editor = PBEditor.new()
+	logic.editor.select_mode = PBEditor.SelectMode.EDGE
+	return logic._common_edge_index(md, edge)
+

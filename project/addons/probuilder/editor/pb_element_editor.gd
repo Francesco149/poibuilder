@@ -360,13 +360,26 @@ func _point_occluded(mesh_data: PBMeshData, mesh_transform: Transform3D,
 
 	return hit["t"] + PBPicking.OCCLUSION_EPSILON < distance - PBPicking.OCCLUSION_EPSILON
 
+## Maps an edge (raw position pair, as returned by PBPicking) to its subgizmo
+## id in get_common_edges(). Comparison is by SHARED-GROUP pair on both sides —
+## the previous version compared a group pair against raw position pairs with
+## .equals(), which only matched by numeric coincidence (4 of 12 cube edges),
+## leaving every other edge unselectable.
 func _common_edge_index(mesh_data: PBMeshData, edge: PBEdge) -> int:
-	var common: PBEdge = mesh_data.get_common_edge(edge)
-	if common == null:
+	if edge == null:
 		return -1
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var ca: int = lookup.get(edge.a, -1)
+	var cb: int = lookup.get(edge.b, -1)
+	var key := Vector2i(mini(ca, cb), maxi(ca, cb))
 	var edges := mesh_data.get_common_edges()
 	for i in range(edges.size()):
-		if edges[i] != null and edges[i].equals(common):
+		var e: PBEdge = edges[i]
+		if e == null:
+			continue
+		var ea: int = lookup.get(e.a, -1)
+		var eb: int = lookup.get(e.b, -1)
+		if Vector2i(mini(ea, eb), maxi(ea, eb)) == key:
 			return i
 	return -1
 
