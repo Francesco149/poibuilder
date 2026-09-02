@@ -28,7 +28,7 @@ func _get_plugin_name() -> String:
 	return "ProBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.6.5"
+const VERSION := "0.6.6"
 
 func _enter_tree():
 	logger.info("plugin", "ProBuilder v%s entering tree" % VERSION)
@@ -216,6 +216,7 @@ func _on_select_mode_changed(mode: PBEditor.SelectMode) -> void:
 	# The engine's subgizmo selection is the authoritative drag source, so it
 	# must be cleared too, and the gizmo redrawn for the new element type.
 	editor.selection.clear_all()
+	gizmo_plugin.element_editor.reset_side_faces()
 	if editor.active_mesh != null:
 		editor.active_mesh.clear_subgizmo_selection()
 		editor.active_mesh.update_gizmos()

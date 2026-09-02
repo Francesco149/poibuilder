@@ -55,6 +55,16 @@ var _drag_pending: Dictionary = {}
 ## Id whose pending transform was stored most recently.
 var _drag_latest_id: int = -1
 
+## Per-element "side" face recorded at pick time (the face under the cursor).
+## ProBuilder UX: the ELEMENT-space gizmo for an edge/vertex is oriented by
+## the normal of the face you selected it FROM, not an average of all
+## adjacent faces.
+var pick_side_faces: Dictionary = {}
+
+## Clears recorded pick-side faces (mode switch / selection cleared).
+func reset_side_faces() -> void:
+	pick_side_faces.clear()
+
 ## The mesh node being dragged.
 var _drag_mesh: PBMesh = null
 
@@ -160,8 +170,26 @@ func element_basis(mesh_data: PBMeshData, node: PBMesh, id: int) -> Basis:
 		PBEditor.OrientationSpace.OBJECT:
 			return Basis.IDENTITY
 		PBEditor.OrientationSpace.ELEMENT:
+			var side: int = pick_side_faces.get(id, -1)
+			if side is int and side >= 0 and side < mesh_data.faces.size() \
+					and mesh_data.faces[side] != null:
+				# ProBuilder UX: orient by the normal of the face the element
+				# was selected FROM (its visible side), not an average.
+				var side_normal := PBMath.normal_from_positions(
+					mesh_data.positions, mesh_data.faces[side].get_indexes())
+				return _basis_from_normal(side_normal)
 			return _element_local_basis(mesh_data, id)
 	return Basis.IDENTITY
+
+## Right-handed orthonormal basis with Z along `normal`.
+func _basis_from_normal(normal: Vector3) -> Basis:
+	if normal.length_squared() < PBMath.FLT_EPSILON:
+		return Basis.IDENTITY
+	normal = normal.normalized()
+	var reference: Vector3 = Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+	var x_axis: Vector3 = reference.cross(normal).normalized()
+	var y_axis: Vector3 = normal.cross(x_axis).normalized()
+	return Basis(x_axis, y_axis, normal)
 
 ## Element-aligned basis derived from the element's geometry (local space).
 ## Z axis = element normal (average adjacent face normals), X/Y orthonormal.
@@ -232,6 +260,7 @@ func _faces_touching_vertex(mesh_data: PBMeshData, sv: PBSharedVertex) -> Array:
 # ==============================================================================
 
 ## Nearest element id under a camera ray through screen_pos, or -1.
+## Records the face under the cursor for side-aware gizmo orientation.
 func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		camera: Camera3D, screen_pos: Vector2) -> int:
 	if mesh_data == null or mesh_data.positions.is_empty() or camera == null:
@@ -240,14 +269,23 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		PBEditor.SelectMode.FACE:
 			var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
 			var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
-			return PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir).face_index
+			var fi: int = PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir).face_index
+			if fi >= 0:
+				pick_side_faces[fi] = fi
+			return fi
 		PBEditor.SelectMode.EDGE:
 			var result: PBPicking.EdgePickResult = PBPicking.pick_edge(mesh_data, mesh_transform, screen_pos, camera)
 			if result.edge == null:
 				return -1
-			return _common_edge_index(mesh_data, result.edge)
+			var id := _common_edge_index(mesh_data, result.edge)
+			if id >= 0 and result.face_index >= 0:
+				pick_side_faces[id] = result.face_index
+			return id
 		PBEditor.SelectMode.VERTEX:
-			return PBPicking.pick_vertex(mesh_data, mesh_transform, screen_pos, camera).common_index
+			var vresult: PBPicking.VertexPickResult = PBPicking.pick_vertex(mesh_data, mesh_transform, screen_pos, camera)
+			if vresult.common_index >= 0 and vresult.face_index >= 0:
+				pick_side_faces[vresult.common_index] = vresult.face_index
+			return vresult.common_index
 	return -1
 
 ## All element ids whose representative point lies inside the frustum planes.

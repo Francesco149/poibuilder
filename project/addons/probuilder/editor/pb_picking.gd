@@ -19,7 +19,9 @@ extends RefCounted
 const MAX_VERTEX_PICK_DISTANCE: float = 20.0
 
 ## Maximum screen-space distance (pixels) to pick an edge.
-const MAX_EDGE_PICK_DISTANCE: float = 15.0
+## ProBuilder gives edges a generous hitbox so you can grab them without
+## pixel-perfect aim; 20px matches that feel.
+const MAX_EDGE_PICK_DISTANCE: float = 20.0
 
 ## Screen-distance window (pixels) inside which two candidates are considered
 ## tied and the one CLOSER TO THE CAMERA wins. Without this, a hidden far-side
@@ -66,6 +68,7 @@ class VertexPickResult extends RefCounted:
 	var common_index: int = -1  ## Shared vertex group index
 	var vertex_index: int = -1  ## Local vertex index
 	var screen_distance: float = INF
+	var face_index: int = -1    ## Face under the cursor at pick time (side)
 
 	func _init(p_common: int = -1, p_vertex: int = -1, p_screen_dist: float = INF) -> void:
 		common_index = p_common
@@ -151,13 +154,14 @@ static func pick_faces_all(mesh_data: PBMeshData, mesh_transform: Transform3D,
 # Edge Picking (Screen-Space Distance)
 # ==============================================================================
 
-## Picks the nearest edge to a screen position.
-## Candidates within the pixel radius are tie-broken by camera distance, and
-## edges hidden behind the mesh surface (relative to the cursor ray) are
-## occluded and not pickable — clicking the interior of a face can no longer
-## select a far-side edge whose on-top highlight draws across it like a
-## diagonal. Surface-adjacent edges (the visible border of the hit face)
-## remain pickable.
+## Picks the nearest edge to a screen position with ProBuilder-style UX:
+## - BIG hitbox (MAX_EDGE_PICK_DISTANCE).
+## - VISIBLE edges always win over hidden ones at comparable screen distance.
+## - If no visible edge is under the cursor, a hidden edge within the hitbox
+##   IS selectable — selecting far edges through the mesh is a first-class
+##   workflow (grab the edge where it appears behind the face).
+## - The face under the cursor is returned in `face_index` so the element
+##   gizmo can orient to the side you picked from.
 ## Returns EdgePickResult with edge != null on hit, or null edge on miss.
 static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> EdgePickResult:
@@ -199,14 +203,14 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			if (world_a - cam_pos).dot(cam_fwd) < 0 and (world_b - cam_pos).dot(cam_fwd) < 0:
 				continue
 
-			# Occlusion: skip edges behind the first surface the cursor ray hits
-			# (edges belonging to the hit face stay pickable).
+			# Occlusion flag: hidden behind the first surface the ray hits
+			# (own-face elements are never hidden). Hidden edges stay
+			# selectable as fallback — see the two-tier selection below.
 			var edge_t: float = _ray_closest_approach_t(ray_origin, ray_dir, world_a, world_b)
 			var hit_face: int = ray_hit["face"]
 			var own := hit_face != -1 and _face_contains_common_edge(
 				mesh_data, mesh_data.faces[hit_face], edge)
-			if _is_occluded(ray_hit, edge_t, own):
-				continue
+			var occluded: bool = _is_occluded(ray_hit, edge_t, own)
 
 			var screen_a: Vector2 = camera.unproject_position(world_a)
 			var screen_b: Vector2 = camera.unproject_position(world_b)
@@ -216,36 +220,44 @@ static func pick_edge(mesh_data: PBMeshData, mesh_transform: Transform3D,
 				continue
 
 			var midpoint: Vector3 = (world_a + world_b) * 0.5
-			candidates.append([dist, (midpoint - cam_pos).length(), edge, fi])
+			var side_face: int = hit_face if (hit_face != -1 and own) else fi
+			candidates.append([dist, (midpoint - cam_pos).length(), edge, occluded, side_face])
 
 	if candidates.is_empty():
 		return EdgePickResult.new()
 
-	# Best screen distance, then among candidates tied within the tie window,
-	# the one closest to the camera.
-	var best_dist: float = INF
-	for c in candidates:
-		best_dist = minf(best_dist, c[0])
-
-	var best: EdgePickResult = null
-	var nearest_depth: float = INF
-	for c in candidates:
-		if c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+	# Tier 1: visible candidates. Tier 2 (only if no visible candidate):
+	# hidden ones — selecting far edges through the mesh is intentional UX.
+	for occluded_flag in [false, true]:
+		var best_dist: float = INF
+		var nearest_depth: float = INF
+		var best: EdgePickResult = null
+		for c in candidates:
+			if c[3] != occluded_flag:
+				continue
+			if c[0] < best_dist:
+				best_dist = c[0]
+		if is_inf(best_dist):
 			continue
-		if c[1] < nearest_depth:
-			nearest_depth = c[1]
-			best = EdgePickResult.new(c[2], c[3], c[0])
+		for c in candidates:
+			if c[3] != occluded_flag or c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+				continue
+			if c[1] < nearest_depth:
+				nearest_depth = c[1]
+				best = EdgePickResult.new(c[2], c[4], c[0])
+		if best != null:
+			return best
 
-	return best if best != null else EdgePickResult.new()
+	return EdgePickResult.new()
 
 # ==============================================================================
 # Vertex Picking (Screen-Space Distance)
 # ==============================================================================
 
-## Picks the nearest vertex to a screen position.
-## Candidates within the pixel radius are tie-broken by camera distance;
-## vertices hidden behind the mesh surface (relative to the cursor ray) are
-## occluded and not pickable.
+## Picks the nearest vertex to a screen position with the same two-tier
+## policy as edges: visible vertices win; hidden vertices remain selectable
+## as fallback (ProBuilder's grab-through-the-mesh workflow). The face under
+## the cursor is returned in face_index for side-aware gizmo orientation.
 ## Returns VertexPickResult with common_index >= 0 on hit, or -1 on miss.
 static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		screen_pos: Vector2, camera: Camera3D) -> VertexPickResult:
@@ -276,38 +288,42 @@ static func pick_vertex(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		if (world_pos - cam_pos).dot(cam_fwd) < 0:
 			continue
 
-		# Occlusion: skip vertices behind the first surface the ray hits
-		# (vertices of the hit face stay pickable).
+		# Occlusion flag (hidden vertices remain selectable as fallback).
 		var vertex_t: float = _ray_closest_approach_t(ray_origin, ray_dir, world_pos, world_pos)
 		var hit_face: int = ray_hit["face"]
 		var own := hit_face != -1 and _face_contains_common_vertex(
 			mesh_data, mesh_data.faces[hit_face], sv)
-		if _is_occluded(ray_hit, vertex_t, own):
-			continue
+		var occluded: bool = _is_occluded(ray_hit, vertex_t, own)
 
 		var screen_pt: Vector2 = camera.unproject_position(world_pos)
 		var dist: float = screen_pos.distance_to(screen_pt)
 
 		if dist <= MAX_VERTEX_PICK_DISTANCE:
-			candidates.append([dist, (world_pos - cam_pos).length(), sv_idx, local_idx])
+			var side_face: int = hit_face if (hit_face != -1 and own) else -1
+			candidates.append([dist, (world_pos - cam_pos).length(), sv_idx, local_idx, occluded, side_face])
 
 	if candidates.is_empty():
 		return VertexPickResult.new()
 
-	var best_dist: float = INF
-	for c in candidates:
-		best_dist = minf(best_dist, c[0])
-
-	var best := VertexPickResult.new()
-	var nearest_depth: float = INF
-	for c in candidates:
-		if c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+	for occluded_flag in [false, true]:
+		var best_dist: float = INF
+		for c in candidates:
+			if c[4] == occluded_flag:
+				best_dist = minf(best_dist, c[0])
+		if is_inf(best_dist):
 			continue
-		if c[1] < nearest_depth:
-			nearest_depth = c[1]
-			best = VertexPickResult.new(c[2], c[3], c[0])
-
-	return best
+		var best := VertexPickResult.new()
+		var nearest_depth: float = INF
+		for c in candidates:
+			if c[4] != occluded_flag or c[0] > best_dist + PICK_DEPTH_TIE_BREAK_PIXELS:
+				continue
+			if c[1] < nearest_depth:
+				nearest_depth = c[1]
+				best = VertexPickResult.new(c[2], c[3], c[0])
+				best.face_index = c[5]
+		if best.common_index != -1:
+			return best
+	return VertexPickResult.new()
 
 # ==============================================================================
 # Occlusion Helpers

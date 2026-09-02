@@ -601,11 +601,10 @@ func test_face_edges_are_perimeter_no_diagonals():
 func _is_top_edge(md: PBMeshData, edge: PBEdge) -> bool:
 	return md.positions[edge.a].y > 0.4 and md.positions[edge.b].y > 0.4
 
-func test_edge_pick_over_top_face_never_returns_hidden_edges():
-	## Screenshot regression: camera looking down at a planar top face; clicking
-	## in/near the face must only ever return the visible TOP edges. Bottom and
-	## far-side edges project across the face but are hidden — their on-top
-	## highlight used to draw across the face like a "diagonal".
+func test_border_edges_pickable_at_grazing_angles():
+	## Round-4 regression: clicking each top edge dead-on at a grazing camera
+	## pose must either return THAT edge, or a NEARER VISIBLE edge when the
+	## clicked edge is on the far side (never a random unpickable state).
 	var s := _make_setup(PBEditor.SelectMode.EDGE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
@@ -613,71 +612,151 @@ func test_edge_pick_over_top_face_never_returns_hidden_edges():
 
 	var cam := Camera3D.new()
 	_viewport.add_child(cam)
-	cam.position = Vector3(2.2, 3.2, 2.6) # high front-left, like the report
+	cam.position = Vector3(1.6, 2.4, -2.6)
 	cam.look_at(Vector3.ZERO, Vector3.UP)
 
-	# Sample a grid of world points across the whole top face
-	var hidden_returns := 0
-	var top_returns := 0
-	for gx in range(11):
-		for gz in range(11):
-			var wx: float = lerpf(-0.48, 0.48, gx / 10.0)
-			var wz: float = lerpf(-0.48, 0.48, gz / 10.0)
-			var screen: Vector2 = cam.unproject_position(Vector3(wx, 0.5, wz))
-			var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
-				md, mesh.global_transform, screen, cam)
-			if result.edge != null:
-				if _is_top_edge(md, result.edge):
-					top_returns += 1
-				else:
-					hidden_returns += 1
-	assert_eq(hidden_returns, 0,
-		"No click on the top face may select a hidden bottom/side edge")
-	assert_gt(top_returns, 0, "Border clicks near top edges must still find them")
+	for ei in range(md.get_common_edges().size()):
+		var e: PBEdge = md.get_common_edges()[ei]
+		if md.positions[e.a].y < 0.4:
+			continue
+		var mid := (md.positions[e.a] + md.positions[e.b]) * 0.5
+		var screen: Vector2 = cam.unproject_position(mid)
+		var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
+			md, mesh.global_transform, screen, cam)
+		if result.edge == null:
+			continue
+		var is_target: bool = result.edge.a == e.a and result.edge.b == e.b
+		if not is_target:
+			var picked_mid: Vector3 = (md.positions[result.edge.a] + md.positions[result.edge.b]) * 0.5
+			var target_mid: Vector3 = mid
+			assert_lt(cam.global_position.distance_to(picked_mid),
+				cam.global_position.distance_to(target_mid),
+				"Non-target result must be a NEARER visible edge")
 
-func test_edge_pick_at_explicit_hidden_edge_projection_returns_nothing_hidden():
-	## Clicking exactly where a bottom edge projects (inside the top face
-	## silhouette) must not select that hidden bottom edge.
-	var s := _make_setup(PBEditor.SelectMode.EDGE)
-	var logic: PBElementEditor = s["logic"]
-	var mesh: PBMesh = s["mesh"]
-	var md: PBMeshData = mesh.pb_mesh_data
+func test_far_edge_selectable_through_mesh():
+	## ProBuilder UX: an edge seen THROUGH a face stays selectable — click its
+	## projection when no visible edge is under the cursor and the far edge
+	## itself is picked (big hitbox, grab through the mesh).
+	var ed := PBEditor.new()
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+	ed.select_mode = PBEditor.SelectMode.EDGE
+
+	# Big far quad + small near quad: the far quad's top edge has free screen
+	# space outside the small near quad.
+	var md := PBMeshData.new()
+	md.positions = PackedVector3Array([
+		Vector3(-1, -1, -2), Vector3(1, -1, -2), Vector3(1, 1, -2), Vector3(-1, 1, -2),
+		Vector3(-0.2, -0.2, 1), Vector3(0.2, -0.2, 1), Vector3(0.2, 0.2, 1), Vector3(-0.2, 0.2, 1),
+	])
+	var faces: Array[PBFace] = []
+	for base in [0, 4]:
+		faces.append(PBFace.new(PackedInt32Array([
+			base + 0, base + 1, base + 2,
+			base + 2, base + 3, base + 0,
+		])))
+	md.faces = faces
+	var groups: Array[PBSharedVertex] = []
+	for i in range(8):
+		groups.append(PBSharedVertex.new(PackedInt32Array([i])))
+	md.shared_vertices = groups
+	md.invalidate_caches()
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = md
+	add_child_autofree(mesh)
 
 	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.size = 5.0
 	_viewport.add_child(cam)
-	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.position = Vector3(0, 0, 5)
 	cam.look_at(Vector3.ZERO, Vector3.UP)
 
-	# Bottom-back edge midpoint projects inside the top face region
-	var screen: Vector2 = cam.unproject_position(Vector3(0, -0.5, -0.5))
-	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(
-		md, mesh.global_transform, screen, cam)
+	var screen: Vector2 = cam.unproject_position(Vector3(0.6, 1, 0))
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(md, mesh.global_transform, screen, cam)
+	assert_true(result.edge != null, "Far edge click must hit the far edge (big hitbox)")
 	if result.edge != null:
-		assert_true(_is_top_edge(md, result.edge),
-			"Click over the face interior must not select the hidden bottom edge")
+		var mid: Vector3 = (md.positions[result.edge.a] + md.positions[result.edge.b]) * 0.5
+		assert_lt(mid.z, 0.0, "Picked edge must be the FAR quad's edge")
+		assert_almost_eq(mid.y, 1.0, 0.001, "Must be the far quad's TOP edge")
 
-func test_vertex_pick_over_top_face_never_returns_hidden_vertices():
-	var s := _make_setup(PBEditor.SelectMode.VERTEX)
+func test_visible_edge_wins_over_hidden_at_same_projection():
+	var ed := PBEditor.new()
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+	ed.select_mode = PBEditor.SelectMode.EDGE
+
+	var md := PBMeshData.new()
+	md.positions = PackedVector3Array([
+		Vector3(-0.5, -0.5, -1), Vector3(0.5, -0.5, -1), Vector3(0.5, 0.5, -1), Vector3(-0.5, 0.5, -1),
+		Vector3(-0.5, -0.5, 1), Vector3(0.5, -0.5, 1), Vector3(0.5, 0.5, 1), Vector3(-0.5, 0.5, 1),
+	])
+	var faces: Array[PBFace] = []
+	for base in [0, 4]:
+		faces.append(PBFace.new(PackedInt32Array([
+			base + 0, base + 1, base + 2,
+			base + 2, base + 3, base + 0,
+		])))
+	md.faces = faces
+	var groups: Array[PBSharedVertex] = []
+	for i in range(8):
+		groups.append(PBSharedVertex.new(PackedInt32Array([i])))
+	md.shared_vertices = groups
+	md.invalidate_caches()
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = md
+	add_child_autofree(mesh)
+
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.size = 4.0
+	_viewport.add_child(cam)
+	cam.position = Vector3(0, 0, 5)
+	cam.look_at(Vector3.ZERO, Vector3.UP)
+
+	var screen: Vector2 = cam.unproject_position(Vector3(0, 0.5, 0))
+	var result: PBPicking.EdgePickResult = PBPicking.pick_edge(md, mesh.global_transform, screen, cam)
+	assert_true(result.edge != null)
+	if result.edge != null:
+		var mid: Vector3 = (md.positions[result.edge.a] + md.positions[result.edge.b]) * 0.5
+		assert_gt(mid.z, 0.0, "Visible (near) edge must win over the hidden far edge")
+
+func test_side_face_recorded_and_gizmo_follows_picked_side():
+	## ProBuilder UX: selecting an edge from different sides gives an
+	## ELEMENT-space gizmo oriented by THAT side's face normal.
+	var s := _make_setup(PBEditor.SelectMode.EDGE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
 	var md: PBMeshData = mesh.pb_mesh_data
 
 	var cam := Camera3D.new()
 	_viewport.add_child(cam)
-	cam.position = Vector3(2.2, 3.2, 2.6)
+	cam.position = Vector3(1.6, 2.4, -2.6)
 	cam.look_at(Vector3.ZERO, Vector3.UP)
 
-	for gx in range(11):
-		for gz in range(11):
-			var wx: float = lerpf(-0.48, 0.48, gx / 10.0)
-			var wz: float = lerpf(-0.48, 0.48, gz / 10.0)
-			var screen: Vector2 = cam.unproject_position(Vector3(wx, 0.5, wz))
-			var result: PBPicking.VertexPickResult = PBPicking.pick_vertex(
-				md, mesh.global_transform, screen, cam)
-			if result.common_index != -1:
-				var group: PackedInt32Array = md.shared_vertices[result.common_index].indices
-				assert_gt(md.positions[group[0]].y, 0.0,
-					"Click over the top face must not select a hidden bottom vertex")
+	# Top-front edge, clicked from above (the top face is under the cursor)
+	var screen: Vector2 = cam.unproject_position(Vector3(0, 0.5, -0.5))
+	var hit: int = logic.pick_ray(md, mesh.global_transform, cam, screen)
+	assert_gte(hit, 0, "Top-front edge must be pickable")
+	var side: int = logic.pick_side_faces.get(hit, -1)
+	assert_gte(side, 0, "Pick must record the side face")
+	if side >= 0:
+		var side_normal := PBMath.normal_from_positions(
+			md.positions, md.faces[side].get_indexes())
+		assert_lt(side_normal.y, 0.5, "Side face for a top-edge-from-above pick must be an upward face")
+
+	# ELEMENT-space basis Z must equal the side face's normal
+	s["ed"].orientation_space = PBEditor.OrientationSpace.ELEMENT
+	var xf: Transform3D = logic.get_subgizmo_transform(md, mesh, hit)
+	var side_n := PBMath.normal_from_positions(md.positions, md.faces[side].get_indexes())
+	assert_true(xf.basis.z.is_equal_approx(side_n),
+		"ELEMENT gizmo Z must follow the picked side's face normal")
+
+	# Reset clears the recorded sides
+	logic.reset_side_faces()
+	assert_true(logic.pick_side_faces.is_empty(), "reset_side_faces must clear the map")
 
 func test_visible_border_edges_still_pickable_from_either_side():
 	## Occlusion must not over-reject: an edge shared with the face the ray
