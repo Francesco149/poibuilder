@@ -372,11 +372,20 @@ func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
 	if count == 0:
 		return
 	var pivot := acc / float(count)
+	# billboard=false is REQUIRED: with the billboard flag the engine rotates
+	# the handle's LOCAL offset around the NODE ORIGIN toward the camera
+	# (both the drawn point and the hit test), which displaces the handle
+	# away from the true element pivot whenever the node origin is not the
+	# pivot itself (a face/edge/vertex on a moved or created mesh). A plain
+	# transform puts the grab point exactly on the gizmo center.
 	gizmo.add_handles(PackedVector3Array([pivot]),
-		get_material("pb_center_handle", gizmo), PackedInt32Array([0]), true)
+		get_material("pb_center_handle", gizmo), PackedInt32Array([0]), false)
 	# Track for the GUI harness + debug logging (did the handle exist, where).
 	var node := gizmo.get_node_3d() as Node3D
 	var world: Vector3 = node.global_transform * pivot if node != null else pivot
+	if logger != null and node != null:
+		logger.debug("handle", "center handle pivot world=%s (node origin %s)" % [
+			str(world), str(node.global_position)])
 	if not _center_handle_drawn or _center_handle_world.distance_to(world) > 0.001:
 		if logger != null:
 			logger.debug("handle", "center handle drawn at world %s (tool=%s selection=%d)"

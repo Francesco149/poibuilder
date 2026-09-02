@@ -339,6 +339,34 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.9 round complete ✓ — the user's v0.9.8 log proved the engine rel
+INVERTS mid-drag (rel −0.63 vs cursor +0.65) and the center handle was
+undetectable; both root causes found and fixed:
+- IN-PLACE CAP IDS (THE extrude bug): `_replace_faces` now writes primary
+  faces (caps/inner faces) INTO THE REMOVED SLOTS (ascending removed
+  order) instead of appending at the end. The shift+drag extrude seeds
+  its topology op MID-DRAG; with append-at-end the editor's still-held
+  subgizmo id re-resolved to an unrelated wall, the engine's per-frame
+  gizmo recomputation jumped, and the delivered motion inverted ("doesn't
+  follow the mouse, moves backwards"). With in-place slots the id keeps
+  resolving to the cap (coincident with the original at seed time), and
+  the engine's deliveries track the cursor. The mouse-verification
+  fallback from v0.9.7 remains as a safety net.
+- CENTER HANDLE BILLBOARD (THE detection bug): add_handles(billboard=
+  true) makes the engine rotate the handle's LOCAL OFFSET around the NODE
+  ORIGIN toward the camera — for the hit test AND the drawn point. With a
+  pivot away from the node origin (any face on a moved/created mesh) the
+  handle rendered and detected at a DISPLACED position. billboard=false
+  pins it to the true pivot. (Harness tests passed despite this because
+  the harness camera was nearly axis-aligned — the offset happened to
+  align with camera up.)
+- INSET_SCALE GESTURE: shift+scale handles on faces now INSETS (spec:
+  VertexManipulationTool — "Shift + Scale ... shrinks the new faces
+  inward toward their centroids"). The gesture seeds the same zero-width
+  inset as the center handle and drives the amount from the dominant
+  scale component of the delivered rel (clamped −1..0.95). Center-handle
+  shift+inset unchanged.
+
 v0.9.8 round complete ✓ — fixes from the first LOGGED sign-off (the user
 supplied console output; the log immediately paid for itself):
 - UNDO STALE VIEW ROOT CAUSE: CmdMeshOp.do_it/undo_it restored the

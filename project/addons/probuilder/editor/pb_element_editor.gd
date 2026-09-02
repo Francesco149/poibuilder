@@ -50,6 +50,7 @@ enum DragGesture {
 	EXTRUDE_MOVE,  ## Shift+move: extrude the selection at drag begin, drag the caps
 	CENTER_SCALE,  ## Dragging the center scale handle: uniform scale about the pivot
 	CENTER_INSET,  ## Shift+center handle on faces: uniform per-face inset
+	INSET_SCALE,   ## Shift+scale handles on faces: per-face inset driven by the scale factor (ProBuilder Shift+Scale)
 }
 
 ## What the current drag does (decided once at drag begin — mid-drag
@@ -141,6 +142,12 @@ func _decide_gesture(shift: bool) -> DragGesture:
 				return DragGesture.EXTRUDE_MOVE
 			if shift and editor.select_mode == PBEditor.SelectMode.EDGE:
 				return DragGesture.EXTRUDE_MOVE
+		PBEditor.ToolMode.SCALE:
+			# ProBuilder spec (VertexManipulationTool.cs): Shift + Scale on
+			# faces extrudes zero-thickness and shrinks the new faces inward
+			# toward their centroids — a face INSET driven by the scale drag.
+			if shift and editor.select_mode == PBEditor.SelectMode.FACE:
+				return DragGesture.INSET_SCALE
 		_:
 			pass
 	return DragGesture.NORMAL
@@ -670,12 +677,15 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 
 	# Topology-creating gestures undo via whole-mesh snapshots — capture the
 	# pre-op state before mutating.
-	if _drag_gesture == DragGesture.EXTRUDE_MOVE:
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE \
+			or _drag_gesture == DragGesture.INSET_SCALE:
 		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
 
 	match _drag_gesture:
 		DragGesture.EXTRUDE_MOVE:
 			_begin_extrude_move(mesh_data, ids)
+		DragGesture.INSET_SCALE:
+			_begin_inset(mesh_data, ids)
 
 	if logger != null:
 		var start_summary := ""
@@ -895,7 +905,8 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	# factor and skip this entirely. Repeated identical rels (multi-id
 	# selections redeliver the same motion) skip the full recompute.
 	var rel: Transform3D = _last_rel
-	if _drag_gesture == DragGesture.NORMAL or _drag_gesture == DragGesture.EXTRUDE_MOVE:
+	if _drag_gesture == DragGesture.NORMAL or _drag_gesture == DragGesture.EXTRUDE_MOVE \
+			or _drag_gesture == DragGesture.INSET_SCALE:
 		if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) \
 				or not _drag_pending.has(_drag_latest_id):
 			return
@@ -912,6 +923,36 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	match _drag_gesture:
 		DragGesture.CENTER_INSET:
 			var amount := clampf(1.0 - _center_factor, -1.0, 0.95)
+			_last_inset_amount = amount
+			for base in _drag_inset_bases:
+				var idxs: PackedInt32Array = base["idxs"]
+				var centroid: Vector3 = base["centroid"]
+				var pre: PackedVector3Array = base["pre"]
+				for i in range(idxs.size()):
+					var idx: int = idxs[i]
+					if idx >= 0 and idx < pos_count:
+						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
+		DragGesture.INSET_SCALE:
+			# The engine delivers a per-axis scale about the subgizmo origin;
+			# the inset amount is the dominant scale deviation from 1.
+			var s := _dominant_scale_factor(rel.basis)
+			var amount := clampf(1.0 - s, -1.0, 0.95)
+			_last_inset_amount = amount
+			for base in _drag_inset_bases:
+				var idxs: PackedInt32Array = base["idxs"]
+				var centroid: Vector3 = base["centroid"]
+				var pre: PackedVector3Array = base["pre"]
+				for i in range(idxs.size()):
+					var idx: int = idxs[i]
+					if idx >= 0 and idx < pos_count:
+						new_positions[idx] = pre[i].lerp(centroid, amount)
+			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
+		DragGesture.INSET_SCALE:
+			# The engine delivers a per-axis scale about the subgizmo origin;
+			# the inset amount is the dominant scale deviation from 1.
+			var s := _dominant_scale_factor(rel.basis)
+			var amount := clampf(1.0 - s, -1.0, 0.95)
 			_last_inset_amount = amount
 			for base in _drag_inset_bases:
 				var idxs: PackedInt32Array = base["idxs"]
@@ -1150,7 +1191,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	match _drag_gesture:
 		DragGesture.EXTRUDE_MOVE:
 			action_name = "Extrude (Shift+Move)"
-		DragGesture.CENTER_INSET:
+		DragGesture.CENTER_INSET, DragGesture.INSET_SCALE:
 			action_name = "Inset (Shift+Scale)"
 		DragGesture.CENTER_SCALE:
 			action_name = "Scale Elements (Uniform)"
@@ -1416,6 +1457,17 @@ func drag_readout() -> String:
 	if not _last_drag_scale.is_equal_approx(Vector3.ONE):
 		return "Scale: %s" % _fmt_vec(_last_drag_scale)
 	return "Delta: %s" % _fmt_vec(_last_drag_translation)
+
+## The basis scale component furthest from 1 — the axis the user is
+## dragging on a scale-handle gesture.
+static func _dominant_scale_factor(b: Basis) -> float:
+	var sc := b.get_scale()
+	var best: float = sc.x
+	if absf(sc.y - 1.0) > absf(best - 1.0):
+		best = sc.y
+	if absf(sc.z - 1.0) > absf(best - 1.0):
+		best = sc.z
+	return best
 
 static func _rel_rotation_deg(rel: Transform3D) -> Vector3:
 	var euler: Vector3 = rel.basis.get_euler()

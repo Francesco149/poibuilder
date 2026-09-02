@@ -731,34 +731,51 @@ static func _dup_position_at(mesh_data: PBMeshData, at: Vector3, src: int) -> in
 			mesh_data.tangents.append(mesh_data.tangents[src * 4 + f])
 	return mesh_data.positions.size() - 1
 
-## Replaces the faces in `removed` with `primary` + `secondary` (appended in
-## that order) and rebuilds topology. Result face ids are FINAL-array indexes:
-## "cap_face_ids" = the primary faces, "new_face_ids" = primary + secondary.
+## Replaces the faces in `removed` with `primary` + `secondary` and rebuilds
+## topology. Result face ids are FINAL-array indexes: "cap_face_ids" = the
+## primary faces, "new_face_ids" = primary + secondary.
+##
+## PRIMARY FACES TAKE OVER THE REMOVED SLOTS (ascending removed order) rather
+## than appending at the end: the editor's subgizmo selection still holds the
+## ORIGINAL face ids, and a mid-drag topology op (shift+drag extrude) must
+## keep those ids resolving to the replacement faces — with append-at-end the
+## engine's drag machinery re-resolves the selected id to an unrelated wall
+## mid-gesture and the delivered motion inverts/jumps ("extrude doesn't
+## follow the mouse"). Extrude/inset produce exactly one primary per removed
+## face, so the in-place mapping is 1:1 for them; extras are appended.
 static func _replace_faces(mesh_data: PBMeshData, removed: Dictionary,
 		primary: Array[PBFace], secondary: Array[PBFace]) -> Dictionary:
-	var kept: Array[PBFace] = []
-	for i in range(mesh_data.faces.size()):
-		if not removed.has(i):
-			kept.append(mesh_data.faces[i])
-	if kept.is_empty() and primary.is_empty() and secondary.is_empty():
+	var remaining := mesh_data.faces.size() - removed.size()
+	if remaining == 0 and primary.is_empty() and secondary.is_empty():
 		return _fail("Operation would leave an empty mesh")
 
-	mesh_data.faces = kept
-	for face in primary:
-		mesh_data.faces.append(face)
-	var primary_start: int = mesh_data.faces.size() - primary.size()
-	for face in secondary:
-		mesh_data.faces.append(face)
+	var final: Array[PBFace] = []
+	var primary_ids := PackedInt32Array()
+	var pi := 0
+	for i in range(mesh_data.faces.size()):
+		if removed.has(i) and pi < primary.size():
+			final.append(primary[pi])
+			primary_ids.append(final.size() - 1)
+			pi += 1
+		elif not removed.has(i):
+			final.append(mesh_data.faces[i])
+	while pi < primary.size():
+		final.append(primary[pi])
+		primary_ids.append(final.size() - 1)
+		pi += 1
 
+	var secondary_ids := PackedInt32Array()
+	for face in secondary:
+		final.append(face)
+		secondary_ids.append(final.size() - 1)
+
+	mesh_data.faces = final
 	_rebuild_topology(mesh_data)
 
-	var cap_ids := PackedInt32Array()
-	for i in range(primary.size()):
-		cap_ids.append(primary_start + i)
-	var all_ids := PackedInt32Array(cap_ids)
-	for i in range(secondary.size()):
-		all_ids.append(mesh_data.faces.size() - secondary.size() + i)
-	return {"ok": true, "cap_face_ids": cap_ids, "new_face_ids": all_ids}
+	var all_ids := PackedInt32Array(primary_ids)
+	for sid in secondary_ids:
+		all_ids.append(sid)
+	return {"ok": true, "cap_face_ids": primary_ids, "new_face_ids": all_ids}
 
 ## Post-op topology repair: compact orphaned positions, rebuild weld groups
 ## from coincident positions, invalidate caches.

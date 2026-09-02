@@ -79,8 +79,10 @@ func test_gesture_decision_matrix():
 
 	ed.tool_mode = PBEditor.ToolMode.SCALE
 	ed.select_mode = PBEditor.SelectMode.FACE
-	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.NORMAL,
-		"Shift+axis-scale is free (inset lives on the center handle)")
+	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.INSET_SCALE,
+		"Shift+scale on faces INSETS (ProBuilder VertexManipulationTool)")
+	assert_eq(logic._decide_gesture(false), PBEditor.ToolMode.SCALE if false else PBElementEditor.DragGesture.NORMAL,
+		"Scale without shift stays free")
 
 	ed.tool_mode = PBEditor.ToolMode.ROTATE
 	assert_eq(logic._decide_gesture(true), PBElementEditor.DragGesture.NORMAL,
@@ -355,6 +357,50 @@ class GestureUndoSpy:
 # ==============================================================================
 # Center handle + Shift on faces: uniform inset (#5 / #13)
 # ==============================================================================
+
+func test_shift_scale_on_faces_insets():
+	# ProBuilder spec: shift+scale extrudes zero-thickness and shrinks the
+	# new faces toward their centroids — a face inset driven by the scale
+	# factor of the delivered rel.
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+	var faces_before := md.faces.size()
+
+	var ids := _ids([4])  # top face
+	var state := _gesture_state(s, ids, true)
+	# First delivery (seed): a 1.2x uniform scale about the face origin.
+	var seed_scale := Transform3D(
+		state["start"][4].basis.scaled_local(Vector3(1.2, 1.2, 1.2)),
+		state["start"][4].origin)
+	for id in ids:
+		logic.set_subgizmo_transform_with_shift(mesh, ids, id, seed_scale, true)
+	assert_eq(md.faces.size(), faces_before + 4,
+		"Shift+scale seeds the inset topology (6 -> 10)")
+
+	# A delivered scale factor of 0.5 about the face origin insets by 0.5.
+	var scale_about_origin := Transform3D(
+		state["start"][4].basis.scaled_local(Vector3(0.5, 0.5, 0.5)),
+		state["start"][4].origin)
+	logic.set_subgizmo_transform_with_shift(mesh, ids, 4, scale_about_origin, true)
+
+	var inner_positions: Array[Vector3] = []
+	for idx in logic._drag_union_override:
+		inner_positions.append(md.positions[idx])
+	var centroid := Vector3.ZERO
+	for p in inner_positions:
+		centroid += p
+	centroid /= float(inner_positions.size())
+	var first_radius: float = (inner_positions[0] - centroid).length()
+	for p in inner_positions:
+		assert_almost_eq((p - centroid).length(), first_radius, 0.01,
+			"Aspect ratio fixed: all corners sit at the same inset radius")
+	assert_lt(first_radius, 0.71 * 0.75,
+		"A 0.5 dominant scale shrinks the inner face (halfway to the centroid)")
+
+	logic.commit_subgizmos(mesh, ids, false)
+	assert_eq(md.faces.size(), faces_before + 4, "Commit keeps the inset topology")
 
 func test_center_drag_with_shift_insets_faces_uniformly():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
