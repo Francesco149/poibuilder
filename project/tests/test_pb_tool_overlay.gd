@@ -318,8 +318,8 @@ func test_overlay_reset_to_default_position():
 	overlay.reset_to_default_position()
 	assert_false(overlay._custom_position_set,
 		"Reset clears custom position flag")
-	assert_eq(overlay.grow_vertical, Control.GROW_DIRECTION_BEGIN,
-		"Reset restores bottom-left anchor orientation")
+	assert_eq(overlay.position.x, PBToolOverlay.DEFAULT_OFFSET,
+		"Reset restores default horizontal offset")
 
 func test_overlay_is_offscreen_and_recovery():
 	var parent := Control.new()

@@ -135,19 +135,37 @@ func _ensure_ui() -> void:
 			editor_gui.get_theme_stylebox("Information3dViewport", "EditorStyles"))
 
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	gui_input.connect(_on_header_gui_input)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	add_child(vbox)
 
-	# ── Header: logo + title + collapse (the drag handle) ────────────────────
+	# ── Header bar: styled titlebar with logo, title, reset, and collapse ───
+	var header_bar := PanelContainer.new()
+	header_bar.name = "HeaderBar"
+	header_bar.mouse_filter = Control.MOUSE_FILTER_PASS
+	var header_style := StyleBoxFlat.new()
+	header_style.bg_color = Color(0.14, 0.16, 0.20, 0.9)
+	header_style.corner_radius_top_left = 4
+	header_style.corner_radius_top_right = 4
+	header_style.corner_radius_bottom_left = 4
+	header_style.corner_radius_bottom_right = 4
+	header_style.content_margin_left = 6
+	header_style.content_margin_right = 4
+	header_style.content_margin_top = 4
+	header_style.content_margin_bottom = 4
+	header_bar.add_theme_stylebox_override("panel", header_style)
+	vbox.add_child(header_bar)
+
 	var header := HBoxContainer.new()
+	header.name = "Header"
 	header.add_theme_constant_override("separation", 6)
 	header.mouse_filter = Control.MOUSE_FILTER_STOP
 	header.gui_input.connect(_on_header_gui_input)
 	header.mouse_default_cursor_shape = Control.CURSOR_MOVE
 	header.tooltip_text = "Drag header to move panel | Double-click or Right-click to reset position"
-
+	header_bar.add_child(header)
 	var logo := TextureRect.new()
 	logo.texture = _load_icon("pb_logo.svg")
 	logo.custom_minimum_size = Vector2(16, 16)
@@ -176,6 +194,15 @@ func _ensure_ui() -> void:
 	_collapse_btn.tooltip_text = "Collapse / expand the panel"
 	_collapse_btn.pressed.connect(_on_collapse_pressed)
 	header.add_child(_collapse_btn)
+
+	var reset_btn := Button.new()
+	reset_btn.name = "ResetButton"
+	reset_btn.flat = true
+	reset_btn.focus_mode = Control.FOCUS_NONE
+	reset_btn.text = "↺"
+	reset_btn.tooltip_text = "Reset panel position to bottom-left corner"
+	reset_btn.pressed.connect(reset_to_default_position)
+	header.add_child(reset_btn)
 
 	# ── Body (hidden when collapsed) ─────────────────────────────────────────
 	_body = VBoxContainer.new()
@@ -273,26 +300,31 @@ func _ensure_ui() -> void:
 func _apply_anchor() -> void:
 	if not is_inside_tree():
 		return
-	_custom_position_set = false
-	# Bottom-left of the host viewport, 12px in from the corner, growing up
-	# and right from there. The header drag repositions freely from here.
-	set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, int(DEFAULT_OFFSET))
-	grow_vertical = Control.GROW_DIRECTION_BEGIN
-	grow_horizontal = Control.GROW_DIRECTION_END
+	reset_to_default_position()
 
 ## Clamps the panel so it stays fully inside the parent viewport with padding.
+## The header is strictly prioritized to never go above the viewport top.
 func clamp_to_viewport() -> void:
 	var parent_ctl := get_parent() as Control
 	if parent_ctl == null:
 		return
 	var max_x := maxf(PADDING, parent_ctl.size.x - size.x - PADDING)
-	var max_y := maxf(PADDING, parent_ctl.size.y - size.y - PADDING)
 	position.x = clampf(position.x, PADDING, max_x)
+	var max_y := maxf(PADDING, parent_ctl.size.y - size.y - PADDING)
 	position.y = clampf(position.y, PADDING, max_y)
 
 ## Resets panel back to its default bottom-left docked location.
 func reset_to_default_position() -> void:
-	_apply_anchor()
+	_custom_position_set = false
+	var parent_ctl := get_parent() as Control
+	if parent_ctl != null:
+		set_anchors_preset(Control.PRESET_TOP_LEFT)
+		grow_vertical = Control.GROW_DIRECTION_END
+		grow_horizontal = Control.GROW_DIRECTION_END
+		var target_y := maxf(PADDING, parent_ctl.size.y - size.y - DEFAULT_OFFSET)
+		position = Vector2(DEFAULT_OFFSET, target_y)
+	else:
+		position = Vector2(DEFAULT_OFFSET, DEFAULT_OFFSET)
 ## Returns true if the panel is completely outside the parent's visible rect.
 func is_offscreen() -> bool:
 	var parent_ctl := get_parent() as Control
