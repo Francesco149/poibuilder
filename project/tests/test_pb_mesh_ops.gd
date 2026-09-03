@@ -234,7 +234,7 @@ func test_subdivide_face_topology():
 	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
 	assert_true(result["ok"], "Subdivide succeeds: " + str(result.get("error", "")))
 	assert_eq(data.faces.size(), 9, "6 - 1 + 4 sub-quads")
-	assert_eq(data.positions.size(), 29, "24 + 4 edge midpoints + 1 center")
+	assert_eq(data.positions.size(), 33, "24 + 4 subquad midpoints + 1 center + 4 neighbor midpoints")
 	assert_eq(data.shared_vertices.size(), 13, "8 + 4 + 1")
 	for fi in result["new_face_ids"]:
 		assert_gt(_face_normal(data, fi).dot(Vector3.UP), 0.99, "Sub-quads stay +Y")
@@ -254,6 +254,38 @@ func test_subdivide_adjacent_faces_share_midpoints():
 		if group.indices.size() >= 2:
 			multi_groups += 1
 	assert_gt(multi_groups, 8, "Rim midpoints are welded across the two faces")
+
+func test_subdivide_face_welds_midpoints_to_neighbor_ngons():
+	var data := _cube()
+	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
+	assert_true(result["ok"])
+
+	# Every edge midpoint must be welded to its neighbor face (>= 2 indices)
+	var lookup := data.get_shared_vertex_lookup()
+	var sub_face: int = result["new_face_ids"][0]
+	for idx in data.faces[sub_face].get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if absf(p.y - 0.5) < 0.001 and (absf(p.x) < 0.001 or absf(p.z) < 0.001) \
+				and not (absf(p.x) < 0.001 and absf(p.z) < 0.001):
+			var grp: int = lookup[idx]
+			assert_gte(data.shared_vertices[grp].indices.size(), 2,
+				"Midpoint at %s must be welded to adjacent side wall" % str(p))
+
+	# Moving the sub-quad must move the welded side-wall vertices, keeping the mesh closed
+	var ed := PBEditor.new()
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+	ed.select_mode = PBEditor.SelectMode.FACE
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = data
+	ed.active_mesh = mesh
+
+	var ids := PackedInt32Array([sub_face])
+	var start_xf := logic.get_subgizmo_transform(data, mesh, sub_face)
+	logic.set_subgizmo_transform(mesh, ids, sub_face, start_xf.translated(Vector3(0, 0.4, 0)))
+
+	# Watertight check: no open edges
+	_assert_watertight(data, "subdivided and lifted subquad")
 
 func test_subdivide_non_quad_fails():
 	var data := _cube()
@@ -398,9 +430,8 @@ func test_merge_subdivided_face_back_to_one_face():
 	assert_eq(data.faces.size(), 6, "Four sub-quads become one face again")
 	assert_eq(data.validate(), "", "Re-merged cube validates")
 	# The center vertex orphans away; the 4 rim midpoints REMAIN as collinear
-	# corners of the merged face (an octagon) — T-junctions against the
-	# neighbor faces are expected; collapsing them is a future weld op.
-	assert_eq(data.positions.size(), 28, "29 - the orphaned center vertex")
+	# corners of the merged face (an octagon) and are welded to the neighbor n-gons.
+	assert_eq(data.positions.size(), 32, "33 - the orphaned center vertex")
 	assert_eq(data.shared_vertices.size(), 12, "8 corners + 4 rim midpoints")
 	# The merged face is planar +Y: every one of its corners sits at y = +0.5.
 	var merged: int = merge["new_face_ids"][0]
