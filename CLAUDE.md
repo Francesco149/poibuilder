@@ -793,6 +793,18 @@ v0.9.21 round complete ✓ (nightly workflow, crisp wireframe/arrow, facing bias
   ping-pongs at the slightest mouse movement; deliberate lateral nudges (> deadzone)
   still allow manual 90° rotation.
 
+v0.9.22 round complete ✓ (flat clean creation arrow, loosened bias & door tunnel nudging)
+- ARROW MANGLING / EXTRA SPIKE: `_add_creation_arrow` had a perpendicular vertical
+  triangle fin (`l_head_up`) on the arrowhead and a vertical quad on the shaft, which
+  projected sideways at angles as an ugly sticking-out spike. Removed all vertical fins;
+  the arrow is now a completely flat, crisp, solid 2D decal (solid triangular arrowhead +
+  solid rectangular shaft) lying flush in the surface plane with clean 1px border outlines.
+- LOOSENED BIAS & DOOR TUNNEL NUDGING: `FACING_DEAD_ZONE` tuned to 0.08m (8cm), and
+  distinguished base rect establishment from post-creation nudging via `_has_initial_base`.
+  Doors naturally default to doorway orientation (facing shorter wall thickness), but
+  deliberately nudging across the arrow by > 0.08m rotates it into a tunnel (facing the
+  longer dimension) and persists across subsequent frames without snapping back.
+
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.
 
