@@ -264,126 +264,24 @@ func _build_straight_stairs_ramp_shape() -> Shape3D:
 	return shape
 
 func _build_curved_stairs_ramp_shape() -> Shape3D:
+	if pb_mesh_data == null:
+		return null
+	if pb_mesh_data.has_meta("ramp_faces"):
+		var shape := ConcavePolygonShape3D.new()
+		shape.set_faces(pb_mesh_data.get_meta("ramp_faces"))
+		return shape
+
+	# Fallback: generate matching curved stairs with shape_params to retrieve ramp_faces
 	var params: Dictionary = pb_mesh_data.shape_params if pb_mesh_data != null else {}
 	var stair_w: float = float(params.get("stair_width", 1.5))
 	var h: float = float(params.get("height", 2.0))
 	var r_in: float = maxf(0.0, float(params.get("inner_radius", 0.5)))
-	var r_out: float = r_in + maxf(0.05, stair_w)
 	var cur_deg: float = float(params.get("curvature", 180.0))
 	var steps: int = maxi(1, int(params.get("steps", 8)))
-	var hh: float = h * 0.5
-	var is_pie: bool = r_in <= 0.0001
-	var is_flipped: bool = cur_deg < 0.0
-	var cir: float = deg_to_rad(absf(cur_deg))
-	if cir <= 0.0001:
-		cir = deg_to_rad(180.0)
-
-	var step_h: float = h / float(steps)
-
-	var faces := PackedVector3Array()
-
-	var add_quad := func(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3) -> void:
-		faces.append(p0)
-		faces.append(p1)
-		faces.append(p2)
-		faces.append(p2)
-		faces.append(p3)
-		faces.append(p0)
-
-	var add_tri := func(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
-		faces.append(p0)
-		faces.append(p1)
-		faces.append(p2)
-
-	for s in range(steps):
-		var inc0: float = (float(s) / float(steps)) * cir
-		var inc1: float = (float(s + 1) / float(steps)) * cir
-
-		var v0 := Vector3(-cos(inc0), 0.0, sin(inc0))
-		var v1 := Vector3(-cos(inc1), 0.0, sin(inc1))
-
-		# Smooth ramp height from ground (-hh) at start to top (+hh)
-		var y0: float = -hh + (float(s) / float(steps)) * h
-		var y1: float = -hh + (float(s + 1) / float(steps)) * h
-		# Top ramp surface (normal pointing upward +Y)
-		if is_pie:
-			var t_center := Vector3(0.0, y0, 0.0)
-			var t_out0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
-			var t_out1 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			add_tri.call(t_center, t_out0, t_out1)
-		else:
-			var t0 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
-			var t1 := Vector3(v0.x * r_out, y0, v0.z * r_out)
-			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			var t3 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
-			add_quad.call(t0, t1, t2, t3)
-
-		# Outer wall
-		var ow_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
-		var ow_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
-		var ow_t1 := Vector3(v1.x * r_out,  y1, v1.z * r_out)
-		var ow_t0 := Vector3(v0.x * r_out,  y0, v0.z * r_out)
-		add_quad.call(ow_b0, ow_b1, ow_t1, ow_t0)
-
-		# Inner wall
-		if not is_pie:
-			var iw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
-			var iw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
-			var iw_t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
-			var iw_t0 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
-			add_quad.call(iw_b1, iw_b0, iw_t0, iw_t1)
-
-		# Floor
-		var f_out0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
-		var f_out1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
-		if is_pie:
-			add_tri.call(Vector3(0.0, -hh, 0.0), f_out1, f_out0)
-		else:
-			var f_in0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
-			var f_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
-			add_quad.call(f_in0, f_in1, f_out1, f_out0)
-
-	# Front edge at s=0 is flush with the ground at y=-hh (no initial step)
-	# Back vertical wall at s=steps
-	var v_end := Vector3(-cos(cir), 0.0, sin(cir))
-	if is_pie:
-		add_tri.call(Vector3(0.0, -hh, 0.0), Vector3(v_end.x * r_out, hh, v_end.z * r_out), Vector3(v_end.x * r_out, -hh, v_end.z * r_out))
-	else:
-		add_quad.call(
-			Vector3(v_end.x * r_out, -hh, v_end.z * r_out),
-			Vector3(v_end.x * r_in,  -hh, v_end.z * r_in),
-			Vector3(v_end.x * r_in,   hh, v_end.z * r_in),
-			Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
-		)
-
-	# Negative curvature
-	if is_flipped:
-		for i in range(faces.size()):
-			faces[i].x = -faces[i].x
-		for i in range(0, faces.size(), 3):
-			var tmp := faces[i + 1]
-			faces[i + 1] = faces[i + 2]
-			faces[i + 2] = tmp
-	# Align ramp collider center in X and Z exactly to visual mesh AABB center
-	if faces.size() > 0 and mesh != null:
-		var ramp_min_x: float = faces[0].x
-		var ramp_max_x: float = faces[0].x
-		var ramp_min_z: float = faces[0].z
-		var ramp_max_z: float = faces[0].z
-		for p in faces:
-			ramp_min_x = minf(ramp_min_x, p.x)
-			ramp_max_x = maxf(ramp_max_x, p.x)
-			ramp_min_z = minf(ramp_min_z, p.z)
-			ramp_max_z = maxf(ramp_max_z, p.z)
-		var ramp_cx := (ramp_min_x + ramp_max_x) * 0.5
-		var ramp_cz := (ramp_min_z + ramp_max_z) * 0.5
-		var mesh_aabb: AABB = mesh.get_aabb()
-		var target_cx := mesh_aabb.position.x + mesh_aabb.size.x * 0.5
-		var target_cz := mesh_aabb.position.z + mesh_aabb.size.z * 0.5
-		var shift := Vector3(ramp_cx - target_cx, 0.0, ramp_cz - target_cz)
-		for i in range(faces.size()):
-			faces[i] -= shift
-
-	var shape := ConcavePolygonShape3D.new()
-	shape.set_faces(faces)
-	return shape
+	var sides: bool = float(params.get("sides", 1.0)) > 0.5
+	var temp := PBShapeComplex.create_curved_stairs(stair_w, h, r_in, cur_deg, steps, sides)
+	if temp != null and temp.has_meta("ramp_faces"):
+		var shape := ConcavePolygonShape3D.new()
+		shape.set_faces(temp.get_meta("ramp_faces"))
+		return shape
+	return null

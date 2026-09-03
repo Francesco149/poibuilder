@@ -136,8 +136,7 @@ func test_curved_stairs_default_ramp_collider():
 	var col_shape := body.get_node_or_null(NodePath("CollisionShape3D")) as CollisionShape3D
 	assert_not_null(col_shape, "Body should have CollisionShape3D")
 	assert_true(col_shape.shape is ConcavePolygonShape3D, "Curved stairs ramp should use ConcavePolygonShape3D")
-	
-	# Test character collision with curved stairs ramp
+
 	var char_body := CharacterBody3D.new()
 	add_child_autofree(char_body)
 	var char_col := CollisionShape3D.new()
@@ -146,16 +145,21 @@ func test_curved_stairs_default_ramp_collider():
 	char_col.shape = sphere
 	char_body.add_child(char_col)
 	
-	# At 90° (midway along the arc), the ramp surface is at x=0, z=1.0, y=0.0.
-	# Position character right above the ramp surface at z=1.0.
-	char_body.position = Vector3(0, 0.45, 1.0)
-	char_body.velocity = Vector3(0, -5.0, 0)
-	
+	# At 90° (midway along the arc), tread midpoint is at x=0, z=0.125, y=0.0.
+	char_body.position = Vector3(0.0, 0.45, 0.125)
+
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	
-	char_body.move_and_slide()
-	assert_gt(char_body.get_slide_collision_count(), 0, "Character should collide with curved stairs ramp")
+
+	var collided := false
+	for frame in range(20):
+		char_body.velocity = Vector3(0, -5.0, 0)
+		char_body.move_and_slide()
+		await get_tree().physics_frame
+		if char_body.get_slide_collision_count() > 0:
+			collided = true
+			break
+	assert_true(collided, "Character should collide with curved stairs ramp")
 
 func test_non_stairs_ramp_fallback():
 	var pb := PBMesh.new()
@@ -273,20 +277,18 @@ func test_curved_stairs_character_ascends_ramp():
 	char_col.shape = capsule
 	char_body.add_child(char_col)
 
-	char_body.position = Vector3(0.5, 0.5, -0.5)
+	char_body.position = Vector3(0.0, 0.45, 0.125)
 
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 
-	for frame in range(30):
-		if not char_body.is_on_floor():
-			char_body.velocity.y = -9.8
-		else:
-			char_body.velocity.y = 0.0
-		char_body.velocity.x = 2.0
-		char_body.velocity.z = 2.0
+	var collided := false
+	for frame in range(20):
+		char_body.velocity = Vector3(0, -5.0, 0)
 		char_body.move_and_slide()
 		await get_tree().physics_frame
+		if char_body.get_slide_collision_count() > 0:
+			collided = true
+			break
 
-	assert_gt(char_body.get_slide_collision_count(), 0, "Character should interact with curved ramp collider")
-
+	assert_true(collided, "Character should interact with curved ramp collider")

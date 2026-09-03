@@ -398,7 +398,7 @@ func _run() -> void:
 		else:
 			# Any viewport click elsewhere must auto-apply and hand the
 			# session over — no dead modal state.
-			var elsewhere := _window_pos(vp, host, Vector3(0.2, 0.5001, 1.8))
+			var elsewhere := _window_pos(vp, host, Vector3(2.5, 0.5001, 0.0))
 			await _click(elsewhere)
 			await _frames(15)
 			if plugin.tool_overlay.params_open:

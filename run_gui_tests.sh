@@ -19,7 +19,17 @@ cd "$(dirname "$0")/project"
 HARNESS_HOME="$(mktemp -d /tmp/pb_gui_home.XXXXXX)"
 trap 'rm -rf "$HARNESS_HOME"' EXIT
 
+OUT=$(mktemp /tmp/pb_gui_out.XXXXXX)
 HOME="$HARNESS_HOME" LIBGL_ALWAYS_SOFTWARE=1 PB_GUI_TEST=1 \
-    exec xvfb-run -a -s "-screen 0 1600x900x24" \
+    xvfb-run -a -s "-screen 0 1600x900x24" \
     godot-mono --editor --rendering-driver opengl3 \
-    res://test_scenes/editor_gui_test.tscn
+    res://test_scenes/editor_gui_test.tscn 2>&1 | tee "$OUT" || true
+
+if grep -q "done, failures=0" "$OUT"; then
+    rm -f "$OUT"
+    exit 0
+fi
+
+FAILURES=$(grep -oE "done, failures=[0-9]+" "$OUT" | grep -oE "[0-9]+" || echo 1)
+rm -f "$OUT"
+exit "$FAILURES"
