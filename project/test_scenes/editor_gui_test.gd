@@ -517,6 +517,9 @@ func _run() -> void:
 			else:
 				_pass("CROSSZERO: sides stayed outward after crossing zero (vol=%.2f, was %.2f)"
 					% [vol, vol_before])
+			var shot6 := vp.get_texture().get_image()
+			shot6.save_png("/tmp/pb_extrude_state.png")
+			print("[GUI TEST] DEBUG extrude-state screenshot saved")
 
 	# ── Test 7: center scale handle — detection, uniform scale, inset ────────
 	# Fresh cube, FACE mode, select the top face, switch to the SCALE tool.
@@ -633,6 +636,11 @@ func _run() -> void:
 	else:
 		_pass("UNDO: view refreshed immediately after undo (pixel_diff=%d)" % diff)
 
+	# DEBUG: screenshot the final extruded state (view-vs-data comparison).
+	await _mouse_motion(_window_pos(vp, host, Vector3(0.5, 0.4, 2.5)))
+	await _frames(6)
+	(vp.get_texture().get_image()).save_png("/tmp/pb_extrude_state.png")
+	print("[GUI TEST] DEBUG extrude-state screenshot saved, positions=%d" % b.pb_mesh_data.positions.size())
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

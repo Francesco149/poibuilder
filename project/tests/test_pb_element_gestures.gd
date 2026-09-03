@@ -410,6 +410,35 @@ func test_shift_scale_on_faces_insets():
 	logic.commit_subgizmos(mesh, ids, false)
 	assert_eq(md.faces.size(), faces_before + 4, "Commit keeps the inset topology")
 
+func test_shift_move_drag_union_has_no_stale_indexes():
+	# The op's drag_positions must be remapped through compact's position
+	# remap. Stale indexes pointed the union at WALL corners — the drag tore
+	# walls off the mesh ("missing, unselectable faces").
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var ids := _ids([0])  # front face (z = -0.5)
+	var state := _gesture_state(s, ids, true)
+	for id in ids:
+		logic.set_subgizmo_transform_with_shift(mesh, ids, id,
+			state["start"][id].translated(Vector3(0.5, 0, 0)), true)
+
+	var max_index: int = -1
+	for idx in logic._drag_union_override:
+		max_index = maxi(max_index, idx)
+	assert_lt(max_index, md.positions.size(),
+		"Drag union indexes are remapped through compact (no stale indexes)")
+
+	var counts := PBMeshOps.edge_usage_counts(md)
+	var open := 0
+	for k in counts:
+		if counts[k] < 2:
+			open += 1
+	assert_eq(open, 0,
+		"No open boundary edges — the swept tube stays welded (no torn walls)")
+
 func test_center_drag_with_shift_insets_faces_uniformly():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.SCALE)
 	var logic: PBElementEditor = s["logic"]

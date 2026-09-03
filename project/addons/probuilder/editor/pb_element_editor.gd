@@ -90,8 +90,13 @@ var _last_inset_amount: float = 0.0
 ## the drag-start snapshot (idempotent, like the position replay).
 var _drag_side_faces: Array[PBFace] = []
 var _drag_side_tris: Array = []  # PackedInt32Array per side face (original)
+var _drag_side_base_e1: Array[Vector3] = []  # base edge (qa->qb) per side face
+var _drag_side_flipped: PackedByteArray = PackedByteArray()
+var _drag_cap_faces: Array[PBFace] = []
+var _drag_cap_tris: Array = []  # PackedInt32Array per cap face (original)
+var _drag_cap_flipped: bool = false
+var _drag_extrude_region_center: Vector3 = Vector3.ZERO  # seed cap center
 var _drag_extrude_normal: Vector3 = Vector3.ZERO
-var _drag_sides_flipped: bool = false
 var _extrude_constrained: bool = false
 
 ## Live mouse feed (editor only): the plugin forwards every viewport motion
@@ -672,8 +677,13 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_center_has_start = false
 	_drag_side_faces = []
 	_drag_side_tris = []
+	_drag_side_base_e1 = []
+	_drag_cap_faces = []
+	_drag_cap_tris = []
+	_drag_cap_flipped = false
+	_drag_extrude_region_center = Vector3.ZERO
+	_drag_side_flipped = PackedByteArray()
 	_drag_extrude_normal = Vector3.ZERO
-	_drag_sides_flipped = false
 	_extrude_constrained = false
 	_drag_mouse_driven = false
 	drag_mouse_active = false
@@ -776,21 +786,42 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	_drag_original_positions = mesh_data.positions.duplicate()
 	_drag_union_override = result["drag_positions"]
 
+	# Region center at seed = the average seed position of the drag union
+	# (the cap is coincident with the original face at extrude distance 0).
+	var region_center := Vector3.ZERO
+	if not _drag_union_override.is_empty():
+		for idx in _drag_union_override:
+			region_center += mesh_data.positions[idx]
+		_drag_extrude_region_center = region_center / float(_drag_union_override.size())
+
 	# Side faces = the op's new faces minus the caps (fins extruded from
 	# edges ARE the caps — edge gestures get no flip treatment).
 	_drag_side_faces = []
 	_drag_side_tris = []
+	_drag_side_base_e1 = []
+	_drag_cap_faces = []
+	_drag_cap_tris = []
 	if editor.select_mode != PBEditor.SelectMode.EDGE:
 		var caps: PackedInt32Array = result["cap_face_ids"]
 		var cap_set := {}
 		for fi in caps:
 			cap_set[fi] = true
+			if fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
+				_drag_cap_faces.append(mesh_data.faces[fi])
+				_drag_cap_tris.append(mesh_data.faces[fi].get_indexes().duplicate())
 		for fi in result["new_face_ids"]:
 			if not cap_set.has(fi) and fi < mesh_data.faces.size() \
 					and mesh_data.faces[fi] != null:
 				_drag_side_faces.append(mesh_data.faces[fi])
-				_drag_side_tris.append(mesh_data.faces[fi].get_indexes().duplicate())
-	_drag_sides_flipped = false
+				var tris := mesh_data.faces[fi].get_indexes()
+				_drag_side_tris.append(tris.duplicate())
+				# Base edge of the wall quad (qa -> qb): its first two
+				# corners; they never move during the drag.
+				_drag_side_base_e1.append(
+					mesh_data.positions[tris[1]] - mesh_data.positions[tris[0]])
+	_drag_side_flipped = PackedByteArray()
+	_drag_side_flipped.resize(_drag_side_faces.size())
+	_drag_cap_flipped = false
 
 	# Mouse-driven extrusion baseline: the cursor position at gesture begin,
 	# the cap pivot in world space, and the extrude normal in world space
@@ -1075,30 +1106,44 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 
 	mesh_data.positions = new_positions
 
-	# EXTRUDE_MOVE: when the cap crosses back through its base plane, flip
-	# the side quads' winding so they stay outward-facing (a wound-for-+normal
-	# tube rendered at negative extrusion shows its backfaces — "missing
-	# faces"). Rewritten from the drag-start snapshot; idempotent.
+	# EXTRUDE_MOVE: the CAP flips when the sweep reverses against the extrude
+	# normal (the cap leads the sweep — its outward follows the sweep
+	# direction); each SIDE wall flips independently when its winding points
+	# into the swept solid (checked against the translated region center).
+	# Both rewrites come from the drag-start snapshot (idempotent).
 	var flipped_now := false
-	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
-			and _drag_extrude_normal.length_squared() > 0.5:
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_cap_faces.is_empty():
 		var crossed := applied_motion.dot(_drag_extrude_normal) < 0.0
-		if crossed != _drag_sides_flipped:
-			_drag_sides_flipped = crossed
+		if crossed != _drag_cap_flipped:
+			_drag_cap_flipped = crossed
 			flipped_now = true
-			for i in range(_drag_side_faces.size()):
-				var face: PBFace = _drag_side_faces[i]
-				var tris: PackedInt32Array = _drag_side_tris[i]
-				if crossed:
-					var flipped := PackedInt32Array()
-					flipped.resize(tris.size())
-					for t in range(0, tris.size() - 2, 3):
-						flipped[t] = tris[t + 2]
-						flipped[t + 1] = tris[t + 1]
-						flipped[t + 2] = tris[t]
-					face.set_indexes(flipped)
-				else:
-					face.set_indexes(tris.duplicate())
+			for i in range(_drag_cap_faces.size()):
+				_set_face_winding(_drag_cap_faces[i], _drag_cap_tris[i], crossed)
+	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
+			and applied_motion.length_squared() > 0.000000001:
+		var sweep := applied_motion
+		var translated_center := _drag_extrude_region_center + sweep
+		for i in range(_drag_side_faces.size()):
+			var tris: PackedInt32Array = _drag_side_tris[i]
+			var a: Vector3 = mesh_data.positions[tris[0]]
+			var b: Vector3 = mesh_data.positions[tris[1]]
+			var a2: Vector3 = mesh_data.positions[tris[4]]
+			var e1 := _drag_side_base_e1[i]
+			var winding_n := e1.cross(sweep)
+			if winding_n.length_squared() < 0.000000001:
+				continue
+			var wall_center := (a + b + a2 * 2.0) * 0.25
+			var outward := wall_center - translated_center
+			# Combine both references: the radial handles normal-axis
+			# crossings; the extrude normal handles walls folded by sideways
+			# sweeps. A wall whose winding disagrees with either enough to
+			# go negative is inside-out.
+			var wants_flipped: bool = winding_n.normalized().dot(
+				(outward.normalized() + _drag_extrude_normal).normalized()) < 0.0
+			if wants_flipped != bool(_drag_side_flipped[i]):
+				_drag_side_flipped[i] = 1 if wants_flipped else 0
+				_set_face_winding(_drag_side_faces[i], tris, wants_flipped)
+				flipped_now = true
 
 	if flipped_now:
 		# A winding flip changes the side faces' normals too (including the
@@ -1330,8 +1375,45 @@ func _log_face_orientation_audit(mesh_data: PBMeshData) -> void:
 			fcen /= float(n)
 		if fnorm.length_squared() > 0.000000001 and fnorm.normalized().dot((fcen - cen).normalized()) < -0.05:
 			inverted.append(fi)
-	logger.info("audit", "face orientation: F=%d V=%d signed_volume=%.3f inward_wound_faces=%s" % [mesh_data.faces.size(), p.size(), vol, str(inverted)])
+	logger.info("audit", "face orientation: F=%d V=%d signed_volume=%.3f (tetra sum /6) inward_wound_faces=%s" % [mesh_data.faces.size(), p.size(), vol / 6.0, str(inverted)])
 
+
+## Compiles what the GPU actually draws: reads the node's ArrayMesh
+## surfaces, counts triangles, and flags any whose RENDERED winding points
+## inward. The data-side audit can pass while the compiled mesh disagrees -
+## this split locates a "missing faces" report definitively.
+func _render_triangle_audit(mesh_node: PBMesh) -> void:
+	if logger == null or mesh_node.mesh == null or mesh_node.pb_mesh_data == null:
+		return
+	var p := mesh_node.pb_mesh_data.positions
+	var cen := Vector3.ZERO
+	for pos in p:
+		cen += pos
+	cen /= float(p.size())
+	var rendered_tris := 0
+	var inverted: Array[int] = []
+	for s in range(mesh_node.mesh.get_surface_count()):
+		var arrays: Array = mesh_node.mesh.surface_get_arrays(s)
+		if arrays.is_empty() or arrays[Mesh.ARRAY_INDEX] == null:
+			continue
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		if verts.is_empty():
+			verts = p
+		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		for t in range(0, idx.size() - 2, 3):
+			var a: Vector3 = verts[idx[t]]
+			var b: Vector3 = verts[idx[t + 1]]
+			var c: Vector3 = verts[idx[t + 2]]
+			rendered_tris += 1
+			var n := (b - a).cross(c - a)
+			var tc := (a + b + c) / 3.0
+			# Godot renders CW front faces: after to_array_mesh's reversal a
+			# CORRECT triangle's geometric normal points INTO the mesh. A
+			# rendered normal pointing OUTWARD = inside-out (culled) face.
+			if n.length_squared() > 0.000000001 and n.normalized().dot((tc - cen).normalized()) > 0.05:
+				inverted.append(rendered_tris - 1)
+	var data_tris: int = mesh_node.pb_mesh_data.index_count() / 3
+	logger.info("audit", "render triangles=%d data_triangles=%d rendered_inward=%s" % [rendered_tris, data_tris, str(inverted)])
 func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
 	var mesh_node: PBMesh = instance_from_id(node_id) as PBMesh
 	if mesh_node == null or mesh_node.pb_mesh_data == null:
@@ -1346,6 +1428,7 @@ func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
 		logger.info("undo", "_restore_full_mesh applied on %s: V=%d F=%d (render rebuilt + gizmo refreshed)" % [
 			mesh_node.name, mesh_node.pb_mesh_data.positions.size(),
 			mesh_node.pb_mesh_data.faces.size()])
+		_render_triangle_audit(mesh_node)
 
 ## Reapplies a position subset by node instance id (undo/redo payload).
 ## Instance id survives history replay; missing nodes are skipped silently.
@@ -1384,8 +1467,13 @@ func _reset_drag_state() -> void:
 	_drag_ids = PackedInt32Array()
 	_drag_side_faces = []
 	_drag_side_tris = []
+	_drag_side_base_e1 = []
+	_drag_cap_faces = []
+	_drag_cap_tris = []
+	_drag_cap_flipped = false
+	_drag_extrude_region_center = Vector3.ZERO
+	_drag_side_flipped = PackedByteArray()
 	_drag_extrude_normal = Vector3.ZERO
-	_drag_sides_flipped = false
 	_extrude_constrained = false
 	_drag_mouse_driven = false
 	drag_mouse_active = false
@@ -1540,6 +1628,19 @@ func drag_readout() -> String:
 	if not _last_drag_scale.is_equal_approx(Vector3.ONE):
 		return "Scale: %s" % _fmt_vec(_last_drag_scale)
 	return "Delta: %s" % _fmt_vec(_last_drag_translation)
+
+## Writes a face's triangle winding, flipped or as originally captured.
+func _set_face_winding(face: PBFace, tris: PackedInt32Array, flipped: bool) -> void:
+	if flipped:
+		var out := PackedInt32Array()
+		out.resize(tris.size())
+		for t in range(0, tris.size() - 2, 3):
+			out[t] = tris[t + 2]
+			out[t + 1] = tris[t + 1]
+			out[t + 2] = tris[t]
+		face.set_indexes(out)
+	else:
+		face.set_indexes(tris.duplicate())
 
 ## Lerps the ring faces' inner corners with the SAME amount as the inner
 ## faces (they are duplicates of the pulled corners) — keeps the ring

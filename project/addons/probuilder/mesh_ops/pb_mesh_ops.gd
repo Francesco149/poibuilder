@@ -97,7 +97,15 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 			drag_positions.append(qb2)
 
 	var result := _replace_faces(mesh_data, removed, caps, sides)
-	result["drag_positions"] = drag_positions
+	# drag_positions were collected BEFORE _compact remapped the position
+	# indexes (the removed face's corners are dropped). Stale indexes made
+	# the drag union point at WALL corners — tearing walls off the mesh
+	# ("missing, unselectable faces").
+	var remap: Dictionary = result["position_remap"]
+	var final_drag := PackedInt32Array()
+	for idx in drag_positions:
+		final_drag.append(remap.get(idx, idx))
+	result["drag_positions"] = final_drag
 	return result
 
 ## Insets each selected face independently: the face is replaced by a shrunken
@@ -504,14 +512,17 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		return _fail("Extrude edges: no extrudable edges (degenerate normals)")
 
 	mesh_data.faces.append_array(new_faces)
-	_rebuild_topology(mesh_data)
+	var remap: Dictionary = _rebuild_topology(mesh_data)
 
 	var new_ids := PackedInt32Array()
 	var base: int = mesh_data.faces.size() - new_faces.size()
 	for i in range(new_faces.size()):
 		new_ids.append(base + i)
+	var final_drag := PackedInt32Array()
+	for idx in drag_positions:
+		final_drag.append(remap.get(idx, idx))
 	return {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids,
-		"drag_positions": drag_positions}
+		"drag_positions": final_drag}
 
 # ==============================================================================
 # Selection helpers
@@ -770,18 +781,20 @@ static func _replace_faces(mesh_data: PBMeshData, removed: Dictionary,
 		secondary_ids.append(final.size() - 1)
 
 	mesh_data.faces = final
-	_rebuild_topology(mesh_data)
+	var remap := _rebuild_topology(mesh_data)
 
 	var all_ids := PackedInt32Array(primary_ids)
 	for sid in secondary_ids:
 		all_ids.append(sid)
-	return {"ok": true, "cap_face_ids": primary_ids, "new_face_ids": all_ids}
+	return {"ok": true, "cap_face_ids": primary_ids, "new_face_ids": all_ids,
+		"position_remap": remap}
 
 ## Post-op topology repair: compact orphaned positions, rebuild weld groups
 ## from coincident positions, invalidate caches.
-static func _rebuild_topology(mesh_data: PBMeshData) -> void:
-	_compact(mesh_data)
+static func _rebuild_topology(mesh_data: PBMeshData) -> Dictionary:
+	var remap := _compact(mesh_data)
 	_rebuild_welds(mesh_data)
+	return remap
 
 static func _rebuild_welds(mesh_data: PBMeshData) -> void:
 	mesh_data.shared_vertices = PBMeshData.build_welds_from_positions(
@@ -789,7 +802,9 @@ static func _rebuild_welds(mesh_data: PBMeshData) -> void:
 	mesh_data.invalidate_caches()
 
 ## Drops position indices no face references, remapping faces and attributes.
-static func _compact(mesh_data: PBMeshData) -> void:
+## Returns the old->new position remap it applied (empty when nothing was
+## dropped) so callers can remap position indexes captured before the op.
+static func _compact(mesh_data: PBMeshData) -> Dictionary:
 	var referenced := {}
 	for face in mesh_data.faces:
 		if face == null:
@@ -805,7 +820,7 @@ static func _compact(mesh_data: PBMeshData) -> void:
 			remap[i] = new_positions.size()
 			new_positions.append(mesh_data.positions[i])
 	if new_positions.size() == old_count:
-		return
+		return remap
 
 	mesh_data.positions = new_positions
 	if mesh_data.textures0.size() == old_count:
@@ -821,6 +836,7 @@ static func _compact(mesh_data: PBMeshData) -> void:
 		for idx in face.get_indexes():
 			remapped.append(remap.get(idx, idx))
 		face.set_indexes(remapped)
+	return remap
 
 static func _remap_packed_vector2(src: PackedVector2Array, remap: Dictionary) -> PackedVector2Array:
 	var out := PackedVector2Array()

@@ -339,6 +339,35 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.11 round complete ✓ — THE "missing faces" root cause, from the
+second LOGGED sign-off (the v0.9.10 audit line `inward_wound_faces=[8]`
+was the smoking gun):
+- STALE drag_positions THROUGH COMPACT: extrude_faces collected
+  drag_positions (the corners the gesture moves) BEFORE _replace_faces
+  ran _compact — which drops the removed face's corners and REMAPS every
+  later position index. The returned union was stale by the shift:
+  union entries pointed at WALL corners and base dups, so the drag tore
+  walls off the mesh and left the cap partially unmoved — "2 faces
+  missing (front and top), unselectable". _compact now RETURNS its
+  remap; _replace_faces exposes it as result["position_remap"];
+  extrude_faces and extrude_edges remap drag_positions through it.
+  Regression test: after the gesture, no open boundary edges and no
+  union index out of range.
+- PER-WALL ORIENTATION: a sideways cap sweep folds individual side walls
+  through the plane (their winding flips one wall at a time — the old
+  all-or-nothing crossing flag missed exactly one wall, matching the
+  audit's inward_wound_faces=[8]). Each wall's winding is now checked
+  per frame against outward = translated-center radial + extrude normal,
+  and flipped independently. The CAP flips when the sweep reverses
+  against the extrude normal (the cap leads the sweep). Harness audits
+  are clean for sideways, normal-axis, and crossing extrudes.
+- RENDER-TRIANGLE AUDIT: _restore_full_mesh logs the compiled ArrayMesh's
+  triangle count and any triangles whose RENDERED winding points outward
+  (Godot CW: correct rendered normals point INTO the mesh — flag > +0.05
+  outward, the opposite sign of the data-side audit). This splits
+  "missing faces" into data bugs vs render bugs definitively.
+- The data audit's signed volume is calibrated (tetra sum / 6).
+
 v0.9.10 round complete ✓ — from the second LOGGED sign-off (the v0.9.9 log
 proved the engine rel now tracks the cursor exactly on the element-space
 normal-axis drag — the in-place cap fix worked; the remaining reports
