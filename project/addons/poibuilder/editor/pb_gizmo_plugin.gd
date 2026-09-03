@@ -462,55 +462,88 @@ func _commit_handle(gizmo, handle_id: int, secondary: bool, restore: Variant,
 	element_editor.commit_center_drag(node, selected, cancel)
 	node.update_gizmos()
 
-## Draws each input line (a pair of points) as a center line plus parallel
-## offset lines, approximating a thick stroke from any angle. `offset` is the
-## world-space distance between sub-lines; `stacks` is how many offset
-## directions are drawn (2 = the full five-line stroke, 1 = a thinner
-## center+±perp1 stroke).
+## Draws each input line (a pair of points) as a crisp, solid 3D stroke using
+## filled cross-quads (plus a center line for guaranteed subpixel visibility at
+## distance). This eliminates the fuzzy, multi-line "wire comb" artifact when
+## zoomed in, maintaining a solid, clean beam at any zoom level.
 static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material,
 		offset: float = THICK_LINE_OFFSET, stacks: int = 2) -> void:
 	var n: int = pairs.size()
 	if n < 2:
 		return
-	var mult: int = 3 if stacks == 1 else 5
-	var out := PackedVector3Array()
-	out.resize(n * mult)
-	var write_idx: int = 0
+
+	# 1. Center hardware lines: guaranteed min 1px visibility at any distance
+	gizmo.add_lines(pairs, material)
+
+	# 2. Solid crossed quads: fills the stroke volume with unshaded triangles
+	# so it stays completely solid and never splits into fuzzy parallel wires when zoomed in.
 	var o := offset
+	var quads_per_seg: int = 2 if stacks >= 2 else 1
+	var num_segs: int = n / 2
+	var verts := PackedVector3Array()
+	var indices := PackedInt32Array()
+	verts.resize(num_segs * quads_per_seg * 4)
+	indices.resize(num_segs * quads_per_seg * 6)
+
+	var v_idx: int = 0
+	var i_idx: int = 0
 	var i: int = 0
 	while i + 1 < n:
 		var a: Vector3 = pairs[i]
 		var b: Vector3 = pairs[i + 1]
-		var dir := (b - a)
+		var dir := b - a
 		if dir.length_squared() > 0.000000001:
 			dir = dir.normalized()
 			var perp1 := dir.cross(Vector3.UP)
 			if perp1.length_squared() < 0.25:
 				perp1 = dir.cross(Vector3.RIGHT)
 			perp1 = perp1.normalized() * o
-			out[write_idx] = a
-			out[write_idx + 1] = b
-			out[write_idx + 2] = a + perp1
-			out[write_idx + 3] = b + perp1
-			out[write_idx + 4] = a - perp1
-			out[write_idx + 5] = b - perp1
-			write_idx += 6
+
+			# Quad 1 (along perp1)
+			var base_v := v_idx
+			verts[v_idx]     = a - perp1
+			verts[v_idx + 1] = a + perp1
+			verts[v_idx + 2] = b + perp1
+			verts[v_idx + 3] = b - perp1
+			v_idx += 4
+
+			indices[i_idx]     = base_v
+			indices[i_idx + 1] = base_v + 1
+			indices[i_idx + 2] = base_v + 2
+			indices[i_idx + 3] = base_v
+			indices[i_idx + 4] = base_v + 2
+			indices[i_idx + 5] = base_v + 3
+			i_idx += 6
+
 			if stacks >= 2:
 				var perp2 := dir.cross(perp1.normalized()).normalized() * o
-				out[write_idx] = a + perp2
-				out[write_idx + 1] = b + perp2
-				out[write_idx + 2] = a - perp2
-				out[write_idx + 3] = b - perp2
-				write_idx += 4
-		else:
-			out[write_idx] = a
-			out[write_idx + 1] = b
-			write_idx += 2
+				var base_v2 := v_idx
+				verts[v_idx]     = a - perp2
+				verts[v_idx + 1] = a + perp2
+				verts[v_idx + 2] = b + perp2
+				verts[v_idx + 3] = b - perp2
+				v_idx += 4
+
+				indices[i_idx]     = base_v2
+				indices[i_idx + 1] = base_v2 + 1
+				indices[i_idx + 2] = base_v2 + 2
+				indices[i_idx + 3] = base_v2
+				indices[i_idx + 4] = base_v2 + 2
+				indices[i_idx + 5] = base_v2 + 3
+				i_idx += 6
 		i += 2
-	if write_idx < out.size():
-		out.resize(write_idx)
-	if out.size() >= 2:
-		gizmo.add_lines(out, material)
+
+	if v_idx > 0:
+		if v_idx < verts.size():
+			verts.resize(v_idx)
+			indices.resize(i_idx)
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_INDEX] = indices
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		gizmo.add_mesh(mesh, material)
 ## True when the node is in the editor's selection. EditorNode3DGizmo's own
 ## is_selected() is not script-bound on all supported engine versions (4.8
 ## added it), so query the EditorSelection directly.
@@ -657,31 +690,96 @@ func _creation_materials() -> void:
 		_creation_vert_material = _make_point_material(SELECTED_COLOR, 11.0)
 		_creation_vert_material.render_priority = RenderingServer.MATERIAL_RENDER_PRIORITY_MAX
 
-## Adds the orange facing arrow as thick on-top lines: a shaft from `base`
-## along `dir` plus two barbs forming a backward V at the tip. All barbs lie
-## IN the dragged surface plane (an out-of-plane barb component rendered as
-## a degenerate standing "Y").
+## Adds the orange facing arrow as a crisp, solid 3D arrow: a solid rectangular
+## shaft along `dir` plus a solid triangular arrowhead at the tip, lying in the
+## dragged surface plane with perpendicular finning for all-angle visibility.
+## Crisp and solid at any zoom level, avoiding the fuzzy multi-line artifact.
 func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vector3,
 		length: float, plane_normal: Vector3) -> void:
-	var tip := base + dir * length
-	var side := dir.cross(plane_normal).normalized()
+	if length < 0.001:
+		return
+	var norm_dir := dir.normalized()
+	var tip := base + norm_dir * length
+	var side := norm_dir.cross(plane_normal).normalized()
 	if side.length_squared() < 0.5:
-		side = dir.cross(Vector3.UP)
+		side = norm_dir.cross(Vector3.UP)
 		if side.length_squared() < 0.5:
-			side = dir.cross(Vector3.RIGHT)
+			side = norm_dir.cross(Vector3.RIGHT)
 	side = side.normalized()
-	var back := -dir.normalized() * length * 0.3
-	var half := side * length * 0.22
-	var arrow := PackedVector3Array([
-		base, tip,
-		tip, tip + back + half,
-		tip, tip + back - half,
-	])
-	var local := PackedVector3Array()
-	for p in arrow:
-		local.append(to_local * p)
-	_add_thick_lines(gizmo, local, _creation_arrow_material, THICK_LINE_OFFSET * 2.0)
+	var up := side.cross(norm_dir).normalized()
 
+	var barb_len: float = length * 0.30
+	var head_half_width: float = length * 0.20
+	var head_base := tip - norm_dir * barb_len
+	var left_barb := head_base + side * head_half_width
+	var right_barb := head_base - side * head_half_width
+	var shaft_half_width: float = maxf(length * 0.035, 0.01)
+
+	# Transform all key points to local space
+	var l_base := to_local * base
+	var l_tip := to_local * tip
+	var l_head_base := to_local * head_base
+	var l_left_barb := to_local * left_barb
+	var l_right_barb := to_local * right_barb
+
+	var l_side := to_local.basis * (side * shaft_half_width)
+	var l_up := to_local.basis * (up * shaft_half_width)
+
+	# 1. Solid mesh: arrowhead triangle + shaft quads (in-plane and perpendicular fin)
+	var verts := PackedVector3Array()
+	var indices := PackedInt32Array()
+
+	# Arrowhead: solid triangle in the plane (tip, left_barb, right_barb)
+	# plus vertical fin for edge-on visibility
+	var l_head_up := to_local.basis * (up * (head_half_width * 0.5))
+	verts.append(l_tip)                            # 0
+	verts.append(l_left_barb)                     # 1
+	verts.append(l_right_barb)                    # 2
+	verts.append(l_head_base + l_head_up)         # 3
+	verts.append(l_head_base - l_head_up)         # 4
+	# In-plane arrowhead triangle:
+	indices.append_array([0, 1, 2])
+	# Vertical arrowhead triangle fin:
+	indices.append_array([0, 3, 4])
+
+	# Shaft: quad in the plane + quad perpendicular to the plane
+	var s_idx := verts.size()
+	verts.append(l_base - l_side)                 # s_idx + 0
+	verts.append(l_base + l_side)                 # s_idx + 1
+	verts.append(l_head_base + l_side)            # s_idx + 2
+	verts.append(l_head_base - l_side)            # s_idx + 3
+	indices.append_array([
+		s_idx, s_idx + 1, s_idx + 2,
+		s_idx, s_idx + 2, s_idx + 3
+	])
+
+	var f_idx := verts.size()
+	verts.append(l_base - l_up)                   # f_idx + 0
+	verts.append(l_base + l_up)                   # f_idx + 1
+	verts.append(l_head_base + l_up)              # f_idx + 2
+	verts.append(l_head_base - l_up)              # f_idx + 3
+	indices.append_array([
+		f_idx, f_idx + 1, f_idx + 2,
+		f_idx, f_idx + 2, f_idx + 3
+	])
+
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	gizmo.add_mesh(mesh, _creation_arrow_material)
+
+	# 2. Crisp 1px outline lines for guaranteed subpixel visibility
+	var outline := PackedVector3Array([
+		l_base, l_head_base,
+		l_head_base, l_left_barb,
+		l_left_barb, l_tip,
+		l_tip, l_right_barb,
+		l_right_barb, l_head_base
+	])
+	gizmo.add_lines(outline, _creation_arrow_material)
 ## Adds yellow square vertex gizmos (GL points) at the world-space points.
 func _add_vert_squares(gizmo, to_local: Transform3D, world_points: PackedVector3Array) -> void:
 	if world_points.is_empty():
