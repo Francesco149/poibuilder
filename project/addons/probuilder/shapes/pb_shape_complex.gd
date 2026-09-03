@@ -29,6 +29,50 @@ static func _build_shared_vertices(positions: PackedVector3Array) -> Array[PBSha
 		shared.append(sv)
 	return shared
 
+## Emits ONE face from a list of coplanar pieces (quads [p0..p3] or tris
+## [p0..p2], each CCW-from-outside). Piece corners are deduplicated by
+## coordinate into a per-face vertex pool, so shared piece edges appear
+## twice in the triangle list and cancel out of the derived perimeter —
+## the face acts as a single welded polygon (one entry in the wireframe,
+## one pick target, one extrude boundary) while the pieces remain only as
+## its internal triangulation. `uv_of` projects a corner to UV space.
+static func _add_polygon_face(
+	positions: PackedVector3Array,
+	uvs: PackedVector2Array,
+	faces: Array[PBFace],
+	pieces: Array,
+	uv_of: Callable
+) -> void:
+	var pool: Dictionary = {}  # coordinate key -> pool index
+	var pool_pos: Array[Vector3] = []
+	var pool_uv: Array[Vector2] = []
+	var local_idx := PackedInt32Array()
+	for piece in pieces:
+		var corner_count: int = piece.size()
+		var tri_sets: Array = [[0, 1, 2]] if corner_count == 3 \
+			else [[0, 1, 2], [0, 2, 3]]
+		for tri in tri_sets:
+			for ci in tri:
+				var corner: Vector3 = piece[ci]
+				var key := "%s|%s|%s" % [
+					snappedf(corner.x, 0.0001) + 0.0,
+					snappedf(corner.y, 0.0001) + 0.0,
+					snappedf(corner.z, 0.0001) + 0.0]
+				if not pool.has(key):
+					pool[key] = pool_pos.size()
+					pool_pos.append(corner)
+					pool_uv.append(uv_of.call(corner))
+				local_idx.append(pool[key])
+	var base: int = positions.size()
+	for p3 in pool_pos:
+		positions.append(p3)
+	for p2 in pool_uv:
+		uvs.append(p2)
+	var indexes := PackedInt32Array()
+	for idx in local_idx:
+		indexes.append(base + idx)
+	faces.append(PBFace.new(indexes))
+
 ## Helper to add a quad face (4 vertices, 2 triangles = 6 indices) to mesh arrays.
 static func _add_quad(
 	positions: PackedVector3Array,
@@ -523,55 +567,51 @@ static func create_door(
 				if absf(arc[k].y - yo) < 0.0001:
 					arc[k].y = yo
 
-	## The shell is built T-JUNCTION-FREE: every face edge is either shared
-	## in full with exactly one neighboring face or lies on the bottom rim.
-	## A junction vert ON another face's edge (not a corner) would stay
-	## behind when that face is grabbed and tear a triangular hole — the
-	## door's outer walls used to tear at the opening-top line for exactly
-	## this reason. Consequences: the legs split at the spring line (when
-	## jambs exist), the outer walls split at every y-level a front/back
-	## face starts or ends at, the header band splits into one strip per
-	## arc segment, and the top wall splits at every header strip boundary.
+	## The shell is welded ONE FACE PER SIDE: the front/back are single
+	## n-gon faces AROUND the opening (their pieces — legs, header strips,
+	## spandrels — are only the internal triangulation; the shared piece
+	## edges cancel out of the perimeter), the outer walls and the top are
+	## single quads. The piece layout below is still T-junction-free: every
+	## perimeter sub-edge of one face pairs exactly with the neighbor face's
+	## sub-edge, so any face can stretch or extrude without tearing.
 	var has_jambs: bool = spring_y > y0 + 0.0001
-	# The legs/walls split at the spring line ONLY when an arch actually
-	# springs above the floor (a flat lintel's spring line IS the opening
-	# top — splitting there would emit zero-height slivers).
+	# The legs split at the spring line ONLY when an arch actually springs
+	# above the floor (a flat lintel's spring line IS the opening top —
+	# splitting there would emit zero-height slivers).
 	var leg_split_at_spring: bool = has_jambs and arc_segs > 0
 	# x boundaries of the header band strips (the spandrel tops).
 	var strip_xs: PackedFloat32Array = PackedFloat32Array([x1])
 	for k in range(1, arc_segs):
 		strip_xs.append(arc[k].x)
 	strip_xs.append(x2)
-	# y segments of the outer walls: the levels any front/back face starts
-	# or ends at along the frame columns.
-	var wall_ys: Array = []
-	if leg_split_at_spring:
-		wall_ys = [[y0, spring_y], [spring_y, yo], [yo, y2]]
-	else:
-		wall_ys = [[y0, yo], [yo, y2]]
 
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
 
-	# ── Front faces (z = +hd, normals +Z) ────────────────────────────────────
+	var uv_xy := func(p: Vector3) -> Vector2: return Vector2(p.x, p.y)
+	var uv_zy := func(p: Vector3) -> Vector2: return Vector2(p.z, p.y)
+	var uv_xz := func(p: Vector3) -> Vector2: return Vector2(p.x, p.z)
+
+	# ── Front side (z = +hd, normal +Z): ONE n-gon around the opening ───────
+	var front_pieces: Array = []
 	for xs in [[x0, x1], [x2, x3]]:
 		var xa: float = xs[0]
 		var xb: float = xs[1]
 		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
 			else [[y0, yo]]
 		for ys in leg_ys:
-			_add_quad(positions, textures0, faces,
+			front_pieces.append([
 				Vector3(xa, ys[0], hd), Vector3(xb, ys[0], hd),
-				Vector3(xb, ys[1], hd), Vector3(xa, ys[1], hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, yo, hd), Vector3(x1, yo, hd), Vector3(x1, y2, hd), Vector3(x0, y2, hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x2, yo, hd), Vector3(x3, yo, hd), Vector3(x3, y2, hd), Vector3(x2, y2, hd))
+				Vector3(xb, ys[1], hd), Vector3(xa, ys[1], hd)])
+	front_pieces.append([
+		Vector3(x0, yo, hd), Vector3(x1, yo, hd), Vector3(x1, y2, hd), Vector3(x0, y2, hd)])
+	front_pieces.append([
+		Vector3(x2, yo, hd), Vector3(x3, yo, hd), Vector3(x3, y2, hd), Vector3(x2, y2, hd)])
 	for s in range(strip_xs.size() - 1):
-		_add_quad(positions, textures0, faces,
+		front_pieces.append([
 			Vector3(strip_xs[s], yo, hd), Vector3(strip_xs[s + 1], yo, hd),
-			Vector3(strip_xs[s + 1], y2, hd), Vector3(strip_xs[s], y2, hd))
+			Vector3(strip_xs[s + 1], y2, hd), Vector3(strip_xs[s], y2, hd)])
 	for k in range(arc_segs):
 		# Spandrel fill between the arc and the opening top. Segments touching
 		# the apex collapse to a triangle there (the arc meets the opening top
@@ -583,34 +623,38 @@ static func create_door(
 		if k_at_top and k1_at_top:
 			continue
 		if k1_at_top:
-			_add_tri(positions, textures0, faces,
-				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd), Vector3(a_k.x, yo, hd))
-		elif k_at_top:
-			_add_tri(positions, textures0, faces,
-				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd), Vector3(a_k1.x, yo, hd))
-		else:
-			_add_quad(positions, textures0, faces,
+			front_pieces.append([
 				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
-				Vector3(a_k1.x, yo, hd), Vector3(a_k.x, yo, hd))
+				Vector3(a_k.x, yo, hd)])
+		elif k_at_top:
+			front_pieces.append([
+				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
+				Vector3(a_k1.x, yo, hd)])
+		else:
+			front_pieces.append([
+				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
+				Vector3(a_k1.x, yo, hd), Vector3(a_k.x, yo, hd)])
+	_add_polygon_face(positions, textures0, faces, front_pieces, uv_xy)
 
-	# ── Back faces (z = -hd, normals -Z) ─────────────────────────────────────
+	# ── Back side (z = -hd, normal -Z): ONE n-gon around the opening ────────
+	var back_pieces: Array = []
 	for xs in [[x0, x1], [x2, x3]]:
 		var xa: float = xs[0]
 		var xb: float = xs[1]
 		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
 			else [[y0, yo]]
 		for ys in leg_ys:
-			_add_quad(positions, textures0, faces,
+			back_pieces.append([
 				Vector3(xa, ys[0], -hd), Vector3(xa, ys[1], -hd),
-				Vector3(xb, ys[1], -hd), Vector3(xb, ys[0], -hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, yo, -hd), Vector3(x0, y2, -hd), Vector3(x1, y2, -hd), Vector3(x1, yo, -hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x2, yo, -hd), Vector3(x2, y2, -hd), Vector3(x3, y2, -hd), Vector3(x3, yo, -hd))
+				Vector3(xb, ys[1], -hd), Vector3(xb, ys[0], -hd)])
+	back_pieces.append([
+		Vector3(x0, yo, -hd), Vector3(x0, y2, -hd), Vector3(x1, y2, -hd), Vector3(x1, yo, -hd)])
+	back_pieces.append([
+		Vector3(x2, yo, -hd), Vector3(x2, y2, -hd), Vector3(x3, y2, -hd), Vector3(x3, yo, -hd)])
 	for s in range(strip_xs.size() - 1):
-		_add_quad(positions, textures0, faces,
+		back_pieces.append([
 			Vector3(strip_xs[s], yo, -hd), Vector3(strip_xs[s], y2, -hd),
-			Vector3(strip_xs[s + 1], y2, -hd), Vector3(strip_xs[s + 1], yo, -hd))
+			Vector3(strip_xs[s + 1], y2, -hd), Vector3(strip_xs[s + 1], yo, -hd)])
 	for k in range(arc_segs):
 		var a_k: Vector2 = arc[k]
 		var a_k1: Vector2 = arc[k + 1]
@@ -619,15 +663,18 @@ static func create_door(
 		if k_at_top and k1_at_top:
 			continue
 		if k1_at_top:
-			_add_tri(positions, textures0, faces,
-				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
-		elif k_at_top:
-			_add_tri(positions, textures0, faces,
-				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
-		else:
-			_add_quad(positions, textures0, faces,
+			back_pieces.append([
 				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd),
-				Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
+				Vector3(a_k1.x, a_k1.y, -hd)])
+		elif k_at_top:
+			back_pieces.append([
+				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k1.x, yo, -hd),
+				Vector3(a_k1.x, a_k1.y, -hd)])
+		else:
+			back_pieces.append([
+				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd),
+				Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd)])
+	_add_polygon_face(positions, textures0, faces, back_pieces, uv_xy)
 
 	# ── Opening reveals ──────────────────────────────────────────────────────
 	# A flat-topped opening (or a semicircle springing above the floor) has
@@ -652,25 +699,37 @@ static func create_door(
 				Vector3(arc[k + 1].x, arc[k + 1].y, -hd), Vector3(arc[k + 1].x, arc[k + 1].y, hd))
 
 	# ── Outer shell (the frame's outside faces) ─────────────────────────────
-	# Split at every y-level a front/back face starts or ends at, so each
-	# shell piece shares FULL edges with the frame faces (no T-junctions).
+	# ONE face per side, built from pieces split at every y-level (walls) or
+	# x-level (top) a front/back perimeter sub-edge starts or ends at — the
+	# pieces cancel internally, but the face's front/back boundary chains
+	# pair exactly with the front/back faces' perimeter sub-edges.
+	var wall_ys: Array = []
+	if leg_split_at_spring:
+		wall_ys = [[y0, spring_y], [spring_y, yo], [yo, y2]]
+	else:
+		wall_ys = [[y0, yo], [yo, y2]]
+	var left_pieces: Array = []
+	var right_pieces: Array = []
 	for ys in wall_ys:
-		# Left outer wall pieces (normal -X)
-		_add_quad(positions, textures0, faces,
+		left_pieces.append([
 			Vector3(x0, ys[0], -hd), Vector3(x0, ys[0], hd),
-			Vector3(x0, ys[1], hd), Vector3(x0, ys[1], -hd))
-		# Right outer wall pieces (normal +X)
-		_add_quad(positions, textures0, faces,
+			Vector3(x0, ys[1], hd), Vector3(x0, ys[1], -hd)])
+		right_pieces.append([
 			Vector3(x3, ys[0], -hd), Vector3(x3, ys[1], -hd),
-			Vector3(x3, ys[1], hd), Vector3(x3, ys[0], hd))
-	# Top wall pieces (normal +Y), split at every header strip boundary.
+			Vector3(x3, ys[1], hd), Vector3(x3, ys[0], hd)])
+	_add_polygon_face(positions, textures0, faces, left_pieces, uv_zy)
+	_add_polygon_face(positions, textures0, faces, right_pieces, uv_zy)
+	# Top wall: split at every header strip boundary (its front/back edge
+	# chains match the front/back faces' top sub-edges).
+	var top_pieces: Array = []
 	var top_xs: PackedFloat32Array = PackedFloat32Array([x0])
 	top_xs.append_array(strip_xs)
 	top_xs.append(x3)
 	for s in range(top_xs.size() - 1):
-		_add_quad(positions, textures0, faces,
+		top_pieces.append([
 			Vector3(top_xs[s], y2, -hd), Vector3(top_xs[s], y2, hd),
-			Vector3(top_xs[s + 1], y2, hd), Vector3(top_xs[s + 1], y2, -hd))
+			Vector3(top_xs[s + 1], y2, hd), Vector3(top_xs[s + 1], y2, -hd)])
+	_add_polygon_face(positions, textures0, faces, top_pieces, uv_xz)
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0

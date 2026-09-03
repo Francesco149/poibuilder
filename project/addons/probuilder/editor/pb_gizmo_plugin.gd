@@ -363,9 +363,6 @@ func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
 	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
 	if selected.is_empty():
 		return
-	# The pivot sits at the expanded selection's center (a clicked side is
-	# its whole coplanar region in FACE mode).
-	selected = element_editor.expand_face_ids(mesh_data, selected)
 	# Pivot = the average origin of the selected elements (node-local).
 	var acc := Vector3.ZERO
 	var count := 0
@@ -414,8 +411,7 @@ func _get_handle_value(gizmo, handle_id: int, secondary: bool):
 	if node == null or node.pb_mesh_data == null:
 		return null
 	return {"pivot": element_editor.center_pivot(node.pb_mesh_data,
-		element_editor.expand_face_ids(node.pb_mesh_data,
-			gizmo.get_subgizmo_selection())), "factor": 1.0}
+		gizmo.get_subgizmo_selection()), "factor": 1.0}
 
 func _set_handle(gizmo, handle_id: int, secondary: bool, camera: Camera3D,
 		screen_pos: Vector2) -> void:
@@ -436,9 +432,7 @@ func _set_handle(gizmo, handle_id: int, secondary: bool, camera: Camera3D,
 		# First motion of the gesture: decide uniform scale vs inset.
 		var inset: bool = Input.is_key_pressed(KEY_SHIFT) \
 			and editor.select_mode == PBEditor.SelectMode.FACE
-		var region_ids: PackedInt32Array = element_editor.expand_face_ids(
-			node.pb_mesh_data, selected)
-		var pivot := element_editor.center_pivot(node.pb_mesh_data, region_ids)
+		var pivot := element_editor.center_pivot(node.pb_mesh_data, selected)
 		if not element_editor.begin_center_drag(node, selected, inset, pivot, screen_pos):
 			return
 
@@ -515,13 +509,8 @@ func _mirror_engine_selection(gizmo, node: PBMesh, mesh_data: PBMeshData) -> voi
 func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 	var fill_meshes: Array[Mesh] = []
 	var selected_any: bool = false
-	# Region expansion: the engine selection holds the seed face ids; the
-	# highlighted fill covers each seed's whole coplanar side.
-	var selected_set := {}
-	for id in element_editor.expand_face_ids(mesh_data, gizmo.get_subgizmo_selection()):
-		selected_set[id] = true
 	for fi in range(mesh_data.faces.size()):
-		if not selected_set.has(fi):
+		if not gizmo.is_subgizmo_selected(fi):
 			continue
 		selected_any = true
 		var fill := element_editor.build_face_fill_mesh(mesh_data, fi)

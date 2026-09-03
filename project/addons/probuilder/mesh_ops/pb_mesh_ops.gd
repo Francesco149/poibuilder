@@ -128,6 +128,8 @@ static func inset_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 		var loop := _ordered_loop(face)
 		if loop.size() < 3:
 			return _fail("Inset faces: face %d has no clean perimeter loop" % fi)
+		if loop.size() != face.get_distinct_indexes().size():
+			return _fail("Inset faces: face %d has a hole — inset is not supported" % fi)
 
 		var centroid := Vector3.ZERO
 		for idx in loop:

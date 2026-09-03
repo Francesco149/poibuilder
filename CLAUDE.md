@@ -603,6 +603,46 @@ sign-off report:
   drive the plugin's delivery path directly against real click-made
   selections.
 
+v0.9.17 round complete ✓ — the v0.9.16 region-select was WRONG and is
+GONE, replaced by real welded geometry in the door generator (from the
+fourth sign-off follow-up: "they need to be welded as if the faces were
+merged — wireframe gone, extrudes normally... a stock door should be 1
+n-gon face per side (and quads for the non-hole sides) but each side
+extrudes normally and the edges from extruding stay. Other shapes behave
+like before"):
+- WHY THE v0.9.16 APPROACH WAS WRONG: selection-time coplanar expansion
+  joined faces that merely HAPPEN to be coplanar — after extruding a
+  cube's top, the new front wall is coplanar with (and edge-connected to)
+  the cube's front face, so both selected and moved as one ("can't select
+  the extruded part"), and every extrude chained into the body. Lesson
+  recorded: NEVER encode shape-specific topology semantics into the
+  shared selection layer — welding is a property of the GEOMETRY a
+  generator emits. All region machinery (expand_face_ids, the PBMeshData
+  region cache) is removed; selection, drags, and ops are per-face again.
+- MERGED DOOR GEOMETRY: create_door now emits ONE face per side via
+  PBShapeComplex._add_polygon_face — a per-face vertex pool turns a list
+  of coplanar pieces into a single PBFace whose triangle list shares
+  pool vertices; PBFace._cache_edges cancels interior edges (appearing
+  twice) so the face's derived perimeter is its TRUE boundary: front and
+  back are n-gons AROUND the opening (outer rect chain + hole outline),
+  outer walls/top are merged faces of their split pieces (their boundary
+  sub-edge chains still pair 1:1 with the front/back perimeter — the
+  T-junction-free pairing from v0.9.15 is preserved at the SUB-EDGE
+  level), jambs/lintel/tunnel stay single quads. Face counts: flat 8,
+  arched N+7 (13 @ 6). Wireframe shows only true boundaries; clicking a
+  side grabs the whole side; extruding it creates ONE cap + one wall per
+  perimeter sub-edge (24 on the stock door) around BOTH the outer rect
+  and the hole, and the new edges persist. The extrude gesture path,
+  weld rebuild at commit, and undo snapshots all work unchanged on the
+  merged faces.
+- HOLE-FACE GUARD: inset_faces (and the loop-cut quad check) now fail
+  cleanly on faces whose perimeter is more than one cycle
+  (loop.size() != distinct count) — a polygon with a hole cannot inset.
+- Tests: door counts updated; test_door_front_is_one_ngon_with_hole_
+  perimeter (perimeter pairs 1:1 or sits on the rim) and
+  test_door_front_extrudes_normally (1 cap + 24 walls, rim unchanged);
+  region tests removed. 625/625 + GUI harness green.
+
 v0.9.16 round complete ✓ — "weld all the faces so each side selects as 1
 face" + the door's height drag, from the fourth sign-off:
 - COPLANAR REGION SELECT (FACE mode): a clicked face now stands for its
