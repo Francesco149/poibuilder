@@ -27,6 +27,15 @@ const COLLIDER_SHAPE_NAME := "CollisionShape3D"
 ## The physics collider generation mode.
 @export var collider_type: ColliderType = ColliderType.ACCURATE:
 	set = set_collider_type
+## When true, draws the collision shape debug wireframe directly in the 3D viewport.
+@export var show_collider: bool = false:
+	set = set_show_collider
+
+func set_show_collider(value: bool) -> void:
+	if show_collider == value:
+		return
+	show_collider = value
+	update_gizmos()
 
 var _collider_type_explicit: bool = false
 
@@ -296,17 +305,17 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 		# Smooth ramp height from ground (-hh) at start to top (+hh)
 		var y0: float = -hh + (float(s) / float(steps)) * h
 		var y1: float = -hh + (float(s + 1) / float(steps)) * h
-		# Top ramp surface
+		# Top ramp surface (normal pointing upward +Y)
 		if is_pie:
-			var t_center := Vector3(0.0, y1, 0.0)
+			var t_center := Vector3(0.0, y0, 0.0)
 			var t_out0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
 			var t_out1 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			add_tri.call(t_center, t_out1, t_out0)
+			add_tri.call(t_center, t_out0, t_out1)
 		else:
 			var t0 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
-			var t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
+			var t1 := Vector3(v0.x * r_out, y0, v0.z * r_out)
 			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			var t3 := Vector3(v0.x * r_out, y0, v0.z * r_out)
+			var t3 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
 			add_quad.call(t0, t1, t2, t3)
 
 		# Outer wall
@@ -328,11 +337,11 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 		var f_out0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
 		var f_out1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
 		if is_pie:
-			add_tri.call(Vector3(0.0, -hh, 0.0), f_out0, f_out1)
+			add_tri.call(Vector3(0.0, -hh, 0.0), f_out1, f_out0)
 		else:
 			var f_in0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
 			var f_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
-			add_quad.call(f_in0, f_out0, f_out1, f_in1)
+			add_quad.call(f_in0, f_in1, f_out1, f_out0)
 
 	# Front edge at s=0 is flush with the ground at y=-hh (no initial step)
 	# Back vertical wall at s=steps
@@ -355,21 +364,25 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 			var tmp := faces[i + 1]
 			faces[i + 1] = faces[i + 2]
 			faces[i + 2] = tmp
-
-	# Center around origin in X and Z
-	if faces.size() > 0:
-		var min_x: float = faces[0].x
-		var max_x: float = faces[0].x
-		var min_z: float = faces[0].z
-		var max_z: float = faces[0].z
+	# Align ramp collider center in X and Z exactly to visual mesh AABB center
+	if faces.size() > 0 and mesh != null:
+		var ramp_min_x: float = faces[0].x
+		var ramp_max_x: float = faces[0].x
+		var ramp_min_z: float = faces[0].z
+		var ramp_max_z: float = faces[0].z
 		for p in faces:
-			min_x = minf(min_x, p.x)
-			max_x = maxf(max_x, p.x)
-			min_z = minf(min_z, p.z)
-			max_z = maxf(max_z, p.z)
-		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
+			ramp_min_x = minf(ramp_min_x, p.x)
+			ramp_max_x = maxf(ramp_max_x, p.x)
+			ramp_min_z = minf(ramp_min_z, p.z)
+			ramp_max_z = maxf(ramp_max_z, p.z)
+		var ramp_cx := (ramp_min_x + ramp_max_x) * 0.5
+		var ramp_cz := (ramp_min_z + ramp_max_z) * 0.5
+		var mesh_aabb: AABB = mesh.get_aabb()
+		var target_cx := mesh_aabb.position.x + mesh_aabb.size.x * 0.5
+		var target_cz := mesh_aabb.position.z + mesh_aabb.size.z * 0.5
+		var shift := Vector3(ramp_cx - target_cx, 0.0, ramp_cz - target_cz)
 		for i in range(faces.size()):
-			faces[i] -= offset
+			faces[i] -= shift
 
 	var shape := ConcavePolygonShape3D.new()
 	shape.set_faces(faces)

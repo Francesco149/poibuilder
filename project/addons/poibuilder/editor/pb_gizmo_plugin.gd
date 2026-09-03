@@ -126,6 +126,7 @@ func _init() -> void:
 	create_material("pb_selected_edge", SELECTED_COLOR, false, true)
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
 	create_handle_material("pb_center_handle")
+	create_material("pb_collider_debug", Color(0.1, 1.0, 0.4, 0.95), false, true, true)
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
@@ -311,7 +312,12 @@ func _redraw(gizmo) -> void:
 			return
 
 	if not _node_selected(node):
+		if node.show_collider and node.collider_type != PBMesh.ColliderType.OFF:
+			_draw_collider_debug(gizmo, node)
 		return
+
+	if node.show_collider and node.collider_type != PBMesh.ColliderType.OFF:
+		_draw_collider_debug(gizmo, node)
 
 	_mirror_engine_selection(gizmo, node, mesh_data)
 
@@ -879,3 +885,45 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 		if node != null:
 			var to_local := node.global_transform.affine_inverse()
 			_add_vert_squares(gizmo, to_local, PackedVector3Array([creation_hover_point]))
+
+## Draws a bright green wireframe overlay of the node's active physics collision shape.
+func _draw_collider_debug(gizmo, node: PBMesh) -> void:
+	var body := node.get_collider_body()
+	if body == null:
+		return
+	var col_shape := body.get_node_or_null(NodePath(PBMesh.COLLIDER_SHAPE_NAME)) as CollisionShape3D
+	if col_shape == null or col_shape.shape == null:
+		return
+
+	var lines := PackedVector3Array()
+	var s := col_shape.shape
+
+	if s is ConvexPolygonShape3D:
+		var pts: PackedVector3Array = (s as ConvexPolygonShape3D).points
+		if pts.size() == 6:
+			var edges := [
+				[0, 1], [1, 2], [2, 3], [3, 0],
+				[4, 5],
+				[0, 4], [1, 5],
+				[3, 4], [2, 5],
+			]
+			for e in edges:
+				lines.append(pts[e[0]])
+				lines.append(pts[e[1]])
+		else:
+			for i in range(pts.size()):
+				for j in range(i + 1, pts.size()):
+					lines.append(pts[i])
+					lines.append(pts[j])
+	elif s is ConcavePolygonShape3D:
+		var tris: PackedVector3Array = (s as ConcavePolygonShape3D).get_faces()
+		for i in range(0, tris.size() - 2, 3):
+			lines.append(tris[i])
+			lines.append(tris[i + 1])
+			lines.append(tris[i + 1])
+			lines.append(tris[i + 2])
+			lines.append(tris[i + 2])
+			lines.append(tris[i])
+
+	if lines.size() >= 2:
+		gizmo.add_lines(lines, get_material("pb_collider_debug", gizmo))
