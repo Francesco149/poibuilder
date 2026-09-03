@@ -208,7 +208,7 @@ func test_door_flat_lintel_has_closed_outer_shell():
 	assert_eq(md.validate(), "")
 	# Front + back n-gons + 2 jambs + 1 lintel + 2 walls + 1 top = 8 faces.
 	assert_eq(md.face_count(), 8, "Flat door: 8 faces")
-	assert_eq(md.vertex_count(), 56, "Flat door: 56 vertices")
+	assert_eq(md.vertex_count(), 40, "Flat door: 40 vertices")
 
 	var left_faces: Array = []
 	var right_faces: Array = []
@@ -417,11 +417,10 @@ func test_door_front_is_one_ngon_with_hole_perimeter():
 	assert_eq(md.faces.size(), 13)
 	var front: PBFace = md.faces[0]
 	var edges: Array[PBEdge] = front.get_edges()
-	# outer: 2 bottom + 3 left chain + 3 right chain + 8 top = 16
-	# hole: 2 jamb + 6 arc + 1 opening bottom = 9 → but 2 of the left/right
-	# chain edges cancel into fewer segments per the piece layout; the exact
-	# count is stable, assert the meaningful properties instead:
-	assert_gt(edges.size(), 13, "The front perimeter spans the hole AND the rect")
+	# The opening is a NOTCH touching the bottom edge, so the side is one
+	# simple concave polygon: 2 rim edges + 2 jamb edges + 6 arc edges +
+	# 2 side edges + 1 top edge = 13 perimeter edges, no collinear chains.
+	assert_eq(edges.size(), 13, "Front perimeter: one edge per true boundary edge")
 	assert_false(front.is_quad(), "The front is an n-gon, not a quad")
 	# Every perimeter edge of the front must pair with exactly one neighbor
 	# edge or sit on the bottom rim (no T-junctions).
@@ -458,9 +457,8 @@ func test_door_front_extrudes_normally():
 	var r: Dictionary = PBMeshOps.extrude_faces(md, PackedInt32Array([0]), 0.3)
 	assert_true(r["ok"], "Extrude ok")
 	assert_eq(r["cap_face_ids"].size(), 1, "One cap replaces the front")
-	# 12 remaining + 1 cap + 24 walls (one per perimeter edge, around the
-	# outer rect AND the hole) = 37.
-	assert_eq(md.faces.size(), 37, "The extrusion adds one wall per perimeter edge")
+	# 12 remaining + 1 cap + 13 walls (one per perimeter edge) = 26.
+	assert_eq(md.faces.size(), 26, "The extrusion adds one wall per perimeter edge")
 	var usage_after := _coord_open_counts(md)
 	var rim_after := 0
 	for k in usage_after.keys():

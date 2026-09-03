@@ -883,21 +883,30 @@ func test_ensure_welds_rebuilds_partial_coverage():
 	assert_true(md.ensure_welds(), "Partial coverage must be detected as damage")
 	assert_eq(md.shared_vertices.size(), 8)
 
-func test_face_fill_mesh_is_offset_centroid_fan():
-	## The selected-face highlight must be a centroid fan offset along the
-	## face normal (depth-testable) — not a raw triangle list that draws its
-	## triangulation diagonal through the surface.
+func test_face_fill_mesh_uses_the_face_triangulation():
+	## The selected-face highlight must re-use the face's OWN triangles,
+	## offset along the face normal. A centroid fan over the perimeter
+	## spills triangles outside concave/n-gon faces (the welded door sides).
 	var md := PBMeshData.create_cube(1.0)
 	var fill := PBElementEditor.build_face_fill_mesh(md, 0)
 	assert_not_null(fill)
 
 	var arrays := fill.surface_get_arrays(0)
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	assert_eq(verts.size(), 12, "Quad fan = 4 triangles = 12 vertices")
+	assert_eq(verts.size(), 6, "Quad = the face's own 2 triangles = 6 vertices")
 
 	# Every vertex is offset off the face plane (z = -0.5 face → z < -0.5)
 	for v in verts:
 		assert_lt(v.z, -0.5, "Fill vertices must sit just above the surface")
+
+	# And the fill's corners are the face's corners (modulo the normal
+	# offset) — no invented points.
+	var face_verts := {}
+	for idx in md.faces[0].get_distinct_indexes():
+		face_verts[Vector2(md.positions[idx].x, md.positions[idx].y)] = true
+	for v in verts:
+		assert_true(face_verts.has(Vector2(v.x, v.y)),
+			"Fill corner belongs to the face")
 
 # ==============================================================================
 # Regression: common edges must be POSITION pairs (round 5 — the wireframe X)
