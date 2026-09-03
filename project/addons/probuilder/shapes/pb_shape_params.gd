@@ -13,6 +13,7 @@ extends RefCounted
 const KIND_SIZE := "size"    ## width/height/depth — mapped onto the creation drag
 const KIND_COUNT := "count"  ## integer parameter (SpinBox step 1)
 const KIND_VALUE := "value"  ## plain float parameter
+const KIND_BOOL := "bool"    ## toggle (CheckBox; stored as 0.0 / 1.0)
 
 ## One entry per parameter: {name, label, min, max, step, suffix, kind}.
 ## Order defines the modal's row order.
@@ -44,6 +45,8 @@ static func get_param_defs(shape_id: StringName) -> Array:
 				_value_def("depth", "Depth", 0.05, 50.0, 1.0, "m"),
 				_value_def("opening_height", "Opening Height", 0.1, 100.0, 2.0, "m"),
 				_value_def("leg_width", "Frame Width", 0.05, 50.0, 0.5, "m"),
+				_bool_def("arched", "Arched", true),
+				_count_def("arch_segments", "Arch Segments", 1, 32, 6),
 			]
 		&"pipe":
 			return [
@@ -112,7 +115,8 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 		&"plane":
 			return PBShapeGenerators.create_plane(v["width"], v["depth"])
 		&"door":
-			return PBShapeComplex.create_door(v["width"], v["height"], v["opening_height"], v["leg_width"], v["depth"])
+			return PBShapeComplex.create_door(v["width"], v["height"], v["opening_height"],
+				v["leg_width"], v["depth"], v["arched"] > 0.5, int(v["arch_segments"]))
 		&"pipe":
 			return PBShapeCylinder.create_pipe(v["radius"], v["height"], v["thickness"], int(v["sides"]))
 		&"cone":
@@ -139,24 +143,59 @@ static func needs_params_modal(shape_id: StringName) -> bool:
 	return false
 
 ## The shape's facing direction in LOCAL space (the orange creation arrow),
-## or Vector3.ZERO when the shape has no meaningful facing. Stairs rise
-## toward +Z (their generator stacks steps along +Z).
+## or Vector3.ZERO when the shape is symmetric enough that an arrow would be
+## noise. Stairs rise toward +Z (their generator stacks steps along +Z); the
+## door's front face is its local +Z.
 static func facing_direction(shape_id: StringName) -> Vector3:
 	match shape_id:
-		&"stair", &"curved_stair":
+		&"stair", &"curved_stair", &"door":
 			return Vector3(0, 0, 1)
 	return Vector3.ZERO
+
+## The parameter the height drag drives for shapes WITHOUT a height param
+## (sphere / torus / arch — their vertical size IS a radius), relative to the
+## value the base drag left: value = base_value + rate * height. The rate is
+## chosen so the shape's topmost point follows the cursor 1:1 (sphere top =
+## 2·radius → 0.5; arch top = radius → 1.0). Empty for shapes with a real
+## height param (absolute mapping) and for the sprite (offset flow).
+static func height_drag_param(shape_id: StringName) -> Dictionary:
+	match shape_id:
+		&"sphere":
+			return {"param": "radius", "rate": 0.5, "min": 0.05}
+		&"torus":
+			return {"param": "tube_radius", "rate": 0.5, "min": 0.01}
+		&"arch":
+			return {"param": "radius", "rate": 1.0, "min": 0.05}
+	return {}
+
+## True when the shape must stay sitting ON the surface no matter which way
+## the height drag goes (round shapes shrink instead of growing below; the
+## sprite rides the normal). Shapes with a real height param keep ProBuilder's
+## negative-height "grow below the surface" behavior.
+static func stays_on_surface(shape_id: StringName) -> bool:
+	return shape_id == &"sprite" or not height_drag_param(shape_id).is_empty()
+
+## True when the creation height drag displaces the shape along the surface
+## normal instead of resizing it (the sprite placement flow: click to anchor,
+## mouse to push off the surface, click to confirm).
+static func height_drags_offset(shape_id: StringName) -> bool:
+	return shape_id == &"sprite"
 
 ## Maps a creation drag (base rect extents u/v in the surface plane + height
 ## along the normal) onto the shape's parameter values. The mapping is the
 ## same for EVERY surface because the placement basis already orients the
 ## data: u → width (local x), v → depth (local z), the normal extent →
-## height (local y — along the face normal, horizontal on walls). Radius-
-## style shapes use the largest extent. `height < 0` means "base drag only"
-## — height-driven values keep their current values.
+## height (local y — along the face normal, horizontal on walls).
+## `base_values` is the values snapshot at base release (empty during the
+## base drag itself); shapes without a height param use it to apply the
+## height drag RELATIVELY (height_drag_param) so the mouse drives the vertical
+## size directly instead of competing with the base extents via max().
+## `height = NAN` means "base drag only" — height-driven values keep their
+## current values. (A NEGATIVE height is a real signed drag: cubes grow
+## below the surface, round shapes shrink.)
 static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
-		height: float) -> void:
-	var height_known := height >= 0.0
+		height: float, base_values: Dictionary = {}) -> void:
+	var height_known := not is_nan(height)
 	if values.has("width"):
 		values["width"] = maxf(0.05, u_size)
 	if values.has("depth"):
@@ -164,14 +203,39 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 	if values.has("height") and height_known:
 		values["height"] = maxf(0.05, height)
 	if not values.has("height"):
-		# Round-in-plan shapes grow with the height drag too.
-		var largest := maxf(u_size, v_size)
-		if height_known:
-			largest = maxf(largest, height)
+		# Round-in-plan shapes: the footprint grows from the base rect only —
+		# a rect footprint (the arch, which has a real depth) uses the width;
+		# a circular one (sphere, torus) inscribes the larger extent.
+		var footprint := maxf(u_size, v_size)
+		if values.has("depth"):
+			footprint = u_size
 		if values.has("radius"):
-			values["radius"] = maxf(0.05, largest * 0.5)
+			values["radius"] = maxf(0.05, footprint * 0.5)
 		elif values.has("outer_radius"):
-			values["outer_radius"] = maxf(0.1, largest * 0.5)
+			values["outer_radius"] = maxf(0.1, footprint * 0.5)
+		# The height drag drives the vertical size parameter relative to the
+		# base-release value, 1:1 with the cursor (see height_drag_param).
+		if height_known and not base_values.is_empty():
+			var mapping := height_drag_param(_shape_id_of_values(values))
+			if not mapping.is_empty() and base_values.has(mapping["param"]):
+				var param: String = mapping["param"]
+				values[param] = maxf(mapping["min"],
+					float(base_values[param]) + float(mapping["rate"]) * height)
+			# The torus tube must never outgrow the ring.
+			if values.has("tube_radius") and values.has("outer_radius"):
+				values["tube_radius"] = minf(values["tube_radius"],
+					values["outer_radius"] * 0.95)
+
+## Best-effort reverse lookup for apply_drag_extents: the values keys encode
+## which round shape this is (sphere radius / torus outer_radius).
+static func _shape_id_of_values(values: Dictionary) -> StringName:
+	if values.has("outer_radius") and values.has("tube_radius"):
+		return &"torus"
+	if values.has("subdivisions"):
+		return &"sphere"
+	if values.has("sweep"):
+		return &"arch"
+	return &""
 
 # ── Def builders ─────────────────────────────────────────────────────────────
 
@@ -192,6 +256,11 @@ static func _count_def(name: String, label: String, min_v: int, max_v: int,
 		default_v: int) -> Dictionary:
 	return {"name": name, "label": label, "min": float(min_v), "max": float(max_v),
 		"step": 1.0, "suffix": "", "default": float(default_v), "kind": KIND_COUNT}
+
+static func _bool_def(name: String, label: String, default_v: bool) -> Dictionary:
+	return {"name": name, "label": label, "min": 0.0, "max": 1.0,
+		"step": 1.0, "suffix": "", "default": 1.0 if default_v else 0.0,
+		"kind": KIND_BOOL}
 
 ## Keeps SpinBox steps human (0.1 for ranges spanning <10, 0.5 below 100,
 ## 1.0 beyond).

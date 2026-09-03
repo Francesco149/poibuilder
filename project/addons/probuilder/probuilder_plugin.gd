@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.12"
+const VERSION := "0.9.13"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -682,7 +682,11 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
 	shape_creator.arm(shape_id)
-	_set_creation_hint("%s — drag a base on any surface (Esc cancels)" % String(shape_id).capitalize())
+	if PBShapeParams.height_drags_offset(shape_id):
+		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
+			% String(shape_id).capitalize())
+	else:
+		_set_creation_hint("%s — drag a base on any surface (Esc cancels)" % String(shape_id).capitalize())
 	if logger:
 		logger.info("plugin", "Creating '%s' — drag on a surface to draw the base" % shape_id)
 
@@ -708,7 +712,7 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 						# marquee / selection under the creation drag.
 						return AFTER_GUI_INPUT_STOP
 					return AFTER_GUI_INPUT_PASS
-				PBShapeCreator.State.HEIGHT:
+				PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
 					_creation_confirm()
 					return AFTER_GUI_INPUT_STOP
 				PBShapeCreator.State.PARAMS:
@@ -781,7 +785,17 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	var hit := _pick_creation_surface(camera, screen_pos)
 	if hit.is_empty():
 		return false
-	shape_creator.begin(hit["point"], hit["normal"], camera.global_transform.basis.z)
+	var view_z: Vector3 = camera.global_transform.basis.z
+	if PBShapeParams.height_drags_offset(shape_creator.shape_id):
+		# Sprite flow: one click anchors the shape ON the surface; the mouse
+		# then pushes it along the surface normal until the confirming click.
+		shape_creator.begin_anchor(hit["point"], hit["normal"], view_z)
+		_clear_creation_hover()
+		_set_creation_hint("move off the surface to set the offset, then click to confirm")
+		_make_preview_node()
+		_refresh_preview()
+		return true
+	shape_creator.begin(hit["point"], hit["normal"], view_z)
 	# The pressed face's hover highlight dies with the drag start (the base
 	# outline takes over); hover stays off until the HEIGHT stage.
 	_clear_creation_hover()
@@ -839,7 +853,7 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 				_refresh_preview()
 			# No hover highlight while the base drag is out — the cursor is
 			# busy drawing the rect, not picking a face.
-		PBShapeCreator.State.HEIGHT:
+		PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
 			var ref := PBShapeCreator.height_reference_point(camera.global_position,
 				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
 			shape_creator.update_height_point(ref)

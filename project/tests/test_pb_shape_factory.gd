@@ -120,8 +120,9 @@ func test_create_door():
 	var md := PBShapeFactory.create_shape(&"door")
 	assert_not_null(md)
 	assert_eq(md.validate(), "")
-	assert_eq(md.vertex_count(), 52)
-	assert_eq(md.face_count(), 13)
+	# Factory door: arched default with 6 segments → 15 + 3*6 = 33 faces.
+	assert_eq(md.vertex_count(), 128)
+	assert_eq(md.face_count(), 33)
 
 func test_create_unknown():
 	var md := PBShapeFactory.create_shape(&"nonexistent")

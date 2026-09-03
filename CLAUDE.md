@@ -339,6 +339,45 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.13 round complete ✓ — creation UX for round shapes, arrow gating,
+door shell + arch, and the sprite placement flow:
+- ROUND-SHAPE HEIGHT DRAG: apply_drag_extents sized radius-style shapes
+  (sphere/torus/arch — no height param) by max(base extent, height), so the
+  height drag (1) did nothing until it exceeded the base rect, (2) never
+  shrank, and (3) placement_transform's negative-height flip (anchor TOP
+  face) yanked the whole shape underground — "sphere starts underground then
+  snaps up, torus stuck at a low 3rd dimension, arch crawls and jams at a
+  minimum". Now the creator snapshots base_values at release and the height
+  drag resizes RELATIVELY (PBShapeParams.height_drag_param: value = base +
+  rate·height, rate picked so the shape's TOP tracks the cursor 1:1: sphere
+  radius +0.5·h, torus tube_radius +0.5·h, arch radius +1.0·h). Negative
+  drags SHRINK; stays_on_surface shapes never flip below the plane (only
+  height-param shapes keep ProBuilder's grow-below). The "base drag only"
+  sentinel moved from height<0 to NAN (negative is a real signed drag now).
+- TORUS WINDING: create_torus quads walked +theta,+phi whose cross points
+  INTO the tube — inside-out mesh. Reversed to p0,p3,p2,p1; regression
+  test asserts every face normal points away from the tube's spine.
+- CREATION ARROW: the gizmo drew it for EVERY shape in BASE and HEIGHT.
+  Both draws are now gated on PBShapeParams.facing_direction != ZERO
+  (stairs/curved_stair +Z high side, door +Z front); symmetric shapes get
+  no arrow.
+- DOOR: create_door never emitted the legs' outer walls (±X) or the lintel
+  top (+Y) — hollow from the side/above. Added all three (wound outward,
+  verified by test). Semantics fix: opening_height was the LINTEL height
+  (2m "opening height" on a 2.5m door left a 0.5m slot); it now measures
+  the opening from the bottom edge. New arched param (KIND_BOOL → CheckBox
+  in the params modal; stored 0/1) with adjustable arch_segments (1..32):
+  an ellipse arc spanning the opening (true semicircle when the opening is
+  ≥ half-width tall, else springing from the floor), tunnel + spandrel
+  fill; apex-adjacent spandrels emit TRIANGLES (the arc touches the
+  opening top there — quads carried zero-area triangles, zero normals).
+  Face counts: flat 16, arched 15+3N.
+- SPRITE PLACEMENT: height_drags_offset(sprite) switches the flow to
+  click-to-anchor (State.OFFSET — no base rect, defaults kept) → mouse
+  displaces along the surface normal (clamped ≥ 0, quad stays
+  surface-parallel) → click confirms. Billboard/auto-face-camera is future
+  work.
+
 v0.9.12 round complete ✓ — chained-extrude walls, from the third LOGGED
 sign-off (the log's seed line `sides=2` on a quad wall was the tell):
 - COORDINATE-BASED BOUNDARY DETECTION: after a zero-distance extrude the

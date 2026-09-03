@@ -304,6 +304,106 @@ func test_placement_basis_points_z_along_facing():
 		"The basis stays right-handed: x = normal x facing")
 
 # ==============================================================================
+# Round shapes: the height drag resizes RELATIVE to the base (v0.9.13)
+# ==============================================================================
+
+func test_sphere_height_drag_resizes_relative_to_base():
+	var creator := _armed_creator(&"sphere")
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(2, 0, 0))
+	creator.end_base()
+	assert_almost_eq(creator.values["radius"], 1.0, 0.0001, "Base rect 2m → footprint radius 1")
+	creator.update_height_point(Vector3(0, 1, 0))
+	assert_almost_eq(creator.values["radius"], 1.5, 0.0001,
+		"1m mouse-up grows the radius by 0.5 — the top follows the cursor 1:1")
+	creator.update_height_point(Vector3(0, -0.5, 0))
+	assert_almost_eq(creator.values["radius"], 0.75, 0.0001,
+		"Mouse-down shrinks the sphere (used to be a dead zone)")
+
+func test_sphere_negative_height_stays_on_the_surface():
+	var creator := _armed_creator(&"sphere")
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(2, 0, 0))
+	creator.end_base()
+	creator.update_height_point(Vector3(0, -0.8, 0))
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var min_y: float = data.positions[0].y
+	for p in data.positions:
+		min_y = minf(min_y, p.y)
+	assert_almost_eq((xf * Vector3(0, min_y, 0)).y, 0.0, 0.001,
+		"A negative drag SHRINKS the sphere on the surface — it never flips underground")
+
+func test_torus_height_drag_thickens_the_tube():
+	var creator := _armed_creator(&"torus")
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(3, 0, 0))
+	creator.end_base()
+	assert_almost_eq(creator.values["outer_radius"], 1.5, 0.0001)
+	assert_almost_eq(creator.values["tube_radius"], 0.15, 0.0001)
+	creator.update_height_point(Vector3(0, 0.5, 0))
+	assert_almost_eq(creator.values["outer_radius"], 1.5, 0.0001,
+		"The height drag no longer inflates the ring (it used to fight the mouse)")
+	assert_almost_eq(creator.values["tube_radius"], 0.4, 0.0001,
+		"The height drag thickens the tube — the 3rd dimension follows the mouse")
+
+func test_arch_height_drag_grows_and_shrinks_one_to_one():
+	var creator := _armed_creator(&"arch")
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	# Two-step drag: the long 2m extent accumulates first, then the lateral
+	# 0.4m step re-points the facing onto itself — the span lands in the
+	# width slot (the arch's local X) with the wall depth along the facing.
+	creator.update_base(Vector3(2.0, 0, 0))
+	creator.update_base(Vector3(2.0, 0, 0.4))
+	creator.end_base()
+	assert_almost_eq(creator.values["radius"], 1.0, 0.0001, "The 2m lateral span → radius 1")
+	assert_almost_eq(creator.values["depth"], 0.4, 0.0001, "The facing extent → wall depth")
+	creator.update_height_point(Vector3(0, 0.5, 0))
+	assert_almost_eq(creator.values["radius"], 1.5, 0.0001,
+		"The arch's top follows the cursor 1:1 (rate 1.0 — no slow crawl)")
+	creator.update_height_point(Vector3(0, -0.5, 0))
+	assert_almost_eq(creator.values["radius"], 0.5, 0.0001,
+		"The arch shrinks below its base size (used to be stuck at a minimum)")
+
+# ==============================================================================
+# Sprite anchor flow (v0.9.13): click → offset along the normal → click
+# ==============================================================================
+
+func test_sprite_anchors_without_a_base_drag():
+	var creator := _armed_creator(&"sprite")
+	creator.begin_anchor(Vector3(1, 2, 3), Vector3.BACK, Vector3(0, 0, -1))
+	assert_eq(creator.state, PBShapeCreator.State.OFFSET,
+		"A sprite press anchors immediately — no base rect stage")
+	assert_almost_eq(creator.values["width"], 1.0, 0.0001,
+		"The sprite keeps its default size (no base rect to size it)")
+	assert_almost_eq(creator.values["depth"], 1.0, 0.0001)
+	assert_almost_eq(creator.height, 0.0, 0.0001, "The offset starts at the surface")
+
+func test_sprite_offset_follows_the_normal():
+	var creator := _armed_creator(&"sprite")
+	creator.begin_anchor(Vector3.ZERO, Vector3.BACK, Vector3(0, 0, -1))
+	creator.update_height_point(Vector3(0, 0, 0.75))
+	assert_almost_eq(creator.height, 0.75, 0.0001, "Offset reads along the surface normal")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	assert_almost_eq(xf.basis.y.dot(Vector3.BACK), 1.0, 0.001,
+		"The sprite's plane stays parallel to the surface")
+	assert_almost_eq(xf.origin.z, 0.75, 0.001,
+		"The offset displaces the sprite off the surface")
+	creator.confirm_height()
+	assert_eq(creator.state, PBShapeCreator.State.PARAMS, "The next click confirms")
+
+func test_sprite_negative_offset_never_passes_through_the_surface():
+	var creator := _armed_creator(&"sprite")
+	creator.begin_anchor(Vector3.ZERO, Vector3.BACK, Vector3(0, 0, -1))
+	creator.update_height_point(Vector3(0, 0, -2.0))
+	assert_almost_eq(creator.height, 0.0, 0.0001, "The offset clamps at the surface")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	assert_almost_eq(xf.origin.z, 0.0, 0.001,
+		"A behind-the-cursor ray pins the sprite IN the surface plane")
+
+# ==============================================================================
 # Ray helpers
 # ==============================================================================
 

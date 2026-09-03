@@ -61,6 +61,9 @@ var _creation_label: Label
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
 
+## param name -> CheckBox for KIND_BOOL params (rebuilt per params session)
+var _param_checkboxes: Dictionary = {}
+
 ## Pin state (toolbar Panel toggle). Pinned = always visible while a mesh
 ## is selected; unpinned = auto-hide when there is nothing to show.
 var pinned: bool = false:
@@ -322,20 +325,31 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 	for child in _params_grid.get_children():
 		child.queue_free()
 	_param_spinboxes.clear()
+	_param_checkboxes.clear()
 
 	for def in defs:
 		var caption := _make_row_label(str(def.get("label", def.get("name", "?"))))
 		_params_grid.add_child(caption)
+		var param_name := str(def.get("name", ""))
+		if str(def.get("kind", "")) == PBShapeParams.KIND_BOOL:
+			var check := CheckBox.new()
+			check.name = "Param" + param_name
+			check.button_pressed = float(values.get(param_name, 0.0)) > 0.5
+			check.focus_mode = Control.FOCUS_NONE
+			check.toggled.connect(_on_param_toggled.bind(param_name))
+			_params_grid.add_child(check)
+			_param_checkboxes[param_name] = check
+			continue
 		var spin := SpinBox.new()
-		spin.name = "Param" + str(def.get("name", ""))
+		spin.name = "Param" + param_name
 		spin.min_value = float(def.get("min", 0.01))
 		spin.max_value = float(def.get("max", 1000.0))
 		spin.step = float(def.get("step", 0.1))
 		spin.suffix = str(def.get("suffix", ""))
-		spin.value = float(values.get(def.get("name", ""), def.get("min", 0.01)))
-		spin.value_changed.connect(_on_param_value_changed.bind(str(def.get("name", ""))))
+		spin.value = float(values.get(param_name, def.get("min", 0.01)))
+		spin.value_changed.connect(_on_param_value_changed.bind(param_name))
 		_params_grid.add_child(spin)
-		_param_spinboxes[str(def.get("name", ""))] = spin
+		_param_spinboxes[param_name] = spin
 
 	params_open = true
 	_params_section.visible = true
@@ -349,12 +363,18 @@ func set_param_values(values: Dictionary) -> void:
 		if values.has(param_name):
 			var spin: SpinBox = _param_spinboxes[param_name]
 			spin.set_value_no_signal(float(values[param_name]))
+	for param_name in _param_checkboxes:
+		if values.has(param_name):
+			var check: CheckBox = _param_checkboxes[param_name]
+			check.set_pressed_no_signal(float(values[param_name]) > 0.5)
 
 ## Snapshot of all param values currently in the controls.
 func get_param_values() -> Dictionary:
 	var out := {}
 	for param_name in _param_spinboxes:
 		out[param_name] = _param_spinboxes[param_name].value
+	for param_name in _param_checkboxes:
+		out[param_name] = 1.0 if _param_checkboxes[param_name].button_pressed else 0.0
 	return out
 
 func close_params() -> void:
@@ -364,11 +384,16 @@ func close_params() -> void:
 	for child in _params_grid.get_children():
 		child.queue_free()
 	_param_spinboxes.clear()
+	_param_checkboxes.clear()
 	refresh()
 
 func _on_param_value_changed(value: float, param_name: String) -> void:
 	if params_open:
 		param_changed.emit(param_name, value)
+
+func _on_param_toggled(pressed: bool, param_name: String) -> void:
+	if params_open:
+		param_changed.emit(param_name, 1.0 if pressed else 0.0)
 
 # ==============================================================================
 # Editor Binding

@@ -73,7 +73,7 @@ static func create_shape(id: StringName, size: Vector3 = Vector3.ONE) -> PBMeshD
 			return PBShapeGenerators.create_plane(size.x, size.z)
 
 		&"door":
-			return PBShapeComplex.create_door(size.x, size.y, 0.5, 0.75, size.z)
+			return PBShapeComplex.create_door(size.x, size.y, size.y * 0.75, size.x * 0.2, size.z)
 
 		&"pipe":
 			var r: float = minf(size.x, size.z) * 0.5

@@ -10,6 +10,10 @@
 ##   HEIGHT — LMB released: mouse motion adjusts the 3rd dimension along the
 ##            surface normal (the shape preview grows from its base); the
 ##            next LMB click confirms.
+##   OFFSET — the sprite flow only: a single CLICK anchors the shape ON the
+##            surface, mouse motion then displaces it along the surface
+##            normal, and the next click confirms (no base drag — a flat
+##            sprite is drawn by parameters, not by dragging a rect).
 ##   PARAMS — the overlay parameter modal is open (live preview, Apply /
 ##            Cancel). Cancel restores session_values (the state at modal
 ##            open); neither destroys the shape — only ESC before the
@@ -22,7 +26,7 @@
 class_name PBShapeCreator
 extends RefCounted
 
-enum State { INACTIVE, ARMED, BASE, HEIGHT, PARAMS }
+enum State { INACTIVE, ARMED, BASE, HEIGHT, OFFSET, PARAMS }
 
 ## Sentinel for "ray missed the plane" from ray_plane_intersect.
 const RAY_MISS := Vector3(INF, INF, INF)
@@ -38,6 +42,10 @@ var shape_id: StringName = &""
 ## Current parameter values (starts from PBShapeParams defaults; the base
 ## drag writes the size dims, the modal writes anything).
 var values: Dictionary = {}
+
+## Snapshot of `values` at base release — the baseline the height drag applies
+## against for round shapes (sphere/torus/arch resize RELATIVELY from here).
+var base_values: Dictionary = {}
 
 ## Snapshot taken when the params modal opened — Cancel restores it.
 var session_values: Dictionary = {}
@@ -109,20 +117,26 @@ func build_data() -> PBMeshData:
 		return null
 	return PBShapeParams.build(shape_id, values)
 
-## Node transform placing `data` so its base face (AABB face towards the
-## plane, by height sign) lies IN the drag plane, centered on rect_center.
-## The basis orients local +Z along `facing` (the drag heuristic direction),
-## local +Y along the surface normal — so e.g. stairs rise toward the arrow.
+## Node transform placing `data` so its base face lies IN the drag plane,
+## centered on rect_center. The basis orients local +Z along `facing` (the
+## drag heuristic direction), local +Y along the surface normal — so e.g.
+## stairs rise toward the arrow.
+##
+## Height sign anchors the base face (>= 0, sits on the surface) or the top
+## face (< 0, grows below — ProBuilder behavior) — EXCEPT for shapes that
+## must stay pinned to the surface (PBShapeParams.stays_on_surface): round
+## shapes SHRINK on a negative drag rather than flipping underground, and the
+## sprite rides the normal offset on top of its plane-aligned base.
 func placement_transform(data: PBMeshData) -> Transform3D:
 	var f := arrow_direction()
 	var x_axis := plane_normal.cross(f).normalized()
 	var basis := Basis(x_axis, plane_normal, f)
 	var aabb := _aabb_of(data)
-	var lift: float
-	if height >= 0.0:
-		lift = -aabb.position.y
-	else:
+	var lift: float = -aabb.position.y
+	if height < 0.0 and not PBShapeParams.stays_on_surface(shape_id):
 		lift = -(aabb.position.y + aabb.size.y)
+	elif PBShapeParams.height_drags_offset(shape_id):
+		lift += height
 	return Transform3D(basis, rect_center + plane_normal * lift)
 
 # ── Transitions ──────────────────────────────────────────────────────────────
@@ -197,18 +211,37 @@ func end_base() -> bool:
 		return false
 	state = State.HEIGHT
 	height = 0.0
+	# The values NOW are the baseline the height drag works against (round
+	# shapes resize relative to their base-release footprint).
+	base_values = values.duplicate()
 	_apply_drag_extents()
 	return true
 
-## Updates the height from a world point (already projected onto the
-## view-parallel plane by the caller). On walls the normal extent maps to
-## the shape's DEPTH (the shape grows along the face normal); on floors it
-## maps to the height. The facing arrow LOCKS at the base release — height
-## motion must not re-point it.
+## Sprite-style anchor placement: a single press pins the shape ON the
+## surface (no base rect — the drag stages are skipped entirely); mouse
+## motion then displaces it along the captured normal (OFFSET state).
+func begin_anchor(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> void:
+	begin(surface_point, surface_normal, view_z)
+	state = State.OFFSET
+	facing = Vector3.ZERO  # no base drag → no facing heuristic, no arrow
+	# begin() seeded the size dims from the zero rect; the anchor flow never
+	# drags a base, so the shape keeps its default parameters.
+	values = PBShapeParams.get_default_values(shape_id)
+	base_values = values.duplicate()
+
+## Updates the height (or the sprite's normal offset) from a world point
+## (already projected onto the view-parallel plane by the caller). On walls
+## the normal extent maps to the shape's DEPTH (the shape grows along the
+## face normal); on floors it maps to the height. The facing arrow LOCKS at
+## the base release — height motion must not re-point it. The sprite's
+## offset never goes negative (a sprite rides ON the surface, not through
+## it); height-param shapes keep signed growth (negative = below).
 func update_height_point(world_point: Vector3) -> void:
-	if state != State.HEIGHT:
+	if state != State.HEIGHT and state != State.OFFSET:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
+	if state == State.OFFSET:
+		height = maxf(0.0, height)
 	_apply_drag_extents()
 
 ## The dragged base rect's four corners IN WORLD SPACE (on the captured
@@ -225,9 +258,10 @@ func base_rect_corners() -> PackedVector3Array:
 		rect_center - u + v,
 	])
 
-## LMB click in HEIGHT: keep the shape, open the params modal.
+## LMB click in HEIGHT (or the sprite's OFFSET): keep the shape, open the
+## params modal.
 func confirm_height() -> void:
-	if state == State.HEIGHT:
+	if state == State.HEIGHT or state == State.OFFSET:
 		state = State.PARAMS
 		session_values = values.duplicate()
 
@@ -250,6 +284,7 @@ func reset() -> void:
 	state = State.INACTIVE
 	shape_id = &""
 	values = {}
+	base_values = {}
 	session_values = {}
 	height = 0.0
 	u_size = 0.0
@@ -282,21 +317,23 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 		facing = v_dir * (sv if sv != 0.0 else signf(dv))
 
 func _apply_drag_extents() -> void:
-	# A negative height means "base stage — height-driven values keep their
-	# current values" (the drag height only exists from HEIGHT on). One
-	# mapping fits every surface: the placement basis points local Y along
-	# the face normal and local +Z along `facing`, so "height" grows along
-	# the normal on walls exactly like it grows up on floors. The u/v extents
-	# map onto width/depth by where the facing points: forward along v keeps
-	# u → width and v → depth; forward along u swaps them (local Z then runs
-	# along u).
-	var height_value: float = height if state >= State.HEIGHT else -1.0
+	if state == State.OFFSET:
+		return  # anchor flow (sprite): the drag drives the normal offset only
+	# NAN means "base stage — height-driven values keep their current values"
+	# (the drag height only exists from HEIGHT on; negative heights are real
+	# signed drags). One mapping fits every surface: the placement basis
+	# points local Y along the face normal and local +Z along `facing`, so
+	# "height" grows along the normal on walls exactly like it grows up on
+	# floors. The u/v extents map onto width/depth by where the facing
+	# points: forward along v keeps u → width and v → depth; forward along u
+	# swaps them (local Z then runs along u).
+	var height_value: float = height if state >= State.HEIGHT else NAN
 	var v_dir := plane_normal.cross(u_dir).normalized()
 	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))
 	var width := v_size if forward_along_u else u_size
 	var depth := u_size if forward_along_u else v_size
 	PBShapeParams.apply_drag_extents(values, maxf(width, MIN_EXTENT),
-		maxf(depth, MIN_EXTENT), height_value)
+		maxf(depth, MIN_EXTENT), height_value, base_values)
 
 ## Snaps an in-plane direction to the nearest world axis (keeping the drag's
 ## sign) when the captured surface is axis aligned; arbitrary surfaces keep

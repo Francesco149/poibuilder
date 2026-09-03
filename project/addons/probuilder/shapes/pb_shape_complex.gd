@@ -59,6 +59,27 @@ static func _add_quad(
 	face.smoothing_group = smoothing_group
 	faces.append(face)
 
+## Helper to add a single triangle face (3 vertices) to mesh arrays.
+static func _add_tri(
+	positions: PackedVector3Array,
+	uvs: PackedVector2Array,
+	faces: Array[PBFace],
+	p0: Vector3, p1: Vector3, p2: Vector3,
+	smoothing_group: int = 0
+) -> void:
+	var base: int = positions.size()
+	positions.append(p0)
+	positions.append(p1)
+	positions.append(p2)
+	uvs.append(Vector2(0.0, 0.0))
+	uvs.append(Vector2(1.0, 0.0))
+	uvs.append(Vector2(0.0, 1.0))
+	var face := PBFace.new(PackedInt32Array([
+		base + 0, base + 1, base + 2
+	]))
+	face.smoothing_group = smoothing_group
+	faces.append(face)
+
 # ==============================================================================
 # 1. Sphere (Icosphere) Generator
 # ==============================================================================
@@ -256,7 +277,11 @@ static func create_torus(
 			var uv2 := Vector2(u2, v2)
 			var uv3 := Vector2(u1, v2)
 
-			_add_quad(positions, textures0, faces, p0, p1, p2, p3, uv0, uv1, uv2, uv3, smooth_grp)
+			# Winding: (p0, p1, p2, p3) walks +theta then +phi, whose cross
+			# product points INTO the tube (inward normals — the classic
+			# inside-out torus). Traversing p0 → p3 → p2 → p1 flips the quad
+			# to CCW-from-outside like every other generator.
+			_add_quad(positions, textures0, faces, p0, p3, p2, p1, uv0, uv3, uv2, uv1, smooth_grp)
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
@@ -283,7 +308,9 @@ static func create_arch(
 	var mesh_data := PBMeshData.new()
 	var num_sides: int = maxi(3, sides)
 	var degs: float = clampf(arch_degrees, 1.0, 360.0)
-	var inner_rad: float = maxf(0.001, radius - thickness)
+	# The tube can never be thicker than the arch's radius (the inner
+	# profile would fold inside out past the outer one).
+	var inner_rad: float = maxf(0.001, radius - minf(thickness, radius * 0.999))
 	var hd: float = depth * 0.5
 	var is_full_circle: bool = absf(degs - 360.0) < 0.001
 	var make_caps: bool = end_caps and not is_full_circle
@@ -434,16 +461,23 @@ static func create_stairs(
 # 5. Door Generator
 # ==============================================================================
 
-## Creates a doorway frame centered at the origin with opening.
-## width, height, depth: overall bounding dimensions.
-## door_height: height of the top lintel / pediment.
-## leg_width: width of each side leg.
+## Creates a doorway frame centered at the origin with an opening.
+## width / height / depth: overall bounding dimensions.
+## opening_height: opening height measured from the bottom edge.
+## leg_width: width of each side leg (the frame).
+## arched: top the opening with a semicircular arch (one arc segment per
+##         arch_segments) instead of a flat lintel. The arch always spans
+##         the full opening width; when the opening is taller than half its
+##         width it is a true semicircle, otherwise it flattens into an
+##         elliptical segment springing from the opening's bottom corners.
 static func create_door(
 	width: float = 3.0,
 	height: float = 2.5,
-	door_height: float = 0.5,
-	leg_width: float = 0.75,
-	depth: float = 1.0
+	opening_height: float = 2.0,
+	leg_width: float = 0.5,
+	depth: float = 1.0,
+	arched: bool = true,
+	arch_segments: int = 6
 ) -> PBMeshData:
 	var mesh_data := PBMeshData.new()
 
@@ -451,72 +485,133 @@ static func create_door(
 	var hh: float = height * 0.5
 	var hd: float = depth * 0.5
 
+	# Frame columns (leg_width clamped so the opening can never close).
+	var leg: float = clampf(leg_width, 0.01, width * 0.5 - 0.01)
 	var x0: float = -hw
-	var x1: float = -hw + leg_width
-	var x2: float =  hw - leg_width
-	var x3: float =  hw
+	var x1: float = -hw + leg
+	var x2: float = hw - leg
+	var x3: float = hw
+	var xc: float = 0.5 * (x1 + x2)
 
+	# Opening top, measured from the bottom edge (always below the frame top).
 	var y0: float = -hh
-	var y1: float =  hh - door_height
-	var y2: float =  hh
+	var y2: float = hh
+	var yo: float = y0 + clampf(opening_height, 0.05, height - 0.05)
 
-	# 12 Template points on front plane (Z = +hd)
-	var p0 := Vector3(x0, y0, hd)
-	var p1 := Vector3(x1, y0, hd)
-	var p2 := Vector3(x2, y0, hd)
-	var p3 := Vector3(x3, y0, hd)
-
-	var p4 := Vector3(x0, y1, hd)
-	var p5 := Vector3(x1, y1, hd)
-	var p6 := Vector3(x2, y1, hd)
-	var p7 := Vector3(x3, y1, hd)
-
-	var p8 := Vector3(x0, y2, hd)
-	var p9 := Vector3(x1, y2, hd)
-	var p10 := Vector3(x2, y2, hd)
-	var p11 := Vector3(x3, y2, hd)
-
-	# 12 Template points on back plane (Z = -hd)
-	var b0 := Vector3(x0, y0, -hd)
-	var b1 := Vector3(x1, y0, -hd)
-	var b2 := Vector3(x2, y0, -hd)
-	var b3 := Vector3(x3, y0, -hd)
-
-	var b4 := Vector3(x0, y1, -hd)
-	var b5 := Vector3(x1, y1, -hd)
-	var b6 := Vector3(x2, y1, -hd)
-	var b7 := Vector3(x3, y1, -hd)
-
-	var b8 := Vector3(x0, y2, -hd)
-	var b9 := Vector3(x1, y2, -hd)
-	var b10 := Vector3(x2, y2, -hd)
-	var b11 := Vector3(x3, y2, -hd)
+	# Arch profile: an ellipse arc spanning the opening, springing at
+	# spring_y and peaking at the opening top. A true semicircle when the
+	# opening is at least half as tall as it is wide.
+	var spring_y: float = yo
+	var arc_segs: int = 0
+	var arc: PackedVector2Array = PackedVector2Array()
+	if arched:
+		var rise: float = minf(0.5 * (x2 - x1), yo - y0)
+		spring_y = yo - rise
+		arc_segs = maxi(1, arch_segments)
+		for k in range(arc_segs + 1):
+			var t: float = PI * (1.0 - float(k) / float(arc_segs))
+			arc.append(Vector2(xc + (xc - x1) * cos(t), spring_y + rise * sin(t)))
 
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
 
-	# 5 Front quads (normal +Z)
-	_add_quad(positions, textures0, faces, p0, p1, p5, p4)   # Left leg
-	_add_quad(positions, textures0, faces, p4, p5, p9, p8)   # Top left
-	_add_quad(positions, textures0, faces, p5, p6, p10, p9)  # Top mid
-	_add_quad(positions, textures0, faces, p6, p7, p11, p10) # Top right
-	_add_quad(positions, textures0, faces, p2, p3, p7, p6)   # Right leg
+	# ── Front faces (z = +hd, normals +Z) ────────────────────────────────────
+	# Legs and corner columns tile each side of the opening; the header is
+	# the solid band over it. When arched, one spandrel strip per arc segment
+	# fills between the arc and the opening top.
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y0, hd), Vector3(x1, y0, hd), Vector3(x1, yo, hd), Vector3(x0, yo, hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, yo, hd), Vector3(x1, yo, hd), Vector3(x1, y2, hd), Vector3(x0, y2, hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x1, yo, hd), Vector3(x2, yo, hd), Vector3(x2, y2, hd), Vector3(x1, y2, hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x2, yo, hd), Vector3(x3, yo, hd), Vector3(x3, y2, hd), Vector3(x2, y2, hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x2, y0, hd), Vector3(x3, y0, hd), Vector3(x3, yo, hd), Vector3(x2, yo, hd))
+	for k in range(arc_segs):
+		# Spandrel fill between the arc and the opening top. Segments touching
+		# the apex collapse to a triangle there (the arc meets the opening top
+		# exactly) — a quad would carry a zero-area triangle.
+		var a_k: Vector2 = arc[k]
+		var a_k1: Vector2 = arc[k + 1]
+		var k_at_top: bool = absf(a_k.y - yo) < 0.0001
+		var k1_at_top: bool = absf(a_k1.y - yo) < 0.0001
+		if k_at_top and k1_at_top:
+			continue
+		if k1_at_top:
+			_add_tri(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd), Vector3(a_k.x, yo, hd))
+		elif k_at_top:
+			_add_tri(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd), Vector3(a_k1.x, yo, hd))
+		else:
+			_add_quad(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
+				Vector3(a_k1.x, yo, hd), Vector3(a_k.x, yo, hd))
 
-	# 5 Back quads (normal -Z)
-	_add_quad(positions, textures0, faces, b0, b4, b5, b1)   # Left leg
-	_add_quad(positions, textures0, faces, b4, b8, b9, b5)   # Top left
-	_add_quad(positions, textures0, faces, b5, b9, b10, b6)  # Top mid
-	_add_quad(positions, textures0, faces, b6, b10, b11, b7) # Top right
-	_add_quad(positions, textures0, faces, b2, b6, b7, b3)   # Right leg
+	# ── Back faces (z = -hd, normals -Z) ─────────────────────────────────────
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y0, -hd), Vector3(x0, yo, -hd), Vector3(x1, yo, -hd), Vector3(x1, y0, -hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, yo, -hd), Vector3(x0, y2, -hd), Vector3(x1, y2, -hd), Vector3(x1, yo, -hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x1, yo, -hd), Vector3(x1, y2, -hd), Vector3(x2, y2, -hd), Vector3(x2, yo, -hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x2, yo, -hd), Vector3(x2, y2, -hd), Vector3(x3, y2, -hd), Vector3(x3, yo, -hd))
+	_add_quad(positions, textures0, faces,
+		Vector3(x2, y0, -hd), Vector3(x2, yo, -hd), Vector3(x3, yo, -hd), Vector3(x3, y0, -hd))
+	for k in range(arc_segs):
+		var a_k: Vector2 = arc[k]
+		var a_k1: Vector2 = arc[k + 1]
+		var k_at_top: bool = absf(a_k.y - yo) < 0.0001
+		var k1_at_top: bool = absf(a_k1.y - yo) < 0.0001
+		if k_at_top and k1_at_top:
+			continue
+		if k1_at_top:
+			_add_tri(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
+		elif k_at_top:
+			_add_tri(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
+		else:
+			_add_quad(positions, textures0, faces,
+				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd),
+				Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd))
 
-	# 3 Inner frame quads
-	# Left jamb (normal +X)
-	_add_quad(positions, textures0, faces, p1, b1, b5, p5)
-	# Right jamb (normal -X)
-	_add_quad(positions, textures0, faces, p2, p6, b6, b2)
-	# Lintel underside (normal -Y)
-	_add_quad(positions, textures0, faces, p5, b5, b6, p6)
+	# ── Opening reveals ──────────────────────────────────────────────────────
+	# A flat-topped opening (or a semicircle springing above the floor) has
+	# jamb walls; an elliptical arch springing at the floor has none.
+	if spring_y > y0 + 0.0001:
+		# Left jamb (normal +X)
+		_add_quad(positions, textures0, faces,
+			Vector3(x1, y0, hd), Vector3(x1, y0, -hd), Vector3(x1, spring_y, -hd), Vector3(x1, spring_y, hd))
+		# Right jamb (normal -X)
+		_add_quad(positions, textures0, faces,
+			Vector3(x2, y0, hd), Vector3(x2, spring_y, hd), Vector3(x2, spring_y, -hd), Vector3(x2, y0, -hd))
+	if arc_segs == 0:
+		# Flat lintel underside (normal -Y)
+		_add_quad(positions, textures0, faces,
+			Vector3(x1, yo, hd), Vector3(x1, yo, -hd), Vector3(x2, yo, -hd), Vector3(x2, yo, hd))
+	else:
+		# Arch tunnel: one quad per segment, normals pointing into the
+		# opening (toward the arc center).
+		for k in range(arc_segs):
+			_add_quad(positions, textures0, faces,
+				Vector3(arc[k].x, arc[k].y, hd), Vector3(arc[k].x, arc[k].y, -hd),
+				Vector3(arc[k + 1].x, arc[k + 1].y, -hd), Vector3(arc[k + 1].x, arc[k + 1].y, hd))
+
+	# ── Outer shell (the frame's outside faces) ─────────────────────────────
+	# Left outer wall (normal -X)
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y0, -hd), Vector3(x0, y0, hd), Vector3(x0, y2, hd), Vector3(x0, y2, -hd))
+	# Right outer wall (normal +X)
+	_add_quad(positions, textures0, faces,
+		Vector3(x3, y0, -hd), Vector3(x3, y2, -hd), Vector3(x3, y2, hd), Vector3(x3, y0, hd))
+	# Top wall (normal +Y)
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y2, -hd), Vector3(x0, y2, hd), Vector3(x3, y2, hd), Vector3(x3, y2, -hd))
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0

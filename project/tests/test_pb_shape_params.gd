@@ -75,11 +75,60 @@ func test_apply_drag_extents_maps_size_dims():
 	assert_almost_eq(values["depth"], 3.0, 0.0001, "v extent → depth")
 	assert_almost_eq(values["height"], 4.0, 0.0001, "normal extent → height")
 
-func test_apply_drag_extents_grows_round_shapes_with_height():
+func test_apply_drag_extents_round_shapes_take_height_relatively():
+	# Sphere: the base rect sets the footprint radius; the height drag then
+	# RESIZES from that baseline (top follows the cursor 1:1) instead of
+	# competing with it via max(). NAN height = base drag only.
 	var values := PBShapeParams.get_default_values(&"sphere")
-	PBShapeParams.apply_drag_extents(values, 2.0, 2.0, 3.0)
+	PBShapeParams.apply_drag_extents(values, 2.0, 2.0, NAN)
+	assert_almost_eq(values["radius"], 1.0, 0.0001, "Base rect 2×2 → radius 1")
+	var base := values.duplicate()
+	PBShapeParams.apply_drag_extents(values, 2.0, 2.0, 1.0, base)
 	assert_almost_eq(values["radius"], 1.5, 0.0001,
-		"Spheres have no height param — the larger extent (incl. height) drives the radius")
+		"Height 1 grows the radius by 0.5 from the base-release value (top +1)")
+	PBShapeParams.apply_drag_extents(values, 2.0, 2.0, -0.5, base)
+	assert_almost_eq(values["radius"], 0.75, 0.0001,
+		"A negative drag shrinks the sphere below its base size (was a dead zone)")
+
+func test_apply_drag_extents_torus_height_drives_the_tube():
+	var values := PBShapeParams.get_default_values(&"torus")
+	PBShapeParams.apply_drag_extents(values, 3.0, 3.0, NAN)
+	assert_almost_eq(values["outer_radius"], 1.5, 0.0001, "Base rect sets the outer radius")
+	assert_almost_eq(values["tube_radius"], 0.15, 0.0001, "Base drag leaves the tube alone")
+	var base := values.duplicate()
+	PBShapeParams.apply_drag_extents(values, 3.0, 3.0, 0.5, base)
+	assert_almost_eq(values["outer_radius"], 1.5, 0.0001,
+		"The height drag no longer inflates the outer radius")
+	assert_almost_eq(values["tube_radius"], 0.4, 0.0001,
+		"The height drag thickens the tube (the 3rd dimension follows the mouse)")
+
+func test_apply_drag_extents_arch_maps_rect_footprint():
+	# The arch has a real depth: the base rect maps width → span, depth →
+	# wall depth, and the height drag grows the arch 1:1 (its top IS the
+	# radius) — including shrinking below the base size.
+	var values := PBShapeParams.get_default_values(&"arch")
+	PBShapeParams.apply_drag_extents(values, 4.0, 0.6, NAN)
+	assert_almost_eq(values["radius"], 2.0, 0.0001, "Width → the arch's span (radius)")
+	assert_almost_eq(values["depth"], 0.6, 0.0001, "Depth → the arch's wall depth")
+	var base := values.duplicate()
+	PBShapeParams.apply_drag_extents(values, 4.0, 0.6, 1.5, base)
+	assert_almost_eq(values["radius"], 3.5, 0.0001, "Arch top follows the cursor 1:1 (rate 1.0)")
+	PBShapeParams.apply_drag_extents(values, 4.0, 0.6, -1.5, base)
+	assert_almost_eq(values["radius"], 0.5, 0.0001, "A downward drag shrinks the arch")
+
+func test_height_drag_param_and_surface_pinning():
+	assert_eq(PBShapeParams.height_drag_param(&"sphere")["param"], "radius")
+	assert_eq(PBShapeParams.height_drag_param(&"torus")["param"], "tube_radius")
+	assert_eq(PBShapeParams.height_drag_param(&"arch")["param"], "radius")
+	assert_true(PBShapeParams.height_drag_param(&"cube").is_empty(),
+		"Shapes with a real height param use the absolute mapping")
+	for pinned in [&"sphere", &"torus", &"arch", &"sprite"]:
+		assert_true(PBShapeParams.stays_on_surface(pinned),
+			"%s never flips below the surface" % pinned)
+	assert_false(PBShapeParams.stays_on_surface(&"cube"),
+		"Cubes keep ProBuilder's negative-height grow-below behavior")
+	assert_true(PBShapeParams.height_drags_offset(&"sprite"))
+	assert_false(PBShapeParams.height_drags_offset(&"cube"))
 
 func test_apply_drag_extents_ignores_height_for_flat_shapes():
 	var values := PBShapeParams.get_default_values(&"plane")
@@ -88,12 +137,16 @@ func test_apply_drag_extents_ignores_height_for_flat_shapes():
 	assert_almost_eq(values["depth"], 3.0, 0.0001)
 	assert_false(values.has("height"), "Planes stay flat — height drag is ignored")
 
-func test_facing_direction_stairs_only():
+func test_facing_direction_only_for_asymmetric_shapes():
 	assert_eq(PBShapeParams.facing_direction(&"stair"), Vector3(0, 0, 1),
 		"Stairs rise toward +Z (their generator stacks steps along +Z)")
 	assert_eq(PBShapeParams.facing_direction(&"curved_stair"), Vector3(0, 0, 1))
-	assert_eq(PBShapeParams.facing_direction(&"cube"), Vector3.ZERO,
-		"Symmetric shapes have no facing arrow")
+	assert_eq(PBShapeParams.facing_direction(&"door"), Vector3(0, 0, 1),
+		"The door's front face is its local +Z")
+	for symmetric in [&"cube", &"sphere", &"torus", &"arch", &"cylinder", &"cone",
+			&"pipe", &"prism", &"plane", &"sprite"]:
+		assert_eq(PBShapeParams.facing_direction(symmetric), Vector3.ZERO,
+			"Symmetric shapes have no facing arrow: %s" % symmetric)
 
 func test_count_params_are_int_steps():
 	for shape_id in PBShapeFactory.get_shape_ids():

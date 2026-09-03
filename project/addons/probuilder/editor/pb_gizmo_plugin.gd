@@ -687,10 +687,13 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 			lines.append(to_local * corners[(i + 1) % corners.size()])
 		_add_thick_lines(gizmo, lines, _creation_edge_material, creation_offset)
 		creation_outline_draws += 1
-		# Facing arrow on the base plane + the two drag-corner squares.
-		var arrow_len: float = clampf(maxf(creator.u_size, creator.v_size) * 0.6, 0.35, 2.0)
-		_add_creation_arrow(gizmo, to_local, creator.rect_center, creator.arrow_direction(),
-			arrow_len, creator.plane_normal)
+		# Facing arrow on the base plane — ONLY for shapes with a meaningful
+		# facing (stairs' high side, door's front); a symmetric shape would
+		# make it noise.
+		if creator.facing_direction() != Vector3.ZERO:
+			var arrow_len: float = clampf(maxf(creator.u_size, creator.v_size) * 0.6, 0.35, 2.0)
+			_add_creation_arrow(gizmo, to_local, creator.rect_center, creator.arrow_direction(),
+				arrow_len, creator.plane_normal)
 		_add_vert_squares(gizmo, to_local,
 			PackedVector3Array([creator.base_start, creator.base_end]))
 		return
@@ -719,11 +722,13 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	creation_outline_draws += 1
 
 	# Facing arrow from the base center along local +Z (the placement basis
-	# points +Z along the creator's facing heuristic).
-	var base_center := Vector3(aabb.get_center().x, p0.y, aabb.get_center().z)
-	var arrow_len: float = clampf(aabb.get_longest_axis_size() * 0.5, 0.3, 2.0)
-	_add_creation_arrow(gizmo, Transform3D(), base_center, Vector3(0, 0, 1),
-		arrow_len, Vector3(0, 1, 0))
+	# points +Z along the creator's facing heuristic) — only for shapes with
+	# a meaningful facing; symmetric shapes get no arrow.
+	if creator.facing_direction() != Vector3.ZERO:
+		var base_center := Vector3(aabb.get_center().x, p0.y, aabb.get_center().z)
+		var arrow_len: float = clampf(aabb.get_longest_axis_size() * 0.5, 0.3, 2.0)
+		_add_creation_arrow(gizmo, Transform3D(), base_center, Vector3(0, 0, 1),
+			arrow_len, Vector3(0, 1, 0))
 
 	# Vertex squares: drag start, drag end, and the extruded end corner.
 	var lifted := creator.base_end + creator.plane_normal * creator.height
