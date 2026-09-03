@@ -1368,6 +1368,8 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		undo.commit_action()
 		if logger != null:
 			logger.info("undo", "%s committed: %d vertices" % [action_name, union.size()])
+	else:
+		node.rebuild()
 	return true
 
 ## Undo/redo payload for topology gestures: swap a node's whole data from a

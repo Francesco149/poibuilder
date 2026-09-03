@@ -21,10 +21,20 @@ static func get_param_defs(shape_id: StringName) -> Array:
 	match shape_id:
 		&"cube":
 			return _size_defs()
-		&"stair", &"curved_stair":
+		&"stair":
 			var defs := _size_defs()
 			defs.append(_count_def("steps", "Steps", 1, 64, 6))
+			defs.append(_bool_def("sides", "Sides", true))
 			return defs
+		&"curved_stair":
+			return [
+				_value_def("stair_width", "Stair Width", 0.1, 50.0, 1.5, "m"),
+				_value_def("height", "Height", 0.05, 100.0, 2.0, "m"),
+				_value_def("inner_radius", "Inner Radius", 0.0, 50.0, 0.5, "m"),
+				_value_def("curvature", "Curvature", -360.0, 360.0, 180.0, "°"),
+				_count_def("steps", "Steps", 1, 64, 8),
+				_bool_def("sides", "Sides", true),
+			]
 		&"prism":
 			return _size_defs()
 		&"cylinder":
@@ -101,36 +111,43 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 	for key in values:
 		if v.has(key):
 			v[key] = float(values[key])
+	var data: PBMeshData = null
 	match shape_id:
 		&"cube":
-			return PBShapeGenerators.create_box(Vector3(v["width"], v["height"], v["depth"]))
+			data = PBShapeGenerators.create_box(Vector3(v["width"], v["height"], v["depth"]))
 		&"stair":
-			return PBShapeComplex.create_stairs(Vector3(v["width"], v["height"], v["depth"]), int(v["steps"]), true)
+			var build_sides: bool = v["sides"] > 0.5 if v.has("sides") else true
+			data = PBShapeComplex.create_stairs(Vector3(v["width"], v["height"], v["depth"]), int(v["steps"]), build_sides)
 		&"curved_stair":
-			return PBShapeComplex.create_stairs(Vector3(v["width"], v["height"], v["depth"]), int(v["steps"]), true)
+			var build_sides: bool = v["sides"] > 0.5 if v.has("sides") else true
+			data = PBShapeComplex.create_curved_stairs(v["stair_width"], v["height"], v["inner_radius"], v["curvature"], int(v["steps"]), build_sides)
 		&"prism":
-			return PBShapeGenerators.create_prism(Vector3(v["width"], v["height"], v["depth"]))
+			data = PBShapeGenerators.create_prism(Vector3(v["width"], v["height"], v["depth"]))
 		&"cylinder":
-			return PBShapeCylinder.create_cylinder(v["radius"], v["height"], int(v["sides"]))
+			data = PBShapeCylinder.create_cylinder(v["radius"], v["height"], int(v["sides"]))
 		&"plane":
-			return PBShapeGenerators.create_plane(v["width"], v["depth"])
+			data = PBShapeGenerators.create_plane(v["width"], v["depth"])
 		&"door":
-			return PBShapeComplex.create_door(v["width"], v["height"], v["opening_height"],
+			data = PBShapeComplex.create_door(v["width"], v["height"], v["opening_height"],
 				v["leg_width"], v["depth"], v["arched"] > 0.5, int(v["arch_segments"]))
 		&"pipe":
-			return PBShapeCylinder.create_pipe(v["radius"], v["height"], v["thickness"], int(v["sides"]))
+			data = PBShapeCylinder.create_pipe(v["radius"], v["height"], v["thickness"], int(v["sides"]))
 		&"cone":
-			return PBShapeCylinder.create_cone(v["radius"], v["height"], int(v["sides"]))
+			data = PBShapeCylinder.create_cone(v["radius"], v["height"], int(v["sides"]))
 		&"sprite":
-			return PBShapeGenerators.create_sprite(v["width"], v["depth"])
+			data = PBShapeGenerators.create_sprite(v["width"], v["depth"])
 		&"arch":
-			return PBShapeComplex.create_arch(v["radius"], v["depth"], v["thickness"], int(v["sides"]), v["sweep"])
+			data = PBShapeComplex.create_arch(v["radius"], v["depth"], v["thickness"], int(v["sides"]), v["sweep"])
 		&"sphere":
-			return PBShapeComplex.create_sphere(v["radius"], int(v["subdivisions"]))
+			data = PBShapeComplex.create_sphere(v["radius"], int(v["subdivisions"]))
 		&"torus":
 			var inner: float = maxf(0.01, v["outer_radius"] - v["tube_radius"])
-			return PBShapeComplex.create_torus(inner, v["tube_radius"])
-	return null
+			data = PBShapeComplex.create_torus(inner, v["tube_radius"])
+	if data != null:
+		data.shape_id = shape_id
+		data.shape_params = v.duplicate()
+		data.shape_edited = false
+	return data
 
 ## True when the shape has parameters the creation drag cannot express
 ## (steps, sides, thickness, sweep...). Simple size-only shapes (cube,
@@ -212,6 +229,10 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		values["depth"] = maxf(0.05, v_size)
 	if values.has("height") and height_known:
 		values["height"] = maxf(0.05, height)
+	if values.has("stair_width"):
+		var max_dim: float = maxf(u_size, v_size)
+		var in_r: float = float(values.get("inner_radius", 0.5))
+		values["stair_width"] = maxf(0.1, max_dim * 0.5 - in_r)
 	# Round-in-plan shapes: the footprint grows from the base rect only —
 	# a rect footprint (the arch, which has a real depth) uses the width;
 	# a circular one (cylinder, pipe, cone, sphere, torus) inscribes the

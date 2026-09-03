@@ -509,6 +509,131 @@ static func create_stairs(
 	mesh_data.shared_textures = []
 	mesh_data.invalidate_caches()
 	return mesh_data
+## Creates a curved/spiral staircase centered at the origin.
+## stair_width: radial width of the stair tread.
+## height: total height of the staircase.
+## inner_radius: inner hole radius (0 = pie/wedge steps meeting at center).
+## circumference: angular sweep in degrees (default 180°, positive curves right, negative left).
+## steps: number of steps.
+## sides: whether to build outer/inner side walls and back.
+static func create_curved_stairs(
+	stair_width: float = 1.5,
+	height: float = 2.0,
+	inner_radius: float = 0.5,
+	circumference: float = 180.0,
+	steps: int = 8,
+	sides: bool = true
+) -> PBMeshData:
+	var mesh_data := PBMeshData.new()
+	var num_steps: int = maxi(1, steps)
+	var hh: float = height * 0.5
+	var r_in: float = maxf(0.0, inner_radius)
+	var r_out: float = r_in + maxf(0.05, stair_width)
+	var is_pie: bool = r_in <= 0.0001
+
+	var sweep_deg: float = circumference
+	var is_flipped: bool = sweep_deg < 0.0
+	var cir: float = deg_to_rad(absf(sweep_deg))
+	if cir <= 0.0001:
+		cir = deg_to_rad(180.0)
+
+	var positions := PackedVector3Array()
+	var textures0 := PackedVector2Array()
+	var faces: Array[PBFace] = []
+
+	var step_h: float = height / float(num_steps)
+
+	for s in range(num_steps):
+		var inc0: float = (float(s) / float(num_steps)) * cir
+		var inc1: float = (float(s + 1) / float(num_steps)) * cir
+
+		var y0: float = -hh + float(s) * step_h
+		var y1: float = -hh + float(s + 1) * step_h
+
+		var v0 := Vector3(-cos(inc0), 0.0, sin(inc0))
+		var v1 := Vector3(-cos(inc1), 0.0, sin(inc1))
+
+		# 1. Riser: vertical face at angle inc0, normal facing -Z at start
+		var r0 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
+		var r1 := Vector3(v0.x * r_out, y0, v0.z * r_out)
+		var r2 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+		var r3 := Vector3(v0.x * r_in,  y1, v0.z * r_in)
+		_add_quad(positions, textures0, faces, r0, r1, r2, r3)
+
+		# 2. Tread: horizontal step top at y1, normal +Y
+		if is_pie:
+			var t_center := Vector3(0.0, y1, 0.0)
+			var t_out0 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+			var t_out1 := Vector3(v1.x * r_out, y1, v1.z * r_out)
+			_add_tri(positions, textures0, faces, t_center, t_out1, t_out0)
+		else:
+			var t0 := Vector3(v0.x * r_in,  y1, v0.z * r_in)
+			var t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
+			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
+			var t3 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+			_add_quad(positions, textures0, faces, t0, t1, t2, t3)
+
+		if sides:
+			# Outer wall quad/tri under step s (facing radially outward)
+			var ow_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
+			var ow_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
+			var ow_t1 := Vector3(v1.x * r_out,  y1, v1.z * r_out)
+			if s == 0:
+				_add_tri(positions, textures0, faces, ow_b0, ow_b1, ow_t1)
+			else:
+				var ow_t0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
+				_add_quad(positions, textures0, faces, ow_b0, ow_b1, ow_t1, ow_t0)
+
+			# Inner wall quad/tri under step s (facing radially inward)
+			if not is_pie:
+				var iw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
+				var iw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
+				var iw_t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
+				if s == 0:
+					_add_tri(positions, textures0, faces, iw_b1, iw_b0, iw_t1)
+				else:
+					var iw_t0 := Vector3(v0.x * r_in, y0, v0.z * r_in)
+					_add_quad(positions, textures0, faces, iw_b1, iw_b0, iw_t0, iw_t1)
+
+	if sides:
+		# Back wall at final angle cir, from -hh to +hh
+		var v_end := Vector3(-cos(cir), 0.0, sin(cir))
+		var b0 := Vector3(v_end.x * r_out, -hh, v_end.z * r_out)
+		var b1 := Vector3(v_end.x * r_in,  -hh, v_end.z * r_in)
+		var b2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
+		var b3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
+		_add_quad(positions, textures0, faces, b0, b1, b2, b3)
+
+	# Negative curvature: mirror along X and reverse winding
+	if is_flipped:
+		for i in range(positions.size()):
+			positions[i].x = -positions[i].x
+		for face in faces:
+			face.reverse()
+
+	# Center around origin in X and Z
+	if positions.size() > 0:
+		var min_x: float = positions[0].x
+		var max_x: float = positions[0].x
+		var min_z: float = positions[0].z
+		var max_z: float = positions[0].z
+		for p in positions:
+			min_x = minf(min_x, p.x)
+			max_x = maxf(max_x, p.x)
+			min_z = minf(min_z, p.z)
+			max_z = maxf(max_z, p.z)
+		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
+		for i in range(positions.size()):
+			positions[i] -= offset
+
+	mesh_data.positions = positions
+	mesh_data.textures0 = textures0
+	mesh_data.faces = faces
+	mesh_data.shared_vertices = _build_shared_vertices(positions)
+	mesh_data.shared_textures = []
+	mesh_data.invalidate_caches()
+	return mesh_data
+
 
 # ==============================================================================
 # 5. Door Generator
