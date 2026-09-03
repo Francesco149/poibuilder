@@ -293,7 +293,6 @@ func clamp_to_viewport() -> void:
 ## Resets panel back to its default bottom-left docked location.
 func reset_to_default_position() -> void:
 	_apply_anchor()
-
 ## Returns true if the panel is completely outside the parent's visible rect.
 func is_offscreen() -> bool:
 	var parent_ctl := get_parent() as Control
@@ -548,23 +547,26 @@ func refresh() -> void:
 		var mesh_data: PBMeshData = editor.active_mesh.pb_mesh_data if editor.active_mesh != null else null
 		var count := 0
 		var total := 0
-		match editor.select_mode:
-			PBEditor.SelectMode.FACE:
-				count = sel.selected_face_count()
-				total = mesh_data.faces.size() if mesh_data != null else 0
-			PBEditor.SelectMode.EDGE:
-				count = sel.selected_edge_count()
-				total = mesh_data.get_common_edges().size() if mesh_data != null else 0
-			PBEditor.SelectMode.VERTEX:
-				count = sel.selected_vertex_count()
-				total = mesh_data.shared_vertices.size() if mesh_data != null else 0
-			_:
-				pass
-		has_selection = count > 0
-		_selection_mode_label.text = PBEditor.mode_name(editor.select_mode)
-		_selection_count_label.text = "%d / %d" % [count, total]
-	_selection_row.visible = has_selection
-
+		if editor.active_mesh != null and mesh_data != null:
+			match editor.select_mode:
+				PBEditor.SelectMode.FACE:
+					count = sel.selected_face_count()
+					total = mesh_data.faces.size()
+				PBEditor.SelectMode.EDGE:
+					count = sel.selected_edge_count()
+					total = mesh_data.get_common_edges().size()
+				PBEditor.SelectMode.VERTEX:
+					count = sel.selected_vertex_count()
+					total = mesh_data.shared_vertices.size()
+				_:
+					pass
+			has_selection = count > 0
+			_selection_mode_label.text = PBEditor.mode_name(editor.select_mode)
+			_selection_count_label.text = "%d / %d" % [count, total]
+		else:
+			_selection_mode_label.text = "None"
+			_selection_count_label.text = "No mesh"
+	_selection_row.visible = has_selection or (pinned and editor != null and editor.active_mesh != null)
 	var dragging := element_editor != null and element_editor.drag_active
 	_drag_row.visible = dragging
 	if dragging:
@@ -584,7 +586,6 @@ func update_visibility() -> void:
 	visible = (mesh_selected and (pinned or params_open or _has_selection() \
 		or (element_editor != null and element_editor.drag_active))) \
 		or creation_hint
-
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
 		return false

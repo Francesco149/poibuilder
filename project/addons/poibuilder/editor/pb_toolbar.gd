@@ -45,6 +45,8 @@ signal edit_params_requested
 ## Emitted when the user toggles the overlay panel pin.
 signal overlay_toggled(pinned: bool)
 
+## Emitted when the user clicks the explicit Reset Panel button on the toolbar.
+signal reset_panel_requested
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -67,7 +69,6 @@ var _btn_space: Button
 var _btn_new_shape: MenuButton
 var _btn_edit_params: Button
 var _btn_overlay: Button
-
 ## op_name -> button (enable/disable per selection context)
 var _op_buttons: Dictionary = {}
 
@@ -171,15 +172,22 @@ func _build_ui() -> void:
 
 	# Overlay panel pin: ON keeps the panel always visible while a mesh is
 	# selected; OFF lets it auto-hide when it has nothing to say.
+	# Double-click or right-click recovers the panel to the bottom-left corner.
 	_btn_overlay = Button.new()
 	_btn_overlay.name = "OverlayToggle"
 	_btn_overlay.text = "Panel"
 	_btn_overlay.flat = true
 	_btn_overlay.toggle_mode = true
-	_btn_overlay.tooltip_text = "Show/hide the PoiBuilder overlay panel (readouts + shape parameters)"
+	_btn_overlay.tooltip_text = "Show/hide overlay panel | Double-click or Right-click to reset to bottom-left"
 	_btn_overlay.toggled.connect(func(pressed: bool): overlay_toggled.emit(pressed))
+	_btn_overlay.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton:
+			var mb := event as InputEventMouseButton
+			if mb.pressed and (mb.button_index == MOUSE_BUTTON_RIGHT or mb.double_click):
+				reset_panel_requested.emit()
+				_btn_overlay.accept_event()
+	)
 	add_child(_btn_overlay)
-
 func _label_space() -> void:
 	add_child(VSeparator.new())
 
