@@ -146,7 +146,9 @@ func test_curved_stairs_default_ramp_collider():
 	char_col.shape = sphere
 	char_body.add_child(char_col)
 	
-	char_body.position = Vector3(0, 0.45, 0)
+	# At 90° (midway along the arc), the ramp surface is at x=0, z=1.0, y=0.0.
+	# Position character right above the ramp surface at z=1.0.
+	char_body.position = Vector3(0, 0.45, 1.0)
 	char_body.velocity = Vector3(0, -5.0, 0)
 	
 	await get_tree().physics_frame
@@ -248,4 +250,43 @@ func test_mesh_rebuild_updates_collider():
 	assert_not_null(shape2)
 	var face_count2 := shape2.get_faces().size()
 	assert_ne(face_count1, face_count2, "Rebuilding mesh should update collider faces")
+
+func test_show_collider_property():
+	var pb := PBMesh.new()
+	add_child_autofree(pb)
+	assert_false(pb.show_collider, "Default show_collider should be false")
+	pb.show_collider = true
+	assert_true(pb.show_collider, "Setting show_collider updates value")
+
+func test_curved_stairs_character_ascends_ramp():
+	var pb := PBMesh.new()
+	add_child_autofree(pb)
+	pb.pb_mesh_data = PBShapeFactory.create_shape(&"curved_stair")
+	pb.rebuild()
+
+	var char_body := CharacterBody3D.new()
+	add_child_autofree(char_body)
+	var char_col := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.3
+	capsule.height = 1.6
+	char_col.shape = capsule
+	char_body.add_child(char_col)
+
+	char_body.position = Vector3(0.5, 0.5, -0.5)
+
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	for frame in range(30):
+		if not char_body.is_on_floor():
+			char_body.velocity.y = -9.8
+		else:
+			char_body.velocity.y = 0.0
+		char_body.velocity.x = 2.0
+		char_body.velocity.z = 2.0
+		char_body.move_and_slide()
+		await get_tree().physics_frame
+
+	assert_gt(char_body.get_slide_collision_count(), 0, "Character should interact with curved ramp collider")
 
