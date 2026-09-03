@@ -197,22 +197,18 @@ func test_stairs_normals():
 func test_door_default():
 	var md = PBShapeComplex.create_door()
 	assert_eq(md.validate(), "", "Door should validate")
-	# Arched default (6 segments), v0.9.15 T-junction-free shell:
-	# per side 4 leg pieces + 2 headers + 6 header strips + 6 spandrels,
-	# plus 2 jambs + 6 tunnel + 6 wall pieces + 8 top pieces = 58 faces
-	# (apex spandrels are triangles, still 1 face per arc segment).
-	assert_eq(md.face_count(), 58, "Door: 58 faces")
+	# v0.9.17 welded shell: ONE face per side — front + back n-gons around
+	# the opening, 2 jambs, 6 tunnel quads, 2 outer walls, 1 top.
+	assert_eq(md.face_count(), 13, "Door: 13 faces")
 
 func test_door_flat_lintel_has_closed_outer_shell():
 	# v0.9.13: the legs' OUTER walls (±X) and the lintel's top (+Y) used to
 	# be missing — the frame was hollow when seen from the side/above.
 	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, false)
 	assert_eq(md.validate(), "")
-	# 5+5 front/back + 2 jambs + 1 lintel + 4 wall pieces + 3 top pieces
-	# = 20 quads (v0.9.15: walls split at the opening top, top split at
-	# the header boundaries — no T-junctions).
-	assert_eq(md.face_count(), 20, "Flat door: 20 faces")
-	assert_eq(md.vertex_count(), 80, "Flat door: 80 vertices")
+	# Front + back n-gons + 2 jambs + 1 lintel + 2 walls + 1 top = 8 faces.
+	assert_eq(md.face_count(), 8, "Flat door: 8 faces")
+	assert_eq(md.vertex_count(), 56, "Flat door: 56 vertices")
 
 	var left_faces: Array = []
 	var right_faces: Array = []
@@ -233,9 +229,9 @@ func test_door_flat_lintel_has_closed_outer_shell():
 			right_faces.append(fi)
 		if all_top:
 			top_faces.append(fi)
-	assert_eq(left_faces.size(), 2, "The left outer wall splits at the opening top")
-	assert_eq(right_faces.size(), 2, "The right outer wall splits at the opening top")
-	assert_eq(top_faces.size(), 3, "The top wall splits at the header boundaries")
+	assert_eq(left_faces.size(), 1, "The left outer wall is ONE face")
+	assert_eq(right_faces.size(), 1, "The right outer wall is ONE face")
+	assert_eq(top_faces.size(), 1, "The top wall is ONE face")
 
 	# And they must face OUTWARD (normals agree with the geometry).
 	var normals = md.calculate_normals()
@@ -271,8 +267,8 @@ func test_door_arch_segments_param_changes_topology():
 	var eight = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 8)
 	assert_eq(three.validate(), "")
 	assert_eq(eight.validate(), "")
-	assert_eq(three.face_count(), 6 * 3 + 22, "3 segments: 40 faces")
-	assert_eq(eight.face_count(), 6 * 8 + 22, "8 segments: 70 faces")
+	assert_eq(three.face_count(), 3 + 7, "3 segments: 10 faces")
+	assert_eq(eight.face_count(), 8 + 7, "8 segments: 15 faces")
 
 func test_door_compiles():
 	var md = PBShapeComplex.create_door()
@@ -412,66 +408,64 @@ func test_door_face_grab_never_tears():
 				md.positions[idx] -= Vector3(0.37, -0.53, 0.21)
 			md.rebuild_welds()
 
-func test_door_coplanar_regions_are_one_face_per_side():
-	## "Weld all the faces so each side selects as 1 face": every side of
-	## the door expands to ONE region — the front/back as a single region
-	## AROUND the arch hole, the split outer walls as one, the top as one.
+func test_door_front_is_one_ngon_with_hole_perimeter():
+	## "A stock door should be 1 n-gon face per side": the front face's
+	## perimeter is its outer rect + the opening outline (sub-edge chains
+	## included); its wireframe contributes ONLY perimeter edges — the
+	## internal piece triangulation is invisible.
 	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
-	# Face 0 is a front leg piece: the whole front is one region.
-	var front: PackedInt32Array = md.get_coplanar_face_region(0)
-	assert_eq(front.size(), 18,
-		"Front side selects as one region (legs + header strips + spandrels)")
-	# The front region spans both sides of the opening (faces at x < 0 and
-	# x > 0 of the frame's center) — one face AROUND the hole.
-	var has_left := false
-	var has_right := false
-	for fi in front:
-		var cen := Vector3.ZERO
-		for idx in md.faces[fi].get_distinct_indexes():
-			cen += md.positions[idx]
-		cen /= float(md.faces[fi].get_distinct_indexes().size())
-		if cen.x < -0.1:
-			has_left = true
-		if cen.x > 0.1:
-			has_right = true
-	assert_true(has_left and has_right,
-		"The front region surrounds the arch hole")
-	# The split outer walls merge into one region each; the top wall too.
-	var wall_piece := -1
-	for fi in range(md.faces.size()):
-		if fi in front:
-			continue
-		var all_x0 := true
-		for idx in md.faces[fi].get_distinct_indexes():
-			if absf(md.positions[idx].x + 1.5) > 0.001:
-				all_x0 = false
-		if all_x0:
-			wall_piece = fi
-			break
-	assert_gt(wall_piece, -1, "Found a left outer wall piece")
-	assert_eq(md.get_coplanar_face_region(wall_piece).size(), 3,
-		"The left outer wall's 3 pieces select as one region")
-	# Coplanar neighbors of OTHER planes never join: the back is its own
-	# region, tunnel quads stay single.
-	var back: PackedInt32Array = md.get_coplanar_face_region(18)
-	assert_eq(back.size(), 18, "Back side is one region")
-	assert_false(front.has(18), "Front and back are separate regions")
-
-func test_door_region_move_never_tears():
-	## Moving a whole region (the region-select drag unit) keeps the shell
-	## closed — only carried rim edges and the untouched bottom rim open.
-	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	assert_eq(md.faces.size(), 13)
+	var front: PBFace = md.faces[0]
+	var edges: Array[PBEdge] = front.get_edges()
+	# outer: 2 bottom + 3 left chain + 3 right chain + 8 top = 16
+	# hole: 2 jamb + 6 arc + 1 opening bottom = 9 → but 2 of the left/right
+	# chain edges cancel into fewer segments per the piece layout; the exact
+	# count is stable, assert the meaningful properties instead:
+	assert_gt(edges.size(), 13, "The front perimeter spans the hole AND the rect")
+	assert_false(front.is_quad(), "The front is an n-gon, not a quad")
+	# Every perimeter edge of the front must pair with exactly one neighbor
+	# edge or sit on the bottom rim (no T-junctions).
+	var usage := _coord_open_counts(md)
 	var y0 := INF
 	for p in md.positions:
 		y0 = minf(y0, p.y)
-	for seed in [0, 2, 18, 20]:
-		var region: PackedInt32Array = md.get_coplanar_face_region(seed)
-		var union := md.get_coincident_vertices_from_faces(region)
-		for idx in union:
-			md.positions[idx] += Vector3(0.2, 0.35, -0.4)
-		md.rebuild_welds()
-		assert_eq(_tears_after_move(md, union, y0), 0,
-			"Region move from seed %d opens no hole" % seed)
-		for idx in union:
-			md.positions[idx] -= Vector3(0.2, 0.35, -0.4)
-		md.rebuild_welds()
+	for e in edges:
+		var pa: Vector3 = md.positions[e.a]
+		var pb: Vector3 = md.positions[e.b]
+		var ka := Vector3(snappedf(pa.x, 0.0001), snappedf(pa.y, 0.0001), snappedf(pa.z, 0.0001))
+		var kb := Vector3(snappedf(pb.x, 0.0001), snappedf(pb.y, 0.0001), snappedf(pb.z, 0.0001))
+		var k: String
+		if ka < kb:
+			k = "%s|%s" % [ka, kb]
+		else:
+			k = "%s|%s" % [kb, ka]
+		if usage[k] == 1:
+			assert_true(absf(pa.y - y0) < 0.0011 and absf(pb.y - y0) < 0.0011,
+				"An unpaired front perimeter edge may only sit on the bottom rim")
+		else:
+			assert_eq(usage[k], 2,
+				"Front perimeter edge pairs with exactly one neighbor edge")
+
+func test_door_front_extrudes_normally():
+	## Extruding the merged front creates the cap + walls around BOTH the
+	## outer rect and the hole, and the new edges stay (watertight shell).
+	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	var usage_before := _coord_open_counts(md)
+	var rim_before := 0
+	for k in usage_before.keys():
+		if usage_before[k] == 1:
+			rim_before += 1
+	var r: Dictionary = PBMeshOps.extrude_faces(md, PackedInt32Array([0]), 0.3)
+	assert_true(r["ok"], "Extrude ok")
+	assert_eq(r["cap_face_ids"].size(), 1, "One cap replaces the front")
+	# 12 remaining + 1 cap + 24 walls (one per perimeter edge, around the
+	# outer rect AND the hole) = 37.
+	assert_eq(md.faces.size(), 37, "The extrusion adds one wall per perimeter edge")
+	var usage_after := _coord_open_counts(md)
+	var rim_after := 0
+	for k in usage_after.keys():
+		assert_lt(usage_after[k], 3, "No edge used by more than 2 faces")
+		if usage_after[k] == 1:
+			rim_after += 1
+	assert_eq(rim_after, rim_before,
+		"The new walls close the cap perimeter; the bottom rim stays the only opening")

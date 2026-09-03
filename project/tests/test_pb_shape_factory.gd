@@ -120,10 +120,10 @@ func test_create_door():
 	var md := PBShapeFactory.create_shape(&"door")
 	assert_not_null(md)
 	assert_eq(md.validate(), "")
-	# Factory door: arched default with 6 segments → 6*6+22 = 58 faces
-	# (v0.9.15 T-junction-free shell; the 2 apex spandrels are triangles).
-	assert_eq(md.vertex_count(), 228)
-	assert_eq(md.face_count(), 58)
+	# Factory door: arched default with 6 segments → 6+7 = 13 faces
+	# (v0.9.17 welded shell: one n-gon per side, tunnel quads stay split).
+	assert_eq(md.vertex_count(), 126)
+	assert_eq(md.face_count(), 13)
 
 func test_create_unknown():
 	var md := PBShapeFactory.create_shape(&"nonexistent")
