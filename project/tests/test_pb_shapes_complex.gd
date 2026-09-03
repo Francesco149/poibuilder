@@ -233,6 +233,14 @@ func test_curved_stairs_pie_treads_face_up():
 		if n.y > 0.9:
 			up_faces += 1
 	assert_eq(up_faces, 8, "All 8 curved stairs pie treads must have up-facing (+Y) normals")
+func test_curved_stairs_risers_face_climber():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.5, 180.0, 8, false)
+	# Face 0 is the riser of step 0 (at inc0 = 0)
+	var n0: Vector3 = PBMath.normal_from_positions(md.positions, md.faces[0].get_indexes())
+	assert_almost_eq(n0.z, -1.0, 0.05, "Step 0 riser must face -Z (toward climber)")
+	assert_almost_eq(n0.y, 0.0, 0.05)
+	assert_almost_eq(n0.x, 0.0, 0.05)
+
 
 func test_door_wide_arch_rise_capped():
 	# Even on a very wide door (width=10m, height=2.5m, opening_height=2.0m),

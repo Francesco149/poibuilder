@@ -553,11 +553,11 @@ static func create_curved_stairs(
 		var v0 := Vector3(-cos(inc0), 0.0, sin(inc0))
 		var v1 := Vector3(-cos(inc1), 0.0, sin(inc1))
 
-		# 1. Riser: vertical face at angle inc0, normal facing -Z at start
-		var r0 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
-		var r1 := Vector3(v0.x * r_out, y0, v0.z * r_out)
-		var r2 := Vector3(v0.x * r_out, y1, v0.z * r_out)
-		var r3 := Vector3(v0.x * r_in,  y1, v0.z * r_in)
+		# 1. Riser: vertical face at angle inc0, normal facing against climb (-Z at start)
+		var r0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
+		var r1 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+		var r2 := Vector3(v0.x * r_in,  y1, v0.z * r_in)
+		var r3 := Vector3(v0.x * r_in,  y0, v0.z * r_in)
 		_add_quad(positions, textures0, faces, r0, r1, r2, r3)
 
 		# 2. Tread: horizontal step top at y1, normal +Y
