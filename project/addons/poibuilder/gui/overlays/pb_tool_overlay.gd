@@ -82,10 +82,26 @@ const DEFAULT_OFFSET: float = 12.0
 
 ## Header drag state.
 var _panel_dragging: bool = false
-var _panel_drag_offset: Vector2 = Vector2.ZERO
 var _collapsed: bool = false
 var _custom_position_set: bool = false
+
+## Stored bottom-left position of the panel in parent coordinates.
+## Anchoring by bottom-left means whenever content height changes (collapsing,
+## expanding, opening modal, closing modal), the panel's bottom edge remains
+## pinned in place and content grows/shrinks cleanly upwards with zero empty space below.
+var _bottom_left: Vector2 = Vector2.ZERO
+
+## Master visibility toggle state (driven by toolbar Panel toggle button).
+## When false, the panel is strictly hidden regardless of selection or modals.
+var panel_enabled: bool = true:
+	set = set_panel_enabled
+
+## Tracks if the user manually collapsed the panel via the collapse button.
+var _user_collapsed: bool = false
 var _ui_built: bool = false
+func set_panel_enabled(value: bool) -> void:
+	panel_enabled = value
+	update_visibility()
 
 # ==============================================================================
 # Lifecycle
@@ -109,14 +125,15 @@ func _exit_tree() -> void:
 		resized.disconnect(_on_self_resized)
 
 func _on_parent_resized() -> void:
+	var parent_ctl := get_parent() as Control
+	if parent_ctl == null:
+		return
 	if not _custom_position_set:
-		_apply_anchor()
-	else:
-		clamp_to_viewport()
+		_bottom_left = Vector2(DEFAULT_OFFSET, parent_ctl.size.y - DEFAULT_OFFSET)
+	_update_position_from_bottom_left()
 
 func _on_self_resized() -> void:
-	if _custom_position_set:
-		clamp_to_viewport()
+	_update_position_from_bottom_left()
 ## Ensures that all UI child nodes are instantiated.
 ## Can be called before _ready() if tests or callers invoke refresh() off-tree.
 func build_ui() -> void:
@@ -133,10 +150,9 @@ func _ensure_ui() -> void:
 	if editor_gui != null and editor_gui.has_theme_stylebox("Information3dViewport", "EditorStyles"):
 		add_theme_stylebox_override("panel",
 			editor_gui.get_theme_stylebox("Information3dViewport", "EditorStyles"))
-
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	gui_input.connect(_on_header_gui_input)
-
+	custom_minimum_size = Vector2(165, 0)
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	add_child(vbox)
@@ -251,29 +267,28 @@ func _ensure_ui() -> void:
 	# PARAMS section: the shape-parameter modal.
 	_params_section = VBoxContainer.new()
 	_params_section.name = "ParamsSection"
-	_params_section.add_theme_constant_override("separation", 4)
+	_params_section.add_theme_constant_override("separation", 3)
 	_body.add_child(_params_section)
 	_params_title = Label.new()
 	_params_title.name = "ParamsTitle"
 	_params_title.text = "SHAPE PARAMETERS"
-	_params_title.add_theme_font_size_override("font_size", 11)
+	_params_title.add_theme_font_size_override("font_size", 10)
 	_params_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	_params_section.add_child(_params_title)
 
 	_params_grid = GridContainer.new()
 	_params_grid.name = "ParamsGrid"
 	_params_grid.columns = 2
-	_params_grid.add_theme_constant_override("h_separation", 10)
-	_params_grid.add_theme_constant_override("v_separation", 3)
+	_params_grid.add_theme_constant_override("h_separation", 6)
+	_params_grid.add_theme_constant_override("v_separation", 2)
 	_params_section.add_child(_params_grid)
 
 	_params_hint = Label.new()
 	_params_hint.name = "ParamsHint"
 	_params_hint.text = "Changes preview live"
-	_params_hint.add_theme_font_size_override("font_size", 10)
+	_params_hint.add_theme_font_size_override("font_size", 9)
 	_params_hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 	_params_section.add_child(_params_hint)
-
 	var buttons_row := HBoxContainer.new()
 	buttons_row.alignment = BoxContainer.ALIGNMENT_END
 	buttons_row.add_theme_constant_override("separation", 6)
@@ -302,29 +317,48 @@ func _apply_anchor() -> void:
 		return
 	reset_to_default_position()
 
-## Clamps the panel so it stays fully inside the parent viewport with padding.
-## The header is strictly prioritized to never go above the viewport top.
-func clamp_to_viewport() -> void:
+## Updates the top-left position based on the pinned bottom-left anchor.
+func _update_position_from_bottom_left() -> void:
 	var parent_ctl := get_parent() as Control
 	if parent_ctl == null:
+		position.x = _bottom_left.x
+		position.y = maxf(PADDING, _bottom_left.y - size.y)
 		return
-	var max_x := maxf(PADDING, parent_ctl.size.x - size.x - PADDING)
-	position.x = clampf(position.x, PADDING, max_x)
-	var max_y := maxf(PADDING, parent_ctl.size.y - size.y - PADDING)
-	position.y = clampf(position.y, PADDING, max_y)
+
+	var min_x: float = PADDING
+	var max_x: float = maxf(PADDING, parent_ctl.size.x - size.x - PADDING)
+	_bottom_left.x = clampf(_bottom_left.x, min_x, max_x)
+
+	var max_y: float = parent_ctl.size.y - PADDING
+	var min_y: float = PADDING + size.y
+	if min_y > max_y:
+		position.x = _bottom_left.x
+		position.y = PADDING
+		_bottom_left.y = PADDING + size.y
+		return
+
+	_bottom_left.y = clampf(_bottom_left.y, min_y, max_y)
+	position.x = _bottom_left.x
+	position.y = _bottom_left.y - size.y
+
+## Clamps the panel so it stays fully inside the parent viewport with padding.
+func clamp_to_viewport() -> void:
+	_update_position_from_bottom_left()
 
 ## Resets panel back to its default bottom-left docked location.
 func reset_to_default_position() -> void:
 	_custom_position_set = false
+	_user_collapsed = false
 	var parent_ctl := get_parent() as Control
 	if parent_ctl != null:
-		set_anchors_preset(Control.PRESET_TOP_LEFT)
+		set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE)
 		grow_vertical = Control.GROW_DIRECTION_END
 		grow_horizontal = Control.GROW_DIRECTION_END
-		var target_y := maxf(PADDING, parent_ctl.size.y - size.y - DEFAULT_OFFSET)
-		position = Vector2(DEFAULT_OFFSET, target_y)
+		reset_size()
+		_bottom_left = Vector2(DEFAULT_OFFSET, parent_ctl.size.y - DEFAULT_OFFSET)
 	else:
-		position = Vector2(DEFAULT_OFFSET, DEFAULT_OFFSET)
+		_bottom_left = Vector2(DEFAULT_OFFSET, DEFAULT_OFFSET + size.y)
+	_update_position_from_bottom_left()
 ## Returns true if the panel is completely outside the parent's visible rect.
 func is_offscreen() -> bool:
 	var parent_ctl := get_parent() as Control
@@ -357,7 +391,6 @@ func _make_row_label(text: String) -> Label:
 func _make_value_label() -> Label:
 	var label := Label.new()
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return label
 
 # ── Header drag + collapse ────────────────────────────────────────────────────
@@ -372,31 +405,18 @@ func _on_header_gui_input(event: InputEvent) -> void:
 				accept_event()
 				return
 			_panel_dragging = mb.pressed
-			if mb.pressed:
-				var parent_ctl := get_parent() as Control
-				if parent_ctl != null:
-					_panel_drag_offset = parent_ctl.get_local_mouse_position() - position
-				else:
-					_panel_drag_offset = get_local_mouse_position()
-				accept_event()
-			else:
-				accept_event()
+			accept_event()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			_show_header_context_menu()
 			accept_event()
 	elif event is InputEventMouseMotion and _panel_dragging:
 		var parent_ctl := get_parent() as Control
 		if parent_ctl != null:
-			if not _custom_position_set:
-				_custom_position_set = true
-				set_anchors_preset(Control.PRESET_TOP_LEFT)
-				grow_vertical = Control.GROW_DIRECTION_END
-				grow_horizontal = Control.GROW_DIRECTION_END
+			_custom_position_set = true
 			var mm := event as InputEventMouseMotion
-			position += mm.relative
-			clamp_to_viewport()
+			_bottom_left += mm.relative
+			_update_position_from_bottom_left()
 			accept_event()
-
 func _show_header_context_menu() -> void:
 	var popup := PopupMenu.new()
 	popup.add_item("Reset Position to Bottom-Left", 0)
@@ -414,15 +434,16 @@ func _show_header_context_menu() -> void:
 	popup.popup()
 
 func _on_collapse_pressed() -> void:
-	_collapsed = not _collapsed
-	_body.visible = not _collapsed
-	_collapse_btn.text = "▸" if _collapsed else "▾"
-	if _custom_position_set:
-		clamp_to_viewport.call_deferred()
-func expand() -> void:
-	if _collapsed:
-		_on_collapse_pressed()
+	_user_collapsed = not _user_collapsed
+	_body.visible = not _user_collapsed
+	_collapse_btn.text = "▸" if _user_collapsed else "▾"
+	_update_position_from_bottom_left.call_deferred()
 
+func expand() -> void:
+	_user_collapsed = false
+	_body.visible = true
+	_collapse_btn.text = "▾"
+	_update_position_from_bottom_left.call_deferred()
 # ==============================================================================
 # Creation hint (what the session expects next)
 # ==============================================================================
@@ -468,6 +489,7 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 			continue
 		var spin := SpinBox.new()
 		spin.name = "Param" + param_name
+		spin.custom_minimum_size = Vector2(64, 0)
 		spin.min_value = float(def.get("min", 0.01))
 		spin.max_value = float(def.get("max", 1000.0))
 		spin.step = float(def.get("step", 0.1))
@@ -478,9 +500,12 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		_param_spinboxes[param_name] = spin
 
 	params_open = true
+	panel_enabled = true
 	_params_section.visible = true
+	reset_size()
 	expand()  # the modal must be visible even if the body was collapsed
 	refresh()
+	_update_position_from_bottom_left.call_deferred()
 
 ## Updates several param values without emitting param_changed (used to
 ## snap back on cancel).
@@ -598,18 +623,33 @@ func refresh() -> void:
 		else:
 			_selection_mode_label.text = "None"
 			_selection_count_label.text = "No mesh"
-	_selection_row.visible = has_selection or (pinned and editor != null and editor.active_mesh != null)
+	_selection_row.visible = has_selection
+
 	var dragging := element_editor != null and element_editor.drag_active
 	_drag_row.visible = dragging
 	if dragging:
 		drag_value_label.text = element_editor.drag_readout()
 
-	update_visibility()
+	# Content presence: is there anything meaningful to display in the body?
+	var has_content := params_open or has_creation_hint() or dragging or has_selection
 
-## The panel shows while a mesh is selected AND at least one of:
-## pinned, params modal open, elements selected, a drag running — or while
-## a shape-creation session is showing its hint (creation needs no mesh).
+	# "empty panel is auto collapsed to just the header, not displayed empty."
+	if editor != null and not has_content:
+		_body.visible = false
+		_collapse_btn.text = "▸"
+	else:
+		_body.visible = not _user_collapsed
+		_collapse_btn.text = "▸" if _user_collapsed else "▾"
+	update_visibility()
+	_update_position_from_bottom_left.call_deferred()
+
+## Evaluates panel visibility.
+## When panel_enabled is false (user toggled Panel off on toolbar), panel is strictly hidden.
+## Otherwise, shows if pinned, params open, creation hint, or if selection/drag is active on a mesh.
 func update_visibility() -> void:
+	if not panel_enabled:
+		visible = false
+		return
 	var creation_hint := has_creation_hint()
 	if editor == null:
 		visible = params_open or creation_hint
