@@ -540,6 +540,20 @@ static func create_curved_stairs(
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
+	var ramp_faces := PackedVector3Array()
+
+	var add_ramp_quad := func(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3) -> void:
+		ramp_faces.append(p0)
+		ramp_faces.append(p1)
+		ramp_faces.append(p2)
+		ramp_faces.append(p0)
+		ramp_faces.append(p2)
+		ramp_faces.append(p3)
+
+	var add_ramp_tri := func(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
+		ramp_faces.append(p0)
+		ramp_faces.append(p1)
+		ramp_faces.append(p2)
 
 	var step_h: float = height / float(num_steps)
 
@@ -572,6 +586,48 @@ static func create_curved_stairs(
 			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
 			var t3 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
 			_add_quad(positions, textures0, faces, t0, t1, t2, t3)
+
+		# Ramp collider faces for this segment
+		var ramp_y0: float = -hh + (float(s) / float(num_steps)) * height
+		var ramp_y1: float = -hh + (float(s + 1) / float(num_steps)) * height
+		# Top ramp surface: normal pointing upward (+Y)
+		if is_pie:
+			var rc_center := Vector3(0.0, ramp_y0, 0.0)
+			var rc_out0 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
+			var rc_out1 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
+			add_ramp_tri.call(rc_center, rc_out0, rc_out1)
+		else:
+			var rp0 := Vector3(v0.x * r_in,  ramp_y0, v0.z * r_in)
+			var rp1 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
+			var rp2 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
+			var rp3 := Vector3(v1.x * r_in,  ramp_y1, v1.z * r_in)
+			add_ramp_quad.call(rp0, rp1, rp2, rp3)
+
+		if sides:
+			# Outer ramp wall
+			var row_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
+			var row_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
+			var row_t1 := Vector3(v1.x * r_out,  ramp_y1, v1.z * r_out)
+			var row_t0 := Vector3(v0.x * r_out,  ramp_y0, v0.z * r_out)
+			add_ramp_quad.call(row_b0, row_b1, row_t1, row_t0)
+
+			# Inner ramp wall
+			if not is_pie:
+				var riw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
+				var riw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
+				var riw_t1 := Vector3(v1.x * r_in,  ramp_y1, v1.z * r_in)
+				var riw_t0 := Vector3(v0.x * r_in,  ramp_y0, v0.z * r_in)
+				add_ramp_quad.call(riw_b1, riw_b0, riw_t0, riw_t1)
+
+			# Ramp floor
+			var rf_out0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
+			var rf_out1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
+			if is_pie:
+				add_ramp_tri.call(Vector3(0.0, -hh, 0.0), rf_out1, rf_out0)
+			else:
+				var rf_in0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
+				var rf_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
+				add_ramp_quad.call(rf_in0, rf_in1, rf_out1, rf_out0)
 
 		if sides:
 			# Outer wall under step s (facing radially outward)
@@ -614,6 +670,13 @@ static func create_curved_stairs(
 		var b2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
 		var b3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
 		_add_quad(positions, textures0, faces, b0, b1, b2, b3)
+		# Ramp back wall
+		var rb0 := Vector3(v_end.x * r_out, -hh, v_end.z * r_out)
+		var rb1 := Vector3(v_end.x * r_in,  -hh, v_end.z * r_in)
+		var rb2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
+		var rb3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
+		add_ramp_quad.call(rb0, rb1, rb2, rb3)
+
 
 	# Negative curvature: mirror along X and reverse winding
 	if is_flipped:
@@ -621,6 +684,13 @@ static func create_curved_stairs(
 			positions[i].x = -positions[i].x
 		for face in faces:
 			face.reverse()
+		for i in range(ramp_faces.size()):
+			ramp_faces[i].x = -ramp_faces[i].x
+		for i in range(0, ramp_faces.size(), 3):
+			var tmp := ramp_faces[i + 1]
+			ramp_faces[i + 1] = ramp_faces[i + 2]
+			ramp_faces[i + 2] = tmp
+
 
 	# Center around origin in X and Z
 	if positions.size() > 0:
@@ -636,6 +706,10 @@ static func create_curved_stairs(
 		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
 		for i in range(positions.size()):
 			positions[i] -= offset
+		for i in range(ramp_faces.size()):
+			ramp_faces[i] -= offset
+
+	mesh_data.set_meta("ramp_faces", ramp_faces)
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0

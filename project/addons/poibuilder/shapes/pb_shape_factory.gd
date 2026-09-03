@@ -64,6 +64,14 @@ static func create_shape(id: StringName, size: Vector3 = Vector3.ONE) -> PBMeshD
 			var inner_r: float = max_w * 0.25
 			var stair_w: float = max_w * 0.75
 			data = PBShapeComplex.create_curved_stairs(stair_w, size.y, inner_r, 180.0, 8, true)
+			data.shape_params = {
+				"stair_width": stair_w,
+				"height": size.y,
+				"inner_radius": inner_r,
+				"curvature": 180.0,
+				"steps": 8,
+				"sides": 1.0,
+			}
 
 		&"prism":
 			data = PBShapeGenerators.create_prism(size)
