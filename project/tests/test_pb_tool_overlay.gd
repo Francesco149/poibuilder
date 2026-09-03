@@ -233,36 +233,6 @@ func test_close_params_clears_controls():
 	assert_false(overlay._params_section.visible)
 	assert_eq(overlay._param_spinboxes.size(), 0, "Controls are cleared on close")
 
-func test_spinbox_click_drag_support():
-	var overlay := _make_overlay()
-	overlay.open_params("Cube", [{"name": "width", "label": "Width", "min": 0.1,
-		"max": 10.0, "step": 0.1, "suffix": "m"}], {"width": 2.0})
-	var spin: SpinBox = overlay._param_spinboxes["width"]
-	assert_not_null(spin)
-	var le := spin.get_line_edit()
-	assert_not_null(le)
-	assert_eq(le.mouse_default_cursor_shape, Control.CURSOR_HSIZE, "Cursor should be horizontal resize drag")
-	assert_true(spin.select_all_on_focus, "select_all_on_focus should be enabled")
-
-	# Simulate click-drag rightwards:
-	var mb := InputEventMouseButton.new()
-	mb.button_index = MOUSE_BUTTON_LEFT
-	mb.pressed = true
-	mb.global_position = Vector2(100, 100)
-	le.gui_input.emit(mb)
-
-	var mm := InputEventMouseMotion.new()
-	mm.global_position = Vector2(150, 100) # dx = +50px
-	le.gui_input.emit(mm)
-
-	var mb_up := InputEventMouseButton.new()
-	mb_up.button_index = MOUSE_BUTTON_LEFT
-	mb_up.pressed = false
-	mb_up.global_position = Vector2(150, 100)
-	le.gui_input.emit(mb_up)
-
-	assert_gt(spin.value, 2.0, "Dragging right should have increased the spinbox value")
-
 # ==============================================================================
 # Pin plumbing
 # ==============================================================================

@@ -495,8 +495,6 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		spin.step = float(def.get("step", 0.1))
 		spin.suffix = str(def.get("suffix", ""))
 		spin.value = float(values.get(param_name, def.get("min", 0.01)))
-		spin.select_all_on_focus = true
-		_attach_spinbox_drag(spin)
 		spin.value_changed.connect(_on_param_value_changed.bind(param_name))
 		_params_grid.add_child(spin)
 		_param_spinboxes[param_name] = spin
@@ -671,53 +669,3 @@ func _has_selection() -> bool:
 	return editor.selection.selected_face_count() > 0 \
 		or editor.selection.selected_edge_count() > 0 \
 		or editor.selection.selected_vertex_count() > 0
-
-## Connects click-drag horizontal adjustment to a SpinBox's LineEdit,
-## matching Godot inspector numerical property controls.
-func _attach_spinbox_drag(spin: SpinBox) -> void:
-	var le := spin.get_line_edit()
-	if le == null:
-		return
-	le.mouse_default_cursor_shape = Control.CURSOR_HSIZE
-
-	var drag_state := {
-		"dragging": false,
-		"start_x": 0.0,
-		"start_val": 0.0,
-		"moved": false,
-	}
-
-	le.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton:
-			var mb := event as InputEventMouseButton
-			if mb.button_index == MOUSE_BUTTON_LEFT:
-				if mb.pressed:
-					drag_state["dragging"] = true
-					drag_state["moved"] = false
-					drag_state["start_x"] = mb.global_position.x
-					drag_state["start_val"] = spin.value
-				else:
-					if drag_state["dragging"] and drag_state["moved"]:
-						drag_state["dragging"] = false
-						drag_state["moved"] = false
-						le.accept_event()
-					else:
-						drag_state["dragging"] = false
-						drag_state["moved"] = false
-		elif event is InputEventMouseMotion and drag_state["dragging"]:
-			var mm := event as InputEventMouseMotion
-			var dx: float = mm.global_position.x - float(drag_state["start_x"])
-			if not drag_state["moved"]:
-				if absf(dx) > 3.0:
-					drag_state["moved"] = true
-			if drag_state["moved"]:
-				var factor: float = 1.0
-				if mm.shift_pressed:
-					factor = 0.1
-				elif mm.ctrl_pressed:
-					factor = 10.0
-				var speed: float = spin.step if spin.step > 0.0 else 0.05
-				var new_val: float = float(drag_state["start_val"]) + dx * speed * factor * 0.5
-				spin.value = clampf(new_val, spin.min_value, spin.max_value)
-				le.accept_event()
-	)
