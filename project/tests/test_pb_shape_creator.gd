@@ -260,6 +260,46 @@ func test_facing_follows_the_dominant_drag_dimension():
 	assert_almost_eq(creator.facing.normalized().dot(Vector3.BACK), 1.0, 0.001,
 		"Sub-dead-zone nudges keep the facing stable")
 
+func test_stairs_facing_biased_along_longer_dimension():
+	var creator := _armed_creator(&"stair")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 3m along X, 1m along Z: stairs must naturally run along X (longer)
+	creator.update_base(Vector3(3.0, 0, 1.0))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
+		"Stairs facing naturally points along the longer dimension (+X)")
+	# Drag 1m along X, 3m along Z: stairs must naturally run along Z (longer)
+	var creator2 := _armed_creator(&"stair")
+	_begin_base(creator2, Vector3.ZERO)
+	creator2.update_base(Vector3(1.0, 0, 3.0))
+	assert_almost_eq(absf(creator2.facing.dot(Vector3.BACK)), 1.0, 0.001,
+		"Stairs facing naturally points along the longer dimension (+Z)")
+
+func test_door_facing_biased_parallel_to_shorter_dimension():
+	var creator := _armed_creator(&"door")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 2.5m along X, 0.4m along Z: door must naturally face along Z (shorter, wall thickness)
+	creator.update_base(Vector3(2.5, 0, 0.4))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
+		"Door facing naturally points parallel to the shorter dimension (+Z)")
+	# Drag 0.4m along X, 2.5m along Z: door must naturally face along X (shorter, wall thickness)
+	var creator2 := _armed_creator(&"door")
+	_begin_base(creator2, Vector3.ZERO)
+	creator2.update_base(Vector3(0.4, 0, 2.5))
+	assert_almost_eq(absf(creator2.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
+		"Door facing naturally points parallel to the shorter dimension (+X)")
+
+func test_facing_hysteresis_prevents_ping_pong_near_square():
+	var creator := _armed_creator(&"door")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 1.05m along X, 1.00m along Z (near square, within 0.15m deadzone)
+	creator.update_base(Vector3(1.05, 0, 1.00))
+	var initial_facing: Vector3 = creator.facing
+	# Slightly shift so Z becomes 1.06m (crosses 1.05m by 0.01m):
+	# Because difference is within FACING_DEAD_ZONE, facing MUST NOT flip!
+	creator.update_base(Vector3(1.05, 0, 1.06))
+	assert_eq(creator.facing, initial_facing,
+		"Near-square dimension crossover does not ping-pong facing")
+
 func test_facing_locks_at_base_release():
 	var creator := _armed_creator()
 	_begin_base(creator, Vector3.ZERO)

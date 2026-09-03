@@ -89,8 +89,11 @@ var base_end: Vector3 = Vector3.ZERO
 var _last_point: Vector3 = Vector3.ZERO
 
 ## Steps smaller than this don't re-point the facing arrow (dead zone).
-const FACING_DEAD_ZONE := 0.04
+## Set to 0.15m to prevent mouse tremors and jitter from ping-ponging the facing.
+const FACING_DEAD_ZONE := 0.15
 
+## Threshold difference between u_size and v_size to consider one dimension clearly dominant.
+const ASPECT_BIAS_THRESHOLD := 0.20
 ## The live preview node (owned and managed by the plugin; the creator only
 ## supplies data + placement for it). Null while nothing is being drawn.
 var preview_node: PBMesh = null
@@ -297,18 +300,59 @@ func reset() -> void:
 
 # ── Geometry helpers ─────────────────────────────────────────────────────────
 
-## Facing-arrow heuristic: the in-plane dimension (u or v) that received the
-## biggest delta in the last SIGNIFICANT movement wins; the sign points away
-## from the drag start. Steps inside the dead zone never re-point it, so
-## placing (and nudging) feels stable.
+## Facing-arrow heuristic:
+## 1. Biased towards the dimension that makes sense for the shape:
+##    - Doors: parallel to the shorter dimension (opening spans width, depth is thickness).
+##    - Stairs: along the longer dimension (steps rise along the longer run).
+##    - Other shapes: follows dominant drag / nudge direction.
+## 2. Protected by deadzone and hysteresis:
+##    - Near-square rectangles (difference < FACING_DEAD_ZONE) do not flip back-and-forth.
+##    - Sub-dead-zone nudges keep the facing stable.
 func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 	var step := _project_on_plane(point - _last_point, plane_normal)
 	_last_point = point
-	if step.length() < FACING_DEAD_ZONE:
-		return
+	var step_len := step.length()
+
 	var cum := point - base_start
 	var du := step.dot(u_dir)
 	var dv := step.dot(v_dir)
+
+	# Shapes with an inherent dimension bias:
+	# Door: parallel to the shorter dimension.
+	# Stairs: along the longer dimension.
+	if PBShapeParams.facing_prefers_shorter(shape_id):
+		# Door: facing runs across the dominant extent (along the shorter extent).
+		# Apply hysteresis near square to avoid ping-pong.
+		var longer_is_u: bool
+		if absf(u_size - v_size) >= FACING_DEAD_ZONE:
+			longer_is_u = u_size >= v_size
+		else:
+			longer_is_u = absf(facing.dot(v_dir)) >= absf(facing.dot(u_dir))
+		var across := v_dir if longer_is_u else u_dir
+		var toward: float = (rect_center - base_start).dot(across)
+		facing = across * (1.0 if toward >= 0.0 else -1.0)
+		return
+	elif shape_id == &"stair" or shape_id == &"curved_stair":
+		# Stairs: facing runs along the longer extent.
+		# Deliberate lateral nudges bigger than deadzone can override.
+		var longer_is_u: bool
+		if absf(u_size - v_size) >= FACING_DEAD_ZONE:
+			longer_is_u = u_size >= v_size
+		else:
+			longer_is_u = absf(facing.dot(u_dir)) >= absf(facing.dot(v_dir))
+		var natural_axis := u_dir if longer_is_u else v_dir
+		var lateral_axis := v_dir if longer_is_u else u_dir
+		if step_len >= FACING_DEAD_ZONE and absf(step.dot(lateral_axis)) > absf(step.dot(natural_axis)) * 1.5:
+			var lat_sign := signf(cum.dot(lateral_axis))
+			facing = lateral_axis * (lat_sign if lat_sign != 0.0 else 1.0)
+		else:
+			var nat_sign := signf(cum.dot(natural_axis))
+			facing = natural_axis * (nat_sign if nat_sign != 0.0 else 1.0)
+		return
+
+	# General shapes: steps inside the dead zone never re-point facing.
+	if step_len < FACING_DEAD_ZONE:
+		return
 	if absf(du) >= absf(dv):
 		var su := signf(cum.dot(u_dir))
 		facing = u_dir * (su if su != 0.0 else signf(du))
@@ -316,31 +360,15 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 		var sv := signf(cum.dot(v_dir))
 		facing = v_dir * (sv if sv != 0.0 else signf(dv))
 
+## Maps the base drag extents (u_size, v_size) and height onto the shape's
+## parameters (width, depth, height, radius). One mapping fits every surface:
+## local Y along the face normal, local +Z along facing (depth), and local +X
+## perpendicular (width).
 func _apply_drag_extents() -> void:
 	if state == State.OFFSET:
 		return  # anchor flow (sprite): the drag drives the normal offset only
-	# NAN means "base stage — height-driven values keep their current values"
-	# (the drag height only exists from HEIGHT on; negative heights are real
-	# signed drags). One mapping fits every surface: the placement basis
-	# points local Y along the face normal and local +Z along `facing`, so
-	# "height" grows along the normal on walls exactly like it grows up on
-	# floors. The u/v extents map onto width/depth by where the facing
-	# points: forward along v keeps u → width and v → depth; forward along u
-	# swaps them (local Z then runs along u).
 	var height_value: float = height if state >= State.HEIGHT else NAN
 	var v_dir := plane_normal.cross(u_dir).normalized()
-	# Door-like oriented shapes: their front contains the dominant base
-	# extent — width always takes the bigger drag and the facing runs ACROSS
-	# it (the sign points away from the drag start). The dominant-step
-	# heuristic below is built for stairs; for a door it turned a wide flat
-	# drag into a thin tunnel and left the height drag nothing visible to
-	# grow. Runs on every extents application so the facing is a pure
-	# function of the rect (frozen u/v keep it locked through the height
-	# phase — the arrow lock).
-	if PBShapeParams.facing_across_dominant(shape_id):
-		var across := v_dir if u_size >= v_size else u_dir
-		var toward: float = (rect_center - base_start).dot(across)
-		facing = across * (1.0 if toward >= 0.0 else -1.0)
 	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))
 	var width := v_size if forward_along_u else u_size
 	var depth := u_size if forward_along_u else v_size

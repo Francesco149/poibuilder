@@ -152,16 +152,16 @@ static func facing_direction(shape_id: StringName) -> Vector3:
 			return Vector3(0, 0, 1)
 	return Vector3.ZERO
 
-## True when the shape's front runs ACROSS its dominant base extent: the
-## width always takes the bigger drag and the facing points perpendicular
-## to it. The door — dragging a wide, thin rect on the floor draws the
-## door's face (width × depth footprint), not a tunnel whose width is the
-## thin extent. The default heuristic instead points the facing ALONG the
-## dominant step, which is right for stairs (they rise along their run)
-## and wrong for doors.
-static func facing_across_dominant(shape_id: StringName) -> bool:
+## True when the shape's facing naturally aligns with the shorter base dimension
+## (e.g. doors: opening spans the longer dimension, depth/facing is the shorter
+## wall thickness). False when facing aligns with the longer dimension
+## (e.g. stairs: run/steps climb along the longer dimension).
+static func facing_prefers_shorter(shape_id: StringName) -> bool:
 	return shape_id == &"door"
 
+## Backward-compatible alias for facing_prefers_shorter.
+static func facing_across_dominant(shape_id: StringName) -> bool:
+	return facing_prefers_shorter(shape_id)
 ## The parameter the height drag drives for shapes WITHOUT a height param
 ## (sphere / torus / arch — their vertical size IS a radius), relative to the
 ## value the base drag left: value = base_value + rate * height. The rate is

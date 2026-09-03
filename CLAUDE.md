@@ -775,6 +775,24 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.21 round complete ✓ (nightly workflow, crisp wireframe/arrow, facing bias)
+- NIGHTLY WORKFLOW: `gh release delete --cleanup-tag` deleted the local and
+  remote tag, causing immediate `src refspec nightly does not match any` on
+  the following push. Replaced by a single clean step: release delete without
+  `--cleanup-tag`, local tag creation, force push, and release create.
+- CRISP THICK WIREFRAME & ARROW: `_add_thick_lines` replaced the 5-parallel-line
+  "wire comb" hack (which separated into fuzzy disconnected 1px wires when zoomed
+  in) with solid unshaded crossed quads (double-sided triangles) plus a 1px center
+  hardware line for guaranteed distance visibility. `_add_creation_arrow` replaced
+  its 15 overlapping wire segments with a real solid triangular arrowhead and a
+  solid 3D shaft with perpendicular fins, completely eliminating all fuzziness.
+- CREATION FACING BIAS & DEADZONE: increased `FACING_DEAD_ZONE` (0.04m → 0.15m)
+  and added `PBShapeParams.facing_prefers_shorter` dimension bias (doors naturally
+  align parallel to the shorter dimension, stairs along the longer dimension).
+  Near-square base dimensions apply hysteresis so the facing arrow never
+  ping-pongs at the slightest mouse movement; deliberate lateral nudges (> deadzone)
+  still allow manual 90° rotation.
+
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.
 
