@@ -353,18 +353,18 @@ func _on_selection_changed() -> void:
 		editor.active_mesh = pb_mesh
 	# Note: _make_visible(false) handles deselection
 
-	# Selecting something else while a params session is open closes it
-	# (auto-apply): the dialog must never sit over a node the user has moved
-	# on from. Re-entrant call from _finish_creation_session's own selection
+	# Selecting something else while a params session is open cancels it:
+	# unconfirmed changes are reverted like clicking Cancel.
+	# Re-entrant call from _finish_creation_session's own selection
 	# change is a no-op (the session kind is already cleared).
 	if _params_session_kind == "edit":
 		if logger:
-			logger.info("plugin", "Edit Params session committed (selection changed)")
-		_on_params_applied()
-	elif _params_session_kind == "create" and pb_mesh != shape_creator.preview_node:
+			logger.info("plugin", "Edit Params session cancelled (selection changed)")
+		_on_params_canceled()
+	elif _params_session_kind == "create" and pb_mesh != null and pb_mesh != shape_creator.preview_node:
 		if logger:
-			logger.info("plugin", "Params modal auto-applied (selection changed)")
-		_on_params_applied()
+			logger.info("plugin", "Create Params session cancelled (selection changed)")
+		_on_params_canceled()
 
 # ==============================================================================
 # Editor State Callbacks
@@ -734,13 +734,11 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 					_creation_confirm()
 					return AFTER_GUI_INPUT_STOP
 				PBShapeCreator.State.PARAMS:
-					# ANY viewport press auto-applies the open modal and
-					# falls through — the same click keeps acting on the
-					# scene (select a face of the placed shape, start the
-					# next shape, drag a new base...). No dead confirm step.
+					# Clicking elsewhere cancels the uncommitted modal changes
+					# (reverts to placement values), exactly like clicking Cancel.
 					if logger:
-						logger.info("plugin", "Params modal auto-applied (viewport press)")
-					_on_params_applied()
+						logger.info("plugin", "Params modal cancelled (viewport press)")
+					_on_params_canceled()
 					return AFTER_GUI_INPUT_PASS
 		else:
 			if shape_creator.state == PBShapeCreator.State.BASE:
@@ -748,23 +746,23 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 				return AFTER_GUI_INPUT_STOP
 
 	if event is InputEventKey and event.pressed and not event.echo:
-		if shape_creator.state == PBShapeCreator.State.PARAMS \
-				and event.keycode != KEY_ESCAPE:
-			# Typing anywhere else / pressing hotkeys dismisses the modal
-			# (applies) instead of leaving it stuck over a live editor.
-			if logger:
-				logger.info("plugin", "Params modal auto-applied (key press)")
-			_on_params_applied()
-			return AFTER_GUI_INPUT_PASS
-		if event.keycode == KEY_ESCAPE:
-			if shape_creator.state == PBShapeCreator.State.PARAMS:
+		if shape_creator.state == PBShapeCreator.State.PARAMS:
+			if event.keycode == KEY_ESCAPE:
 				_on_params_canceled()
+				return AFTER_GUI_INPUT_STOP
+			elif event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+				_on_params_applied()
+				return AFTER_GUI_INPUT_STOP
 			else:
-				# ESC before the confirming click: nothing is created at all.
-				_creation_abort("cancelled with Escape")
+				if logger:
+					logger.info("plugin", "Params modal cancelled (key press)")
+				_on_params_canceled()
+				return AFTER_GUI_INPUT_PASS
+		if event.keycode == KEY_ESCAPE:
+			# ESC before confirming click: nothing is created at all.
+			_creation_abort("cancelled with Escape")
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
-
 ## Nearest surface under the cursor: PBMesh faces (world space) with the
 ## editor grid plane (y=0) as the fallback, like ProBuilder dragging on the
 ## grid. Returns {point, normal} or {} on a miss.
@@ -948,6 +946,14 @@ func _creation_confirm() -> void:
 	undo.add_undo_method(self, "_detach_node", node)
 	undo.commit_action()
 	_set_creation_hint("")
+
+	# Select the created node immediately so the editor recognises it as active
+	# and doesn't treat initial placement as a deselect event
+	var editor_selection := get_editor_interface().get_selection()
+	if editor_selection != null and node != null and is_instance_valid(node):
+		editor_selection.clear()
+		editor_selection.add_node(node)
+		editor.active_mesh = node
 
 	if PBShapeParams.needs_params_modal(shape_creator.shape_id):
 		_params_session_kind = "create"
