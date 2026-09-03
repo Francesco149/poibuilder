@@ -53,6 +53,17 @@ func rebuild() -> void:
 	mesh = pb_mesh_data.to_array_mesh()
 	_needs_rebuild = false
 
+## Fast-path rebuild for position-only edits (active element dragging).
+## Reuses precompiled submesh index buffers since topology and material
+## assignments do not change during vertex movement.
+func rebuild_positions() -> void:
+	if pb_mesh_data == null:
+		mesh = null
+		_needs_rebuild = false
+		return
+	mesh = pb_mesh_data.to_array_mesh(null, true)
+	_needs_rebuild = false
+
 # ==============================================================================
 # Convenience Factory Methods
 # ==============================================================================

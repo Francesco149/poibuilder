@@ -64,6 +64,9 @@ var _drag_gesture: DragGesture = DragGesture.NORMAL
 ## from the element ids.
 var _drag_union_override: PackedInt32Array = PackedInt32Array()
 
+## Precomputed union of all vertex position indices moved by the current drag.
+## Computed once at drag begin so per-motion deliveries never re-evaluate it.
+var _drag_union: PackedInt32Array = PackedInt32Array()
 ## Full-mesh snapshot taken BEFORE a gesture's begin-op (extrude/inset).
 ## Non-null makes commit/cancel swap whole-mesh snapshots instead of
 ## per-position payloads (topology changed, indexes don't correspond).
@@ -628,19 +631,19 @@ func get_subgizmo_transform(mesh_data: PBMeshData, node: PBMesh, id: int) -> Tra
 ## Handles one engine _set_subgizmo_transform delivery.
 ## `ids` is the engine's current subgizmo selection (all elements the gizmo
 ## moves); it is delivered fresh so the logic never holds a stale selection.
-func set_subgizmo_transform(node: PBMesh, ids: PackedInt32Array, id: int, transform: Transform3D) -> void:
-	set_subgizmo_transform_with_shift(node, ids, id, transform, shift_held())
+func set_subgizmo_transform(node: PBMesh, ids: PackedInt32Array, id: int, transform: Transform3D) -> bool:
+	return set_subgizmo_transform_with_shift(node, ids, id, transform, shift_held())
 
 ## Shift-aware entry point: the editor path passes live modifier state, the
 ## gesture decision and every gesture path are testable headlessly by
-## injecting `shift` directly.
+## injecting `shift` directly. Returns true if geometry was modified and rebuilt.
 func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: int,
-		transform: Transform3D, shift: bool) -> void:
+		transform: Transform3D, shift: bool) -> bool:
 	if node == null or not is_editing_node(node):
-		return
+		return false
 	var mesh_data: PBMeshData = node.pb_mesh_data
 	if mesh_data == null:
-		return
+		return false
 
 	if not drag_active:
 		_begin_drag(node, ids, shift)
@@ -650,8 +653,7 @@ func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: 
 
 	_drag_pending[id] = transform
 	_drag_latest_id = id
-	_apply_drag(node, mesh_data, ids)
-
+	return _apply_drag(node, mesh_data, ids)
 ## Begins a drag gesture: decide the gesture from tool+shift, snapshot
 ## positions and start transforms, then run any begin-time topology op
 ## (extrude for shift+move, inset for shift+scale). `shift` is injected by
@@ -669,7 +671,7 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_drag_pending.clear()
 	_drag_latest_id = -1
 	_drag_union_override = PackedInt32Array()
-	_drag_before_op = null
+	_drag_union = PackedInt32Array()
 	_drag_inset_bases = []
 	_drag_ring_bases = []
 	_last_inset_amount = 0.0
@@ -703,6 +705,17 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 			_begin_extrude_move(mesh_data, ids)
 		DragGesture.INSET_SCALE:
 			_begin_inset(mesh_data, ids)
+
+	if not _drag_union_override.is_empty():
+		_drag_union = _drag_union_override
+	else:
+		_drag_union = PackedInt32Array()
+		var seen := {}
+		for id in ids:
+			for idx in element_indices(mesh_data, id):
+				if not seen.has(idx):
+					seen[idx] = true
+					_drag_union.append(idx)
 
 	if logger != null:
 		var start_summary := ""
@@ -947,26 +960,27 @@ func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 ## call: the engine calls set_subgizmo_transform once per selected id per
 ## motion, and re-deriving from the snapshot makes repeated calls idempotent
 ## (no compounding / "teleporting").
-func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> bool:
 	if not drag_active or _drag_start_xf.is_empty():
-		return
+		return false
 
-	# Topology-creating gestures move exactly their reported drag positions;
-	# plain gestures move the coincident-expanded union of the selection.
-	var union := PackedInt32Array()
-	if not _drag_union_override.is_empty():
-		union = _drag_union_override
-	else:
-		if ids.is_empty():
-			ids = _drag_ids
-		var seen := {}
-		for id in ids:
-			for idx in element_indices(mesh_data, id):
-				if not seen.has(idx):
-					seen[idx] = true
-					union.append(idx)
+	var union: PackedInt32Array = _drag_union
 	if union.is_empty():
-		return
+		if not _drag_union_override.is_empty():
+			union = _drag_union_override
+			_drag_union = union
+		else:
+			if ids.is_empty():
+				ids = _drag_ids
+			var seen := {}
+			for id in ids:
+				for idx in element_indices(mesh_data, id):
+					if not seen.has(idx):
+						seen[idx] = true
+						union.append(idx)
+			_drag_union = union
+	if union.is_empty():
+		return false
 
 	# rel = latest target * start^-1. The engine composes the same motion into
 	# every selected subgizmo's transform, so any id's rel is the gesture's
@@ -979,13 +993,12 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 			or _drag_gesture == DragGesture.INSET_SCALE:
 		if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) \
 				or not _drag_pending.has(_drag_latest_id):
-			return
+			return false
 		rel = _drag_pending[_drag_latest_id] * _drag_start_xf[_drag_latest_id].affine_inverse()
 		if _last_rel_valid and rel.is_equal_approx(_last_rel):
-			return
+			return false
 		_last_rel = rel
 		_last_rel_valid = true
-
 	var new_positions := _drag_original_positions.duplicate()
 	var pos_count: int = new_positions.size()
 	var applied_motion := Vector3.ZERO
@@ -1149,14 +1162,15 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 		# A winding flip changes the side faces' normals too (including the
 		# base corners outside the drag union) — full recompute, once.
 		mesh_data.calculate_normals()
+		node.rebuild()
 	else:
 		# Position edits never change the common-edge list or weld groups
 		# (index pairs/groups), and only the drag union's normals change —
 		# incremental updates keep the per-motion cost flat instead of
 		# rebuilding every normal on each mouse move.
 		mesh_data.update_normals_for(union)
-	node.rebuild()
-
+		node.rebuild_positions()
+	return true
 # ==============================================================================
 # Center scale handle (uniform scale + inset, ProBuilder-style)
 # ==============================================================================
@@ -1215,6 +1229,16 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 	else:
 		_drag_gesture = DragGesture.CENTER_SCALE
 
+	if not _drag_union_override.is_empty():
+		_drag_union = _drag_union_override
+	else:
+		_drag_union = PackedInt32Array()
+		var seen := {}
+		for id in ids:
+			for idx in element_indices(mesh_data, id):
+				if not seen.has(idx):
+					seen[idx] = true
+					_drag_union.append(idx)
 	if logger != null:
 		logger.info("drag", "CENTER drag begun: %s, %d element(s), pivot=%s start_screen=%s inset=%s" % [
 			DragGesture.keys()[_drag_gesture], ids.size(), str(pivot),
@@ -1466,7 +1490,7 @@ func _reset_drag_state() -> void:
 	_drag_latest_id = -1
 	_drag_gesture = DragGesture.NORMAL
 	_drag_union_override = PackedInt32Array()
-	_drag_before_op = null
+	_drag_union = PackedInt32Array()
 	_drag_inset_bases = []
 	_drag_ring_bases = []
 	_last_inset_amount = 0.0
@@ -1510,6 +1534,8 @@ static func _arrays_equal(a: PackedVector3Array, b: PackedVector3Array) -> bool:
 func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		engine_ids: PackedInt32Array) -> bool:
 	if selection == null or mesh_data == null:
+		return false
+	if drag_active:
 		return false
 
 	var differs: bool = false
@@ -1600,6 +1626,46 @@ static func build_face_fill_mesh(mesh_data: PBMeshData, face_index: int,
 		tris.append(positions[b] + shift)
 		tris.append(positions[c] + shift)
 
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	var fill_mesh := ArrayMesh.new()
+	fill_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return fill_mesh
+
+## Builds a single combined ArrayMesh highlighting multiple selected faces.
+## Combines all triangles into one draw surface to minimize draw calls and mesh allocations.
+static func build_face_fill_mesh_multi(mesh_data: PBMeshData, face_indices: PackedInt32Array,
+		offset: float = FACE_FILL_DEPTH_OFFSET) -> ArrayMesh:
+	if mesh_data == null or face_indices.is_empty():
+		return null
+	var positions := mesh_data.positions
+	var pos_count: int = positions.size()
+	var tris := PackedVector3Array()
+
+	for fi in face_indices:
+		if fi < 0 or fi >= mesh_data.faces.size():
+			continue
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var indexes := face.get_indexes()
+		if indexes.size() < 3:
+			continue
+		var normal := PBMath.normal_from_positions(positions, indexes)
+		var shift := normal * offset
+		for i in range(0, indexes.size() - 2, 3):
+			var a: int = indexes[i]
+			var b: int = indexes[i + 1]
+			var c: int = indexes[i + 2]
+			if a >= pos_count or b >= pos_count or c >= pos_count:
+				continue
+			tris.append(positions[a] + shift)
+			tris.append(positions[b] + shift)
+			tris.append(positions[c] + shift)
+
+	if tris.is_empty():
+		return null
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = tris
