@@ -31,9 +31,9 @@ newbuilder/
 ├── project/                          # Godot project root
 │   ├── project.godot
 │   ├── addons/
-│   │   └── probuilder/              # The plugin
+│   │   └── poibuilder/              # The plugin
 │   │       ├── plugin.cfg
-│   │       ├── probuilder_plugin.gd # Main EditorPlugin entry
+│   │       ├── poibuilder_plugin.gd # Main EditorPlugin entry
 │   │       ├── core/                # Data model, math, mesh representation
 │   │       │   ├── pb_mesh_data.gd  # PBMeshData Resource
 │   │       │   ├── pb_face.gd       # PBFace Resource
@@ -423,7 +423,7 @@ Each worker receives a prompt structured as:
 You are implementing IU {iu_id}: {description}
 
 ## Context Files
-- Read: project/addons/probuilder/{relevant_files}
+- Read: project/addons/poibuilder/{relevant_files}
 - Read: UNITY-GODOT-MAPPING.md (sections {relevant_sections})
 - Read: SPECIFICATION.md (lines {start}-{end}) for spec section {spec_section}
 - Reference: ../cyclops-ref/godot/addons/cyclops_level_builder/{pattern_file}
@@ -438,7 +438,7 @@ You are implementing IU {iu_id}: {description}
 4. Test must pass with exit code 0.
 
 ## Constraints
-- Follow patterns in existing codebase (check project/addons/probuilder/)
+- Follow patterns in existing codebase (check project/addons/poibuilder/)
 - All classes use @tool annotation
 - All public methods have type annotations
 - Log significant operations via PBLogger

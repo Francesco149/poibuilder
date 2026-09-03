@@ -255,7 +255,7 @@ func _apply_anchor() -> void:
 # ── UI helpers ────────────────────────────────────────────────────────────────
 
 static func _load_icon(icon_name: String) -> Texture2D:
-	var path := "res://addons/probuilder/icons/" + icon_name
+	var path := "res://addons/poibuilder/icons/" + icon_name
 	if ResourceLoader.exists(path):
 		return load(path)
 	return null

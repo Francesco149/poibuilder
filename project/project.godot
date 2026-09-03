@@ -24,7 +24,7 @@ project/assembly_name="PoiBuilder"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/probuilder/plugin.cfg")
+enabled=PackedStringArray("res://addons/poibuilder/plugin.cfg")
 
 [rendering]
 

@@ -40,7 +40,7 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 func _find_plugin(node: Node) -> Node:
-	if node.get_script() != null and str(node.get_script().resource_path).ends_with("probuilder_plugin.gd"):
+	if node.get_script() != null and str(node.get_script().resource_path).ends_with("poibuilder_plugin.gd"):
 		return node
 	for child in node.get_children():
 		var found := _find_plugin(child)

@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.18"
+const VERSION := "0.9.19"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -77,8 +77,8 @@ func _enter_tree():
 	add_custom_type(
 		"PBMesh",
 		"MeshInstance3D",
-		preload("res://addons/probuilder/core/pb_mesh.gd"),
-		preload("res://addons/probuilder/icons/pb_mesh_icon.svg") if FileAccess.file_exists("res://addons/probuilder/icons/pb_mesh_icon.svg") else null
+		preload("res://addons/poibuilder/core/pb_mesh.gd"),
+		preload("res://addons/poibuilder/icons/pb_mesh_icon.svg") if FileAccess.file_exists("res://addons/poibuilder/icons/pb_mesh_icon.svg") else null
 	)
 
 	# Register the node gizmo plugin — this is the native editor integration:
