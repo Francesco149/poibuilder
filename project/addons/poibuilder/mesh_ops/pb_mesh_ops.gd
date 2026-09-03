@@ -175,12 +175,12 @@ static func inset_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 ## Faces subdivided in the same call are connected through coincident (welded)
 ## midpoint positions — the position-privacy invariant forbids sharing the
 ## position index itself across faces.
+## Unselected neighbor faces sharing split boundary edges are retriangulated into
+## n-gons connected to the new midpoint vertices (each face owning its own
+## duplicate positions, welded via coincident vertex groups).
 static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Dictionary:
 	if not _faces_valid(mesh_data, face_ids):
 		return _fail("Subdivide faces: invalid selection")
-
-	var new_faces: Array[PBFace] = []
-	var removed := {}
 
 	for fi in face_ids:
 		var face := mesh_data.faces[fi]
@@ -188,10 +188,34 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 		if loop.size() != 4:
 			return _fail("Subdivide faces: face %d is not a quad" % fi)
 
-		var v := loop
-		# Face-local duplicates: corners, edge midpoints, one shared centroid
-		# (the centroid is coplanar with every sub-quad, so sharing it is
-		# normal-safe).
+	var selected_set := {}
+	for fi in face_ids:
+		selected_set[fi] = true
+
+	var lookup := mesh_data.get_shared_vertex_lookup()
+
+	# 1. Collect boundary edges of selected faces and their 3D midpoint coordinates
+	var split_edges: Dictionary = {}
+	for fi in face_ids:
+		var face := mesh_data.faces[fi]
+		var v := _ordered_loop(face)
+		for i in range(4):
+			var a: int = v[i]
+			var b: int = v[(i + 1) % 4]
+			var ga: int = lookup.get(a, a)
+			var gb: int = lookup.get(b, b)
+			var key := Vector2i(mini(ga, gb), maxi(ga, gb))
+			var mid_pos := mesh_data.positions[a].lerp(mesh_data.positions[b], 0.5)
+			split_edges[key] = mid_pos
+
+	var new_faces: Array[PBFace] = []
+	var removed := {}
+
+	# 2. Build the 4 sub-quads per selected face
+	for fi in face_ids:
+		var face := mesh_data.faces[fi]
+		var v := _ordered_loop(face)
+
 		var pv := PackedInt32Array()
 		for i in range(4):
 			pv.append(_dup_position(mesh_data, v[i], Vector3.ZERO))
@@ -219,8 +243,104 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 
 		removed[fi] = true
 
-	return _replace_faces(mesh_data, removed, new_faces, [])
+	# 3. Retriangulate unselected neighbor faces that touch split boundary edges
+	# so they become n-gons connected to the new midpoint vertices.
+	var updated_neighbor_faces: Array[PBFace] = []
+	for nfi in range(mesh_data.faces.size()):
+		if selected_set.has(nfi):
+			continue
+		var nface := mesh_data.faces[nfi]
+		if nface == null:
+			continue
+		var nloop := _ordered_loop(nface)
+		if nloop.is_empty():
+			continue
 
+		var has_split_edge := false
+		for j in range(nloop.size()):
+			var na: int = nloop[j]
+			var nb: int = nloop[(j + 1) % nloop.size()]
+			var nga: int = lookup.get(na, na)
+			var ngb: int = lookup.get(nb, nb)
+			var key := Vector2i(mini(nga, ngb), maxi(nga, ngb))
+			if split_edges.has(key):
+				has_split_edge = true
+				break
+
+		if not has_split_edge:
+			continue
+
+		# Build new cycle for neighbor n-gon with midpoints inserted
+		var new_cycle: Array[int] = []
+		for j in range(nloop.size()):
+			var na: int = nloop[j]
+			var nb: int = nloop[(j + 1) % nloop.size()]
+			var nga: int = lookup.get(na, na)
+			var ngb: int = lookup.get(nb, nb)
+			var key := Vector2i(mini(nga, ngb), maxi(nga, ngb))
+
+			var new_na := _dup_position(mesh_data, na, Vector3.ZERO)
+			new_cycle.append(new_na)
+
+			if split_edges.has(key):
+				var mid_pos: Vector3 = split_edges[key]
+				var new_mid := _dup_position_at(mesh_data, mid_pos, na)
+				new_cycle.append(new_mid)
+
+		# Triangulate planar n-gon into non-degenerate triangles
+		var norm := PBMath.normal_from_positions(mesh_data.positions, nface.get_indexes())
+		var u := norm.cross(Vector3.UP)
+		if u.length_squared() < 0.25:
+			u = norm.cross(Vector3.RIGHT)
+		u = u.normalized()
+		var v := norm.cross(u).normalized()
+
+		var pts2d := PackedVector2Array()
+		for idx in new_cycle:
+			var p: Vector3 = mesh_data.positions[idx]
+			pts2d.append(Vector2(p.dot(u), p.dot(v)))
+
+		# Ensure CCW in 2D
+		var area := 0.0
+		var num_pts := pts2d.size()
+		for k in range(num_pts):
+			var p0 := pts2d[k]
+			var p1 := pts2d[(k + 1) % num_pts]
+			area += (p1.x - p0.x) * (p1.y + p0.y)
+
+		var map_indices: Array[int] = []
+		for k in range(num_pts):
+			map_indices.append(k)
+
+		if area > 0:
+			pts2d.reverse()
+			map_indices.reverse()
+
+		var tris := PBShapeComplex._triangulate_2d(pts2d)
+		var face_idxs := PackedInt32Array()
+		for tri in tris:
+			var idx0: int = new_cycle[map_indices[tri[0]]]
+			var idx1: int = new_cycle[map_indices[tri[1]]]
+			var idx2: int = new_cycle[map_indices[tri[2]]]
+			var e1: Vector3 = mesh_data.positions[idx1] - mesh_data.positions[idx0]
+			var e2: Vector3 = mesh_data.positions[idx2] - mesh_data.positions[idx0]
+			var cp := e1.cross(e2)
+			if cp.dot(norm) < 0:
+				face_idxs.append(idx0)
+				face_idxs.append(idx2)
+				face_idxs.append(idx1)
+			else:
+				face_idxs.append(idx0)
+				face_idxs.append(idx1)
+				face_idxs.append(idx2)
+
+		var new_nface := PBFace.new(face_idxs)
+		new_nface.submesh_index = nface.submesh_index
+		updated_neighbor_faces.append(new_nface)
+		removed[nfi] = true
+	var res := _replace_faces(mesh_data, removed, new_faces, updated_neighbor_faces)
+	res["new_face_ids"] = res["cap_face_ids"]
+	return res
 ## Deletes the selected faces and compacts away now-orphaned vertices.
 static func delete_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Dictionary:
 	if not _faces_valid(mesh_data, face_ids):

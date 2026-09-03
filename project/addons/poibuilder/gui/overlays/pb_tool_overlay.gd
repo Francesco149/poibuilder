@@ -533,10 +533,14 @@ func close_params() -> void:
 	if _ui_built:
 		_params_section.visible = false
 	for child in _params_grid.get_children():
+		_params_grid.remove_child(child)
 		child.queue_free()
 	_param_spinboxes.clear()
 	_param_checkboxes.clear()
+	reset_size()
 	refresh()
+	reset_size.call_deferred()
+	_update_position_from_bottom_left.call_deferred()
 
 func _on_param_value_changed(value: float, param_name: String) -> void:
 	if params_open:
@@ -640,7 +644,9 @@ func refresh() -> void:
 	else:
 		_body.visible = not _user_collapsed
 		_collapse_btn.text = "▸" if _user_collapsed else "▾"
+	reset_size()
 	update_visibility()
+	reset_size.call_deferred()
 	_update_position_from_bottom_left.call_deferred()
 
 ## Evaluates panel visibility.
