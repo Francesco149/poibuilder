@@ -8,9 +8,9 @@ You are implementing part of a ProBuilder clone as a Godot 4.3+ editor plugin.
 /opt/src/newbuilder/
 ├── project/                    # Godot project root
 │   ├── project.godot
-│   ├── addons/probuilder/      # THE PLUGIN (your work goes here)
+│   ├── addons/poibuilder/      # THE PLUGIN (your work goes here)
 │   │   ├── plugin.cfg
-│   │   ├── probuilder_plugin.gd
+│   │   ├── poibuilder_plugin.gd
 │   │   ├── core/               # Data model, math, mesh ops
 │   │   ├── editor/             # Editor integration, tools
 │   │   ├── commands/           # Undo/redo command pattern

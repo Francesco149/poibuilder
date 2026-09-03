@@ -30,7 +30,7 @@ installed engine it is developed against); older 4.x versions are untested.
 
 ### Install
 
-1. Copy `project/addons/probuilder/` into your project (or open this
+1. Copy `project/addons/poibuilder/` into your project (or open this
    repository's `project/` directly).
 2. Enable **PoiBuilder** in *Project Settings → Plugins*.
 3. Select any `PBMesh` node (or create one via the **New Shape** menu in the

@@ -23,7 +23,7 @@ jobs:
           cd project
           # Top-level entries are `addons/...` so the zip extracts straight
           # into a Godot project folder.
-          zip -r ../PoiBuilder-nightly.zip addons/probuilder
+          zip -r ../PoiBuilder-nightly.zip addons/poibuilder
           cd ..
           unzip -l PoiBuilder-nightly.zip | head -5
 
@@ -49,7 +49,7 @@ jobs:
             echo "### Install"
             echo "1. Download \`PoiBuilder-nightly.zip\` below."
             echo "2. Extract it into your Godot project folder (it contains"\
-              "\`addons/probuilder\`)."
+              "\`addons/poibuilder\`)."
             echo "3. Enable the plugin via Project → Project Settings → Plugins."
             echo
             echo "Built from $(git rev-parse --short HEAD)"\

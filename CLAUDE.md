@@ -5,10 +5,12 @@ capabilities. Built from a 37k-line specification extracted from ProBuilder
 v6.1.2 source code.
 
 Naming: the plugin is **PoiBuilder** (renamed from ProBuilder in v0.8.0).
-The `PB*`/`pb_*` prefix and the `addons/probuilder/` folder+file names are
-kept on purpose (they pre-date the rename and res:// paths / .uid files
-reference them). Comments citing "ProBuilder" behavior/math refer to Unity's
-ProBuilder — the spec source — and are intentional.
+Since v0.9.19 the addon folder/file names carry the rename too:
+`addons/poibuilder/` + `poibuilder_plugin.gd`. The `PB*`/`pb_*` script and
+class prefixes are kept (res:// paths and .uid files reference them;
+renaming classes would churn every file for no functional gain). Comments
+citing "ProBuilder" behavior/math refer to Unity's ProBuilder — the spec
+source — and are intentional.
 
 ## Quick Start
 
@@ -38,8 +40,8 @@ godot-mono --editor project/project.godot
 
 ## Architecture
 
-Plugin: `project/addons/probuilder/`
-- `probuilder_plugin.gd` — EditorPlugin entry: registration, hover tracking,
+Plugin: `project/addons/poibuilder/`
+- `poibuilder_plugin.gd` — EditorPlugin entry: registration, hover tracking,
   H/J/K/X keys. Clicks pass through untouched (the engine's own priority
   applies: the transform gizmo wins over element picking).
 - `core/` — PBMeshData, PBFace, PBEdge, PBMath, PBTopology
@@ -786,7 +788,7 @@ checklist in test_scenes/human_test_phase6.tscn for the human pass.
   Derive the slugs from YOUR OWN model id (lowercase, provider path prefix);
   never reuse another model's trailer.
 - VERSION BUMP EVERY SIGN-OFF ROUND (mandatory): bump `VERSION` in
-  probuilder_plugin.gd, `PLUGIN_VERSION` in pb_editor.gd, and
+  poibuilder_plugin.gd, `PLUGIN_VERSION` in pb_editor.gd, and
   plugin.cfg's `version` TOGETHER at the start of every fix/UX round. The
   overlay title is how the human verifies they are running the new build —
   rounds 2 and 3 of v0.9.0 skipped this and shipped fixes the human never

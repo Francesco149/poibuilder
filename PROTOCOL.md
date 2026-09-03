@@ -171,5 +171,5 @@ When starting a fresh session to process a work unit:
 
 ## File Manifest
 
-`probuilder-manifest.json` contains every source file organized by category
+`poibuilder-manifest.json` contains every source file organized by category
 with line counts. Use this to plan your reading.

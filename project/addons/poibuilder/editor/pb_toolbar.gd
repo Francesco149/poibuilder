@@ -49,7 +49,7 @@ signal overlay_toggled(pinned: bool)
 # Icons
 # ==============================================================================
 
-const ICON_DIR := "res://addons/probuilder/icons/"
+const ICON_DIR := "res://addons/poibuilder/icons/"
 
 # ==============================================================================
 # Internal UI
