@@ -121,8 +121,8 @@ func test_create_door():
 	assert_not_null(md)
 	assert_eq(md.validate(), "")
 	# Factory door: arched default with 6 segments → 6+7 = 13 faces
-	# (v0.9.17 welded shell: one n-gon per side, tunnel quads stay split).
-	assert_eq(md.vertex_count(), 126)
+	# (v0.9.17 welded shell: one ear-clipped n-gon per side).
+	assert_eq(md.vertex_count(), 70)
 	assert_eq(md.face_count(), 13)
 
 func test_create_unknown():

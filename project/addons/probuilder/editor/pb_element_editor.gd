@@ -1580,32 +1580,25 @@ static func build_face_fill_mesh(mesh_data: PBMeshData, face_index: int,
 		return null
 
 	var positions := mesh_data.positions
-	var loop := face.get_distinct_indexes()
-	if loop.size() < 3:
+	var indexes := face.get_indexes()
+	if indexes.size() < 3:
 		return null
 
-	var centroid := Vector3.ZERO
-	var count: int = 0
-	for idx in loop:
-		if idx >= 0 and idx < positions.size():
-			centroid += positions[idx]
-			count += 1
-	if count < 3:
-		return null
-	centroid /= float(count)
-
-	var normal := PBMath.normal_from_positions(positions, face.get_indexes())
+	var normal := PBMath.normal_from_positions(positions, indexes)
 	var shift := normal * offset
 
+	# The fill uses the face's OWN triangulation — re-fanning the perimeter
+	# spills triangles outside concave/n-gon faces (the welded door sides).
 	var tris := PackedVector3Array()
-	for i in range(count):
-		var a: int = loop[i]
-		var b: int = loop[(i + 1) % count]
-		if a < 0 or a >= positions.size() or b < 0 or b >= positions.size():
+	for i in range(0, indexes.size() - 2, 3):
+		var a: int = indexes[i]
+		var b: int = indexes[i + 1]
+		var c: int = indexes[i + 2]
+		if a >= positions.size() or b >= positions.size() or c >= positions.size():
 			return null
-		tris.append(centroid + shift)
 		tris.append(positions[a] + shift)
 		tris.append(positions[b] + shift)
+		tris.append(positions[c] + shift)
 
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)

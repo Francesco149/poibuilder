@@ -603,6 +603,32 @@ sign-off report:
   drive the plugin's delivery path directly against real click-made
   selections.
 
+v0.9.18 round complete ✓ — the merged door sides became TRUE simple
+polygons and the fill overlay learned n-gons (from the fifth sign-off:
+"selection overlay is a mess of triangles; extruding these faces results
+in the extrusion having all the extra layers when they should inherit the
+merged faces"):
+- KEY GEOMETRY INSIGHT: the door's opening is a NOTCH touching the bottom
+  edge — the front/back sides are not faces-with-holes at all, they are
+  ONE SIMPLE CONCAVE POLYGON each. create_door now ear-clips that polygon
+  (PBShapeComplex._triangulate_2d, concave-safe, corner-dedup for
+  floor-springing arches whose arc endpoints coincide with the rim
+  corners; the back face re-uses the front's triangulation with each
+  triangle's winding flipped — the ear clip needs CCW input). Result: the
+  perimeter carries NO collinear chains — 13 edges on the stock door
+  (2 rim + 2 jamb + 6 arc + 2 sides + 1 top) — the outer walls/top are
+  plain full-size quads, and extruding a side yields EXACTLY one wall per
+  true edge (1 cap + 13 walls) with the new edges persisting. Face
+  counts unchanged (flat 8, arched N+7); vertex counts dropped (flat 40,
+  arched 70).
+- FILL OVERLAY: build_face_fill_mesh used to fan from the centroid over
+  the perimeter — spills triangles outside any concave or n-gon face
+  (the "mess of triangles"). It now emits the face's OWN triangulation
+  offset along the normal, which is correct by construction for every
+  face shape.
+- 400-door randomized sweep: zero defects (watertight, no over-used
+  edges, no zero normals). 625/625 + GUI harness green.
+
 v0.9.17 round complete ✓ — the v0.9.16 region-select was WRONG and is
 GONE, replaced by real welded geometry in the door generator (from the
 fourth sign-off follow-up: "they need to be welded as if the faces were

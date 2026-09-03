@@ -29,49 +29,58 @@ static func _build_shared_vertices(positions: PackedVector3Array) -> Array[PBSha
 		shared.append(sv)
 	return shared
 
-## Emits ONE face from a list of coplanar pieces (quads [p0..p3] or tris
-## [p0..p2], each CCW-from-outside). Piece corners are deduplicated by
-## coordinate into a per-face vertex pool, so shared piece edges appear
-## twice in the triangle list and cancel out of the derived perimeter —
-## the face acts as a single welded polygon (one entry in the wireframe,
-## one pick target, one extrude boundary) while the pieces remain only as
-## its internal triangulation. `uv_of` projects a corner to UV space.
-static func _add_polygon_face(
-	positions: PackedVector3Array,
-	uvs: PackedVector2Array,
-	faces: Array[PBFace],
-	pieces: Array,
-	uv_of: Callable
-) -> void:
-	var pool: Dictionary = {}  # coordinate key -> pool index
-	var pool_pos: Array[Vector3] = []
-	var pool_uv: Array[Vector2] = []
-	var local_idx := PackedInt32Array()
-	for piece in pieces:
-		var corner_count: int = piece.size()
-		var tri_sets: Array = [[0, 1, 2]] if corner_count == 3 \
-			else [[0, 1, 2], [0, 2, 3]]
-		for tri in tri_sets:
-			for ci in tri:
-				var corner: Vector3 = piece[ci]
-				var key := "%s|%s|%s" % [
-					snappedf(corner.x, 0.0001) + 0.0,
-					snappedf(corner.y, 0.0001) + 0.0,
-					snappedf(corner.z, 0.0001) + 0.0]
-				if not pool.has(key):
-					pool[key] = pool_pos.size()
-					pool_pos.append(corner)
-					pool_uv.append(uv_of.call(corner))
-				local_idx.append(pool[key])
-	var base: int = positions.size()
-	for p3 in pool_pos:
-		positions.append(p3)
-	for p2 in pool_uv:
-		uvs.append(p2)
-	var indexes := PackedInt32Array()
-	for idx in local_idx:
-		indexes.append(base + idx)
-	faces.append(PBFace.new(indexes))
+## Ear-clips a simple CCW polygon (2D) into index triangles. Concave-safe;
+## reflex and collinear corners are skipped as ears, and a guard bails to a
+## fan fallback if the corner cases ever stall (our polygons are mild).
+static func _triangulate_2d(points: PackedVector2Array) -> Array:
+	var n := points.size()
+	var idxs: Array[int] = []
+	for i in range(n):
+		idxs.append(i)
+	var tris: Array = []
+	var guard: int = n * n + 16
+	while idxs.size() > 3 and guard > 0:
+		guard -= 1
+		var m := idxs.size()
+		var clipped := false
+		for i in range(m):
+			var i0: int = idxs[(i + m - 1) % m]
+			var i1: int = idxs[i]
+			var i2: int = idxs[(i + 1) % m]
+			var a := points[i0]
+			var b := points[i1]
+			var c := points[i2]
+			if (b - a).cross(c - b) <= 0.0000001:
+				continue  # reflex or collinear corner — not an ear
+			var ear := true
+			for j in idxs:
+				if j == i0 or j == i1 or j == i2:
+					continue
+				if PBShapeComplex._point_in_triangle(points[j], a, b, c):
+					ear = false
+					break
+			if not ear:
+				continue
+			tris.append([i0, i1, i2])
+			idxs.remove_at(i)
+			clipped = true
+			break
+		if not clipped:
+			break
+	if idxs.size() == 3:
+		tris.append([idxs[0], idxs[1], idxs[2]])
+	elif idxs.size() > 3:
+		for i in range(1, idxs.size() - 1):
+			tris.append([idxs[0], idxs[i], idxs[i + 1]])
+	return tris
+
+static func _point_in_triangle(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> bool:
+	var d1 := (b - a).cross(p - a)
+	var d2 := (c - b).cross(p - b)
+	var d3 := (a - c).cross(p - c)
+	var has_neg := d1 < -0.0000001 or d2 < -0.0000001 or d3 < -0.0000001
+	var has_pos := d1 > 0.0000001 or d2 > 0.0000001 or d3 > 0.0000001
+	return not (has_neg and has_pos)
 
 ## Helper to add a quad face (4 vertices, 2 triangles = 6 indices) to mesh arrays.
 static func _add_quad(
@@ -567,114 +576,60 @@ static func create_door(
 				if absf(arc[k].y - yo) < 0.0001:
 					arc[k].y = yo
 
-	## The shell is welded ONE FACE PER SIDE: the front/back are single
-	## n-gon faces AROUND the opening (their pieces — legs, header strips,
-	## spandrels — are only the internal triangulation; the shared piece
-	## edges cancel out of the perimeter), the outer walls and the top are
-	## single quads. The piece layout below is still T-junction-free: every
-	## perimeter sub-edge of one face pairs exactly with the neighbor face's
-	## sub-edge, so any face can stretch or extrude without tearing.
+	## The shell is welded ONE FACE PER SIDE, and the sides are SIMPLE
+	## POLYGONS: the opening is a notch touching the bottom edge, so the
+	## front/back are one concave n-gon each (ear-clipped — the notch adds
+	## no hole and no interior triangulation edges reach the perimeter).
+	## The perimeter carries no collinear splits: the outer walls and the
+	## top are plain full-size quads that pair edge-for-edge with it, and
+	## extruding a side produces exactly one wall per true edge.
 	var has_jambs: bool = spring_y > y0 + 0.0001
-	# The legs split at the spring line ONLY when an arch actually springs
-	# above the floor (a flat lintel's spring line IS the opening top —
-	# splitting there would emit zero-height slivers).
-	var leg_split_at_spring: bool = has_jambs and arc_segs > 0
-	# x boundaries of the header band strips (the spandrel tops).
-	var strip_xs: PackedFloat32Array = PackedFloat32Array([x1])
-	for k in range(1, arc_segs):
-		strip_xs.append(arc[k].x)
-	strip_xs.append(x2)
 
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
 
-	var uv_xy := func(p: Vector3) -> Vector2: return Vector2(p.x, p.y)
-	var uv_zy := func(p: Vector3) -> Vector2: return Vector2(p.z, p.y)
-	var uv_xz := func(p: Vector3) -> Vector2: return Vector2(p.x, p.z)
+	# ── Front/back sides (z = ±hd): ONE ear-clipped n-gon each ──────────────
+	# CCW corner walk: bottom rim into the notch, over the arch (or under
+	# the lintel), back along the bottom rim, up the right side and across.
+	# (Corner dedup matters: a floor-springing arch's arc endpoints ARE its
+	# rim corners.)
+	var front2 := PackedVector2Array()
+	var push := func(p: Vector2) -> void:
+		if front2.is_empty() or front2[front2.size() - 1].distance_to(p) > 0.0001:
+			front2.append(p)
+	push.call(Vector2(x0, y0))
+	push.call(Vector2(x1, y0))
+	if arc_segs > 0:
+		for k in range(arc_segs + 1):
+			push.call(arc[k])
+	else:
+		push.call(Vector2(x1, yo))
+		push.call(Vector2(x2, yo))
+	push.call(Vector2(x2, y0))
+	push.call(Vector2(x3, y0))
+	push.call(Vector2(x3, y2))
+	push.call(Vector2(x0, y2))
+	# The walk closes: drop a final corner equal to the first one.
+	if front2.size() > 3 and front2[0].distance_to(front2[front2.size() - 1]) < 0.0001:
+		front2.remove_at(front2.size() - 1)
 
-	# ── Front side (z = +hd, normal +Z): ONE n-gon around the opening ───────
-	var front_pieces: Array = []
-	for xs in [[x0, x1], [x2, x3]]:
-		var xa: float = xs[0]
-		var xb: float = xs[1]
-		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
-			else [[y0, yo]]
-		for ys in leg_ys:
-			front_pieces.append([
-				Vector3(xa, ys[0], hd), Vector3(xb, ys[0], hd),
-				Vector3(xb, ys[1], hd), Vector3(xa, ys[1], hd)])
-	front_pieces.append([
-		Vector3(x0, yo, hd), Vector3(x1, yo, hd), Vector3(x1, y2, hd), Vector3(x0, y2, hd)])
-	front_pieces.append([
-		Vector3(x2, yo, hd), Vector3(x3, yo, hd), Vector3(x3, y2, hd), Vector3(x2, y2, hd)])
-	for s in range(strip_xs.size() - 1):
-		front_pieces.append([
-			Vector3(strip_xs[s], yo, hd), Vector3(strip_xs[s + 1], yo, hd),
-			Vector3(strip_xs[s + 1], y2, hd), Vector3(strip_xs[s], y2, hd)])
-	for k in range(arc_segs):
-		# Spandrel fill between the arc and the opening top. Segments touching
-		# the apex collapse to a triangle there (the arc meets the opening top
-		# exactly) — a quad would carry a zero-area triangle.
-		var a_k: Vector2 = arc[k]
-		var a_k1: Vector2 = arc[k + 1]
-		var k_at_top: bool = absf(a_k.y - yo) < 0.0001
-		var k1_at_top: bool = absf(a_k1.y - yo) < 0.0001
-		if k_at_top and k1_at_top:
-			continue
-		if k1_at_top:
-			front_pieces.append([
-				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
-				Vector3(a_k.x, yo, hd)])
-		elif k_at_top:
-			front_pieces.append([
-				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
-				Vector3(a_k1.x, yo, hd)])
-		else:
-			front_pieces.append([
-				Vector3(a_k.x, a_k.y, hd), Vector3(a_k1.x, a_k1.y, hd),
-				Vector3(a_k1.x, yo, hd), Vector3(a_k.x, yo, hd)])
-	_add_polygon_face(positions, textures0, faces, front_pieces, uv_xy)
-
-	# ── Back side (z = -hd, normal -Z): ONE n-gon around the opening ────────
-	var back_pieces: Array = []
-	for xs in [[x0, x1], [x2, x3]]:
-		var xa: float = xs[0]
-		var xb: float = xs[1]
-		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
-			else [[y0, yo]]
-		for ys in leg_ys:
-			back_pieces.append([
-				Vector3(xa, ys[0], -hd), Vector3(xa, ys[1], -hd),
-				Vector3(xb, ys[1], -hd), Vector3(xb, ys[0], -hd)])
-	back_pieces.append([
-		Vector3(x0, yo, -hd), Vector3(x0, y2, -hd), Vector3(x1, y2, -hd), Vector3(x1, yo, -hd)])
-	back_pieces.append([
-		Vector3(x2, yo, -hd), Vector3(x2, y2, -hd), Vector3(x3, y2, -hd), Vector3(x3, yo, -hd)])
-	for s in range(strip_xs.size() - 1):
-		back_pieces.append([
-			Vector3(strip_xs[s], yo, -hd), Vector3(strip_xs[s], y2, -hd),
-			Vector3(strip_xs[s + 1], y2, -hd), Vector3(strip_xs[s + 1], yo, -hd)])
-	for k in range(arc_segs):
-		var a_k: Vector2 = arc[k]
-		var a_k1: Vector2 = arc[k + 1]
-		var k_at_top: bool = absf(a_k.y - yo) < 0.0001
-		var k1_at_top: bool = absf(a_k1.y - yo) < 0.0001
-		if k_at_top and k1_at_top:
-			continue
-		if k1_at_top:
-			back_pieces.append([
-				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd),
-				Vector3(a_k1.x, a_k1.y, -hd)])
-		elif k_at_top:
-			back_pieces.append([
-				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k1.x, yo, -hd),
-				Vector3(a_k1.x, a_k1.y, -hd)])
-		else:
-			back_pieces.append([
-				Vector3(a_k.x, a_k.y, -hd), Vector3(a_k.x, yo, -hd),
-				Vector3(a_k1.x, yo, -hd), Vector3(a_k1.x, a_k1.y, -hd)])
-	_add_polygon_face(positions, textures0, faces, back_pieces, uv_xy)
+	# The ear clip needs the CCW (front) winding; the back face re-uses the
+	# same triangulation with each triangle's winding flipped (CCW-from-
+	# outside flips with the normal).
+	var corner_tris: Array = _triangulate_2d(front2)
+	for z in [hd, -hd]:
+		var base: int = positions.size()
+		for p in front2:
+			positions.append(Vector3(p.x, p.y, z))
+			textures0.append(p)
+		var indexes := PackedInt32Array()
+		for t in corner_tris:
+			if z == hd:
+				indexes.append_array(PackedInt32Array([base + int(t[0]), base + int(t[1]), base + int(t[2])]))
+			else:
+				indexes.append_array(PackedInt32Array([base + int(t[0]), base + int(t[2]), base + int(t[1])]))
+		faces.append(PBFace.new(indexes))
 
 	# ── Opening reveals ──────────────────────────────────────────────────────
 	# A flat-topped opening (or a semicircle springing above the floor) has
@@ -699,37 +654,18 @@ static func create_door(
 				Vector3(arc[k + 1].x, arc[k + 1].y, -hd), Vector3(arc[k + 1].x, arc[k + 1].y, hd))
 
 	# ── Outer shell (the frame's outside faces) ─────────────────────────────
-	# ONE face per side, built from pieces split at every y-level (walls) or
-	# x-level (top) a front/back perimeter sub-edge starts or ends at — the
-	# pieces cancel internally, but the face's front/back boundary chains
-	# pair exactly with the front/back faces' perimeter sub-edges.
-	var wall_ys: Array = []
-	if leg_split_at_spring:
-		wall_ys = [[y0, spring_y], [spring_y, yo], [yo, y2]]
-	else:
-		wall_ys = [[y0, yo], [yo, y2]]
-	var left_pieces: Array = []
-	var right_pieces: Array = []
-	for ys in wall_ys:
-		left_pieces.append([
-			Vector3(x0, ys[0], -hd), Vector3(x0, ys[0], hd),
-			Vector3(x0, ys[1], hd), Vector3(x0, ys[1], -hd)])
-		right_pieces.append([
-			Vector3(x3, ys[0], -hd), Vector3(x3, ys[1], -hd),
-			Vector3(x3, ys[1], hd), Vector3(x3, ys[0], hd)])
-	_add_polygon_face(positions, textures0, faces, left_pieces, uv_zy)
-	_add_polygon_face(positions, textures0, faces, right_pieces, uv_zy)
-	# Top wall: split at every header strip boundary (its front/back edge
-	# chains match the front/back faces' top sub-edges).
-	var top_pieces: Array = []
-	var top_xs: PackedFloat32Array = PackedFloat32Array([x0])
-	top_xs.append_array(strip_xs)
-	top_xs.append(x3)
-	for s in range(top_xs.size() - 1):
-		top_pieces.append([
-			Vector3(top_xs[s], y2, -hd), Vector3(top_xs[s], y2, hd),
-			Vector3(top_xs[s + 1], y2, hd), Vector3(top_xs[s + 1], y2, -hd)])
-	_add_polygon_face(positions, textures0, faces, top_pieces, uv_xz)
+	# Plain full-size quads: the front/back polygons' side and top edges are
+	# single perimeter edges now, so the walls and top pair edge-for-edge
+	# with no split points at all.
+	# Left outer wall (normal -X)
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y0, -hd), Vector3(x0, y0, hd), Vector3(x0, y2, hd), Vector3(x0, y2, -hd))
+	# Right outer wall (normal +X)
+	_add_quad(positions, textures0, faces,
+		Vector3(x3, y0, -hd), Vector3(x3, y2, -hd), Vector3(x3, y2, hd), Vector3(x3, y0, hd))
+	# Top wall (normal +Y)
+	_add_quad(positions, textures0, faces,
+		Vector3(x0, y2, -hd), Vector3(x0, y2, hd), Vector3(x3, y2, hd), Vector3(x3, y2, -hd))
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
