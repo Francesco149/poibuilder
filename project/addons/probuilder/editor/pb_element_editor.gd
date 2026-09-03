@@ -1038,7 +1038,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.CENTER_SCALE:
 			var pivot := _center_pivot
-			if logger != null:
+			if logger != null and PBLogger.verbose:
 				logger.debug("drag", "CENTER_SCALE apply: factor=%.3f union=%d pivot=%s" % [
 					_center_factor, union.size(), str(pivot)])
 			for idx in union:
@@ -1093,7 +1093,7 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 				for idx in union:
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = _drag_original_positions[idx] + motion
-				if logger != null:
+				if logger != null and PBLogger.verbose:
 					logger.debug("drag", "apply %s: rel_origin=%s motion=%s union=%d mouse_driven=%s" % [
 						DragGesture.keys()[_drag_gesture], str(rel.origin), str(motion),
 						union.size(), str(_drag_mouse_driven)])
@@ -1233,7 +1233,7 @@ func apply_center_drag(node: PBMesh, camera: Camera3D, screen_pos: Vector2) -> v
 	if not _center_has_start:
 		return
 	_center_factor = clampf(1.0 - (screen_pos.x - _center_start_screen.x) * 0.01, 0.01, 10.0)
-	if logger != null:
+	if logger != null and PBLogger.verbose:
 		logger.debug("drag", "center apply: screen_dx=%.1f factor=%.3f" % [
 			screen_pos.x - _center_start_screen.x, _center_factor])
 	_apply_drag(node, node.pb_mesh_data, PackedInt32Array())
@@ -1286,6 +1286,14 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	if _drag_before_op != null:
 		# Topology gesture: undo/redo swap whole-mesh snapshots (face ids
 		# shifted, per-position payloads don't correspond).
+		# The drag separated positions that the seed-time weld groups still
+		# tie together (a zero-distance seed merges every coincident corner
+		# into one group; the drag moves only the cap/lifted dups). Rebuild
+		# from post-drag coincidence BEFORE snapshotting, or the next grab's
+		# union carries the unmoved bases ("moving the extruded face moves
+		# the whole extruded part" / "one vert left behind" tears) and the
+		# group-pair dedup drops the cap's edges from the edge list.
+		mesh_data.rebuild_welds()
 		var after := PBCommand.copy_mesh_data(mesh_data)
 		var before := _drag_before_op
 		mesh_data.shape_edited = true
@@ -1343,7 +1351,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 ## negative dot means the face is wound INWARD - the concrete "which faces
 ## are inverted" answer when the render shows missing faces.
 func _log_face_orientation_audit(mesh_data: PBMeshData) -> void:
-	if logger == null or mesh_data.positions.is_empty():
+	if logger == null or not PBLogger.verbose or mesh_data.positions.is_empty():
 		return
 	var p := mesh_data.positions
 	var cen := Vector3.ZERO
@@ -1383,7 +1391,8 @@ func _log_face_orientation_audit(mesh_data: PBMeshData) -> void:
 ## inward. The data-side audit can pass while the compiled mesh disagrees -
 ## this split locates a "missing faces" report definitively.
 func _render_triangle_audit(mesh_node: PBMesh) -> void:
-	if logger == null or mesh_node.mesh == null or mesh_node.pb_mesh_data == null:
+	if logger == null or not PBLogger.verbose \
+			or mesh_node.mesh == null or mesh_node.pb_mesh_data == null:
 		return
 	var p := mesh_node.pb_mesh_data.positions
 	var cen := Vector3.ZERO

@@ -360,6 +360,7 @@ func test_fake_undo_and_logger() -> void:
 	var selection := PBSelection.new(mesh_data)
 	selection.add_face(0)
 
+	PBLogger.verbose = true  # these tests assert on INFO entries
 	var logger := PBLogger.new()
 	var delta := Vector3(0.0, 1.0, 0.0)
 	var cmd := CmdMoveElements.new(mesh_data, delta, null, logger)

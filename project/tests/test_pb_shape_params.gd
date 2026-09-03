@@ -116,6 +116,25 @@ func test_apply_drag_extents_arch_maps_rect_footprint():
 	PBShapeParams.apply_drag_extents(values, 4.0, 0.6, -1.5, base)
 	assert_almost_eq(values["radius"], 0.5, 0.0001, "A downward drag shrinks the arch")
 
+func test_apply_drag_extents_height_param_shapes_map_radius_from_base():
+	## REGRESSION (v0.9.14): cylinder/pipe/cone have a height param, which
+	## used to skip the footprint block entirely — the base drag never
+	## touched the radius and it stuck at the default 0.5.
+	for shape in [&"cylinder", &"pipe", &"cone"]:
+		var values := PBShapeParams.get_default_values(shape)
+		PBShapeParams.apply_drag_extents(values, 2.0, 2.4, NAN)
+		assert_almost_eq(values["radius"], 1.2, 0.0001,
+			"%s: base rect inscribes the radius" % shape)
+		assert_almost_eq(values["height"], 1.0, 0.0001,
+			"%s: base drag leaves the height alone" % shape)
+		# The u/v extents persist through the height phase: the radius keeps
+		# tracking the base rect while the height drag drives the height.
+		PBShapeParams.apply_drag_extents(values, 2.0, 2.4, 3.0, values.duplicate())
+		assert_almost_eq(values["radius"], 1.2, 0.0001,
+			"%s: radius survives the height phase" % shape)
+		assert_almost_eq(values["height"], 3.0, 0.0001,
+			"%s: height drag drives the height" % shape)
+
 func test_height_drag_param_and_surface_pinning():
 	assert_eq(PBShapeParams.height_drag_param(&"sphere")["param"], "radius")
 	assert_eq(PBShapeParams.height_drag_param(&"torus")["param"], "tube_radius")

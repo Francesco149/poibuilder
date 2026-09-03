@@ -421,6 +421,7 @@ func test_fake_undo_and_logger() -> void:
 	var scale_factor := Vector3(2.0, 2.0, 2.0)
 	var expected_pos_0: Vector3 = orig_centroid + (original_pos_0 - orig_centroid) * 2.0
 
+	PBLogger.verbose = true  # these tests assert on INFO entries
 	var logger := PBLogger.new()
 	var cmd := CmdScaleElements.new(mesh_data, scale_factor, null, logger)
 	cmd.setup_from_selection(mesh_data, selection, PBEditor.SelectMode.FACE, scale_factor)

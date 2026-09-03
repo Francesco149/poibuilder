@@ -603,6 +603,47 @@ sign-off report:
   drive the plugin's delivery path directly against real click-made
   selections.
 
+v0.9.14 round complete ✓ — the stale-weld root cause behind BOTH the
+door-shell tear and the broken first extrude, the cylinder/pipe radius
+drag, and the debug gate:
+- STALE WELD GROUPS AFTER TOPOLOGY GESTURES (the door hole + the first-
+  extrude symptoms, one root): a zero-distance extrude/inset seed merges
+  every seed-time-coincident corner into ONE weld group; the drag then
+  moves only the cap/lifted dups, but the group still lists the unmoved
+  bases. Consequences on the NEXT grab: the union carried the bases
+  ("moving the extruded face moves the whole extruded part" — cube cap
+  union was 28 positions instead of 12), the group-pair dedup collapsed
+  the cap's edges out of get_common_edges ("after extruding, no edges are
+  created"; cube edge list 16 instead of 20), and a dragged neighbor's
+  union scattered into stale dups that tore coincident corners open
+  ("outer walls leave one vert behind, triangular hole at the arch
+  tangent" — the door leg extrude's cap dups leaked into the header
+  grab's union, 19 positions instead of 13, and the spandrel top corner
+  at the opening-top tangent line stayed while its quad moved). FIX:
+  commit_subgizmos rebuilds the welds from post-drag coincidence
+  (PBMeshData.rebuild_welds) before snapshotting the after-state; undo is
+  whole-mesh snapshots, so both directions stay consistent. Repro'd
+  headlessly (edge counts, union sizes, watertight-by-coordinate) and
+  through the real gesture commit path; regression:
+  test_extrude_commit_rebuilds_welds_edges_and_cap_union.
+- CYLINDER/PIPE/CONE RADIUS FROM THE BASE DRAG: apply_drag_extents
+  mapped the drag footprint onto radius only inside the no-height-param
+  branch, so height-param round shapes kept radius at the default 0.5
+  while the base drag ran ("pipe/cylinder radius doesn't adjust with the
+  initial drag"). The footprint block now runs for every shape with a
+  radius/outer_radius param (the u/v extents persist through the height
+  phase, so the radius keeps tracking the base rect).
+- POIBUILDER_DEBUG GATE: PBLogger.verbose (static, read once from the
+  environment) drops INFO/DEBUG entirely — no ring entry, no signal, no
+  print — unless POIBUILDER_DEBUG is set to a non-empty value other than
+  "0". WARN/ERROR always print (that is the "ask for the console log"
+  channel when a bug report arrives; TELL THE REPORTER to run with
+  POIBUILDER_DEBUG=1 for the full drag trace). The per-motion hot sites
+  (drag apply lines, center-handle redraw lines, the per-commit face-
+  orientation and render-triangle audits) ALSO check the flag so their
+  format strings are never built. Tests that assert on INFO entries set
+  PBLogger.verbose = true themselves.
+
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.
 

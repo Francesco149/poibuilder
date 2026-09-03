@@ -329,6 +329,19 @@ func ensure_welds(tolerance: float = 0.0001) -> bool:
 			return true
 	return false
 
+## Rebuilds the weld groups from the CURRENT positions (the unconditional
+## form of ensure_welds). Required after any drag that moved positions
+## apart which an earlier op had seeded coincident: a zero-distance
+## extrude/inset merges every seed-time-coincident corner into one group,
+## and the drag only moves the cap/lifted dups — the stale group then ties
+## the moved cap to the unmoved bases, so the next grab drags the bases
+## along ("moving the extruded face moves the whole extruded part") and
+## the group-pair dedup collapses the cap's edges out of the common-edge
+## list ("no edges after extruding").
+func rebuild_welds(tolerance: float = 0.0001) -> void:
+	shared_vertices = build_welds_from_positions(positions, tolerance)
+	invalidate_caches()
+
 ## Groups position indices whose coordinates coincide within tolerance.
 static func build_welds_from_positions(positions: PackedVector3Array,
 		tolerance: float = 0.0001) -> Array[PBSharedVertex]:

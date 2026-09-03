@@ -202,17 +202,20 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		values["depth"] = maxf(0.05, v_size)
 	if values.has("height") and height_known:
 		values["height"] = maxf(0.05, height)
+	# Round-in-plan shapes: the footprint grows from the base rect only —
+	# a rect footprint (the arch, which has a real depth) uses the width;
+	# a circular one (cylinder, pipe, cone, sphere, torus) inscribes the
+	# larger extent. This runs for height-param shapes (cylinder/pipe/cone)
+	# too — the u/v extents persist through the height phase, so the radius
+	# always tracks the base drag instead of sticking at the default.
+	var footprint := maxf(u_size, v_size)
+	if values.has("depth"):
+		footprint = u_size
+	if values.has("radius"):
+		values["radius"] = maxf(0.05, footprint * 0.5)
+	elif values.has("outer_radius"):
+		values["outer_radius"] = maxf(0.1, footprint * 0.5)
 	if not values.has("height"):
-		# Round-in-plan shapes: the footprint grows from the base rect only —
-		# a rect footprint (the arch, which has a real depth) uses the width;
-		# a circular one (sphere, torus) inscribes the larger extent.
-		var footprint := maxf(u_size, v_size)
-		if values.has("depth"):
-			footprint = u_size
-		if values.has("radius"):
-			values["radius"] = maxf(0.05, footprint * 0.5)
-		elif values.has("outer_radius"):
-			values["outer_radius"] = maxf(0.1, footprint * 0.5)
 		# The height drag drives the vertical size parameter relative to the
 		# base-release value, 1:1 with the cursor (see height_drag_param).
 		if height_known and not base_values.is_empty():

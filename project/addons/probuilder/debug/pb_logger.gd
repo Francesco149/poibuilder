@@ -11,6 +11,15 @@ extends RefCounted
 
 enum Level { DEBUG, INFO, WARN, ERROR }
 
+## Console verbosity gate: INFO/DEBUG logging is opt-in via the
+## POIBUILDER_DEBUG environment variable (set it to any non-empty value,
+## e.g. POIBUILDER_DEBUG=1, when reporting viewport bugs). WARN/ERROR always
+## record and print. The gate also guards the hot call sites (per-motion
+## drag lines, redraw/hover logs, per-commit audits) so their format
+## strings are never built in a normal session.
+static var verbose: bool = not String(OS.get_environment("POIBUILDER_DEBUG")).is_empty() \
+	and OS.get_environment("POIBUILDER_DEBUG") != "0"
+
 ## Each entry: {time_msec: int, level: Level, category: String, message: String}
 var entries: Array[Dictionary] = []
 var max_entries: int = 10000
@@ -19,6 +28,8 @@ var max_entries: int = 10000
 signal entry_added(entry: Dictionary)
 
 func _log(category: String, message: String, level: Level = Level.INFO) -> void:
+	if level < Level.WARN and not verbose:
+		return
 	var entry := {
 		"time_msec": Time.get_ticks_msec(),
 		"level": level,

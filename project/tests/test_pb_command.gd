@@ -164,6 +164,7 @@ func test_cmd_nudge_all_round_trip() -> void:
 	var mesh_data := PBMeshData.create_cube(1.0)
 	var original_positions := mesh_data.positions.duplicate()
 	var delta := Vector3(1.0, 2.0, 3.0)
+	PBLogger.verbose = true  # these tests assert on INFO entries
 	var logger := PBLogger.new()
 
 	var cmd := CmdNudgeAll.new(mesh_data, delta, logger)

@@ -4,6 +4,7 @@
 extends GutTest
 
 func test_timing():
+	PBLogger.verbose = true  # the test asserts on the INFO entry end_op emits
 	var logger = PBLogger.new()
 	var tel = PBTelemetry.new(logger)
 

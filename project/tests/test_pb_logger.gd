@@ -7,7 +7,13 @@ extends GutTest
 var logger: PBLogger
 
 func before_each():
+	# Tests assert on INFO/DEBUG entries, so force verbosity on (production
+	# gates it behind POIBUILDER_DEBUG — see test_verbose_gate).
+	PBLogger.verbose = true
 	logger = PBLogger.new()
+
+func after_each():
+	PBLogger.verbose = false
 
 func test_basic_logging():
 	logger.info("test", "hello")
@@ -78,3 +84,23 @@ func test_clear():
 	logger.info("test", "msg2")
 	logger.clear()
 	assert_eq(logger.entry_count(), 0)
+
+func test_verbose_gate():
+	# Production default: the gate is OFF unless POIBUILDER_DEBUG is set.
+	# INFO/DEBUG are dropped entirely (no entry, no signal, no print);
+	# WARN/ERROR always go through.
+	PBLogger.verbose = false
+	logger = PBLogger.new()
+	var received = []
+	logger.entry_added.connect(func(entry): received.append(entry))
+	logger.debug("gate", "dropped debug")
+	logger.info("gate", "dropped info")
+	assert_eq(logger.entry_count(), 0, "INFO/DEBUG should be gated off")
+	assert_eq(received.size(), 0, "No signal for gated entries")
+	logger.warn("gate", "kept warn")
+	logger.error("gate", "kept error")
+	assert_eq(logger.entry_count(), 2, "WARN/ERROR always record")
+	# Back to verbose: entries flow again.
+	PBLogger.verbose = true
+	logger.info("gate", "kept info")
+	assert_eq(logger.entry_count(), 3, "verbose restores INFO")

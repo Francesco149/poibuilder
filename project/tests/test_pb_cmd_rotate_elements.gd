@@ -375,6 +375,7 @@ func test_fake_undo_and_logger() -> void:
 	var selection := PBSelection.new(mesh_data)
 	selection.add_face(0)
 
+	PBLogger.verbose = true  # these tests assert on INFO entries
 	var logger := PBLogger.new()
 	var rot := Quaternion(Vector3.UP, PI / 2.0)
 	var cmd := CmdRotateElements.new(mesh_data, rot, null, Vector3.ZERO, true, logger)

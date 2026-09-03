@@ -226,6 +226,53 @@ func test_shift_move_extrudes_faces_at_drag_begin():
 	logic.commit_subgizmos(mesh, ids, false)
 	assert_eq(md.faces.size(), faces_before + 4, "Commit keeps the extruded topology")
 
+func test_extrude_commit_rebuilds_welds_edges_and_cap_union():
+	## REGRESSION (v0.9.14): the gesture seeds the extrude at distance 0,
+	## which merges every seed-time-coincident corner into ONE weld group.
+	## The drag moves only the cap/lifted dups, but the STALE group still
+	## tied them to the unmoved bases — grabbing the cap afterwards dragged
+	## the bases along ("moving the extruded face moves the whole extruded
+	## part"), the group-pair dedup collapsed the cap's own edges out of the
+	## common-edge list ("no edges after extruding"), and neighboring
+	## coincident corners tore open ("one vert left behind" holes on the
+	## door shell). Commit must rebuild the welds from post-drag
+	## coincidence.
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var ids := _ids([4])  # top face (y = +0.5)
+	var state := _gesture_state(s, ids, true)
+	for id in ids:
+		logic.set_subgizmo_transform_with_shift(mesh, ids, id,
+			state["start"][id].translated(Vector3(0, 0.5, 0)), true)
+	logic.commit_subgizmos(mesh, ids, false)
+
+	# The cap replaced the removed face in place, so id 4 is the cap.
+	var cap_union := md.get_coincident_vertices_from_faces(PackedInt32Array([4]))
+	assert_eq(cap_union.size(), 12,
+		"Cap grab moves the 4 cap corners + 8 lifted side corners only — never the bases")
+
+	# Physical edges after the extrude: 4 bottom + 4 lower verticals +
+	# 4 base ring + 4 upper verticals + 4 cap ring. Stale welds dedup the
+	# cap ring away (16).
+	assert_eq(md.get_common_edges().size(), 20,
+		"The cap's own edges survive the weld-group dedup")
+
+	# A follow-up plain drag of the cap lifts ONLY the extruded part.
+	var start := md.positions.duplicate()
+	for id in ids:
+		logic.set_subgizmo_transform(mesh, ids, id,
+			logic.get_subgizmo_transform(md, mesh, 4).translated(Vector3(0, 0.25, 0)))
+	for i in range(md.positions.size()):
+		if cap_union.has(i):
+			assert_lt(absf(md.positions[i].y - (start[i].y + 0.25)), 0.0001,
+				"Cap/lifted vertex %d rises with the second drag" % i)
+		elif absf(start[i].y - 0.5) < 0.0001:
+			assert_eq(md.positions[i], start[i],
+				"Base-ring vertex %d stays put (stale weld would drag it along)" % i)
+
 func test_shift_move_crossing_zero_flips_side_winding():
 	# Dragging the cap back through its base plane must flip the side quads'
 	# winding (they were wound for the original extrude direction at drag

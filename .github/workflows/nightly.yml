@@ -1,0 +1,61 @@
+name: Nightly
+
+# Every night the `nightly` tag is moved to the current master HEAD and a
+# prerelease carrying the Godot-importable addon zip is published for it
+# (replacing the previous nightly release). Also runnable by hand.
+on:
+  schedule:
+    - cron: "30 2 * * *" # 02:30 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the latest master
+        uses: actions/checkout@v4
+
+      - name: Zip the addon for Godot import
+        run: |
+          cd project
+          # Top-level entries are `addons/...` so the zip extracts straight
+          # into a Godot project folder.
+          zip -r ../PoiBuilder-nightly.zip addons/probuilder
+          cd ..
+          unzip -l PoiBuilder-nightly.zip | head -5
+
+      - name: Move the nightly tag to this commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly
+          git push -f origin nightly
+
+      - name: Publish the nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Replace the previous nightly release (delete --cleanup-tag also
+          # removes the old tag; harmless when neither exists yet).
+          gh release delete nightly --yes --cleanup-tag || true
+          git push -f origin nightly
+          {
+            echo "Automatic nightly build of PoiBuilder at commit"\
+              "$(git rev-parse --short HEAD)."
+            echo
+            echo "### Install"
+            echo "1. Download \`PoiBuilder-nightly.zip\` below."
+            echo "2. Extract it into your Godot project folder (it contains"\
+              "\`addons/probuilder\`)."
+            echo "3. Enable the plugin via Project → Project Settings → Plugins."
+            echo
+            echo "Built from $(git rev-parse --short HEAD)"\
+              "($(git log -1 --date=short --format='%ad')) on the master branch."
+          } > notes.md
+          gh release create nightly PoiBuilder-nightly.zip \
+            --title "PoiBuilder nightly $(date -u +%Y-%m-%d)" \
+            --notes-file notes.md \
+            --prerelease

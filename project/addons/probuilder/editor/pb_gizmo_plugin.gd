@@ -383,11 +383,11 @@ func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
 	# Track for the GUI harness + debug logging (did the handle exist, where).
 	var node := gizmo.get_node_3d() as Node3D
 	var world: Vector3 = node.global_transform * pivot if node != null else pivot
-	if logger != null and node != null:
+	if logger != null and PBLogger.verbose and node != null:
 		logger.debug("handle", "center handle pivot world=%s (node origin %s)" % [
 			str(world), str(node.global_position)])
 	if not _center_handle_drawn or _center_handle_world.distance_to(world) > 0.001:
-		if logger != null:
+		if logger != null and PBLogger.verbose:
 			logger.debug("handle", "center handle drawn at world %s (tool=%s selection=%d)"
 				% [str(world), PBEditor.ToolMode.keys()[editor.tool_mode], selected.size()])
 	_center_handle_drawn = true
