@@ -94,6 +94,7 @@ func _enter_tree():
 	toolbar.operation_requested.connect(_on_operation_requested)
 	toolbar.edit_params_requested.connect(_on_edit_params_requested)
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
+	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	_add_toolbar_row_below_3d_toolbar()
 
 	# Tool overlay panel floating in the 3D viewport (readouts + params
@@ -503,9 +504,20 @@ func _update_engine_tool() -> void:
 ## Toolbar Panel toggle → overlay pin (and back, keeping both in sync).
 func _on_overlay_toggled(pinned: bool) -> void:
 	tool_overlay.pinned = pinned
-	tool_overlay.ensure_visible_and_clamped()
+	if pinned:
+		tool_overlay.ensure_visible_and_clamped()
 	tool_overlay.update_visibility()
 
+## Explicit toolbar recovery button: resets the panel, forces it visible, uncollapses it.
+func _on_reset_panel_requested() -> void:
+	if tool_overlay != null:
+		tool_overlay.pinned = true
+		toolbar.set_overlay_pinned(true)
+		tool_overlay.expand()
+		tool_overlay.reset_to_default_position()
+		tool_overlay.update_visibility()
+		if logger:
+			logger.info("plugin", "Overlay panel recovered to bottom-left corner")
 ## Drag lifecycle signal. Hover is cleared when a drag STARTS; per-update
 ## refreshes are deliberately NOT done here — the delivery path
 ## (_set_subgizmo_transform) already redraws the gizmo every motion, and a
