@@ -370,8 +370,10 @@ func _on_selection_changed() -> void:
 # ==============================================================================
 
 func _on_active_mesh_changed(mesh: PBMesh) -> void:
+	if gizmo_plugin != null and gizmo_plugin.element_editor != null \
+			and gizmo_plugin.element_editor.drag_active:
+		gizmo_plugin.element_editor.commit_subgizmos(editor.active_mesh, PackedInt32Array(), true)
 	if mesh != null:
-		# Heal missing/partial weld groups before any element interaction:
 		# broken welds make element ids resolve to raw position pairs, which
 		# tears corners apart on drag (the "moved those 2 verts" failure).
 		if mesh.pb_mesh_data != null and mesh.pb_mesh_data.ensure_welds():
@@ -1106,9 +1108,13 @@ func _unique_detached_name(mesh: PBMesh) -> String:
 	return "%s%d" % [base, i]
 
 ## Undo/redo payload: swap a mesh's whole data from a snapshot.
-func _restore_mesh_snapshot(mesh_id: int, snapshot: PBMeshData) -> void:
-	var mesh := instance_from_id(mesh_id) as PBMesh
-	if mesh == null or mesh.pb_mesh_data == null:
+func _restore_mesh_snapshot(target: Variant, snapshot: PBMeshData) -> void:
+	var mesh: PBMesh = null
+	if target is PBMesh:
+		mesh = target as PBMesh
+	elif target is int:
+		mesh = instance_from_id(target) as PBMesh
+	if mesh == null or not is_instance_valid(mesh) or mesh.pb_mesh_data == null:
 		return
 	PBCommand.restore_mesh_data(mesh.pb_mesh_data, snapshot)
 	mesh.rebuild()

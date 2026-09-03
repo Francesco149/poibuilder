@@ -54,6 +54,17 @@ func do_it() -> void:
 func undo_it() -> void:
 	_apply_snapshot(before)
 
+
+func add_to_undo_manager(undo: Object) -> void:
+	if undo == null:
+		return
+	if undo is EditorUndoRedoManager and node != null and is_instance_valid(node):
+		undo.create_action(command_name, UndoRedo.MERGE_DISABLE, node)
+	else:
+		undo.create_action(command_name)
+	undo.add_do_method(self, "do_it")
+	undo.add_undo_method(self, "undo_it")
+	undo.commit_action()
 ## True when the op produced no change worth an undo entry.
 func is_noop() -> bool:
 	return before == null or after == null

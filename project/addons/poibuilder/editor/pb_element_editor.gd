@@ -645,12 +645,14 @@ func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: 
 	if mesh_data == null:
 		return false
 
+	if drag_active and _drag_mesh != node:
+		_reset_drag_state()
+
 	if not drag_active:
 		_begin_drag(node, ids, shift)
 		if logger != null:
 			logger.info("drag", "first delivery: id=%d target_origin=%s target_basis_z=%s shift=%s" % [
 				id, str(transform.origin), str(transform.basis.z), str(shift)])
-
 	_drag_pending[id] = transform
 	_drag_latest_id = id
 	return _apply_drag(node, mesh_data, ids)
@@ -1447,11 +1449,15 @@ func _render_triangle_audit(mesh_node: PBMesh) -> void:
 				inverted.append(rendered_tris - 1)
 	var data_tris: int = mesh_node.pb_mesh_data.index_count() / 3
 	logger.info("audit", "render triangles=%d data_triangles=%d rendered_inward=%s" % [rendered_tris, data_tris, str(inverted)])
-func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
-	var mesh_node: PBMesh = instance_from_id(node_id) as PBMesh
-	if mesh_node == null or mesh_node.pb_mesh_data == null:
+func _restore_full_mesh(target: Variant, snapshot: PBMeshData) -> void:
+	var mesh_node: PBMesh = null
+	if target is PBMesh:
+		mesh_node = target as PBMesh
+	elif target is int:
+		mesh_node = instance_from_id(target) as PBMesh
+	if mesh_node == null or not is_instance_valid(mesh_node) or mesh_node.pb_mesh_data == null:
 		if logger != null:
-			logger.warn("undo", "_restore_full_mesh skipped (node %d missing or dataless)" % node_id)
+			logger.warn("undo", "_restore_full_mesh skipped (node missing or dataless)")
 		return
 	PBCommand.restore_mesh_data(mesh_node.pb_mesh_data, snapshot)
 	mesh_node.pb_mesh_data.invalidate_caches()
@@ -1465,21 +1471,26 @@ func _restore_full_mesh(node_id: int, snapshot: PBMeshData) -> void:
 
 ## Reapplies a position subset by node instance id (undo/redo payload).
 ## Instance id survives history replay; missing nodes are skipped silently.
-func _apply_positions(node_id: int, indices: PackedInt32Array, positions_subset: PackedVector3Array) -> void:
-	var node: PBMesh = instance_from_id(node_id) as PBMesh
-	if node == null or node.pb_mesh_data == null:
+func _apply_positions(target: Variant, indices: PackedInt32Array, positions_subset: PackedVector3Array) -> void:
+	var mesh_node: PBMesh = null
+	if target is PBMesh:
+		mesh_node = target as PBMesh
+	elif target is int:
+		mesh_node = instance_from_id(target) as PBMesh
+	if mesh_node == null or not is_instance_valid(mesh_node) or mesh_node.pb_mesh_data == null:
 		if logger != null:
-			logger.warn("undo", "_apply_positions skipped (node %d missing or dataless)" % node_id)
+			logger.warn("undo", "_apply_positions skipped (node missing or dataless)")
 		return
-	var positions := node.pb_mesh_data.positions
+	var positions: PackedVector3Array = mesh_node.pb_mesh_data.positions
 	var count: int = mini(indices.size(), positions_subset.size())
 	for i in range(count):
 		var idx: int = indices[i]
 		if idx >= 0 and idx < positions.size():
 			positions[idx] = positions_subset[i]
-	node.pb_mesh_data.positions = positions
-	node.pb_mesh_data.invalidate_caches()
-	node.rebuild()
+	mesh_node.pb_mesh_data.positions = positions
+	mesh_node.pb_mesh_data.invalidate_caches()
+	mesh_node.rebuild()
+	mesh_node.update_gizmos()
 
 func _reset_drag_state() -> void:
 	drag_active = false
@@ -1491,6 +1502,7 @@ func _reset_drag_state() -> void:
 	_drag_gesture = DragGesture.NORMAL
 	_drag_union_override = PackedInt32Array()
 	_drag_union = PackedInt32Array()
+	_drag_before_op = null
 	_drag_inset_bases = []
 	_drag_ring_bases = []
 	_last_inset_amount = 0.0
