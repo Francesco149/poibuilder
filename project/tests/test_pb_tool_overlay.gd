@@ -245,3 +245,96 @@ func test_pinned_setter_updates_visibility():
 	assert_false(overlay.visible)
 	overlay.pinned = true
 	assert_true(overlay.visible, "Setting pinned re-evaluates visibility immediately")
+
+# ==============================================================================
+# Dragging, Clamping, and Recovery
+# ==============================================================================
+
+func test_overlay_header_drag_reaches_bottom_and_clamps():
+	var parent := Control.new()
+	parent.size = Vector2(800, 600)
+	add_child_autofree(parent)
+
+	var overlay := PBToolOverlay.new()
+	parent.add_child(overlay)
+	overlay.build_ui()
+	overlay.size = Vector2(200, 100)
+	overlay.reset_to_default_position()
+
+	# Simulate left-click on header
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = Vector2(50, 10)
+	overlay._on_header_gui_input(press)
+	assert_true(overlay._panel_dragging)
+
+	# Simulate dragging mouse down towards the bottom of the parent (by 400px)
+	var motion := InputEventMouseMotion.new()
+	motion.relative = Vector2(0, 400)
+	overlay._on_header_gui_input(motion)
+
+	# The panel must be allowed to reach the bottom padding edge without snapping up
+	var max_allowed_y: float = parent.size.y - overlay.size.y - PBToolOverlay.PADDING
+	assert_almost_eq(overlay.position.y, max_allowed_y, 1.0,
+		"Panel can reach the true bottom of the viewport with padding")
+	assert_lte(overlay.position.y + overlay.size.y, parent.size.y,
+		"Panel never exceeds bottom edge of viewport")
+
+func test_overlay_clamp_on_parent_resize():
+	var parent := Control.new()
+	parent.size = Vector2(800, 600)
+	add_child_autofree(parent)
+
+	var overlay := PBToolOverlay.new()
+	parent.add_child(overlay)
+	overlay.build_ui()
+	overlay.size = Vector2(200, 100)
+	overlay.position = Vector2(500, 450)
+	overlay._custom_position_set = true
+
+	# Parent shrinks to 400x300 — overlay at (500, 450) is now out of bounds
+	parent.size = Vector2(400, 300)
+	overlay.clamp_to_viewport()
+
+	assert_lte(overlay.position.x + overlay.size.x, parent.size.x,
+		"Clamped panel X stays inside parent bounds")
+	assert_lte(overlay.position.y + overlay.size.y, parent.size.y,
+		"Clamped panel Y stays inside parent bounds")
+	assert_gte(overlay.position.x, PBToolOverlay.PADDING)
+	assert_gte(overlay.position.y, PBToolOverlay.PADDING)
+
+func test_overlay_reset_to_default_position():
+	var parent := Control.new()
+	parent.size = Vector2(800, 600)
+	add_child_autofree(parent)
+
+	var overlay := PBToolOverlay.new()
+	parent.add_child(overlay)
+	overlay.build_ui()
+	overlay.position = Vector2(400, 200)
+	overlay._custom_position_set = true
+
+	overlay.reset_to_default_position()
+	assert_false(overlay._custom_position_set,
+		"Reset clears custom position flag")
+	assert_eq(overlay.grow_vertical, Control.GROW_DIRECTION_BEGIN,
+		"Reset restores bottom-left anchor orientation")
+
+func test_overlay_is_offscreen_and_recovery():
+	var parent := Control.new()
+	parent.size = Vector2(800, 600)
+	add_child_autofree(parent)
+
+	var overlay := PBToolOverlay.new()
+	parent.add_child(overlay)
+	overlay.build_ui()
+	overlay.size = Vector2(200, 100)
+
+	# Move completely outside parent bounds
+	overlay.position = Vector2(-300, -200)
+	assert_true(overlay.is_offscreen(), "Panel outside parent rect must report is_offscreen")
+
+	# Recovery resets it
+	overlay.ensure_visible_and_clamped()
+	assert_false(overlay.is_offscreen(), "Recovery must bring panel back inside visible area")
