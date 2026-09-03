@@ -603,6 +603,37 @@ sign-off report:
   drive the plugin's delivery path directly against real click-made
   selections.
 
+v0.9.15 round complete ✓ — the door shell rebuilt T-JUNCTION-FREE (the
+real "outer walls leave one vert behind" root cause; the v0.9.14 weld
+rebuild was necessary but not sufficient — on pristine meshes it also
+removed the accidental stale-group over-merging that had been papering
+over the tears, which is why the door looked MORE broken after 0.9.14):
+- The old shell carried ~54 T-junctions — verts lying ON another face's
+  edge without being its corner: the outer wall was one tall quad while
+  the leg/header faces met it at the opening-top line (yo), the header
+  band's bottom edge carried every spandrel top corner, the top wall's
+  front edge carried the header corners. A weld group only moves
+  CORNERS, so grabbing a frame face moved those junction verts (via
+  their own faces) while the face whose edge they sat on stayed — the
+  junction vert "left behind", triangular tears along the wall ("the
+  edge loop tangent to the top of the arch" IS the yo line — the arch
+  is tangent to it at the apex). THE FIX: every face edge is now shared
+  IN FULL with exactly one neighbor — legs split at the arch spring
+  line (when jambs exist), outer walls split at every y-level a
+  front/back face starts/ends at, the header band becomes one strip per
+  arc segment, the top wall splits at every strip boundary; the arc's
+  endpoints/apex snap EXACTLY onto the shared lines (float fuzz = a
+  T-junction). Face counts: flat 16→20, arched 15+3N→6N+22 (58 @ N=6).
+  Degenerate-rise guard: rise < 0.0001 builds the flat variant.
+  REGRESSION LOCK: test_door_shell_is_tjunction_free (coordinate-edge
+  usage ≤ 2 everywhere; the ONLY open edges are the 8 bottom-rim
+  segments — the shell has no bottom face by design) and
+  test_door_face_grab_never_tears (EVERY face's weld union moves, welds
+  rebuild, and the shell stays closed — a tear would add open edges).
+  400-door randomized sweep: zero defects. Reveal faces (tunnel/jamb/
+  lintel) legitimately face INTO the opening — the per-commit
+  inward_wound_faces audit flags them by design on doors.
+
 v0.9.14 round complete ✓ — the stale-weld root cause behind BOTH the
 door-shell tear and the broken first extrude, the cylinder/pipe radius
 drag, and the debug gate:

@@ -197,19 +197,22 @@ func test_stairs_normals():
 func test_door_default():
 	var md = PBShapeComplex.create_door()
 	assert_eq(md.validate(), "", "Door should validate")
-	# Arched default (6 segments): 5+6 front + 5+6 back + 2 jambs + 6 tunnel
-	# + 3 outer walls = 33 faces (apex spandrels are triangles, still 1 face
-	# per arc segment).
-	assert_eq(md.face_count(), 33, "Door: 33 faces")
+	# Arched default (6 segments), v0.9.15 T-junction-free shell:
+	# per side 4 leg pieces + 2 headers + 6 header strips + 6 spandrels,
+	# plus 2 jambs + 6 tunnel + 6 wall pieces + 8 top pieces = 58 faces
+	# (apex spandrels are triangles, still 1 face per arc segment).
+	assert_eq(md.face_count(), 58, "Door: 58 faces")
 
 func test_door_flat_lintel_has_closed_outer_shell():
 	# v0.9.13: the legs' OUTER walls (±X) and the lintel's top (+Y) used to
 	# be missing — the frame was hollow when seen from the side/above.
 	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, false)
 	assert_eq(md.validate(), "")
-	# 5+5 front/back + 2 jambs + 1 lintel + 3 outer walls = 16 quads.
-	assert_eq(md.face_count(), 16, "Flat door: 16 faces")
-	assert_eq(md.vertex_count(), 64, "Flat door: 64 vertices")
+	# 5+5 front/back + 2 jambs + 1 lintel + 4 wall pieces + 3 top pieces
+	# = 20 quads (v0.9.15: walls split at the opening top, top split at
+	# the header boundaries — no T-junctions).
+	assert_eq(md.face_count(), 20, "Flat door: 20 faces")
+	assert_eq(md.vertex_count(), 80, "Flat door: 80 vertices")
 
 	var left_faces: Array = []
 	var right_faces: Array = []
@@ -230,9 +233,9 @@ func test_door_flat_lintel_has_closed_outer_shell():
 			right_faces.append(fi)
 		if all_top:
 			top_faces.append(fi)
-	assert_eq(left_faces.size(), 1, "Exactly one left outer wall quad")
-	assert_eq(right_faces.size(), 1, "Exactly one right outer wall quad")
-	assert_eq(top_faces.size(), 1, "Exactly one top wall quad")
+	assert_eq(left_faces.size(), 2, "The left outer wall splits at the opening top")
+	assert_eq(right_faces.size(), 2, "The right outer wall splits at the opening top")
+	assert_eq(top_faces.size(), 3, "The top wall splits at the header boundaries")
 
 	# And they must face OUTWARD (normals agree with the geometry).
 	var normals = md.calculate_normals()
@@ -268,8 +271,8 @@ func test_door_arch_segments_param_changes_topology():
 	var eight = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 8)
 	assert_eq(three.validate(), "")
 	assert_eq(eight.validate(), "")
-	assert_eq(three.face_count(), 15 + 3 * 3, "3 segments: 24 faces")
-	assert_eq(eight.face_count(), 15 + 3 * 8, "8 segments: 39 faces")
+	assert_eq(three.face_count(), 6 * 3 + 22, "3 segments: 40 faces")
+	assert_eq(eight.face_count(), 6 * 8 + 22, "8 segments: 70 faces")
 
 func test_door_compiles():
 	var md = PBShapeComplex.create_door()
@@ -289,3 +292,81 @@ func test_door_shared_vertices():
 	# Coincident lookup should find sharing vertices
 	var lookup = md.get_shared_vertex_lookup()
 	assert_eq(lookup.size(), md.vertex_count())
+
+static func _coord_open_counts(md: PBMeshData) -> Dictionary:
+	var usage := {}
+	for face in md.faces:
+		for e in face.get_edges():
+			var pa: Vector3 = md.positions[e.a]
+			var pb: Vector3 = md.positions[e.b]
+			var ka := Vector3(snappedf(pa.x, 0.0001), snappedf(pa.y, 0.0001), snappedf(pa.z, 0.0001))
+			var kb := Vector3(snappedf(pb.x, 0.0001), snappedf(pb.y, 0.0001), snappedf(pb.z, 0.0001))
+			var k: String
+			if ka < kb:
+				k = "%s|%s" % [ka, kb]
+			else:
+				k = "%s|%s" % [kb, ka]
+			usage[k] = usage.get(k, 0) + 1
+	return usage
+
+static func _open_off_bottom(md: PBMeshData, usage: Dictionary) -> Array:
+	var y0 := INF
+	for p in md.positions:
+		y0 = minf(y0, p.y)
+	var off_bottom: Array = []
+	for k in usage.keys():
+		if usage[k] == 1:
+			var both_bottom := true
+			for half in (k as String).split("|"):
+				var comp: PackedStringArray = half.replace("(", "").replace(")", "").split(", ")
+				if absf(comp[1].to_float() - y0) > 0.0011:
+					both_bottom = false
+			if not both_bottom:
+				off_bottom.append(k)
+	return off_bottom
+
+func test_door_shell_is_tjunction_free():
+	## REGRESSION (v0.9.15): the shell used to carry T-junctions (a vertex
+	## lying ON another face's edge — e.g. the opening-top corner on the
+	## outer wall's edge); grabbing any frame face sheared it off the wall
+	## and tore triangular holes ("one vert left behind"). Every edge must
+	## now be shared in full by exactly 2 faces, except the open bottom rim.
+	for params in [[3.0, 2.5, 2.0, 0.5, 1.0, false, 6],
+			[3.0, 2.5, 2.0, 0.5, 1.0, true, 6],
+			[3.0, 2.5, 2.0, 0.5, 1.0, true, 3],
+			[4.0, 1.4, 1.0, 0.4, 0.8, true, 6]]:
+		var md = PBShapeComplex.create_door(
+			params[0], params[1], params[2], params[3], params[4], params[5], params[6])
+		var usage := _coord_open_counts(md)
+		for k in usage.keys():
+			assert_lt(usage[k], 3, "Edge used by more than 2 faces: %s" % k)
+		var off_bottom := _open_off_bottom(md, usage)
+		assert_eq(off_bottom.size(), 0,
+			"Door shell must have no open/T-junction edges off the bottom rim")
+		var rim := 0
+		for k in usage.keys():
+			if usage[k] == 1:
+				rim += 1
+		assert_eq(rim, 8, "Exactly the 8 bottom-rim segments stay open")
+
+func test_door_face_grab_never_tears():
+	## The user-facing guarantee: grabbing ANY face and moving its weld
+	## union must never open a hole — after a weld rebuild the shell keeps
+	## exactly its 8 open bottom-rim edges (a tear would add more).
+	for arched in [true, false]:
+		var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, arched, 6)
+		for fi in range(md.faces.size()):
+			var union := md.get_coincident_vertices_from_faces(PackedInt32Array([fi]))
+			for idx in union:
+				md.positions[idx] += Vector3(0.37, -0.53, 0.21)
+			md.rebuild_welds()
+			var open := 0
+			var usage := _coord_open_counts(md)
+			for k in usage.keys():
+				if usage[k] == 1:
+					open += 1
+			assert_eq(open, 8,
+				"Face %d grab+move keeps the shell closed (8 rim edges)" % fi)
+			for idx in union:
+				md.positions[idx] -= Vector3(0.37, -0.53, 0.21)
+			md.rebuild_welds()

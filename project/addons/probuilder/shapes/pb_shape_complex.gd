@@ -506,30 +506,72 @@ static func create_door(
 	var arc: PackedVector2Array = PackedVector2Array()
 	if arched:
 		var rise: float = minf(0.5 * (x2 - x1), yo - y0)
-		spring_y = yo - rise
-		arc_segs = maxi(1, arch_segments)
-		for k in range(arc_segs + 1):
-			var t: float = PI * (1.0 - float(k) / float(arc_segs))
-			arc.append(Vector2(xc + (xc - x1) * cos(t), spring_y + rise * sin(t)))
+		if rise >= 0.0001:
+			spring_y = yo - rise
+			if absf(spring_y - y0) < 0.0001:
+				spring_y = y0  # exact floor springing
+			arc_segs = maxi(1, arch_segments)
+			for k in range(arc_segs + 1):
+				var t: float = PI * (1.0 - float(k) / float(arc_segs))
+				arc.append(Vector2(xc + (xc - x1) * cos(t), spring_y + rise * sin(t)))
+			arc[0] = Vector2(x1, spring_y)
+			arc[arc_segs] = Vector2(x2, spring_y)
+			# Snap apex points that touch the opening top onto it exactly — the
+			# spandrel corners and the header strip boundaries must be THE SAME
+			# point or the shell carries a float-fuzz T-junction.
+			for k in range(arc_segs + 1):
+				if absf(arc[k].y - yo) < 0.0001:
+					arc[k].y = yo
+
+	## The shell is built T-JUNCTION-FREE: every face edge is either shared
+	## in full with exactly one neighboring face or lies on the bottom rim.
+	## A junction vert ON another face's edge (not a corner) would stay
+	## behind when that face is grabbed and tear a triangular hole — the
+	## door's outer walls used to tear at the opening-top line for exactly
+	## this reason. Consequences: the legs split at the spring line (when
+	## jambs exist), the outer walls split at every y-level a front/back
+	## face starts or ends at, the header band splits into one strip per
+	## arc segment, and the top wall splits at every header strip boundary.
+	var has_jambs: bool = spring_y > y0 + 0.0001
+	# The legs/walls split at the spring line ONLY when an arch actually
+	# springs above the floor (a flat lintel's spring line IS the opening
+	# top — splitting there would emit zero-height slivers).
+	var leg_split_at_spring: bool = has_jambs and arc_segs > 0
+	# x boundaries of the header band strips (the spandrel tops).
+	var strip_xs: PackedFloat32Array = PackedFloat32Array([x1])
+	for k in range(1, arc_segs):
+		strip_xs.append(arc[k].x)
+	strip_xs.append(x2)
+	# y segments of the outer walls: the levels any front/back face starts
+	# or ends at along the frame columns.
+	var wall_ys: Array = []
+	if leg_split_at_spring:
+		wall_ys = [[y0, spring_y], [spring_y, yo], [yo, y2]]
+	else:
+		wall_ys = [[y0, yo], [yo, y2]]
 
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
 
 	# ── Front faces (z = +hd, normals +Z) ────────────────────────────────────
-	# Legs and corner columns tile each side of the opening; the header is
-	# the solid band over it. When arched, one spandrel strip per arc segment
-	# fills between the arc and the opening top.
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, y0, hd), Vector3(x1, y0, hd), Vector3(x1, yo, hd), Vector3(x0, yo, hd))
+	for xs in [[x0, x1], [x2, x3]]:
+		var xa: float = xs[0]
+		var xb: float = xs[1]
+		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
+			else [[y0, yo]]
+		for ys in leg_ys:
+			_add_quad(positions, textures0, faces,
+				Vector3(xa, ys[0], hd), Vector3(xb, ys[0], hd),
+				Vector3(xb, ys[1], hd), Vector3(xa, ys[1], hd))
 	_add_quad(positions, textures0, faces,
 		Vector3(x0, yo, hd), Vector3(x1, yo, hd), Vector3(x1, y2, hd), Vector3(x0, y2, hd))
 	_add_quad(positions, textures0, faces,
-		Vector3(x1, yo, hd), Vector3(x2, yo, hd), Vector3(x2, y2, hd), Vector3(x1, y2, hd))
-	_add_quad(positions, textures0, faces,
 		Vector3(x2, yo, hd), Vector3(x3, yo, hd), Vector3(x3, y2, hd), Vector3(x2, y2, hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x2, y0, hd), Vector3(x3, y0, hd), Vector3(x3, yo, hd), Vector3(x2, yo, hd))
+	for s in range(strip_xs.size() - 1):
+		_add_quad(positions, textures0, faces,
+			Vector3(strip_xs[s], yo, hd), Vector3(strip_xs[s + 1], yo, hd),
+			Vector3(strip_xs[s + 1], y2, hd), Vector3(strip_xs[s], y2, hd))
 	for k in range(arc_segs):
 		# Spandrel fill between the arc and the opening top. Segments touching
 		# the apex collapse to a triangle there (the arc meets the opening top
@@ -552,16 +594,23 @@ static func create_door(
 				Vector3(a_k1.x, yo, hd), Vector3(a_k.x, yo, hd))
 
 	# ── Back faces (z = -hd, normals -Z) ─────────────────────────────────────
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, y0, -hd), Vector3(x0, yo, -hd), Vector3(x1, yo, -hd), Vector3(x1, y0, -hd))
+	for xs in [[x0, x1], [x2, x3]]:
+		var xa: float = xs[0]
+		var xb: float = xs[1]
+		var leg_ys: Array = [[y0, spring_y], [spring_y, yo]] if leg_split_at_spring \
+			else [[y0, yo]]
+		for ys in leg_ys:
+			_add_quad(positions, textures0, faces,
+				Vector3(xa, ys[0], -hd), Vector3(xa, ys[1], -hd),
+				Vector3(xb, ys[1], -hd), Vector3(xb, ys[0], -hd))
 	_add_quad(positions, textures0, faces,
 		Vector3(x0, yo, -hd), Vector3(x0, y2, -hd), Vector3(x1, y2, -hd), Vector3(x1, yo, -hd))
 	_add_quad(positions, textures0, faces,
-		Vector3(x1, yo, -hd), Vector3(x1, y2, -hd), Vector3(x2, y2, -hd), Vector3(x2, yo, -hd))
-	_add_quad(positions, textures0, faces,
 		Vector3(x2, yo, -hd), Vector3(x2, y2, -hd), Vector3(x3, y2, -hd), Vector3(x3, yo, -hd))
-	_add_quad(positions, textures0, faces,
-		Vector3(x2, y0, -hd), Vector3(x2, yo, -hd), Vector3(x3, yo, -hd), Vector3(x3, y0, -hd))
+	for s in range(strip_xs.size() - 1):
+		_add_quad(positions, textures0, faces,
+			Vector3(strip_xs[s], yo, -hd), Vector3(strip_xs[s], y2, -hd),
+			Vector3(strip_xs[s + 1], y2, -hd), Vector3(strip_xs[s + 1], yo, -hd))
 	for k in range(arc_segs):
 		var a_k: Vector2 = arc[k]
 		var a_k1: Vector2 = arc[k + 1]
@@ -583,7 +632,7 @@ static func create_door(
 	# ── Opening reveals ──────────────────────────────────────────────────────
 	# A flat-topped opening (or a semicircle springing above the floor) has
 	# jamb walls; an elliptical arch springing at the floor has none.
-	if spring_y > y0 + 0.0001:
+	if has_jambs:
 		# Left jamb (normal +X)
 		_add_quad(positions, textures0, faces,
 			Vector3(x1, y0, hd), Vector3(x1, y0, -hd), Vector3(x1, spring_y, -hd), Vector3(x1, spring_y, hd))
@@ -603,15 +652,25 @@ static func create_door(
 				Vector3(arc[k + 1].x, arc[k + 1].y, -hd), Vector3(arc[k + 1].x, arc[k + 1].y, hd))
 
 	# ── Outer shell (the frame's outside faces) ─────────────────────────────
-	# Left outer wall (normal -X)
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, y0, -hd), Vector3(x0, y0, hd), Vector3(x0, y2, hd), Vector3(x0, y2, -hd))
-	# Right outer wall (normal +X)
-	_add_quad(positions, textures0, faces,
-		Vector3(x3, y0, -hd), Vector3(x3, y2, -hd), Vector3(x3, y2, hd), Vector3(x3, y0, hd))
-	# Top wall (normal +Y)
-	_add_quad(positions, textures0, faces,
-		Vector3(x0, y2, -hd), Vector3(x0, y2, hd), Vector3(x3, y2, hd), Vector3(x3, y2, -hd))
+	# Split at every y-level a front/back face starts or ends at, so each
+	# shell piece shares FULL edges with the frame faces (no T-junctions).
+	for ys in wall_ys:
+		# Left outer wall pieces (normal -X)
+		_add_quad(positions, textures0, faces,
+			Vector3(x0, ys[0], -hd), Vector3(x0, ys[0], hd),
+			Vector3(x0, ys[1], hd), Vector3(x0, ys[1], -hd))
+		# Right outer wall pieces (normal +X)
+		_add_quad(positions, textures0, faces,
+			Vector3(x3, ys[0], -hd), Vector3(x3, ys[1], -hd),
+			Vector3(x3, ys[1], hd), Vector3(x3, ys[0], hd))
+	# Top wall pieces (normal +Y), split at every header strip boundary.
+	var top_xs: PackedFloat32Array = PackedFloat32Array([x0])
+	top_xs.append_array(strip_xs)
+	top_xs.append(x3)
+	for s in range(top_xs.size() - 1):
+		_add_quad(positions, textures0, faces,
+			Vector3(top_xs[s], y2, -hd), Vector3(top_xs[s], y2, hd),
+			Vector3(top_xs[s + 1], y2, hd), Vector3(top_xs[s + 1], y2, -hd))
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
