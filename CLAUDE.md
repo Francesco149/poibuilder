@@ -339,6 +339,22 @@ creation; gizmo-less active meshes self-heal on selection. Harness now
 also covers ELEMENT picking (hover, face click, edge click) and asserts
 the BASE outline actually drew (creation_outline_draws counter).
 
+v0.9.12 round complete ✓ — chained-extrude walls, from the third LOGGED
+sign-off (the log's seed line `sides=2` on a quad wall was the tell):
+- COORDINATE-BASED BOUNDARY DETECTION: after a zero-distance extrude the
+  weld rebuild merges EVERY corner copy that coincides at seed time — the
+  tube's top and bottom rim corners land in the SAME weld groups. The
+  region logic keyed edges by weld-group pairs, so the next extrude of a
+  tube wall conflated its top and bottom edges into one key and created
+  only 2 of its 4 side walls ("top and bottom faces missing", 8 open
+  boundary edges). _face_regions and _region_boundary_edges now key edges
+  by COORDINATE (tolerance-snapped endpoint pair), which is
+  over-merge-proof. Reproduced and verified headlessly (sides 2 -> 4,
+  open edges 8 -> 0).
+- Also in this round: extrude-cap flip on sweep reversal, per-wall side
+  orientation for sideways sweeps, the render-triangle audit, and the
+  drag_positions compact remap (see v0.9.11).
+
 v0.9.11 round complete ✓ — THE "missing faces" root cause, from the
 second LOGGED sign-off (the v0.9.10 audit line `inward_wound_faces=[8]`
 was the smoking gun):

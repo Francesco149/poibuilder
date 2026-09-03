@@ -604,14 +604,28 @@ static func _common_key(lookup: Dictionary, a: int, b: int) -> Vector2i:
 	var cb: int = lookup.get(b, b)
 	return Vector2i(mini(ca, cb), maxi(ca, cb))
 
-## Connected groups of selected faces (shared welded edges). Whole regions
+## Coordinate-based edge key: identifies a physical edge by its endpoint
+## COORDINATES (tolerance-snapped), not by weld-group pairs. Weld groups
+## over-merge after zero-distance extrudes (every swept corner coincides at
+## seed and one group absorbs the base corner, the lifted corner, the cap
+## corner and the original corner), which conflates distinct physical edges
+## and made the boundary detection drop walls of chained extrudes.
+static func _coord_edge_key(mesh_data: PBMeshData, a: int, b: int) -> String:
+	var pa: Vector3 = mesh_data.positions[a]
+	var pb: Vector3 = mesh_data.positions[b]
+	var ka := Vector3(snappedf(pa.x, 0.0001), snappedf(pa.y, 0.0001), snappedf(pa.z, 0.0001))
+	var kb := Vector3(snappedf(pb.x, 0.0001), snappedf(pb.y, 0.0001), snappedf(pb.z, 0.0001))
+	if ka < kb:
+		return "%s|%s" % [ka, kb]
+	return "%s|%s" % [kb, ka]
+
+## Connected groups of selected faces (shared physical edges). Whole regions
 ## extrude together so adjacent selected faces never grow internal walls.
 static func _face_regions(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Array:
-	var lookup := mesh_data.get_shared_vertex_lookup()
 	var edge_faces := {}
 	for fi in face_ids:
 		for edge in mesh_data.faces[fi].get_edges():
-			var key := _common_key(lookup, edge.a, edge.b)
+			var key := _coord_edge_key(mesh_data, edge.a, edge.b)
 			if not edge_faces.has(key):
 				edge_faces[key] = PackedInt32Array()
 			edge_faces[key].append(fi)
@@ -629,7 +643,7 @@ static func _face_regions(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> 
 			queue.remove_at(queue.size() - 1)
 			region.append(cur)
 			for edge in mesh_data.faces[cur].get_edges():
-				for nf in edge_faces.get(_common_key(lookup, edge.a, edge.b), PackedInt32Array()):
+				for nf in edge_faces.get(_coord_edge_key(mesh_data, edge.a, edge.b), PackedInt32Array()):
 					if not visited.has(nf):
 						visited[nf] = true
 						queue.append(nf)
@@ -658,12 +672,11 @@ static func _face_area_normal(mesh_data: PBMeshData, face: PBFace) -> Vector3:
 ## ONE region face, oriented along that face's winding. Output entries:
 ## {a: int, b: int} (raw position indices).
 static func _region_boundary_edges(mesh_data: PBMeshData, region: PackedInt32Array) -> Array:
-	var lookup := mesh_data.get_shared_vertex_lookup()
 	var usage := {}
 	var directed := {}
 	for fi in region:
 		for edge in mesh_data.faces[fi].get_edges():
-			var key := _common_key(lookup, edge.a, edge.b)
+			var key := _coord_edge_key(mesh_data, edge.a, edge.b)
 			usage[key] = usage.get(key, 0) + 1
 			directed[key] = [edge.a, edge.b]
 	var result: Array = []
