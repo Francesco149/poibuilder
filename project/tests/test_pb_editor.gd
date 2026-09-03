@@ -212,8 +212,8 @@ func test_toolbar_initial_state():
 	add_child_autofree(tb)
 
 	# Logo, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
-	# sep, 8 op buttons, sep, New Shape, Edit Params, sep, Panel toggle.
-	assert_eq(tb.get_child_count(), 26, "Toolbar should have 26 children")
+	# sep, 8 op buttons, sep, New Shape, Edit Params, sep, Panel toggle, Recover Panel.
+	assert_eq(tb.get_child_count(), 27, "Toolbar should have 27 children")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 

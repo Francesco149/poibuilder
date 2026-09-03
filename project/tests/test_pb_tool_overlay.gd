@@ -338,3 +338,64 @@ func test_overlay_is_offscreen_and_recovery():
 	# Recovery resets it
 	overlay.ensure_visible_and_clamped()
 	assert_false(overlay.is_offscreen(), "Recovery must bring panel back inside visible area")
+
+func test_bottom_left_anchor_growth():
+	var parent := Control.new()
+	parent.size = Vector2(800, 600)
+	add_child_autofree(parent)
+
+	var overlay := PBToolOverlay.new()
+	parent.add_child(overlay)
+	overlay.build_ui()
+	overlay.size = Vector2(165, 40)
+	overlay.reset_to_default_position()
+
+	var initial_bottom: float = overlay.position.y + overlay.size.y
+
+	# When content height expands (e.g. to 140px), the bottom-left corner stays pinned
+	overlay.size = Vector2(165, 140)
+	overlay._update_position_from_bottom_left()
+
+	assert_almost_eq(overlay.position.y + overlay.size.y, initial_bottom, 0.001,
+		"Bottom edge remains anchored when panel height expands")
+
+	# When content height shrinks back (e.g. to 40px), bottom edge stays pinned
+	overlay.size = Vector2(165, 40)
+	overlay._update_position_from_bottom_left()
+
+	assert_almost_eq(overlay.position.y + overlay.size.y, initial_bottom, 0.001,
+		"Bottom edge remains anchored when panel height shrinks")
+
+func test_panel_enabled_master_toggle():
+	var s := _make_editor_with_cube()
+	var ed: PBEditor = s["ed"]
+	var overlay := _make_overlay()
+	overlay.editor = ed
+	ed.selection.set_faces(PackedInt32Array([0]))
+	overlay.refresh()
+	assert_true(overlay.visible, "With selection, panel is visible when enabled")
+
+	# Disabling panel_enabled strictly hides the panel
+	overlay.panel_enabled = false
+	assert_false(overlay.visible, "Disabling panel_enabled strictly hides the panel even with selection")
+
+	# Re-enabling shows it again
+	overlay.panel_enabled = true
+	assert_true(overlay.visible, "Re-enabling panel_enabled restores visibility")
+
+func test_empty_panel_auto_collapsed():
+	var s := _make_editor_with_cube()
+	var ed: PBEditor = s["ed"]
+	var overlay := _make_overlay()
+	overlay.editor = ed
+	overlay.pinned = true
+	overlay.refresh()
+	# No elements selected: empty panel auto-collapses body
+	assert_false(overlay._body.visible, "Empty panel body is auto-collapsed to header")
+	assert_eq(overlay._collapse_btn.text, "▸", "Collapse button shows right arrow when auto-collapsed")
+
+	# Selecting an element expands it
+	ed.selection.set_faces(PackedInt32Array([0]))
+	overlay.refresh()
+	assert_true(overlay._body.visible, "Selecting an element expands the panel body")
+	assert_eq(overlay._collapse_btn.text, "▾", "Collapse button shows down arrow when expanded")

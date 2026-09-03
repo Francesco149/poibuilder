@@ -503,14 +503,17 @@ func _update_engine_tool() -> void:
 
 ## Toolbar Panel toggle → overlay pin (and back, keeping both in sync).
 func _on_overlay_toggled(pinned: bool) -> void:
+	tool_overlay.panel_enabled = pinned
 	tool_overlay.pinned = pinned
 	if pinned:
+		tool_overlay.expand()
 		tool_overlay.ensure_visible_and_clamped()
 	tool_overlay.update_visibility()
 
 ## Explicit toolbar recovery button: resets the panel, forces it visible, uncollapses it.
 func _on_reset_panel_requested() -> void:
 	if tool_overlay != null:
+		tool_overlay.panel_enabled = true
 		tool_overlay.pinned = true
 		toolbar.set_overlay_pinned(true)
 		tool_overlay.expand()
@@ -948,6 +951,8 @@ func _creation_confirm() -> void:
 
 	if PBShapeParams.needs_params_modal(shape_creator.shape_id):
 		_params_session_kind = "create"
+		tool_overlay.panel_enabled = true
+		toolbar.set_overlay_pinned(true)
 		tool_overlay.open_params("%s Parameters" % String(shape_creator.shape_id).capitalize(),
 			PBShapeParams.get_param_defs(shape_creator.shape_id), shape_creator.values)
 		if logger:
@@ -1084,9 +1089,10 @@ func _on_edit_params_requested() -> void:
 	_params_edit_node = mesh
 	_params_edit_snapshot = PBCommand.copy_mesh_data(data)
 	_params_edit_values = data.shape_params.duplicate()
+	tool_overlay.panel_enabled = true
+	toolbar.set_overlay_pinned(true)
 	tool_overlay.open_params("%s Parameters" % String(data.shape_id).capitalize(),
 		PBShapeParams.get_param_defs(data.shape_id), _params_edit_values)
-
 func _commit_edit_params() -> void:
 	var node := _params_edit_node
 	if node == null or not is_instance_valid(node) or node.pb_mesh_data == null:

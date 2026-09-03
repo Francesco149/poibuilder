@@ -69,7 +69,7 @@ var _btn_space: Button
 var _btn_new_shape: MenuButton
 var _btn_edit_params: Button
 var _btn_overlay: Button
-## op_name -> button (enable/disable per selection context)
+var _btn_recover_overlay: Button
 var _op_buttons: Dictionary = {}
 
 var _tool_group: ButtonGroup = ButtonGroup.new()
@@ -130,64 +130,69 @@ func _build_ui() -> void:
 
 	_label_space()
 
-	# Mesh operations on the current selection (greyed out when the selection
-	# does not apply — the overlay panel carries no op buttons anymore).
-	_make_op_button("Extrude", "extrude_faces", "Extrude the selected faces along their normal (Shift+Move does this live)")
-	_make_op_button("Inset", "inset_faces", "Inset the selected faces (Shift+Scale does this live)")
-	_make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge")
-	_make_op_button("Merge", "merge_faces", "Merge edge-adjacent selected faces into one n-gon")
-	_make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4")
-	_make_op_button("Weld", "weld_vertices", "Weld the selected vertices together at their centroid")
-	_make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh node")
-	_make_op_button("Del", "delete_faces", "Delete the selected faces")
+	# Mesh operations on the current selection with SVG icons.
+	_make_op_button("Extrude", "extrude_faces", "Extrude selected faces/edges along their normal (Shift+Move does this live)", "icon_extrude.svg")
+	_make_op_button("Inset", "inset_faces", "Inset selected faces (Shift+Scale does this live)", "icon_inset.svg")
+	_make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge", "icon_loop_cut.svg")
+	_make_op_button("Merge", "merge_faces", "Merge edge-adjacent selected faces into one n-gon", "icon_merge.svg")
+	_make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4", "icon_subdivide.svg")
+	_make_op_button("Weld", "weld_vertices", "Weld the selected vertices together at their centroid", "icon_weld.svg")
+	_make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh node", "icon_detach.svg")
+	_make_op_button("Del", "delete_faces", "Delete the selected faces", "icon_delete.svg")
 
 	_label_space()
 
-	# New Shape menu: the always-enabled creation entry point (no PBMesh
-	# selection required). The plugin performs placement + undo.
+	# New Shape menu: creation entry point with SVG icon.
 	_btn_new_shape = MenuButton.new()
 	_btn_new_shape.name = "NewShape"
-	_btn_new_shape.text = "New Shape"
+	_btn_new_shape.icon = _load_icon("icon_new_shape.svg")
+	if _btn_new_shape.icon == null:
+		_btn_new_shape.text = "New Shape"
 	_btn_new_shape.flat = true
-	_btn_new_shape.tooltip_text = "Create a new PoiBuilder shape: drag its base on any surface, set the height, then adjust parameters"
+	_btn_new_shape.tooltip_text = "New Shape: Create a new primitive 3D shape (drag base on any surface, set height)"
 	var popup: PopupMenu = _btn_new_shape.get_popup()
 	for shape_id in PBShapeFactory.get_shape_ids():
 		popup.add_item(String(shape_id).capitalize(), popup.item_count)
 	popup.id_pressed.connect(_on_shape_menu_pressed)
 	add_child(_btn_new_shape)
 
-	# Edit Params: re-open the parameter modal of the selected factory shape.
-	# Only works while the geometry is untouched (an edited mesh cannot be
-	# regenerated without destroying the edits).
+	# Edit Params: re-open parameter modal with SVG icon.
 	_btn_edit_params = Button.new()
 	_btn_edit_params.name = "EditParams"
-	_btn_edit_params.text = "Edit Params"
+	_btn_edit_params.icon = _load_icon("icon_edit_params.svg")
+	if _btn_edit_params.icon == null:
+		_btn_edit_params.text = "Edit Params"
 	_btn_edit_params.flat = true
-	_btn_edit_params.tooltip_text = "Re-edit this shape's creation parameters (only while its geometry is unedited)"
+	_btn_edit_params.tooltip_text = "Edit Params: Re-edit creation parameters for the selected shape"
 	_btn_edit_params.disabled = true
 	_btn_edit_params.pressed.connect(func(): edit_params_requested.emit())
 	add_child(_btn_edit_params)
 
 	_label_space()
 
-	# Overlay panel pin: ON keeps the panel always visible while a mesh is
-	# selected; OFF lets it auto-hide when it has nothing to say.
-	# Double-click or right-click recovers the panel to the bottom-left corner.
+	# Overlay panel toggle: represents current panel visibility state with SVG icon.
 	_btn_overlay = Button.new()
 	_btn_overlay.name = "OverlayToggle"
-	_btn_overlay.text = "Panel"
+	_btn_overlay.icon = _load_icon("icon_panel.svg")
+	if _btn_overlay.icon == null:
+		_btn_overlay.text = "Panel"
 	_btn_overlay.flat = true
 	_btn_overlay.toggle_mode = true
-	_btn_overlay.tooltip_text = "Show/hide overlay panel | Double-click or Right-click to reset to bottom-left"
+	_btn_overlay.tooltip_text = "Toggle Overlay Panel: Show or hide the viewport overlay panel"
 	_btn_overlay.toggled.connect(func(pressed: bool): overlay_toggled.emit(pressed))
-	_btn_overlay.gui_input.connect(func(event: InputEvent):
-		if event is InputEventMouseButton:
-			var mb := event as InputEventMouseButton
-			if mb.pressed and (mb.button_index == MOUSE_BUTTON_RIGHT or mb.double_click):
-				reset_panel_requested.emit()
-				_btn_overlay.accept_event()
-	)
 	add_child(_btn_overlay)
+
+	# Separate recovery button right next to panel toggle with reset icon.
+	_btn_recover_overlay = Button.new()
+	_btn_recover_overlay.name = "RecoverPanel"
+	_btn_recover_overlay.icon = _load_icon("icon_panel_reset.svg")
+	if _btn_recover_overlay.icon == null:
+		_btn_recover_overlay.text = "↺"
+	_btn_recover_overlay.flat = true
+	_btn_recover_overlay.focus_mode = Control.FOCUS_NONE
+	_btn_recover_overlay.tooltip_text = "Reset Panel: Recover overlay panel and dock to bottom-left corner"
+	_btn_recover_overlay.pressed.connect(func(): reset_panel_requested.emit())
+	add_child(_btn_recover_overlay)
 func _label_space() -> void:
 	add_child(VSeparator.new())
 
@@ -225,14 +230,21 @@ func _create_mode_button(text: String, mode: PBEditor.SelectMode, icon_name: Str
 	add_child(btn)
 	return btn
 
-func _make_op_button(text: String, op_name: String, tooltip: String) -> Button:
+func _make_op_button(text: String, op_name: String, tooltip: String, icon_name: String = "") -> Button:
 	var btn := Button.new()
 	btn.name = "Op" + text
-	btn.text = text
 	btn.flat = true
-	btn.tooltip_text = tooltip
+	btn.tooltip_text = "%s: %s" % [text, tooltip]
 	btn.disabled = true
 	btn.focus_mode = Control.FOCUS_NONE
+	if icon_name != "":
+		var ico := _load_icon(icon_name)
+		if ico != null:
+			btn.icon = ico
+		else:
+			btn.text = text
+	else:
+		btn.text = text
 	btn.pressed.connect(func(): operation_requested.emit(op_name))
 	add_child(btn)
 	_op_buttons[op_name] = btn
