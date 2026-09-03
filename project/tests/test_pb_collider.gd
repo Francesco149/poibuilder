@@ -86,7 +86,7 @@ func test_stairs_default_ramp_collider():
 	var col_shape := body.get_node_or_null(NodePath("CollisionShape3D")) as CollisionShape3D
 	assert_not_null(col_shape, "Body should have CollisionShape3D")
 	assert_true(col_shape.shape is ConvexPolygonShape3D, "Straight stairs ramp should use ConvexPolygonShape3D")
-	
+	assert_eq((col_shape.shape as ConvexPolygonShape3D).points.size(), 6, "Straight stairs ramp should be 6-vertex triangular prism flush with ground")
 	# Test character collision with ramp
 	var char_body := CharacterBody3D.new()
 	add_child_autofree(char_body)
@@ -205,6 +205,8 @@ func test_character_walks_up_stairs_ramp():
 	# Character should have moved forward (+Z) and climbed upward (+Y) smoothly
 	assert_gt(char_body.position.z, 0.0, "Character should have moved forward along +Z past center")
 	assert_gt(char_body.position.y, 0.5, "Character should have ascended up the stairs ramp")
+
+func test_validate_property_options():
 	var pb_cube := PBMesh.new()
 	add_child_autofree(pb_cube)
 	pb_cube.pb_mesh_data = PBMeshData.create_cube(1.0)

@@ -213,6 +213,42 @@ func test_curved_stairs_negative_curvature():
 	for n in normals:
 		assert_almost_eq(n.length(), 1.0, 0.01)
 
+func test_curved_stairs_treads_face_up():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.5, 180.0, 8, false)
+	# With sides=false, 8 steps have 8 risers and 8 treads = 16 faces.
+	assert_eq(md.face_count(), 16)
+	var up_faces := 0
+	for f in md.faces:
+		var n: Vector3 = PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.y > 0.9:
+			up_faces += 1
+	assert_eq(up_faces, 8, "All 8 curved stairs treads must have up-facing (+Y) normals")
+
+func test_curved_stairs_pie_treads_face_up():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.0, 180.0, 8, false)
+	assert_eq(md.face_count(), 16)
+	var up_faces := 0
+	for f in md.faces:
+		var n: Vector3 = PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.y > 0.9:
+			up_faces += 1
+	assert_eq(up_faces, 8, "All 8 curved stairs pie treads must have up-facing (+Y) normals")
+
+func test_door_wide_arch_rise_capped():
+	# Even on a very wide door (width=10m, height=2.5m, opening_height=2.0m),
+	# the arch rise must be capped so it never exceeds half the opening height.
+	# This guarantees vertical jambs of at least 1.0m and prevents the arch from
+	# becoming a floor-springing oval.
+	var md := PBShapeComplex.create_door(10.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	assert_eq(md.validate(), "")
+	# Find lowest Y on the arch tunnel (should be spring_y >= y0 + 1.0 = -1.25 + 1.0 = -0.25)
+	var spring_found := false
+	for p in md.positions:
+		# Check if any arc point touches floor (-1.25): only rim corners touch floor
+		if absf(p.x) < 4.0 and absf(p.y - (-1.25)) < 0.001 and absf(p.z) < 0.4:
+			spring_found = true
+	assert_false(spring_found, "Arch must not spring from the floor on a wide door")
+
 # ==============================================================================
 # Door Tests
 # ==============================================================================
