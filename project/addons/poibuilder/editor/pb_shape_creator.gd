@@ -87,10 +87,16 @@ var base_end: Vector3 = Vector3.ZERO
 
 ## Last surface point seen (drag steps are measured against it).
 var _last_point: Vector3 = Vector3.ZERO
-
 ## Steps smaller than this don't re-point the facing arrow (dead zone).
-## Set to 0.15m to prevent mouse tremors and jitter from ping-ponging the facing.
-const FACING_DEAD_ZONE := 0.15
+## Set to 0.08m to absorb hand tremors while allowing responsive lateral nudging.
+const FACING_DEAD_ZONE := 0.08
+
+## True if the user explicitly nudged the facing direction away from the shape's
+## natural dimension bias (e.g. turning a door into a tunnel). Persists across
+## frames until explicitly nudged back or reset.
+var _user_nudged: bool = false
+var _nudged_axis: Vector3 = Vector3.ZERO
+var _has_initial_base: bool = false
 
 ## Threshold difference between u_size and v_size to consider one dimension clearly dominant.
 const ASPECT_BIAS_THRESHOLD := 0.20
@@ -172,6 +178,9 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	v_size = 0.0
 	height = 0.0
 	_u_locked = false
+	_user_nudged = false
+	_nudged_axis = Vector3.ZERO
+	_has_initial_base = false
 	base_end = surface_point
 	_last_point = surface_point
 	# At rest the forward arrow sits along v (perpendicular to the drag seed)
@@ -293,8 +302,10 @@ func reset() -> void:
 	u_size = 0.0
 	v_size = 0.0
 	_u_locked = false
+	_user_nudged = false
+	_nudged_axis = Vector3.ZERO
+	_has_initial_base = false
 	facing = Vector3.ZERO
-	base_end = Vector3.ZERO
 	_last_point = Vector3.ZERO
 	preview_node = null
 
@@ -305,62 +316,59 @@ func reset() -> void:
 ##    - Doors: parallel to the shorter dimension (opening spans width, depth is thickness).
 ##    - Stairs: along the longer dimension (steps rise along the longer run).
 ##    - Other shapes: follows dominant drag / nudge direction.
-## 2. Protected by deadzone and hysteresis:
-##    - Near-square rectangles (difference < FACING_DEAD_ZONE) do not flip back-and-forth.
-##    - Sub-dead-zone nudges keep the facing stable.
+## 2. Nudging:
+##    - Moving the mouse across the natural axis by >= FACING_DEAD_ZONE turns on
+##      _user_nudged and flips the facing (e.g. creating a door tunnel).
+##    - The nudge PERSISTS so the shape does not immediately snap back on the next frame.
+##    - Sub-dead-zone mouse tremors (< 0.08m) are ignored, eliminating ping-pong.
 func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 	var step := _project_on_plane(point - _last_point, plane_normal)
 	_last_point = point
 	var step_len := step.length()
-
 	var cum := point - base_start
-	var du := step.dot(u_dir)
-	var dv := step.dot(v_dir)
 
-	# Shapes with an inherent dimension bias:
-	# Door: parallel to the shorter dimension.
-	# Stairs: along the longer dimension.
-	if PBShapeParams.facing_prefers_shorter(shape_id):
-		# Door: facing runs across the dominant extent (along the shorter extent).
-		# Apply hysteresis near square to avoid ping-pong.
-		var longer_is_u: bool
-		if absf(u_size - v_size) >= FACING_DEAD_ZONE:
-			longer_is_u = u_size >= v_size
-		else:
-			longer_is_u = absf(facing.dot(v_dir)) >= absf(facing.dot(u_dir))
-		var across := v_dir if longer_is_u else u_dir
-		var toward: float = (rect_center - base_start).dot(across)
-		facing = across * (1.0 if toward >= 0.0 else -1.0)
-		return
-	elif shape_id == &"stair" or shape_id == &"curved_stair":
-		# Stairs: facing runs along the longer extent.
-		# Deliberate lateral nudges bigger than deadzone can override.
-		var longer_is_u: bool
-		if absf(u_size - v_size) >= FACING_DEAD_ZONE:
-			longer_is_u = u_size >= v_size
-		else:
-			longer_is_u = absf(facing.dot(u_dir)) >= absf(facing.dot(v_dir))
-		var natural_axis := u_dir if longer_is_u else v_dir
-		var lateral_axis := v_dir if longer_is_u else u_dir
-		if step_len >= FACING_DEAD_ZONE and absf(step.dot(lateral_axis)) > absf(step.dot(natural_axis)) * 1.5:
-			var lat_sign := signf(cum.dot(lateral_axis))
-			facing = lateral_axis * (lat_sign if lat_sign != 0.0 else 1.0)
-		else:
-			var nat_sign := signf(cum.dot(natural_axis))
-			facing = natural_axis * (nat_sign if nat_sign != 0.0 else 1.0)
-		return
+	var prefers_shorter := PBShapeParams.facing_prefers_shorter(shape_id)
+	var is_stair := shape_id == &"stair" or shape_id == &"curved_stair"
 
-	# General shapes: steps inside the dead zone never re-point facing.
-	if step_len < FACING_DEAD_ZONE:
-		return
-	if absf(du) >= absf(dv):
-		var su := signf(cum.dot(u_dir))
-		facing = u_dir * (su if su != 0.0 else signf(du))
+	# 1. Determine natural axis from base rect dimensions (with hysteresis)
+	var longer_is_u: bool
+	if absf(u_size - v_size) >= FACING_DEAD_ZONE:
+		longer_is_u = u_size >= v_size
 	else:
-		var sv := signf(cum.dot(v_dir))
-		facing = v_dir * (sv if sv != 0.0 else signf(dv))
+		longer_is_u = absf(facing.dot(u_dir)) >= absf(facing.dot(v_dir)) if is_stair else absf(facing.dot(v_dir)) >= absf(facing.dot(u_dir))
 
-## Maps the base drag extents (u_size, v_size) and height onto the shape's
+	var longer_dir := u_dir if longer_is_u else v_dir
+	var shorter_dir := v_dir if longer_is_u else u_dir
+	var natural_axis := shorter_dir if prefers_shorter else longer_dir
+
+	# 2. Check for deliberate lateral nudge (moving perpendicular to current facing)
+	# A nudge only triggers AFTER the initial base rectangle has been established.
+	if not _has_initial_base:
+		if u_size >= MIN_EXTENT or v_size >= MIN_EXTENT:
+			_has_initial_base = true
+	elif facing.length_squared() > 0.5 and step_len >= FACING_DEAD_ZONE:
+		var current_axis := facing.normalized()
+		var lateral := plane_normal.cross(current_axis).normalized()
+		var d_lat := absf(step.dot(lateral))
+		var d_curr := absf(step.dot(current_axis))
+		if d_lat > d_curr and d_lat >= FACING_DEAD_ZONE:
+			_user_nudged = true
+			_nudged_axis = lateral
+	var chosen_axis: Vector3
+	if _user_nudged and _nudged_axis.length_squared() > 0.5:
+		# If user deliberately nudges back towards natural axis, clear the override
+		if step_len >= FACING_DEAD_ZONE and absf(step.dot(natural_axis)) > absf(step.dot(_nudged_axis)):
+			_user_nudged = false
+			chosen_axis = natural_axis
+		else:
+			chosen_axis = _nudged_axis
+	else:
+		chosen_axis = natural_axis
+
+	var toward := cum.dot(chosen_axis)
+	var sign_val: float = signf(toward) if toward != 0.0 else signf(step.dot(chosen_axis))
+	facing = chosen_axis * (sign_val if sign_val != 0.0 else 1.0)
+
 ## parameters (width, depth, height, radius). One mapping fits every surface:
 ## local Y along the face normal, local +Z along facing (depth), and local +X
 ## perpendicular (width).

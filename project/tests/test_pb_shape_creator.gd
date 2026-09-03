@@ -288,6 +288,22 @@ func test_door_facing_biased_parallel_to_shorter_dimension():
 	assert_almost_eq(absf(creator2.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
 		"Door facing naturally points parallel to the shorter dimension (+X)")
 
+
+func test_door_facing_can_be_nudged_into_tunnel():
+	var creator := _armed_creator(&"door")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 3m along X, 1m along Z: natural facing is along Z (shorter)
+	creator.update_base(Vector3(3.0, 0, 1.0))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
+		"Initially door faces along the shorter dimension (+Z)")
+	# Deliberate lateral nudge along X (> deadzone):
+	creator.update_base(Vector3(3.2, 0, 1.0))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
+		"Deliberate lateral nudge rotates door to face along longer dimension (+X, tunnel)")
+	# Sub-dead-zone movement does NOT snap it back (nudge persists):
+	creator.update_base(Vector3(3.22, 0, 1.02))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
+		"Nudge persists across subsequent frames without snapping back")
 func test_facing_hysteresis_prevents_ping_pong_near_square():
 	var creator := _armed_creator(&"door")
 	_begin_base(creator, Vector3.ZERO)

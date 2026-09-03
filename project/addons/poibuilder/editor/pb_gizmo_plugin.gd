@@ -723,26 +723,18 @@ func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vecto
 	var l_right_barb := to_local * right_barb
 
 	var l_side := to_local.basis * (side * shaft_half_width)
-	var l_up := to_local.basis * (up * shaft_half_width)
 
-	# 1. Solid mesh: arrowhead triangle + shaft quads (in-plane and perpendicular fin)
+	# 1. Solid mesh: flat arrowhead triangle + shaft quad lying strictly in the plane
 	var verts := PackedVector3Array()
 	var indices := PackedInt32Array()
 
 	# Arrowhead: solid triangle in the plane (tip, left_barb, right_barb)
-	# plus vertical fin for edge-on visibility
-	var l_head_up := to_local.basis * (up * (head_half_width * 0.5))
 	verts.append(l_tip)                            # 0
 	verts.append(l_left_barb)                     # 1
 	verts.append(l_right_barb)                    # 2
-	verts.append(l_head_base + l_head_up)         # 3
-	verts.append(l_head_base - l_head_up)         # 4
-	# In-plane arrowhead triangle:
 	indices.append_array([0, 1, 2])
-	# Vertical arrowhead triangle fin:
-	indices.append_array([0, 3, 4])
 
-	# Shaft: quad in the plane + quad perpendicular to the plane
+	# Shaft: flat quad in the plane
 	var s_idx := verts.size()
 	verts.append(l_base - l_side)                 # s_idx + 0
 	verts.append(l_base + l_side)                 # s_idx + 1
@@ -752,17 +744,6 @@ func _add_creation_arrow(gizmo, to_local: Transform3D, base: Vector3, dir: Vecto
 		s_idx, s_idx + 1, s_idx + 2,
 		s_idx, s_idx + 2, s_idx + 3
 	])
-
-	var f_idx := verts.size()
-	verts.append(l_base - l_up)                   # f_idx + 0
-	verts.append(l_base + l_up)                   # f_idx + 1
-	verts.append(l_head_base + l_up)              # f_idx + 2
-	verts.append(l_head_base - l_up)              # f_idx + 3
-	indices.append_array([
-		f_idx, f_idx + 1, f_idx + 2,
-		f_idx, f_idx + 2, f_idx + 3
-	])
-
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
