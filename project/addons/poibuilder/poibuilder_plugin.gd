@@ -503,6 +503,7 @@ func _update_engine_tool() -> void:
 ## Toolbar Panel toggle → overlay pin (and back, keeping both in sync).
 func _on_overlay_toggled(pinned: bool) -> void:
 	tool_overlay.pinned = pinned
+	tool_overlay.ensure_visible_and_clamped()
 	tool_overlay.update_visibility()
 
 ## Drag lifecycle signal. Hover is cleared when a drag STARTS; per-update
