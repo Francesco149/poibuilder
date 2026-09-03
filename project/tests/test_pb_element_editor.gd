@@ -1064,3 +1064,34 @@ func logic_common_edge_index(md: PBMeshData, edge: PBEdge) -> int:
 	logic.editor.select_mode = PBEditor.SelectMode.EDGE
 	return logic._common_edge_index(md, edge)
 
+func test_set_subgizmo_transform_returns_boolean_on_change_and_noop():
+	var s := _make_setup(PBEditor.SelectMode.FACE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+	var ids := _ids([0])
+	var start_xf: Transform3D = logic.get_subgizmo_transform(md, mesh, 0)
+
+	# First motion changes geometry -> returns true
+	var moved_xf := start_xf.translated(Vector3(1, 0, 0))
+	var changed: bool = logic.set_subgizmo_transform(mesh, ids, 0, moved_xf)
+	assert_true(changed, "set_subgizmo_transform must return true when geometry moves")
+
+	# Identical motion delivery -> returns false (no redundant rebuild/gizmo redraw)
+	var noop: bool = logic.set_subgizmo_transform(mesh, ids, 0, moved_xf)
+	assert_false(noop, "set_subgizmo_transform must return false on redundant delivery")
+
+	logic.commit_subgizmos(mesh, ids, false)
+
+func test_build_face_fill_mesh_multi():
+	var md := PBMeshData.create_cube(1.0)
+	# Build multi-face fill for faces 0, 1, 2
+	var faces := PackedInt32Array([0, 1, 2])
+	var fill := PBElementEditor.build_face_fill_mesh_multi(md, faces)
+	assert_not_null(fill, "Combined fill mesh must be generated")
+	assert_eq(fill.get_surface_count(), 1, "Combined fill must be a single surface")
+	var arrays := fill.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	# Each quad face has 2 triangles = 6 vertices; 3 faces = 18 vertices
+	assert_eq(verts.size(), 18, "Combined fill must contain all triangles of selected faces")
+

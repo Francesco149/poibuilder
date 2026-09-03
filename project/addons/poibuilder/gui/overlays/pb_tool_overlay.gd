@@ -432,8 +432,13 @@ func set_element_editor(value: PBElementEditor) -> void:
 	refresh()
 
 func _on_editor_changed(_arg = null, _arg2 = null, _arg3 = null, _arg4 = null) -> void:
+	if element_editor != null and element_editor.drag_active:
+		_ensure_ui()
+		_drag_row.visible = true
+		drag_value_label.text = element_editor.drag_readout()
+		update_visibility()
+		return
 	refresh()
-
 # ==============================================================================
 # Refresh + visibility
 # ==============================================================================

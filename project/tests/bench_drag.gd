@@ -37,14 +37,19 @@ func _bench() -> void:
 		var t_move := Time.get_ticks_usec() - t0b
 		logic.commit_subgizmos(mesh, ids, false)
 
-		# The other big per-motion cost: rebuild (mesh recompile).
+		# Per-motion rebuild cost: full rebuild vs position-only fast path.
 		var t0c := Time.get_ticks_usec()
 		for i in range(60):
 			mesh.rebuild()
 		var t_rebuild := Time.get_ticks_usec() - t0c
 
-		print("faces=%d: extrude_drag(60 frames)=%d us  move_drag(60)=%d us  rebuild(60)=%d us  pos=%d" % [
-			face_count, t_drag, t_move, t_rebuild, md.positions.size()])
+		var t0d := Time.get_ticks_usec()
+		for i in range(60):
+			mesh.rebuild_positions()
+		var t_rebuild_pos := Time.get_ticks_usec() - t0d
+
+		print("faces=%d: extrude_drag(60)=%d us  move_drag(60)=%d us  rebuild_pos(60)=%d us (full=%d us)  pos=%d" % [
+			face_count, t_drag, t_move, t_rebuild_pos, t_rebuild, md.positions.size()])
 
 func _make_gridded_cube(target_faces: int) -> PBMeshData:
 	# Start from a cube and subdivide until we roughly hit the face budget.

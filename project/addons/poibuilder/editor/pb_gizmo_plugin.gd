@@ -255,9 +255,8 @@ func _set_subgizmo_transform(gizmo, subgizmo_id: int, transform: Transform3D) ->
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null:
 		return
-	element_editor.set_subgizmo_transform(node, gizmo.get_subgizmo_selection(), subgizmo_id, transform)
-	node.update_gizmos()
-
+	if element_editor.set_subgizmo_transform(node, gizmo.get_subgizmo_selection(), subgizmo_id, transform):
+		node.update_gizmos()
 ## Commit (drag released) or cancel (Escape) — called by the editor.
 ## `restores` are the start transforms the engine snapshotted (informational
 ## here; PBElementEditor keeps its own snapshot). On cancel the engine does
@@ -320,12 +319,22 @@ func _redraw(gizmo) -> void:
 	# black strokes — thicker via stacked parallel lines — with the selection
 	# highlighted on top; VERTEX mode uses bolder dark dots; FACE mode keeps
 	# the subtle gray wireframe under the translucent face fill.
+	var edge_indices := mesh_data.get_common_edge_indices()
+	var n_indices: int = edge_indices.size()
+	var positions := mesh_data.positions
+	var pos_size: int = positions.size()
 	var wire_points := PackedVector3Array()
-	for edge in mesh_data.get_common_edges():
-		if edge.a >= 0 and edge.a < mesh_data.positions.size() \
-				and edge.b >= 0 and edge.b < mesh_data.positions.size():
-			wire_points.append(mesh_data.positions[edge.a])
-			wire_points.append(mesh_data.positions[edge.b])
+	wire_points.resize(n_indices)
+	var write_idx: int = 0
+	for i in range(0, n_indices, 2):
+		var a: int = edge_indices[i]
+		var b: int = edge_indices[i + 1]
+		if a >= 0 and a < pos_size and b >= 0 and b < pos_size:
+			wire_points[write_idx] = positions[a]
+			wire_points[write_idx + 1] = positions[b]
+			write_idx += 2
+	if write_idx < n_indices:
+		wire_points.resize(write_idx)
 	if wire_points.size() >= 2:
 		if editor != null and editor.select_mode == PBEditor.SelectMode.EDGE \
 				and is_editing_node(node):
@@ -460,9 +469,16 @@ func _commit_handle(gizmo, handle_id: int, secondary: bool, restore: Variant,
 ## center+±perp1 stroke).
 static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material,
 		offset: float = THICK_LINE_OFFSET, stacks: int = 2) -> void:
+	var n: int = pairs.size()
+	if n < 2:
+		return
+	var mult: int = 3 if stacks == 1 else 5
+	var out := PackedVector3Array()
+	out.resize(n * mult)
+	var write_idx: int = 0
 	var o := offset
 	var i: int = 0
-	while i + 1 < pairs.size():
+	while i + 1 < n:
 		var a: Vector3 = pairs[i]
 		var b: Vector3 = pairs[i + 1]
 		var dir := (b - a)
@@ -472,17 +488,29 @@ static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Materia
 			if perp1.length_squared() < 0.25:
 				perp1 = dir.cross(Vector3.RIGHT)
 			perp1 = perp1.normalized() * o
-			var perp2 := dir.cross(perp1.normalized()).normalized() * o
-			gizmo.add_lines(PackedVector3Array([a, b]), material)
-			gizmo.add_lines(PackedVector3Array([a + perp1, b + perp1]), material)
-			gizmo.add_lines(PackedVector3Array([a - perp1, b - perp1]), material)
+			out[write_idx] = a
+			out[write_idx + 1] = b
+			out[write_idx + 2] = a + perp1
+			out[write_idx + 3] = b + perp1
+			out[write_idx + 4] = a - perp1
+			out[write_idx + 5] = b - perp1
+			write_idx += 6
 			if stacks >= 2:
-				gizmo.add_lines(PackedVector3Array([a + perp2, b + perp2]), material)
-				gizmo.add_lines(PackedVector3Array([a - perp2, b - perp2]), material)
+				var perp2 := dir.cross(perp1.normalized()).normalized() * o
+				out[write_idx] = a + perp2
+				out[write_idx + 1] = b + perp2
+				out[write_idx + 2] = a - perp2
+				out[write_idx + 3] = b - perp2
+				write_idx += 4
 		else:
-			gizmo.add_lines(PackedVector3Array([a, b]), material)
+			out[write_idx] = a
+			out[write_idx + 1] = b
+			write_idx += 2
 		i += 2
-
+	if write_idx < out.size():
+		out.resize(write_idx)
+	if out.size() >= 2:
+		gizmo.add_lines(out, material)
 ## True when the node is in the editor's selection. EditorNode3DGizmo's own
 ## is_selected() is not script-bound on all supported engine versions (4.8
 ## added it), so query the EditorSelection directly.
@@ -507,23 +535,15 @@ func _mirror_engine_selection(gizmo, node: PBMesh, mesh_data: PBMeshData) -> voi
 ## fill pokes its triangle boundary through non-planar faces, reading as a
 ## phantom "diagonal edge" where no edge exists).
 func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
-	var fill_meshes: Array[Mesh] = []
-	var selected_any: bool = false
-	for fi in range(mesh_data.faces.size()):
-		if not gizmo.is_subgizmo_selected(fi):
-			continue
-		selected_any = true
-		var fill := element_editor.build_face_fill_mesh(mesh_data, fi)
-		if fill != null:
-			fill_meshes.append(fill)
-
-	if not selected_any:
+	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if selected.is_empty():
 		return
-
+	var fill := element_editor.build_face_fill_mesh_multi(mesh_data, selected)
+	if fill == null:
+		return
 	if _face_fill_material == null:
 		_face_fill_material = _make_face_fill_material(FACE_FILL_COLOR)
-	for fill in fill_meshes:
-		gizmo.add_mesh(fill, _face_fill_material)
+	gizmo.add_mesh(fill, _face_fill_material)
 
 ## The hovered (not selected) face as a translucent yellow fill — same yellow
 ## as the selection, just slightly more transparent.
@@ -543,24 +563,30 @@ func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 ## Selected edges as bright on-top strokes (thick in EDGE mode). Loop
 ## selections (alt+click) highlight their whole ring.
 func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
+	var selected_ids: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if selected_ids.is_empty():
+		return
+	var expanded := element_editor.expand_edge_ids(mesh_data, selected_ids)
+	if expanded.is_empty():
+		return
 	var positions := mesh_data.positions
+	var pos_count: int = positions.size()
 	var edges := mesh_data.get_common_edges()
-	var selected := {}
-	for eid in element_editor.expand_edge_ids(mesh_data, gizmo.get_subgizmo_selection()):
-		selected[eid] = true
+	var edges_count: int = edges.size()
 	var lines := PackedVector3Array()
-	var selected_any: bool = false
-	for ei in range(edges.size()):
-		if not selected.has(ei):
-			continue
-		selected_any = true
-		var edge: PBEdge = edges[ei]
-		if edge.a >= 0 and edge.a < positions.size() and edge.b >= 0 and edge.b < positions.size():
-			lines.append(positions[edge.a])
-			lines.append(positions[edge.b])
-	if selected_any and lines.size() >= 2:
+	lines.resize(expanded.size() * 2)
+	var write_idx: int = 0
+	for eid in expanded:
+		if eid >= 0 and eid < edges_count:
+			var edge: PBEdge = edges[eid]
+			if edge.a >= 0 and edge.a < pos_count and edge.b >= 0 and edge.b < pos_count:
+				lines[write_idx] = positions[edge.a]
+				lines[write_idx + 1] = positions[edge.b]
+				write_idx += 2
+	if write_idx < lines.size():
+		lines.resize(write_idx)
+	if lines.size() >= 2:
 		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo))
-
 ## The hovered (not selected) edge as a translucent yellow on-top stroke.
 func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
@@ -580,18 +606,24 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 ## hovered one (when not selected) as a slightly more transparent yellow dot.
 func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 	var positions := mesh_data.positions
+	var pos_count: int = positions.size()
 	var unselected := PackedVector3Array()
 	var selected := PackedVector3Array()
 	var hovered := PackedVector3Array()
 	var hover_id: int = editor.hover_id
-	for sv_idx in range(mesh_data.shared_vertices.size()):
+	var sub_selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	var sel_set := {}
+	for s in sub_selected:
+		sel_set[s] = true
+	var sv_count: int = mesh_data.shared_vertices.size()
+	for sv_idx in range(sv_count):
 		var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
 		if sv == null or sv.indices.is_empty():
 			continue
 		var idx: int = sv.indices[0]
-		if idx < 0 or idx >= positions.size():
+		if idx < 0 or idx >= pos_count:
 			continue
-		if gizmo.is_subgizmo_selected(sv_idx):
+		if sel_set.has(sv_idx):
 			selected.append(positions[idx])
 		elif sv_idx == hover_id:
 			hovered.append(positions[idx])
@@ -601,7 +633,6 @@ func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 	_add_points_mesh(gizmo, unselected, _vertex_dot_material)
 	_add_points_mesh(gizmo, hovered, _vertex_dot_hover_material)
 	_add_points_mesh(gizmo, selected, _vertex_dot_selected_material)
-
 static func _add_points_mesh(gizmo, points: PackedVector3Array, material: StandardMaterial3D) -> void:
 	if points.is_empty():
 		return

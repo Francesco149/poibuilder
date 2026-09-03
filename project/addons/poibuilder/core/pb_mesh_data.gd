@@ -57,13 +57,17 @@ var _normals: PackedVector3Array = PackedVector3Array()
 
 ## Cached: deduplicated common edges in stable face-scan order
 var _common_edges: Array[PBEdge] = []
+var _common_edge_indices: PackedInt32Array = PackedInt32Array()
 var _common_edges_valid: bool = false
+
+## Cached: submesh_index -> PackedInt32Array of compiled triangle indices (CW front faces).
+var _submesh_indices_cache: Dictionary = {}
+var _submesh_keys_cache: Array[int] = []
 
 ## Cached: position index -> owning face index (position privacy gives every
 ## position exactly one owner). Used by the incremental normals update.
 var _position_face: Dictionary = {}
 var _position_face_valid: bool = false
-
 
 # ==============================================================================
 # Property Accessors (Computed, Read-Only)
@@ -134,9 +138,13 @@ func invalidate_caches() -> void:
 	invalidate_shared_vertex_lookup()
 	invalidate_shared_texture_lookup()
 	_common_edges_valid = false
+	_common_edges.clear()
+	_common_edge_indices.clear()
 	_position_face_valid = false
+	_position_face.clear()
+	_submesh_indices_cache.clear()
+	_submesh_keys_cache.clear()
 	_normals.clear()
-
 ## Invalidates ONLY the geometry-derived caches (normals). Position edits
 ## never change the common-edge list (pairs of indexes) or the weld groups,
 ## so per-motion drags keep those caches hot instead of rebuilding them on
@@ -204,24 +212,38 @@ func update_normals_for(union: PackedInt32Array) -> void:
 ## Subgizmo IDs for edge mode index into this list.
 func get_common_edges() -> Array[PBEdge]:
 	if not _common_edges_valid:
-		_common_edges.clear()
-		var seen: Dictionary = {}
-		var lookup := get_shared_vertex_lookup()
-		for face in faces:
-			if face == null:
-				continue
-			for edge in face.get_edges():
-				var ca: int = lookup.get(edge.a, -1)
-				var cb: int = lookup.get(edge.b, -1)
-				var key := Vector2i(mini(ca, cb), maxi(ca, cb))
-				if seen.has(key):
-					continue
-				seen[key] = true
-				# Emit the raw POSITION pair; the group key above already
-				# guarantees one entry per welded edge.
-				_common_edges.append(PBEdge.new(edge.a, edge.b))
-		_common_edges_valid = true
+		_build_common_edges()
 	return _common_edges
+
+## Returns unique edges as a flat PackedInt32Array of position-index pairs
+## [a0, b0, a1, b1, ...]. Avoids PBEdge object allocation and property lookups
+## during wireframe rendering and picking.
+func get_common_edge_indices() -> PackedInt32Array:
+	if not _common_edges_valid:
+		_build_common_edges()
+	return _common_edge_indices
+
+func _build_common_edges() -> void:
+	_common_edges.clear()
+	_common_edge_indices.clear()
+	var seen: Dictionary = {}
+	var lookup := get_shared_vertex_lookup()
+	for face in faces:
+		if face == null:
+			continue
+		for edge in face.get_edges():
+			var ca: int = lookup.get(edge.a, -1)
+			var cb: int = lookup.get(edge.b, -1)
+			var key := Vector2i(mini(ca, cb), maxi(ca, cb))
+			if seen.has(key):
+				continue
+			seen[key] = true
+			# Emit the raw POSITION pair; the group key above already
+			# guarantees one entry per welded edge.
+			_common_edges.append(PBEdge.new(edge.a, edge.b))
+			_common_edge_indices.append(edge.a)
+			_common_edge_indices.append(edge.b)
+	_common_edges_valid = true
 
 # ==============================================================================
 # Coincident Vertex Queries & Common Index Lookups
@@ -466,7 +488,7 @@ func get_normals() -> PackedVector3Array:
 ## Compiles this PBMeshData into a Godot ArrayMesh.
 ## If existing is provided, clears its surfaces and reuses it; otherwise instantiates a new ArrayMesh.
 ## Faces are grouped by submesh_index into distinct surfaces.
-func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
+func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false) -> ArrayMesh:
 	var mesh: ArrayMesh = existing if existing != null else ArrayMesh.new()
 	mesh.clear_surfaces()
 
@@ -484,35 +506,40 @@ func to_array_mesh(existing: ArrayMesh = null) -> ArrayMesh:
 	# (incremental drag updates keep it fresh) — recompute only when stale.
 	var normals: PackedVector3Array = get_normals()
 
-	# Group faces by submesh_index
-	var submesh_faces: Dictionary = {}
-	var submesh_indices: Array[int] = []
+	if not use_cached_indices or _submesh_indices_cache.is_empty():
+		# Group faces by submesh_index and compile triangle index buffers
+		var submesh_faces: Dictionary = {}
+		var submesh_indices: Array[int] = []
 
-	for face in faces:
-		if face == null:
-			continue
-		var s_idx: int = face.submesh_index
-		if not submesh_faces.has(s_idx):
-			submesh_faces[s_idx] = [] as Array[PBFace]
-			submesh_indices.append(s_idx)
-		submesh_faces[s_idx].append(face)
+		for face in faces:
+			if face == null:
+				continue
+			var s_idx: int = face.submesh_index
+			if not submesh_faces.has(s_idx):
+				submesh_faces[s_idx] = [] as Array[PBFace]
+				submesh_indices.append(s_idx)
+			submesh_faces[s_idx].append(face)
 
-	submesh_indices.sort()
+		submesh_indices.sort()
+		_submesh_keys_cache = submesh_indices
+
+		for s_idx in submesh_indices:
+			var group_faces: Array = submesh_faces[s_idx]
+			var indices := PackedInt32Array()
+			for face in group_faces:
+				if face != null:
+					var fi: PackedInt32Array = face.get_indexes()
+					# Reverse each triangle's winding: internal data is CCW-from-outside
+					# (Unity convention), Godot front faces are CW-from-outside.
+					for tri_i in range(0, fi.size() - 2, 3):
+						indices.append(fi[tri_i + 2])
+						indices.append(fi[tri_i + 1])
+						indices.append(fi[tri_i])
+			_submesh_indices_cache[s_idx] = indices
 
 	var vc: int = positions.size()
-	for s_idx in submesh_indices:
-		var group_faces: Array = submesh_faces[s_idx]
-		var indices := PackedInt32Array()
-		for face in group_faces:
-			if face != null:
-				var fi: PackedInt32Array = face.get_indexes()
-				# Reverse each triangle's winding: internal data is CCW-from-outside
-				# (Unity convention), Godot front faces are CW-from-outside.
-				for tri_i in range(0, fi.size() - 2, 3):
-					indices.append(fi[tri_i + 2])
-					indices.append(fi[tri_i + 1])
-					indices.append(fi[tri_i])
-
+	for s_idx in _submesh_keys_cache:
+		var indices: PackedInt32Array = _submesh_indices_cache.get(s_idx, PackedInt32Array())
 		if indices.is_empty():
 			continue
 

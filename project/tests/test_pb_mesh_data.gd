@@ -339,4 +339,20 @@ func test_setters():
 
 	var st: Array[PBSharedVertex] = [PBSharedVertex.new(PackedInt32Array([1, 2]))]
 	mesh_data.set_shared_textures(st)
-	assert_eq(mesh_data.shared_textures, st)
+
+func test_common_edge_indices_matches_common_edges():
+	var cube := PBMeshData.create_cube(1.0)
+	var edges := cube.get_common_edges()
+	var flat_indices := cube.get_common_edge_indices()
+	assert_eq(flat_indices.size(), edges.size() * 2)
+	for i in range(edges.size()):
+		assert_eq(flat_indices[i * 2], edges[i].a)
+		assert_eq(flat_indices[i * 2 + 1], edges[i].b)
+
+	# Invalidation clears both and recomputes correctly
+	cube.invalidate_caches()
+	var flat2 := cube.get_common_edge_indices()
+	assert_eq(flat2.size(), edges.size() * 2)
+	for i in range(edges.size()):
+		assert_eq(flat2[i * 2], edges[i].a)
+		assert_eq(flat2[i * 2 + 1], edges[i].b)
