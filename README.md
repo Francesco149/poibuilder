@@ -18,7 +18,7 @@ same thing, keep an eye on **UniBuilder** (upcoming):
 Another open source Godot level builder in a similar spirit is **GoBuild**:
 **https://github.com/marcel-b-roodt/GoBuild**
 
-https://github.com/user-attachments/assets/7a1239e1-c576-4368-bef8-691a9d945084
+https://github.com/user-attachments/assets/bc2a71ff-8978-433f-8258-80be66e44397
 
 ## Status
 
