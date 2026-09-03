@@ -174,8 +174,10 @@ func _click(pos: Vector2) -> void:
 	await _frames(2)
 
 func _run() -> void:
-	await _frames(30)
+	await _frames(120)
 	var iface := EditorInterface
+	iface.set_main_screen_editor("3D")
+	await _frames(10)
 	var vp: SubViewport = iface.get_editor_viewport_3d(0)
 	if vp == null:
 		_fail("no 3D viewport")

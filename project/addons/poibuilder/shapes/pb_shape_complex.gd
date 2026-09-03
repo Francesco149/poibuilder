@@ -565,12 +565,12 @@ static func create_curved_stairs(
 			var t_center := Vector3(0.0, y1, 0.0)
 			var t_out0 := Vector3(v0.x * r_out, y1, v0.z * r_out)
 			var t_out1 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			_add_tri(positions, textures0, faces, t_center, t_out1, t_out0)
+			_add_tri(positions, textures0, faces, t_center, t_out0, t_out1)
 		else:
 			var t0 := Vector3(v0.x * r_in,  y1, v0.z * r_in)
-			var t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
+			var t1 := Vector3(v0.x * r_out, y1, v0.z * r_out)
 			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
-			var t3 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+			var t3 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
 			_add_quad(positions, textures0, faces, t0, t1, t2, t3)
 
 		if sides:
@@ -683,7 +683,9 @@ static func create_door(
 	var arc_segs: int = 0
 	var arc: PackedVector2Array = PackedVector2Array()
 	if arched:
-		var rise: float = minf(0.5 * (x2 - x1), yo - y0)
+		# Cap rise to at most half the opening height so the door always has
+		# vertical jambs and never degenerates into a floor-springing oval arch.
+		var rise: float = minf(0.5 * (x2 - x1), (yo - y0) * 0.5)
 		if rise >= 0.0001:
 			spring_y = yo - rise
 			if absf(spring_y - y0) < 0.0001:

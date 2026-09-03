@@ -54,6 +54,7 @@ func _validate_property(property: Dictionary) -> void:
 		else:
 			property.hint = PROPERTY_HINT_ENUM
 			property.hint_string = "Off:0,Geometry Accurate:1"
+
 # ==============================================================================
 # Property Setters & Rebuild
 # ==============================================================================
@@ -201,7 +202,6 @@ func _get_or_create_collision_shape(body: StaticBody3D) -> CollisionShape3D:
 		body.add_child(col_shape)
 		col_shape.owner = null
 	return col_shape
-
 func _cleanup_collider() -> void:
 	var body := get_node_or_null(NodePath(COLLIDER_BODY_NAME))
 	if body != null:
@@ -239,20 +239,18 @@ func _build_straight_stairs_ramp_shape() -> Shape3D:
 
 	var step_h: float = (y1 - y0) / float(num_steps)
 
-	# 8-vertex right trapezoidal prism:
-	# Bottom 4 corners at y0:
-	# Top front 2 corners at (y0 + step_h) at z0 (step 0 nose height):
-	# Top back 2 corners at y1 at z1:
+	# Straight triangular prism flush with the ground (no initial step):
+	# Base rectangle at ground y0 from z0 to z1.
+	# Top slopes from (x, y0, z0) at the ground straight up to (x, y1, z1).
+	# Back is vertical from y0 to y1 at z1.
 	var shape := ConvexPolygonShape3D.new()
 	shape.points = PackedVector3Array([
 		Vector3(x0, y0, z0),
 		Vector3(x1, y0, z0),
 		Vector3(x1, y0, z1),
 		Vector3(x0, y0, z1),
-		Vector3(x0, y0 + step_h, z0),
-		Vector3(x1, y0 + step_h, z0),
-		Vector3(x1, y1, z1),
 		Vector3(x0, y1, z1),
+		Vector3(x1, y1, z1),
 	])
 	return shape
 
@@ -295,10 +293,9 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 		var v0 := Vector3(-cos(inc0), 0.0, sin(inc0))
 		var v1 := Vector3(-cos(inc1), 0.0, sin(inc1))
 
-		# Smooth ramp height from bottom step nose to top
-		var y0: float = -hh + step_h + (float(s) / float(steps)) * (h - step_h)
-		var y1: float = -hh + step_h + (float(s + 1) / float(steps)) * (h - step_h)
-
+		# Smooth ramp height from ground (-hh) at start to top (+hh)
+		var y0: float = -hh + (float(s) / float(steps)) * h
+		var y1: float = -hh + (float(s + 1) / float(steps)) * h
 		# Top ramp surface
 		if is_pie:
 			var t_center := Vector3(0.0, y1, 0.0)
@@ -337,19 +334,7 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 			var f_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
 			add_quad.call(f_in0, f_out0, f_out1, f_in1)
 
-	# Front vertical wall at s=0
-	var v_start := Vector3(-1.0, 0.0, 0.0)
-	var y_front := -hh + step_h
-	if is_pie:
-		add_tri.call(Vector3(0.0, -hh, 0.0), Vector3(v_start.x * r_out, -hh, 0.0), Vector3(v_start.x * r_out, y_front, 0.0))
-	else:
-		add_quad.call(
-			Vector3(v_start.x * r_in, -hh, 0.0),
-			Vector3(v_start.x * r_out, -hh, 0.0),
-			Vector3(v_start.x * r_out, y_front, 0.0),
-			Vector3(v_start.x * r_in, y_front, 0.0)
-		)
-
+	# Front edge at s=0 is flush with the ground at y=-hh (no initial step)
 	# Back vertical wall at s=steps
 	var v_end := Vector3(-cos(cir), 0.0, sin(cir))
 	if is_pie:

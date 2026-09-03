@@ -223,12 +223,20 @@ static func height_drags_offset(shape_id: StringName) -> bool:
 static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		height: float, base_values: Dictionary = {}) -> void:
 	var height_known := not is_nan(height)
-	if values.has("width"):
-		values["width"] = maxf(0.05, u_size)
-	if values.has("depth"):
-		values["depth"] = maxf(0.05, v_size)
 	if values.has("height") and height_known:
 		values["height"] = maxf(0.05, height)
+	if values.has("depth"):
+		values["depth"] = maxf(0.05, v_size)
+	if values.has("width"):
+		if values.has("opening_height"):
+			# Door: cap width to reasonable door proportions (at most 1.5x height)
+			var dh: float = float(values["height"]) if (height_known and height > 0.0) else float(values.get("height", 2.5))
+			if height_known and height > 0.0:
+				values["opening_height"] = clampf(dh * 0.8, 0.5, dh - 0.2)
+			var max_door_w: float = maxf(3.0, dh * 1.5)
+			values["width"] = clampf(u_size, 0.5, max_door_w)
+		else:
+			values["width"] = maxf(0.05, u_size)
 	if values.has("stair_width"):
 		var max_dim: float = maxf(u_size, v_size)
 		var in_r: float = float(values.get("inner_radius", 0.5))
