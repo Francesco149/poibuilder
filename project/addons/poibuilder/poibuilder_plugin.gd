@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.22"
+const VERSION := "0.9.23"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -977,7 +977,7 @@ func _finalize_created_shape(node: PBMesh) -> void:
 	node.pb_mesh_data.shape_id = shape_creator.shape_id
 	node.pb_mesh_data.shape_params = shape_creator.values.duplicate()
 	node.pb_mesh_data.shape_edited = false
-
+	node._update_collider()
 func _creation_abort(reason: String) -> void:
 	var node := shape_creator.preview_node
 	shape_creator.reset()

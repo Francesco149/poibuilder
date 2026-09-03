@@ -190,6 +190,29 @@ func test_stairs_normals():
 	for n in normals:
 		assert_almost_eq(n.length(), 1.0, 0.01)
 
+func test_curved_stairs_default():
+	var md := PBShapeComplex.create_curved_stairs()
+	assert_eq(md.validate(), "", "Curved stairs should validate")
+	assert_gt(md.face_count(), 0)
+	assert_gt(md.vertex_count(), 0)
+	var mesh := md.to_array_mesh()
+	assert_not_null(mesh)
+
+func test_curved_stairs_pie_steps():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.0, 180.0, 6, true)
+	assert_eq(md.validate(), "", "Curved stairs with 0 inner radius should validate")
+	assert_gt(md.face_count(), 0)
+	var mesh := md.to_array_mesh()
+	assert_not_null(mesh)
+
+func test_curved_stairs_negative_curvature():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.5, -90.0, 6, true)
+	assert_eq(md.validate(), "", "Curved stairs with negative curvature should validate")
+	assert_gt(md.face_count(), 0)
+	var normals := md.calculate_normals()
+	for n in normals:
+		assert_almost_eq(n.length(), 1.0, 0.01)
+
 # ==============================================================================
 # Door Tests
 # ==============================================================================
