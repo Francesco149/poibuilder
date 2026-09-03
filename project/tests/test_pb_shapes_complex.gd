@@ -349,24 +349,129 @@ func test_door_shell_is_tjunction_free():
 				rim += 1
 		assert_eq(rim, 8, "Exactly the 8 bottom-rim segments stay open")
 
+## True when a usage-1 edge is legitimate: it carries the moved side
+## (an endpoint in the union) or lies on the original bottom rim.
+static func _is_open_edge_ok(md: PBMeshData, e: PBEdge, union: Dictionary,
+		y0: float) -> bool:
+	if union.has(e.a) or union.has(e.b):
+		return true
+	var pa: Vector3 = md.positions[e.a]
+	var pb: Vector3 = md.positions[e.b]
+	return absf(pa.y - y0) < 0.0011 and absf(pb.y - y0) < 0.0011
+
+## y0 = the PRE-move bottom rim height (a moved leg piece can dip below it).
+static func _tears_after_move(md: PBMeshData, union_ids: PackedInt32Array,
+		y0: float) -> int:
+	var union := {}
+	for idx in union_ids:
+		union[idx] = true
+	var usage := _coord_open_counts(md)
+	var tears := 0
+	for k in usage.keys():
+		if usage[k] != 1:
+			continue
+		var ok := false
+		for fi in range(md.faces.size()):
+			for e in md.faces[fi].get_edges():
+				var pa: Vector3 = md.positions[e.a]
+				var pb: Vector3 = md.positions[e.b]
+				var ka := Vector3(snappedf(pa.x, 0.0001), snappedf(pa.y, 0.0001), snappedf(pa.z, 0.0001))
+				var kb := Vector3(snappedf(pb.x, 0.0001), snappedf(pb.y, 0.0001), snappedf(pb.z, 0.0001))
+				var k2: String
+				if ka < kb:
+					k2 = "%s|%s" % [ka, kb]
+				else:
+					k2 = "%s|%s" % [kb, ka]
+				if k2 == k:
+					if _is_open_edge_ok(md, e, union, y0):
+						ok = true
+					break
+			if ok:
+				break
+		if not ok:
+			tears += 1
+	return tears
+
 func test_door_face_grab_never_tears():
 	## The user-facing guarantee: grabbing ANY face and moving its weld
-	## union must never open a hole — after a weld rebuild the shell keeps
-	## exactly its 8 open bottom-rim edges (a tear would add more).
+	## union must never open a hole. Open edges may only carry the moved
+	## side or sit on the untouched bottom rim — everything else is a tear.
 	for arched in [true, false]:
 		var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, arched, 6)
+		var y0 := INF
+		for p in md.positions:
+			y0 = minf(y0, p.y)
 		for fi in range(md.faces.size()):
 			var union := md.get_coincident_vertices_from_faces(PackedInt32Array([fi]))
 			for idx in union:
 				md.positions[idx] += Vector3(0.37, -0.53, 0.21)
 			md.rebuild_welds()
-			var open := 0
-			var usage := _coord_open_counts(md)
-			for k in usage.keys():
-				if usage[k] == 1:
-					open += 1
-			assert_eq(open, 8,
-				"Face %d grab+move keeps the shell closed (8 rim edges)" % fi)
+			assert_eq(_tears_after_move(md, union, y0), 0,
+				"Face %d grab+move opens no hole" % fi)
 			for idx in union:
 				md.positions[idx] -= Vector3(0.37, -0.53, 0.21)
 			md.rebuild_welds()
+
+func test_door_coplanar_regions_are_one_face_per_side():
+	## "Weld all the faces so each side selects as 1 face": every side of
+	## the door expands to ONE region — the front/back as a single region
+	## AROUND the arch hole, the split outer walls as one, the top as one.
+	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	# Face 0 is a front leg piece: the whole front is one region.
+	var front: PackedInt32Array = md.get_coplanar_face_region(0)
+	assert_eq(front.size(), 18,
+		"Front side selects as one region (legs + header strips + spandrels)")
+	# The front region spans both sides of the opening (faces at x < 0 and
+	# x > 0 of the frame's center) — one face AROUND the hole.
+	var has_left := false
+	var has_right := false
+	for fi in front:
+		var cen := Vector3.ZERO
+		for idx in md.faces[fi].get_distinct_indexes():
+			cen += md.positions[idx]
+		cen /= float(md.faces[fi].get_distinct_indexes().size())
+		if cen.x < -0.1:
+			has_left = true
+		if cen.x > 0.1:
+			has_right = true
+	assert_true(has_left and has_right,
+		"The front region surrounds the arch hole")
+	# The split outer walls merge into one region each; the top wall too.
+	var wall_piece := -1
+	for fi in range(md.faces.size()):
+		if fi in front:
+			continue
+		var all_x0 := true
+		for idx in md.faces[fi].get_distinct_indexes():
+			if absf(md.positions[idx].x + 1.5) > 0.001:
+				all_x0 = false
+		if all_x0:
+			wall_piece = fi
+			break
+	assert_gt(wall_piece, -1, "Found a left outer wall piece")
+	assert_eq(md.get_coplanar_face_region(wall_piece).size(), 3,
+		"The left outer wall's 3 pieces select as one region")
+	# Coplanar neighbors of OTHER planes never join: the back is its own
+	# region, tunnel quads stay single.
+	var back: PackedInt32Array = md.get_coplanar_face_region(18)
+	assert_eq(back.size(), 18, "Back side is one region")
+	assert_false(front.has(18), "Front and back are separate regions")
+
+func test_door_region_move_never_tears():
+	## Moving a whole region (the region-select drag unit) keeps the shell
+	## closed — only carried rim edges and the untouched bottom rim open.
+	var md = PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	var y0 := INF
+	for p in md.positions:
+		y0 = minf(y0, p.y)
+	for seed in [0, 2, 18, 20]:
+		var region: PackedInt32Array = md.get_coplanar_face_region(seed)
+		var union := md.get_coincident_vertices_from_faces(region)
+		for idx in union:
+			md.positions[idx] += Vector3(0.2, 0.35, -0.4)
+		md.rebuild_welds()
+		assert_eq(_tears_after_move(md, union, y0), 0,
+			"Region move from seed %d opens no hole" % seed)
+		for idx in union:
+			md.positions[idx] -= Vector3(0.2, 0.35, -0.4)
+		md.rebuild_welds()

@@ -603,6 +603,38 @@ sign-off report:
   drive the plugin's delivery path directly against real click-made
   selections.
 
+v0.9.16 round complete ✓ — "weld all the faces so each side selects as 1
+face" + the door's height drag, from the fourth sign-off:
+- COPLANAR REGION SELECT (FACE mode): a clicked face now stands for its
+  connected coplanar region — PBMeshData.get_coplanar_face_region (BFS
+  over full coordinate-shared edges, same-plane only, lazy-cached,
+  invalidated with the caches). The door's split shell therefore behaves
+  like one face per side: the FRONT/BACK each select as ONE region around
+  the arch hole (18 faces @ N=6), each outer wall's 3 pieces merge, the
+  top wall's 8 pieces merge; cube faces are regions of one (unchanged;
+  the tunnel/jamb faces stay single — adjacent arc quads are not
+  coplanar). Expansion points: _begin_drag (the drag's union + mesh-op
+  seeds — so shift+move EXTRUDES THE WHOLE REGION with walls around the
+  hole boundary too), commit_subgizmos (undo payload covers exactly the
+  moved set), begin_center_drag, _draw_selected_faces (the fill covers
+  the whole side), the center-handle pivot, and the toolbar ops.
+  element_origin stays per-seed-face (the gizmo sits on the grabbed
+  face). This is only tear-free BECAUSE the shell is T-junction-free
+  (v0.9.15): region moves are covered by test_door_region_move_never_tears
+  (open-edge invariant: an open edge must carry the moved union or sit on
+  the untouched bottom rim — the pre-move rim height is what counts; a
+  moved leg piece can dip below it).
+- DOOR CREATION MAPPING: the dominant-step facing heuristic (built for
+  stairs) ran for the door too — a wide, thin base drag mapped the THIN
+  extent onto width and the door grew as a 0.3m-wide tunnel, so the
+  height drag seemed dead ("the door height should adjust when sizing
+  the 3rd dimension"). PBShapeParams.facing_across_dominant(&"door"):
+  the creator overrides the facing to run ACROSS the dominant extent
+  (sign away from the drag start), making width = the bigger drag and
+  the placement deterministic in either drag order; the height drag now
+  visibly grows a standing door. Tests: test_door_drag_maps_width_to_
+  the_dominant_extent, test_door_drag_mapping_is_drag_order_independent.
+
 v0.9.15 round complete ✓ — the door shell rebuilt T-JUNCTION-FREE (the
 real "outer walls leave one vert behind" root cause; the v0.9.14 weld
 rebuild was necessary but not sufficient — on pristine meshes it also

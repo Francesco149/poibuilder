@@ -43,7 +43,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.15"
+const VERSION := "0.9.16"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -553,9 +553,13 @@ func _on_operation_requested(op_name: String) -> void:
 	var distance := OP_EXTRUDE_DISTANCE
 	var amount := OP_INSET_AMOUNT
 	var selection := editor.selection
+	# FACE-mode ops act on the clicked face's whole coplanar region — the
+	# same "one face per side" unit the drags use.
+	var face_ids := gizmo_plugin.element_editor.expand_face_ids(
+		mesh_data, selection.selected_faces)
 
 	if op_name == "detach_faces":
-		_perform_detach(mesh, selection.selected_faces.duplicate())
+		_perform_detach(mesh, face_ids.duplicate())
 		return
 
 	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
@@ -564,15 +568,15 @@ func _on_operation_requested(op_name: String) -> void:
 	var result: Dictionary
 	match op_name:
 		"extrude_faces":
-			result = PBMeshOps.extrude_faces(mesh_data, selection.selected_faces.duplicate(), distance)
+			result = PBMeshOps.extrude_faces(mesh_data, face_ids.duplicate(), distance)
 		"inset_faces":
-			result = PBMeshOps.inset_faces(mesh_data, selection.selected_faces.duplicate(), amount)
+			result = PBMeshOps.inset_faces(mesh_data, face_ids.duplicate(), amount)
 		"subdivide_faces":
-			result = PBMeshOps.subdivide_faces(mesh_data, selection.selected_faces.duplicate())
+			result = PBMeshOps.subdivide_faces(mesh_data, face_ids.duplicate())
 		"merge_faces":
-			result = PBMeshOps.merge_faces(mesh_data, selection.selected_faces.duplicate())
+			result = PBMeshOps.merge_faces(mesh_data, face_ids.duplicate())
 		"delete_faces":
-			result = PBMeshOps.delete_faces(mesh_data, selection.selected_faces.duplicate())
+			result = PBMeshOps.delete_faces(mesh_data, face_ids.duplicate())
 		"weld_vertices":
 			result = PBMeshOps.weld_vertices(mesh_data, selection.selected_vertices.duplicate())
 		"extrude_edges":

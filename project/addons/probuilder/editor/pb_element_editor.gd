@@ -650,7 +650,29 @@ func set_subgizmo_transform_with_shift(node: PBMesh, ids: PackedInt32Array, id: 
 
 	_drag_pending[id] = transform
 	_drag_latest_id = id
-	_apply_drag(node, mesh_data, ids)
+	# _drag_ids is the begin-time selection (region-expanded in FACE mode) —
+	# the engine only delivers the seed id, but the drag moves the whole side.
+	_apply_drag(node, mesh_data, _drag_ids)
+
+## Expands face ids to their connected COPLANAR regions (FACE mode only).
+## A clicked face stands for its whole side — the door's split shell makes
+## each side (front/back around the arch hole included) select, drag, and
+## extrude as ONE face. Other modes and single-quad sides pass through.
+func expand_face_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt32Array:
+	if editor == null or editor.select_mode != PBEditor.SelectMode.FACE:
+		return ids
+	if mesh_data == null or ids.is_empty():
+		return ids
+	var out := PackedInt32Array()
+	var seen := {}
+	for id in ids:
+		if id < 0 or id >= mesh_data.faces.size():
+			continue
+		for fi in mesh_data.get_coplanar_face_region(id):
+			if not seen.has(fi):
+				seen[fi] = true
+				out.append(fi)
+	return out
 
 ## Begins a drag gesture: decide the gesture from tool+shift, snapshot
 ## positions and start transforms, then run any begin-time topology op
@@ -661,6 +683,7 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	if mesh_data == null:
 		return
 	drag_active = true
+	ids = expand_face_ids(mesh_data, ids)
 	_drag_mesh = node
 	_drag_gesture = _decide_gesture(shift)
 	_drag_ids = ids.duplicate()
@@ -1187,6 +1210,7 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 	if node == null or node.pb_mesh_data == null or ids.is_empty() or drag_active:
 		return false
 	var mesh_data: PBMeshData = node.pb_mesh_data
+	ids = expand_face_ids(mesh_data, ids)
 	drag_active = true
 	_drag_mesh = node
 	_drag_ids = ids.duplicate()
@@ -1273,6 +1297,11 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 
 	if not drag_active:
 		return false
+
+	# The undo payload must cover exactly what the drag moved — expand to the
+	# same regions the begin-time selection used (stable across the drag via
+	# the mesh data's region cache).
+	ids = expand_face_ids(mesh_data, ids)
 
 	var action_name := TRANSFORM_ACTION_NAME
 	match _drag_gesture:

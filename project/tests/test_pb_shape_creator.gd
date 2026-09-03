@@ -429,3 +429,44 @@ func test_height_reference_projects_through_the_cursor():
 		Vector3.ZERO)
 	assert_almost_eq(ref.z, 0.0, 0.0001, "Reference stays in the view-parallel plane")
 	assert_lt(ref.y, 0.0, "Aiming below center reads a negative height")
+
+func test_door_drag_maps_width_to_the_dominant_extent():
+	## REGRESSION (v0.9.16): the dominant-step facing heuristic (built for
+	## stairs) ran for the door too — a wide, thin base drag mapped the thin
+	## extent onto width and the door grew as a 0.3m-wide tunnel, leaving
+	## the height drag nothing visible to size. The door's front runs ACROSS
+	## its dominant extent: width = the bigger drag, facing perpendicular.
+	var creator := _armed_creator(&"door")
+	_begin_base(creator, Vector3.ZERO)
+	creator.update_base(Vector3(2.5, 0, 0.3))
+	creator.end_base()
+	assert_almost_eq(creator.values["width"], 2.5, 0.0001,
+		"The dominant extent is the width (the door's face, not a tunnel)")
+	assert_almost_eq(creator.values["depth"], 0.3, 0.0001)
+	# The facing runs across the width: the front points along +Z here.
+	assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
+		"The facing is perpendicular to the width (the front contains it)")
+	# And the height drag sizes the standing door.
+	creator.update_height_point(Vector3(0, 2.0, 0))
+	assert_almost_eq(creator.values["height"], 2.0, 0.0001)
+	var data := creator.build_data()
+	assert_almost_eq(data.positions[0].y * 2.0, 0.0, 4.0)  # (sanity: builds)
+	var aabb := AABB(data.positions[0], Vector3.ZERO)
+	for p in data.positions:
+		aabb = aabb.expand(p)
+	assert_almost_eq(aabb.size.y, 2.0, 0.001, "The placed door stands 2m tall")
+	assert_almost_eq(aabb.size.x, 2.5, 0.001, "The placed door spans the dominant drag")
+
+func test_door_drag_mapping_is_drag_order_independent():
+	## The same footprint drawn in either direction must produce the same
+	## door (the old heuristic made creation nondeterministic).
+	var a := _armed_creator(&"door")
+	_begin_base(a, Vector3.ZERO)
+	a.update_base(Vector3(2.5, 0, 0.3))
+	a.end_base()
+	var b := _armed_creator(&"door")
+	_begin_base(b, Vector3.ZERO)
+	b.update_base(Vector3(0.3, 0, 2.5))
+	b.end_base()
+	assert_almost_eq(b.values["width"], a.values["width"], 0.0001)
+	assert_almost_eq(b.values["depth"], a.values["depth"], 0.0001)

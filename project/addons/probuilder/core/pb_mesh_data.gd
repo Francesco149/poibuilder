@@ -64,6 +64,19 @@ var _common_edges_valid: bool = false
 var _position_face: Dictionary = {}
 var _position_face_valid: bool = false
 
+## Cached: face id -> its connected COPLANAR region (the face plus every
+## edge-connected face lying in the same plane). Used by FACE-mode region
+## selection — the door's sides are split T-junction-free, and expansion
+## makes each side select and move as ONE face (the front/back around the
+## arch hole included). Invalidated with the caches (ops, undo, weld
+## rebuilds); position-only drags keep membership stable — the same faces
+## remain the selection unit.
+var _face_region_cache: Dictionary = {}
+
+## Cached: coordinate edge key -> face indexes using it (region adjacency).
+var _coord_edge_faces: Dictionary = {}
+var _coord_edge_faces_valid: bool = false
+
 # ==============================================================================
 # Property Accessors (Computed, Read-Only)
 # ==============================================================================
@@ -134,6 +147,9 @@ func invalidate_caches() -> void:
 	invalidate_shared_texture_lookup()
 	_common_edges_valid = false
 	_position_face_valid = false
+	_face_region_cache.clear()
+	_coord_edge_faces.clear()
+	_coord_edge_faces_valid = false
 	_normals.clear()
 
 ## Invalidates ONLY the geometry-derived caches (normals). Position edits
@@ -221,6 +237,86 @@ func get_common_edges() -> Array[PBEdge]:
 				_common_edges.append(PBEdge.new(edge.a, edge.b))
 		_common_edges_valid = true
 	return _common_edges
+
+# ==============================================================================
+# Coplanar Face Regions (FACE-mode selection expansion)
+# ==============================================================================
+
+## The connected COPLANAR region containing `face_id` (seed included): faces
+## linked through full shared edges that lie in the seed's plane. This is the
+## "one face per side" selection unit for split shells (the door).
+func get_coplanar_face_region(face_id: int) -> PackedInt32Array:
+	if _face_region_cache.has(face_id):
+		return _face_region_cache[face_id]
+	var region := PackedInt32Array([face_id])
+	if face_id < 0 or face_id >= faces.size() or faces[face_id] == null:
+		_face_region_cache[face_id] = region
+		return region
+
+	var plane := _face_plane(face_id)
+	if plane.is_empty():
+		_face_region_cache[face_id] = region
+		return region
+
+	if not _coord_edge_faces_valid:
+		_coord_edge_faces.clear()
+		for fi in range(faces.size()):
+			if faces[fi] == null:
+				continue
+			for e in faces[fi].get_edges():
+				var key := _coordinate_edge_key(e.a, e.b)
+				if not _coord_edge_faces.has(key):
+					_coord_edge_faces[key] = PackedInt32Array()
+				_coord_edge_faces[key].append(fi)
+		_coord_edge_faces_valid = true
+
+	var visited := {face_id: true}
+	var queue: Array[int] = [face_id]
+	while not queue.is_empty():
+		var fi: int = queue.pop_back()
+		for e in faces[fi].get_edges():
+			for nf in _coord_edge_faces.get(_coordinate_edge_key(e.a, e.b), PackedInt32Array()):
+				if visited.has(nf):
+					continue
+				visited[nf] = true
+				var nplane := _face_plane(nf)
+				if nplane.is_empty():
+					continue
+				var n_norm: Vector3 = nplane["normal"]
+				var same_plane: bool = absf(n_norm.dot(plane["normal"])) > 0.9999 \
+					and absf((nplane["point"] - plane["point"]).dot(plane["normal"])) < 0.001
+				if same_plane:
+					region.append(nf)
+					queue.append(nf)
+
+	_face_region_cache[face_id] = region
+	return region
+
+## Outward area normal + a point on the face, for coplanarity tests.
+func _face_plane(face_id: int) -> Dictionary:
+	var face: PBFace = faces[face_id]
+	var idxs := face.get_indexes()
+	var p := positions
+	var norm := Vector3.ZERO
+	for t in range(0, idxs.size() - 2, 3):
+		if idxs[t] >= p.size() or idxs[t + 1] >= p.size() or idxs[t + 2] >= p.size():
+			continue
+		norm += (p[idxs[t + 1]] - p[idxs[t]]).cross(p[idxs[t + 2]] - p[idxs[t]])
+	if norm.length_squared() < 0.000000001:
+		return {}
+	for idx in face.get_distinct_indexes():
+		if idx >= 0 and idx < p.size():
+			return {"normal": norm.normalized(), "point": p[idx]}
+	return {}
+
+func _coordinate_edge_key(a: int, b: int) -> String:
+	var pa := positions[a]
+	var pb := positions[b]
+	var ka := Vector3(snappedf(pa.x, 0.0001), snappedf(pa.y, 0.0001), snappedf(pa.z, 0.0001))
+	var kb := Vector3(snappedf(pb.x, 0.0001), snappedf(pb.y, 0.0001), snappedf(pb.z, 0.0001))
+	if ka < kb:
+		return "%s|%s" % [ka, kb]
+	return "%s|%s" % [kb, ka]
 
 # ==============================================================================
 # Coincident Vertex Queries & Common Index Lookups

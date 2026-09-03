@@ -329,6 +329,18 @@ func _apply_drag_extents() -> void:
 	# swaps them (local Z then runs along u).
 	var height_value: float = height if state >= State.HEIGHT else NAN
 	var v_dir := plane_normal.cross(u_dir).normalized()
+	# Door-like oriented shapes: their front contains the dominant base
+	# extent — width always takes the bigger drag and the facing runs ACROSS
+	# it (the sign points away from the drag start). The dominant-step
+	# heuristic below is built for stairs; for a door it turned a wide flat
+	# drag into a thin tunnel and left the height drag nothing visible to
+	# grow. Runs on every extents application so the facing is a pure
+	# function of the rect (frozen u/v keep it locked through the height
+	# phase — the arrow lock).
+	if PBShapeParams.facing_across_dominant(shape_id):
+		var across := v_dir if u_size >= v_size else u_dir
+		var toward: float = (rect_center - base_start).dot(across)
+		facing = across * (1.0 if toward >= 0.0 else -1.0)
 	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))
 	var width := v_size if forward_along_u else u_size
 	var depth := u_size if forward_along_u else v_size
