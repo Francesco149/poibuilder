@@ -574,27 +574,38 @@ static func create_curved_stairs(
 			_add_quad(positions, textures0, faces, t0, t1, t2, t3)
 
 		if sides:
-			# Outer wall quad/tri under step s (facing radially outward)
+			# Outer wall under step s (facing radially outward)
 			var ow_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
 			var ow_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
 			var ow_t1 := Vector3(v1.x * r_out,  y1, v1.z * r_out)
 			if s == 0:
-				_add_tri(positions, textures0, faces, ow_b0, ow_b1, ow_t1)
+				var ow_t0 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+				_add_quad(positions, textures0, faces, ow_b0, ow_b1, ow_t1, ow_t0)
 			else:
 				var ow_t0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
 				_add_quad(positions, textures0, faces, ow_b0, ow_b1, ow_t1, ow_t0)
+				# Connecting vertical triangle under the tread
+				var tri0 := Vector3(v0.x * r_out, y0, v0.z * r_out)
+				var tri1 := Vector3(v1.x * r_out, y1, v1.z * r_out)
+				var tri2 := Vector3(v0.x * r_out, y1, v0.z * r_out)
+				_add_tri(positions, textures0, faces, tri0, tri1, tri2)
 
-			# Inner wall quad/tri under step s (facing radially inward)
+			# Inner wall under step s (facing radially inward toward center)
 			if not is_pie:
 				var iw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
 				var iw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
 				var iw_t1 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
 				if s == 0:
-					_add_tri(positions, textures0, faces, iw_b1, iw_b0, iw_t1)
+					var iw_t0 := Vector3(v0.x * r_in, y1, v0.z * r_in)
+					_add_quad(positions, textures0, faces, iw_b1, iw_b0, iw_t0, iw_t1)
 				else:
 					var iw_t0 := Vector3(v0.x * r_in, y0, v0.z * r_in)
 					_add_quad(positions, textures0, faces, iw_b1, iw_b0, iw_t0, iw_t1)
-
+					# Connecting vertical triangle under the tread
+					var itri0 := Vector3(v0.x * r_in, y0, v0.z * r_in)
+					var itri1 := Vector3(v0.x * r_in, y1, v0.z * r_in)
+					var itri2 := Vector3(v1.x * r_in, y1, v1.z * r_in)
+					_add_tri(positions, textures0, faces, itri0, itri1, itri2)
 	if sides:
 		# Back wall at final angle cir, from -hh to +hh
 		var v_end := Vector3(-cos(cir), 0.0, sin(cir))

@@ -240,6 +240,15 @@ func test_curved_stairs_risers_face_climber():
 	assert_almost_eq(n0.z, -1.0, 0.05, "Step 0 riser must face -Z (toward climber)")
 	assert_almost_eq(n0.y, 0.0, 0.05)
 	assert_almost_eq(n0.x, 0.0, 0.05)
+func test_curved_stairs_sides_watertight_and_face_count():
+	var md := PBShapeComplex.create_curved_stairs(1.5, 2.0, 0.5, 180.0, 8, true)
+	assert_eq(md.validate(), "", "Curved stairs with sides should validate")
+	# 8 risers + 8 treads + 1 front wall quad + 7 wall quads + 7 wall tris + 1 inner quad + 7 inner quads + 7 inner tris + 1 back quad = 47
+	assert_eq(md.face_count(), 47, "Curved stairs with sides has 47 faces")
+	var normals := md.calculate_normals()
+	for n in normals:
+		assert_almost_eq(n.length(), 1.0, 0.01)
+
 
 
 func test_door_wide_arch_rise_capped():
