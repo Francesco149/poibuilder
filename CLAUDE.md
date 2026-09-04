@@ -805,6 +805,60 @@ v0.9.22 round complete ✓ (flat clean creation arrow, loosened bias & door tunn
   deliberately nudging across the arrow by > 0.08m rotates it into a tunnel (facing the
   longer dimension) and persists across subsequent frames without snapping back.
 
+v0.9.29 round complete ✓ (curved-stairs ramp collider: TWO stacked defects, both
+physics-reproduced headlessly — "stuck the moment I touch them"):
+- INVERTED RAMP WINDING: the ramp wedge emission never got Godot's front-face
+  reversal (the render mesh is CCW-from-outside and reversed in to_array_mesh;
+  the collider bypassed that path and fed ConcavePolygonShape3D raw). With
+  backface_collision=false (default), the wedge was passable from outside and
+  solid from inside: walk into the outer wall, fall into the wedge, trapped.
+  Fixed at emission; wedge is now built by the standalone
+  PBShapeComplex.create_curved_stairs_ramp (the mesh generator no longer
+  emits/stores ramp_faces metas).
+- CREASE-CLIFF LOCK: even correctly wound, one quad per step makes a twisted
+  helical strip whose two triangle halves differed by ~25 deg of local slope
+  (27 deg vs 53 deg on the defaults — the steep facet is a WALL to
+  floor_max_angle 45-50); a climber hit the first crease and the
+  floor+wall contact pair locked its velocity to zero. The wedge is now
+  tessellated 4 slices/step (crease angle falls with the square of slice
+  arc). Verified by capsule climb: continuous ascent, never sinks.
+- STALE-COLLIDER RULES: _update_collider RAMP path now ALWAYS regenerates
+  from shape_params (never reads a stored ramp_faces meta — old scenes carry
+  inward-wound ones) and falls back to a live trimesh when
+  pb_mesh_data.shape_edited or params are absent (params describe the
+  pristine primitive, not an edited mesh).
+- PIE POLE HOLE: fanning the ramp to the axis left an unsealable vertical
+  slit per spoke (one-sided faces cannot close it). Pie ramps now keep a 5cm
+  pole hole — closed shell, walkably identical.
+- DEBUG-INFRA (headless): debug/pb_collider_audit.gd — signed_volume (shell
+  orientation), edge_pairing_report (closure + winding consistency),
+  front_exterior_report (per-face inside/outside via GENERALIZED WINDING
+  NUMBERS — ray probes are blind to wall inversion: a probe along the face's
+  own normal from inside hits the wall's inward front. Sliver facets smaller
+  than the probe epsilon are exempt by design: closure+consistency covers
+  them). tests/test_pb_collider_audit.gd runs: winding+closure+concordance
+  audits (drop rays from tread-derived probes), character containment
+  (capsule pushed into the wedge must never end up under the ramp surface),
+  character climb (must progress in angle and height, never sink), and
+  variant sweeps (pie / flipped / no_sides — EACH IN ITS OWN TEST: multiple
+  staircases in one physics space contaminate each other's raycasts).
+  NOTE: there is no sound per-facet slope cap for tessellated helicoids
+  (inner-chord facets structurally hit the inner-radius design slope);
+  walkability locks via the character tests, not a slope assert.
+- DEBUG-INFRA (visual): the show_collider overlay now draws the collider as
+  an inspection skin — every collision triangle inflated 3cm along WELDED
+  vertex normals (per-face inflation opens silhouette gaps that read as
+  false positives), depth-tested, green on the face FRONT (the physics side)
+  and RED on the back: green coat wrapping the mesh from outside = sound;
+  red patch = that face collides on the wrong side. Depth-testing matters:
+  an x-ray solid pass cannot tell an inverted face from the far side of a
+  correct shell. Reading rules are documented on _draw_collider_debug.
+  GUI harness covers it (green-present + red-ratio bounds; place test
+  objects AWAY from the world origin — the viewport's red X origin-axis line
+  pollutes naive pixel counts).
+- Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
+  plugin.cfg).
+
 Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
 checklist in test_scenes/human_test_phase6.tscn for the human pass.
 

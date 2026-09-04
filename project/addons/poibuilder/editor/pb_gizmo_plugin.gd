@@ -886,7 +886,31 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 			var to_local := node.global_transform.affine_inverse()
 			_add_vert_squares(gizmo, to_local, PackedVector3Array([creation_hover_point]))
 
-## Draws a bright green wireframe overlay of the node's active physics collision shape.
+## Collider inspection overlay over the node's ACTIVE physics shape.
+##
+## Two layers:
+## 1. Bright green x-ray wireframe of the exact collision triangles the
+##    physics server holds (raw concave faces / engine debug hull via
+##    PBColliderAudit.shape_faces) — shows the collider that EXISTS, never
+##    the mesh that "should" produce it.
+## 2. A depth-tested solid "contact skin": every triangle INFLATED 3 cm along
+##    its FRONT normal (the side Godot physics collides with) and drawn twice
+##    — as-is in translucent GREEN, reversed in RED, both back-culled. Read
+##    from OUTSIDE the collider:
+##      green skin wrapping the mesh  = faces wound correctly;
+##      a RED patch                   = that face's collidable side points
+##    					INWARD (bodies would tunnel in and be trapped);
+##      a patch of skin MISSING       = the face's front points into the mesh
+##                                     (inflated into the geometry).
+##    The inflation keeps the skin reading outside the render mesh; depth
+##    testing keeps far-side backs (the interior views of a sound shell) from
+##    bleeding through and reading as false red — an x-ray solid pass cannot
+##    distinguish "inverted face" from "far side of a correct shell".
+const COLLIDER_SKIN_INFLATE := 0.03
+
+var _collider_front_material: StandardMaterial3D
+var _collider_back_material: StandardMaterial3D
+
 func _draw_collider_debug(gizmo, node: PBMesh) -> void:
 	var body := node.get_collider_body()
 	if body == null:
@@ -895,35 +919,81 @@ func _draw_collider_debug(gizmo, node: PBMesh) -> void:
 	if col_shape == null or col_shape.shape == null:
 		return
 
+	var tris := PBColliderAudit.shape_faces(col_shape.shape)
+	if tris.size() < 3:
+		return
+
+	# Vertex normals welded by position: corner-sharing triangles get the SAME
+	# offset, so the inflated skin stays connected across creases instead of
+	# opening rim gaps (through which far-side backs read as false red).
+	var vnormal_sums := {}
+	for i in range(0, tris.size() - 2, 3):
+		var fn := PBColliderAudit.tri_front_normal(tris[i], tris[i + 1], tris[i + 2])
+		if fn == Vector3.ZERO:
+			continue
+		for k in range(3):
+			var key := _collider_vert_key(tris[i + k])
+			vnormal_sums[key] = vnormal_sums.get(key, Vector3.ZERO) + fn
+
 	var lines := PackedVector3Array()
-	var s := col_shape.shape
+	var front_tris := PackedVector3Array()
+	var back_tris := PackedVector3Array()
+	front_tris.resize(tris.size())
+	back_tris.resize(tris.size())
+	for i in range(0, tris.size() - 2, 3):
+		var a := tris[i]
+		var b := tris[i + 1]
+		var c := tris[i + 2]
+		lines.append(a)
+		lines.append(b)
+		lines.append(b)
+		lines.append(c)
+		lines.append(c)
+		lines.append(a)
+		var oa := _collider_skin_offset(a, vnormal_sums)
+		var ob := _collider_skin_offset(b, vnormal_sums)
+		var oc := _collider_skin_offset(c, vnormal_sums)
+		front_tris[i] = a + oa
+		front_tris[i + 1] = b + ob
+		front_tris[i + 2] = c + oc
+		back_tris[i] = a + oa
+		back_tris[i + 1] = c + oc
+		back_tris[i + 2] = b + ob
 
-	if s is ConvexPolygonShape3D:
-		var pts: PackedVector3Array = (s as ConvexPolygonShape3D).points
-		if pts.size() == 6:
-			var edges := [
-				[0, 1], [1, 2], [2, 3], [3, 0],
-				[4, 5],
-				[0, 4], [1, 5],
-				[3, 4], [2, 5],
-			]
-			for e in edges:
-				lines.append(pts[e[0]])
-				lines.append(pts[e[1]])
-		else:
-			for i in range(pts.size()):
-				for j in range(i + 1, pts.size()):
-					lines.append(pts[i])
-					lines.append(pts[j])
-	elif s is ConcavePolygonShape3D:
-		var tris: PackedVector3Array = (s as ConcavePolygonShape3D).get_faces()
-		for i in range(0, tris.size() - 2, 3):
-			lines.append(tris[i])
-			lines.append(tris[i + 1])
-			lines.append(tris[i + 1])
-			lines.append(tris[i + 2])
-			lines.append(tris[i + 2])
-			lines.append(tris[i])
+	gizmo.add_lines(lines, get_material("pb_collider_debug", gizmo))
+	if _collider_front_material == null:
+		_collider_front_material = _make_collider_side_material(Color(0.1, 1.0, 0.4, 0.30))
+	if _collider_back_material == null:
+		_collider_back_material = _make_collider_side_material(Color(1.0, 0.12, 0.1, 0.45))
+	gizmo.add_mesh(_tris_to_mesh(front_tris), _collider_front_material)
+	gizmo.add_mesh(_tris_to_mesh(back_tris), _collider_back_material)
 
-	if lines.size() >= 2:
-		gizmo.add_lines(lines, get_material("pb_collider_debug", gizmo))
+static func _tris_to_mesh(tris: PackedVector3Array) -> ArrayMesh:
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+static func _collider_vert_key(v: Vector3) -> String:
+	return "%d,%d,%d" % [int(round(v.x * 10000.0)), int(round(v.y * 10000.0)), int(round(v.z * 10000.0))]
+
+func _collider_skin_offset(v: Vector3, vnormal_sums: Dictionary) -> Vector3:
+	var sum: Vector3 = vnormal_sums.get(_collider_vert_key(v), Vector3.ZERO)
+	if sum == Vector3.ZERO:
+		return Vector3.ZERO
+	return sum.normalized() * COLLIDER_SKIN_INFLATE
+
+## Unshaded translucent material for the collider skin passes. DEPTH-TESTED
+## (the skin must be occluded by geometry in front of it — far-side backs
+## must not bleed through); CULL_BACK is what makes front vs back winding
+## visible per viewpoint.
+func _make_collider_side_material(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = false
+	mat.cull_mode = BaseMaterial3D.CULL_BACK
+	return mat
