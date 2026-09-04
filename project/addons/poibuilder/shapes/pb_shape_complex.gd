@@ -540,20 +540,6 @@ static func create_curved_stairs(
 	var positions := PackedVector3Array()
 	var textures0 := PackedVector2Array()
 	var faces: Array[PBFace] = []
-	var ramp_faces := PackedVector3Array()
-
-	var add_ramp_quad := func(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3) -> void:
-		ramp_faces.append(p0)
-		ramp_faces.append(p1)
-		ramp_faces.append(p2)
-		ramp_faces.append(p0)
-		ramp_faces.append(p2)
-		ramp_faces.append(p3)
-
-	var add_ramp_tri := func(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
-		ramp_faces.append(p0)
-		ramp_faces.append(p1)
-		ramp_faces.append(p2)
 
 	var step_h: float = height / float(num_steps)
 
@@ -586,48 +572,6 @@ static func create_curved_stairs(
 			var t2 := Vector3(v1.x * r_out, y1, v1.z * r_out)
 			var t3 := Vector3(v1.x * r_in,  y1, v1.z * r_in)
 			_add_quad(positions, textures0, faces, t0, t1, t2, t3)
-
-		# Ramp collider faces for this segment
-		var ramp_y0: float = -hh + (float(s) / float(num_steps)) * height
-		var ramp_y1: float = -hh + (float(s + 1) / float(num_steps)) * height
-		# Top ramp surface: normal pointing upward (+Y)
-		if is_pie:
-			var rc_center := Vector3(0.0, ramp_y0, 0.0)
-			var rc_out0 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
-			var rc_out1 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
-			add_ramp_tri.call(rc_center, rc_out0, rc_out1)
-		else:
-			var rp0 := Vector3(v0.x * r_in,  ramp_y0, v0.z * r_in)
-			var rp1 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
-			var rp2 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
-			var rp3 := Vector3(v1.x * r_in,  ramp_y1, v1.z * r_in)
-			add_ramp_quad.call(rp0, rp1, rp2, rp3)
-
-		if sides:
-			# Outer ramp wall
-			var row_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
-			var row_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
-			var row_t1 := Vector3(v1.x * r_out,  ramp_y1, v1.z * r_out)
-			var row_t0 := Vector3(v0.x * r_out,  ramp_y0, v0.z * r_out)
-			add_ramp_quad.call(row_b0, row_b1, row_t1, row_t0)
-
-			# Inner ramp wall
-			if not is_pie:
-				var riw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
-				var riw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
-				var riw_t1 := Vector3(v1.x * r_in,  ramp_y1, v1.z * r_in)
-				var riw_t0 := Vector3(v0.x * r_in,  ramp_y0, v0.z * r_in)
-				add_ramp_quad.call(riw_b1, riw_b0, riw_t0, riw_t1)
-
-			# Ramp floor
-			var rf_out0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
-			var rf_out1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
-			if is_pie:
-				add_ramp_tri.call(Vector3(0.0, -hh, 0.0), rf_out1, rf_out0)
-			else:
-				var rf_in0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
-				var rf_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
-				add_ramp_quad.call(rf_in0, rf_in1, rf_out1, rf_out0)
 
 		if sides:
 			# Outer wall under step s (facing radially outward)
@@ -670,12 +614,6 @@ static func create_curved_stairs(
 		var b2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
 		var b3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
 		_add_quad(positions, textures0, faces, b0, b1, b2, b3)
-		# Ramp back wall
-		var rb0 := Vector3(v_end.x * r_out, -hh, v_end.z * r_out)
-		var rb1 := Vector3(v_end.x * r_in,  -hh, v_end.z * r_in)
-		var rb2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
-		var rb3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
-		add_ramp_quad.call(rb0, rb1, rb2, rb3)
 
 
 	# Negative curvature: mirror along X and reverse winding
@@ -684,12 +622,6 @@ static func create_curved_stairs(
 			positions[i].x = -positions[i].x
 		for face in faces:
 			face.reverse()
-		for i in range(ramp_faces.size()):
-			ramp_faces[i].x = -ramp_faces[i].x
-		for i in range(0, ramp_faces.size(), 3):
-			var tmp := ramp_faces[i + 1]
-			ramp_faces[i + 1] = ramp_faces[i + 2]
-			ramp_faces[i + 2] = tmp
 
 
 	# Center around origin in X and Z
@@ -706,10 +638,6 @@ static func create_curved_stairs(
 		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
 		for i in range(positions.size()):
 			positions[i] -= offset
-		for i in range(ramp_faces.size()):
-			ramp_faces[i] -= offset
-
-	mesh_data.set_meta("ramp_faces", ramp_faces)
 
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
@@ -718,6 +646,158 @@ static func create_curved_stairs(
 	mesh_data.shared_textures = []
 	mesh_data.invalidate_caches()
 	return mesh_data
+
+
+## Builds ONLY the physics ramp wedge for create_curved_stairs: a closed solid
+## under an inclined annular-sector top (incline + radial walls + floor + back
+## wall). This is the RAMP collider — a smooth walkable stand-in for the steps.
+## PBMesh._update_collider rebuilds it fresh from shape_params; it is never
+## stored on the mesh data (a stored copy goes stale on the first edit).
+##
+## WINDING (load-bearing): triangles are emitted CW seen from OUTSIDE — Godot's
+## front-face convention — because Godot Physics collides on the FRONT side of
+## concave triangles only (ConcavePolygonShape3D.backface_collision stays
+## false). The visual mesh is CCW-from-outside in data and is reversed inside
+## to_array_mesh(); this array bypasses that path, so it must be pre-reversed.
+## An inward-wound wedge is passable from outside and solid from inside —
+## characters walk in through a wall and get trapped (the 0.9.28 bug).
+## Regression lock: test_pb_collider_audit.gd (signed volume, per-face exterior
+## ray battery, character containment + climb).
+static func create_curved_stairs_ramp(
+	stair_width: float = 1.5,
+	height: float = 2.0,
+	inner_radius: float = 0.5,
+	circumference: float = 180.0,
+	steps: int = 8,
+	sides: bool = true
+) -> PackedVector3Array:
+	var num_steps: int = maxi(1, steps)
+	var hh: float = height * 0.5
+	var r_in: float = maxf(0.0, inner_radius)
+	var r_out: float = r_in + maxf(0.05, stair_width)
+
+	# PIE STAIRS (inner_radius == 0): the visual mesh fans the treads to the
+	# axis, but fanning the collider there leaves one unsealable vertical slit
+	# per spoke (adjacent fan triangles meet the axis at different heights, and
+	# a one-sided concave face cannot close the crack from both sides). The
+	# ramp instead keeps a tiny 5cm-radius pole hole — walkable-behavior
+	# identical, closed shell, uniform audits.
+	if r_in < 0.05:
+		r_in = 0.05
+
+	var is_flipped: bool = circumference < 0.0
+	var cir: float = deg_to_rad(absf(circumference))
+	if cir <= 0.0001:
+		cir = deg_to_rad(180.0)
+
+	var ramp := PackedVector3Array()
+
+	var add_tri := func(a: Vector3, b: Vector3, c: Vector3) -> void:
+		ramp.append(a)
+		ramp.append(b)
+		ramp.append(c)
+
+	# Tessellate the wedge along the sweep FINER than the step grid. The
+	# incline is a twisted helical strip: with one quad per step its two
+	# triangle halves' normals differ by ~25 degrees (measured: 27 deg vs 53
+	# deg local slope on the default stairs), and the second half pops ~0.18 m
+	# above the first's plane. To a character controller the steep facet is a
+	# WALL (floor_max_angle 45-50 deg), so a capsule climbing the ramp locks
+	# dead against the first crease — the "stuck on touch" report. Crease
+	# angle falls with the SQUARE of the slice arc; 4 slices per step keeps
+	# every facet within ~1-2 degrees of the true slope.
+	const SLICES_PER_STEP := 4
+	var total: int = num_steps * SLICES_PER_STEP
+
+	for g in range(total):
+		var f0: float = float(g) / float(total)
+		var f1: float = float(g + 1) / float(total)
+
+		var inc0: float = f0 * cir
+		var inc1: float = f1 * cir
+
+		var ramp_y0: float = -hh + f0 * height
+		var ramp_y1: float = -hh + f1 * height
+
+		var v0 := Vector3(-cos(inc0), 0.0, sin(inc0))
+		var v1 := Vector3(-cos(inc1), 0.0, sin(inc1))
+
+		# Top incline: front must point up-and-downhill (out of the wedge).
+		var rp0 := Vector3(v0.x * r_in,  ramp_y0, v0.z * r_in)
+		var rp1 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
+		var rp2 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
+		var rp3 := Vector3(v1.x * r_in,  ramp_y1, v1.z * r_in)
+		add_tri.call(rp0, rp2, rp1)
+		add_tri.call(rp0, rp3, rp2)
+
+		if sides:
+			# Outer wall: front points radially outward. At the first segment
+			# the wedge pinches to a line (ramp_y0 == -hh), so the quad
+			# collapses to one triangle — emit only the non-degenerate half.
+			var row_b0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
+			var row_b1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
+			var row_t1 := Vector3(v1.x * r_out, ramp_y1, v1.z * r_out)
+			var row_t0 := Vector3(v0.x * r_out, ramp_y0, v0.z * r_out)
+			add_tri.call(row_b0, row_t1, row_b1)
+			if ramp_y0 > -hh + 0.0001:
+				add_tri.call(row_b0, row_t0, row_t1)
+
+			# Inner wall: front points toward the center hole. Same first-
+			# segment pinch: (riw_b1, riw_t0, riw_b0) degenerates there, so
+			# the OTHER half is the one that always carries the wall.
+			var riw_b0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
+			var riw_b1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
+			var riw_t1 := Vector3(v1.x * r_in, ramp_y1, v1.z * r_in)
+			var riw_t0 := Vector3(v0.x * r_in, ramp_y0, v0.z * r_in)
+			add_tri.call(riw_b1, riw_t1, riw_t0)
+			if ramp_y0 > -hh + 0.0001:
+				add_tri.call(riw_b1, riw_t0, riw_b0)
+
+			# Floor: front points down (-Y).
+			var rf_out0 := Vector3(v0.x * r_out, -hh, v0.z * r_out)
+			var rf_out1 := Vector3(v1.x * r_out, -hh, v1.z * r_out)
+			var rf_in0 := Vector3(v0.x * r_in, -hh, v0.z * r_in)
+			var rf_in1 := Vector3(v1.x * r_in, -hh, v1.z * r_in)
+			add_tri.call(rf_in0, rf_out1, rf_in1)
+			add_tri.call(rf_in0, rf_out0, rf_out1)
+
+	if sides:
+		# Back wall at the final angle: front points away from the wedge.
+		var v_end := Vector3(-cos(cir), 0.0, sin(cir))
+		var rb0 := Vector3(v_end.x * r_out, -hh, v_end.z * r_out)
+		var rb1 := Vector3(v_end.x * r_in,  -hh, v_end.z * r_in)
+		var rb2 := Vector3(v_end.x * r_in,   hh, v_end.z * r_in)
+		var rb3 := Vector3(v_end.x * r_out,  hh, v_end.z * r_out)
+		add_tri.call(rb0, rb2, rb1)
+		add_tri.call(rb0, rb3, rb2)
+
+	# Negative curvature: mirror along X (flips handedness) and re-reverse
+	# winding so fronts stay outward — mirrors the visual-mesh flip above.
+	if is_flipped:
+		for i in range(ramp.size()):
+			ramp[i].x = -ramp[i].x
+		for i in range(0, ramp.size(), 3):
+			var tmp := ramp[i + 1]
+			ramp[i + 1] = ramp[i + 2]
+			ramp[i + 2] = tmp
+
+	# Center the wedge in XZ exactly like the mesh (same angle/radius sample
+	# set, so the extremes coincide with the visual mesh's own centering).
+	if ramp.size() > 0:
+		var min_x: float = ramp[0].x
+		var max_x: float = ramp[0].x
+		var min_z: float = ramp[0].z
+		var max_z: float = ramp[0].z
+		for p in ramp:
+			min_x = minf(min_x, p.x)
+			max_x = maxf(max_x, p.x)
+			min_z = minf(min_z, p.z)
+			max_z = maxf(max_z, p.z)
+		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
+		for i in range(ramp.size()):
+			ramp[i] -= offset
+
+	return ramp
 
 
 # ==============================================================================

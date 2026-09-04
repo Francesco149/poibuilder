@@ -266,22 +266,24 @@ func _build_straight_stairs_ramp_shape() -> Shape3D:
 func _build_curved_stairs_ramp_shape() -> Shape3D:
 	if pb_mesh_data == null:
 		return null
-	if pb_mesh_data.has_meta("ramp_faces"):
-		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(pb_mesh_data.get_meta("ramp_faces"))
-		return shape
+	# The ramp is a DESIGN-TIME simplification of the pristine primitive. Once
+	# the stairs have been edited (or params never existed), the params no
+	# longer describe the geometry — regenerate nothing and fall back to a
+	# geometry-accurate trimesh of the CURRENT mesh instead of emitting a
+	# collider that silently disagrees with what the user sees.
+	if pb_mesh_data.shape_edited or pb_mesh_data.shape_params.is_empty():
+		return mesh.create_trimesh_shape()
 
-	# Fallback: generate matching curved stairs with shape_params to retrieve ramp_faces
-	var params: Dictionary = pb_mesh_data.shape_params if pb_mesh_data != null else {}
-	var stair_w: float = float(params.get("stair_width", 1.5))
-	var h: float = float(params.get("height", 2.0))
-	var r_in: float = maxf(0.0, float(params.get("inner_radius", 0.5)))
-	var cur_deg: float = float(params.get("curvature", 180.0))
-	var steps: int = maxi(1, int(params.get("steps", 8)))
-	var sides: bool = float(params.get("sides", 1.0)) > 0.5
-	var temp := PBShapeComplex.create_curved_stairs(stair_w, h, r_in, cur_deg, steps, sides)
-	if temp != null and temp.has_meta("ramp_faces"):
-		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(temp.get_meta("ramp_faces"))
-		return shape
-	return null
+	var params: Dictionary = pb_mesh_data.shape_params
+	var faces := PBShapeComplex.create_curved_stairs_ramp(
+		float(params.get("stair_width", 1.5)),
+		float(params.get("height", 2.0)),
+		maxf(0.0, float(params.get("inner_radius", 0.5))),
+		float(params.get("curvature", 180.0)),
+		maxi(1, int(params.get("steps", 8))),
+		float(params.get("sides", 1.0)) > 0.5)
+	if faces.is_empty():
+		return mesh.create_trimesh_shape()
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	return shape
