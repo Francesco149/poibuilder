@@ -638,11 +638,64 @@ func _run() -> void:
 	else:
 		_pass("UNDO: view refreshed immediately after undo (pixel_diff=%d)" % diff)
 
-	# DEBUG: screenshot the final extruded state (view-vs-data comparison).
-	await _mouse_motion(_window_pos(vp, host, Vector3(0.5, 0.4, 2.5)))
-	await _frames(6)
-	(vp.get_texture().get_image()).save_png("/tmp/pb_extrude_state.png")
-	print("[GUI TEST] DEBUG extrude-state screenshot saved, positions=%d" % b.pb_mesh_data.positions.size())
+	# ── Test 10: collider winding overlay (show_collider) ────────────────────
+	# The overlay must skin the active collider: green solid on face fronts,
+	# red on backs, plus an x-ray wireframe. The scene is placed AWAY from the
+	# world origin so the viewport's red X-axis origin line cannot pollute the
+	# pixel counts.
+	b.position = Vector3(30, 0, 0) # move the extrude-test cube out of frame
+	a.visible = false              # and hide the origin cube: stairs render alone
+	var stairs := PBMesh.new()
+	stairs.name = "GuiTestStairs"
+	stairs.pb_mesh_data = PBShapeFactory.create_shape(&"curved_stair", Vector3(2, 2, 2))
+	stairs.position = Vector3(6, 0, 6.5)
+	root.add_child(stairs)
+	stairs.owner = root
+	stairs.show_collider = true
+	sel.clear()
+	await _frames(3)
+	var col_body := stairs.get_collider_body()
+	var col_shape := col_body.get_node_or_null(NodePath("CollisionShape3D")) as CollisionShape3D
+	if not (col_shape != null and col_shape.shape is ConcavePolygonShape3D):
+		_fail("COLLIDER: curved stairs ramp should be ConcavePolygonShape3D")
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(2.6, 2.1, 10.1)) \
+		.looking_at(Vector3(6, 0, 6.2), Vector3.UP)
+	await _frames(20)
+	var shot_col := vp.get_texture().get_image()
+	shot_col.save_png("/tmp/pb_collider_overlay.png")
+	# Count pixels only inside the stairs' projected bounding rect.
+	var aabb10: AABB = stairs.mesh.get_aabb()
+	var r0 := Vector2(INF, INF)
+	var r1 := Vector2(-INF, -INF)
+	for cx in [aabb10.position.x, aabb10.end.x]:
+		for cy in [aabb10.position.y, aabb10.end.y]:
+			for cz in [aabb10.position.z, aabb10.end.z]:
+				var sp: Vector2 = cam.unproject_position(stairs.global_transform * Vector3(cx, cy, cz))
+				r0 = r0.min(sp)
+				r1 = r1.max(sp)
+	var frame_x := Rect2i(Vector2i(r0), Vector2i(r1 - r0)).grow(10).intersection(Rect2i(Vector2i.ZERO, shot_col.get_size()))
+	var red_px := 0
+	var green_px := 0
+	for py in range(frame_x.position.y, frame_x.end.y):
+		for px in range(frame_x.position.x, frame_x.end.x):
+			var c := shot_col.get_pixel(px, py)
+			if c.r > 0.35 and c.r > c.g + 0.12 and c.r > c.b + 0.12:
+				red_px += 1
+			elif c.g > 0.3 and c.g > c.r + 0.12 and c.g > c.b + 0.10:
+				green_px += 1
+	print("[GUI TEST] DEBUG collider overlay: green=%d red=%d roi=%s" % [green_px, red_px, frame_x])
+	# Red is legal in patches: the floor annulus's front faces DOWN, so any
+	# above-side view sees its back (red) where the skin bulges past the
+	# silhouette. What may NOT happen is red FLOODING the view: a bulk
+	# inversion shows red on the dominant contact surfaces (the pre-0.9.29
+	# ramp read ~22k red px in this exact frame).
+	if green_px < 1500: # the solid skin band alone is thousands of px; ~300 could come from the viewport's Y-axis line
+		_fail("COLLIDER: overlay not drawn (green_px=%d)" % green_px)
+	elif red_px > green_px / 3:
+		_fail("COLLIDER: red dominates the outside view (red=%d green=%d) — bulk winding inversion" % [red_px, green_px])
+	else:
+		_pass("COLLIDER: winding overlay drawn, red contained (green=%d, red=%d)" % [green_px, red_px])
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
