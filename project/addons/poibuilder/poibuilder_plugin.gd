@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.38"
+const VERSION := "0.9.39"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -431,28 +431,13 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 		grid.unit_down()
 	elif action == &"grid_raise":
 		grid.raise()
-		_redraw_viewport()
 	elif action == &"grid_lower":
 		grid.lower()
-		_redraw_viewport()
 	elif action == &"grid_reset":
 		grid.reset_origin()
-		_redraw_viewport()
 	else:
 		return AFTER_GUI_INPUT_PASS
 	return AFTER_GUI_INPUT_STOP
-func _redraw_viewport() -> void:
-	var vp := get_editor_interface().get_editor_viewport_3d(0)
-	if vp != null:
-		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-		var p := vp.get_parent()
-		if p != null and p is CanvasItem:
-			p.queue_redraw()
-		if p != null and p.get_parent() != null and p.get_parent() is CanvasItem:
-			p.get_parent().queue_redraw()
-	if editor != null and editor.active_mesh != null:
-		editor.active_mesh.update_gizmos()
-
 func _is_repeatable_grid_key(k: InputEventKey) -> bool:
 	var act := PBActions.action_for(k, _settings)
 	return act == &"grid_raise" or act == &"grid_lower"
@@ -493,7 +478,6 @@ func _on_grid_changed() -> void:
 			str(grid.draw_on_grid), str(grid.show_grid), str(grid.origin.y),
 			str(grid.rotate_step_deg)])
 	grid_view.mark_dirty()
-	_redraw_viewport()
 	# Object-mode engine snap tracks live grid changes while a PBMesh is
 	# selected (element modes never use it — see _update_editing_context).
 	if editor.active_mesh != null and not editor.is_editing():
@@ -740,12 +724,12 @@ func _process(_delta: float) -> void:
 ## on an elevated/custom grid, or grid settings panel is open).
 func show_grid_should_draw() -> bool:
 	return editor.active_mesh != null or shape_creator.is_active() or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
-
 func _attach_grid_view_scenario() -> void:
 	if grid_view == null:
 		return
 	var vp := get_editor_interface().get_editor_viewport_3d(0)
 	if vp != null:
+		vp.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
 		var w3d := vp.find_world_3d()
 		if w3d != null:
 			grid_view.attach_scenario(w3d.get_scenario())

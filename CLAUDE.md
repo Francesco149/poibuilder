@@ -775,6 +775,21 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.39 round complete ✓ — root-cause fix for 3D viewport freeze (render_target_update_mode):
+- ROOT CAUSE OF 3D SCENE FREEZE:
+  In v0.9.38, `_redraw_viewport()` assigned `vp.render_target_update_mode = SubViewport.UPDATE_ONCE`
+  to the editor's main 3D SubViewport. In Godot's C++ rendering pipeline (`viewport.cpp:5720`),
+  after the rendering server renders that single frame, it automatically switches the viewport's
+  update mode to `VIEWPORT_UPDATE_DISABLED`. This permanently halted continuous 3D rendering
+  in the editor until an action (like toggling the grid) triggered another one-shot update.
+- RESOLUTION:
+  - Completely removed `_redraw_viewport()` and all assignments to `render_target_update_mode`.
+  - `_enter_tree()` now self-heals and explicitly restores
+    `vp.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE`.
+  - Normal per-frame `_process()` updates `grid_view.update(cam)` and
+    `RenderingServer.instance_set_transform` cleanly while the engine's viewport
+    renders continuously as designed.
+
 v0.9.38 round complete ✓ — concave extrusion face flip fix, live grid repeat viewport redraw:
 - EXTRUSION FLIPPED FACES FIX (CONCAVE / STEPPED PROFILES):
   In `PBElementEditor`, the side quad live-flip check during `EXTRUDE_MOVE`
