@@ -775,6 +775,26 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.35 round complete ✓ — shortcut label naming & EditorSettingsDialog discoverability:
+- ROOT CAUSE OF MISSING `grid_raise` IN SETTINGS:
+  In Godot C++ (`editor_settings_dialog.cpp:712`), the Shortcuts dialog iterates
+  shortcuts and does `if (!sc->has_meta("original")) { continue; }`, silently
+  skipping any shortcut lacking the `"original"` metadata tag. If a shortcut
+  existed in settings without `"original"` (e.g. from prior runs or unbinds),
+  it was never shown. Furthermore, `_make_shortcut` never called `sc.set_name()`,
+  so shortcuts were assigned internal slug names (`grid_raise`, `grid_lower`)
+  rather than human-readable labels, causing searches for "Elevation" or "Raise"
+  to miss.
+- RESOLUTION:
+  - `_make_shortcut(id)` now explicitly sets `sc.set_name(ACTIONS[id]["label"])`
+    so shortcuts appear as `Grid: Raise Elevation`, `Grid: Lower Elevation`, etc.
+  - `PBActions.register()` guarantees `sc.has_meta("original")` is always set
+    and updates existing shortcuts with proper labels and default events.
+- VERIFICATION:
+  Unit test in `test_pb_grid.gd` asserts `grid_raise` and `grid_lower` have
+  proper display labels and `"original"` metadata. GUI harness asserts both
+  shortcuts are registered with labels and events in a live editor.
+
 v0.9.34 round complete ✓ — grayish light-blue grid palette:
 - GRID PALETTE TUNING: replaced punchy saturated cyan with a soft, neutral,
   grayish light-blue (`COLOR_MAJOR = Color(0.52, 0.68, 0.82, 0.55)`,

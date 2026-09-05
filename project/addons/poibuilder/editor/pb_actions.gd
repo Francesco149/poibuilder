@@ -153,20 +153,31 @@ static func register(settings: Object, logger: Object = null) -> void:
 	unbind_conflicts(settings, logger)
 	for id: String in ACTIONS:
 		var path := PREFIX + id
+		var def_sc := _make_shortcut(id)
 		if not settings.has_shortcut(path):
-			settings.add_shortcut(path, _make_shortcut(id))
-		else:
-			var sc: Shortcut = settings.get_shortcut(path)
-			if sc != null and sc.events.is_empty() and ACTIONS[id]["keys"].size() > 0:
-				sc.events = _make_shortcut(id).events
+			settings.add_shortcut(path, def_sc)
+		var sc: Shortcut = settings.get_shortcut(path)
+		if sc != null:
+			# Ensure human-readable display label ("Grid: Raise Elevation", etc.)
+			if sc.get_name().is_empty() or sc.get_name() == id:
+				sc.set_name(ACTIONS[id]["label"])
+			# Ensure meta("original") is always set so EditorSettingsDialog displays it!
+			if not sc.has_meta("original"):
+				sc.set_meta("original", sc.events.duplicate(true))
+			# Ensure empty shortcuts receive default events
+			if sc.events.is_empty() and ACTIONS[id]["keys"].size() > 0:
+				sc.events = def_sc.events.duplicate(true)
+				sc.set_meta("original", def_sc.events.duplicate(true))
+
 static func _make_shortcut(id: String) -> Shortcut:
 	var sc := Shortcut.new()
+	if ACTIONS.has(id) and ACTIONS[id].has("label"):
+		sc.set_name(ACTIONS[id]["label"])
 	var events: Array[InputEvent] = []
 	for spec: Array in ACTIONS[id]["keys"]:
 		events.append(make_event(spec))
 	sc.events = events
 	return sc
-
 ## Builds the InputEventKey for a table entry [physical_key, ctrl, shift, alt].
 static func make_event(spec: Array) -> InputEventKey:
 	var ev := InputEventKey.new()
