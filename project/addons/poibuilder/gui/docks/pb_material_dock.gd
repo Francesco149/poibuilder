@@ -107,7 +107,6 @@ func _save_default_material_setting(path: String) -> void:
 	var settings = EditorInterface.get_editor_settings() if Engine.is_editor_hint() else null
 	if settings != null:
 		settings.set_setting(SETTING_DEFAULT_MATERIAL, path)
-		settings.save()
 
 func get_default_material() -> Material:
 	if ResourceLoader.exists(_default_material_path):

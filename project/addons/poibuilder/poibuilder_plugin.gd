@@ -877,10 +877,10 @@ func _load_display_settings() -> void:
 			grid_op = float(_settings.get_setting("poibuilder/display/grid_opacity"))
 		if _settings.has_setting("poibuilder/display/wireframe_opacity"):
 			wire_op = float(_settings.get_setting("poibuilder/display/wireframe_opacity"))
-		if _settings.has_setting("poibuilder/display/selection_opacity"):
-			sel_op = float(_settings.get_setting("poibuilder/display/selection_opacity"))
-		if _settings.has_setting("poibuilder/display/hover_opacity"):
-			hov_op = float(_settings.get_setting("poibuilder/display/hover_opacity"))
+		if _settings.has_setting("poibuilder/display/selection_opacity_v2"):
+			sel_op = float(_settings.get_setting("poibuilder/display/selection_opacity_v2"))
+		if _settings.has_setting("poibuilder/display/hover_opacity_v2"):
+			hov_op = float(_settings.get_setting("poibuilder/display/hover_opacity_v2"))
 
 	grid_view.grid_opacity = grid_op
 	gizmo_plugin.apply_display_opacities(wire_op, sel_op, hov_op)
@@ -903,8 +903,10 @@ func _on_display_setting_changed(setting_name: StringName, value: float) -> void
 			if editor.active_mesh != null:
 				editor.active_mesh.update_gizmos()
 	if _settings != null:
-		_settings.set_setting("poibuilder/display/" + String(setting_name), value)
-		_settings.save()
+		var key := String(setting_name)
+		if key == "selection_opacity" or key == "hover_opacity":
+			key += "_v2"
+		_settings.set_setting("poibuilder/display/" + key, value)
 
 func _on_display_reset() -> void:
 	_on_display_setting_changed(&"grid_opacity", 0.7)

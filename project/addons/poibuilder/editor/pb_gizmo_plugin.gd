@@ -144,6 +144,8 @@ func _init() -> void:
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
+	_face_fill_material = _make_face_fill_material(Color(FACE_FILL_COLOR.r, FACE_FILL_COLOR.g, FACE_FILL_COLOR.b, 0.25))
+	_face_hover_fill_material = _make_face_fill_material(Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, 0.25))
 
 func set_logger(value: PBLogger) -> void:
 	logger = value
