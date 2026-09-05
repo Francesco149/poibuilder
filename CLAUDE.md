@@ -775,6 +775,33 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.36 round complete ✓ — keybind layout matching, grid lifecycle per mode, surface picking default:
+- KEYBIND MATCHING FIX (`[` and `]` without reassignment):
+  `make_event(spec)` previously only set `ev.physical_keycode` while `ev.keycode`
+  was `KEY_NONE`. On keyboards or layouts where incoming key events carry `keycode`
+  or translate physical keys, Godot's `Shortcut::is_match` failed to match until
+  the user manually reassigned the key in settings (which wrote `keycode`).
+  `make_event` now initializes `keycode`, `physical_keycode`, and `key_label`.
+  Additionally, `PBActions.action_for` falls back to `_match_default` whenever
+  `settings.is_shortcut` misses.
+- GRID LIFECYCLE & POIBUILDER-ONLY MODES:
+  `_on_selection_changed()` previously only updated `editor.active_mesh` when a
+  `PBMesh` was selected; selecting a non-PBMesh (or deselecting) left `editor.active_mesh`
+  stale forever, causing PoiBuilder's grid to stay visible permanently.
+  `_on_selection_changed` now unconditionally assigns `editor.active_mesh = pb_mesh`.
+  The grid now only renders in PoiBuilder modes (PBMesh selected, shape creation
+  armed, draw_on_grid on, elevated grid, or grid settings panel open); selecting
+  a non-PoiBuilder node or deselecting cleanly restores Godot's stock grid.
+  `_process()` also tracks `vp.find_world_3d().get_scenario()` and re-attaches
+  whenever a new scene/scenario loads.
+- SURFACE-DRAWING DEFAULT & COMPREHENSIVE PICKING:
+  `draw_on_grid` was previously included in `GRID_SETTING_KEYS`, persisting as
+  `true` into `EditorSettings` and permanently forcing grid-plane creation over
+  surfaces. `draw_on_grid` is now session-only, forced to `false` on startup, and
+  removed from persistent keys. `_pick_creation_surface()` and hover tracking
+  now pick `PBMesh` faces, generic `MeshInstance3D` triangle meshes, and scene
+  physics colliders, falling back to the grid plane only when no surface is hit.
+
 v0.9.35 round complete ✓ — shortcut label naming & EditorSettingsDialog discoverability:
 - ROOT CAUSE OF MISSING `grid_raise` IN SETTINGS:
   In Godot C++ (`editor_settings_dialog.cpp:712`), the Shortcuts dialog iterates
