@@ -72,6 +72,14 @@ var _grid_controls: Dictionary = {}
 ## Grid settings panel state (opened by the toolbar Grid button).
 var grid_panel_open: bool = false
 
+## Display settings panel state (opened by the toolbar Settings button).
+var settings_panel_open: bool = false
+var _settings_section: VBoxContainer
+var _display_controls: Dictionary = {}
+
+signal display_setting_changed(setting_name: StringName, value: float)
+signal display_reset_pressed
+
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
 
@@ -323,6 +331,7 @@ func _ensure_ui() -> void:
 	buttons_row.add_child(cancel_btn)
 
 	_build_grid_section()
+	_build_settings_section()
 
 	_params_section.visible = false
 	_selection_row.visible = false
@@ -700,6 +709,120 @@ func _build_grid_section() -> void:
 
 	_grid_section.visible = false
 
+## Builds the display settings section (grid, wireframe, selection, hover opacity).
+func _build_settings_section() -> void:
+	_settings_section = VBoxContainer.new()
+	_settings_section.name = "SettingsSection"
+	_settings_section.add_theme_constant_override("separation", 3)
+	_body.add_child(_settings_section)
+
+	var title := Label.new()
+	title.text = "DISPLAY SETTINGS"
+	title.add_theme_font_size_override("font_size", 10)
+	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_settings_section.add_child(title)
+
+	var rows := GridContainer.new()
+	rows.columns = 2
+	rows.add_theme_constant_override("h_separation", 8)
+	rows.add_theme_constant_override("v_separation", 2)
+	_settings_section.add_child(rows)
+
+	# Grid Opacity (default 0.7)
+	var grid_spin := SpinBox.new()
+	grid_spin.name = "GridOpacity"
+	grid_spin.min_value = 0.0
+	grid_spin.max_value = 1.0
+	grid_spin.step = 0.05
+	grid_spin.value = 0.7
+	grid_spin.tooltip_text = "Master opacity for PoiBuilder 3D grid (default 0.7)"
+	grid_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"grid_opacity", v))
+	rows.add_child(_make_row_label("Grid Opacity"))
+	rows.add_child(grid_spin)
+	_display_controls["grid_opacity"] = grid_spin
+
+	# Wireframe Opacity
+	var wire_spin := SpinBox.new()
+	wire_spin.name = "WireframeOpacity"
+	wire_spin.min_value = 0.0
+	wire_spin.max_value = 1.0
+	wire_spin.step = 0.05
+	wire_spin.value = 1.0
+	wire_spin.tooltip_text = "Base mesh wireframe opacity"
+	wire_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"wireframe_opacity", v))
+	rows.add_child(_make_row_label("Wireframe"))
+	rows.add_child(wire_spin)
+	_display_controls["wireframe_opacity"] = wire_spin
+
+	# Selection Opacity (default 1.0 multiplier)
+	var sel_spin := SpinBox.new()
+	sel_spin.name = "SelectionOpacity"
+	sel_spin.min_value = 0.0
+	sel_spin.max_value = 2.0
+	sel_spin.step = 0.05
+	sel_spin.value = 1.0
+	sel_spin.tooltip_text = "Selection highlight opacity multiplier"
+	sel_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"selection_opacity", v))
+	rows.add_child(_make_row_label("Selection"))
+	rows.add_child(sel_spin)
+	_display_controls["selection_opacity"] = sel_spin
+
+	# Hover Opacity (default 1.0 multiplier)
+	var hover_spin := SpinBox.new()
+	hover_spin.name = "HoverOpacity"
+	hover_spin.min_value = 0.0
+	hover_spin.max_value = 2.0
+	hover_spin.step = 0.05
+	hover_spin.value = 1.0
+	hover_spin.tooltip_text = "Cursor hover highlight opacity multiplier"
+	hover_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"hover_opacity", v))
+	rows.add_child(_make_row_label("Hover"))
+	rows.add_child(hover_spin)
+	_display_controls["hover_opacity"] = hover_spin
+
+	# Reset footer
+	var footer := HBoxContainer.new()
+	_settings_section.add_child(footer)
+	var space := Control.new()
+	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.add_child(space)
+	var reset_btn := Button.new()
+	reset_btn.name = "DisplayReset"
+	reset_btn.text = "Reset"
+	reset_btn.focus_mode = Control.FOCUS_NONE
+	reset_btn.tooltip_text = "Reset display settings to defaults"
+	reset_btn.pressed.connect(func(): display_reset_pressed.emit())
+	footer.add_child(reset_btn)
+
+	_settings_section.visible = false
+
+func open_settings() -> void:
+	settings_panel_open = true
+	panel_enabled = true
+	_ensure_ui()
+	_settings_section.visible = true
+	reset_size()
+	expand()
+	refresh()
+
+func close_settings() -> void:
+	settings_panel_open = false
+	if _ui_built:
+		_settings_section.visible = false
+	reset_size()
+	refresh()
+
+func sync_display_settings(grid_op: float, wire_op: float, sel_op: float, hov_op: float) -> void:
+	build_ui()
+	if _display_controls.has("grid_opacity"):
+		_display_controls["grid_opacity"].set_value_no_signal(grid_op)
+	if _display_controls.has("wireframe_opacity"):
+		_display_controls["wireframe_opacity"].set_value_no_signal(wire_op)
+	if _display_controls.has("selection_opacity"):
+		_display_controls["selection_opacity"].set_value_no_signal(sel_op)
+	if _display_controls.has("hover_opacity"):
+		_display_controls["hover_opacity"].set_value_no_signal(hov_op)
+
 ## Opens the grid settings panel (toolbar Grid button).
 func open_grid() -> void:
 	grid_panel_open = true
@@ -819,7 +942,7 @@ func refresh() -> void:
 		drag_value_label.text = element_editor.drag_readout()
 
 	# Content presence: is there anything meaningful to display in the body?
-	var has_content := params_open or grid_panel_open or has_creation_hint() or dragging or has_selection
+	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or dragging or has_selection
 
 	# "empty panel is auto collapsed to just the header, not displayed empty."
 	if editor != null and not has_content:
@@ -847,7 +970,7 @@ func update_visibility() -> void:
 	var mesh_selected := editor.active_mesh != null
 	visible = (mesh_selected and (pinned or params_open or _has_selection() \
 		or (element_editor != null and element_editor.drag_active))) \
-		or creation_hint or grid_panel_open
+		or creation_hint or grid_panel_open or settings_panel_open
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
 		return false

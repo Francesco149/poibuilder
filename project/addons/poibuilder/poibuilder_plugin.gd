@@ -127,6 +127,7 @@ func _enter_tree():
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
 	toolbar.materials_dock_requested.connect(focus_material_dock)
+	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
 	_add_toolbar_row_below_3d_toolbar()
 	toolbar.sync_grid(grid)
 
@@ -142,6 +143,9 @@ func _enter_tree():
 	tool_overlay.grid_setting_changed.connect(_on_grid_ui_setting)
 	tool_overlay.grid_reset_pressed.connect(_on_grid_reset)
 	tool_overlay.sync_grid(grid)
+	tool_overlay.display_setting_changed.connect(_on_display_setting_changed)
+	tool_overlay.display_reset_pressed.connect(_on_display_reset)
+	_load_display_settings()
 	_add_overlay_to_3d_viewport(tool_overlay)
 
 	# Material drag-and-drop overlay in the 3D viewport
@@ -854,6 +858,60 @@ func _on_reset_panel_requested() -> void:
 		tool_overlay.update_visibility()
 		if logger:
 			logger.info("plugin", "Overlay panel recovered to bottom-left corner")
+
+func _on_settings_panel_toggled(open: bool) -> void:
+	if tool_overlay == null:
+		return
+	if open:
+		tool_overlay.open_settings()
+	else:
+		tool_overlay.close_settings()
+
+func _load_display_settings() -> void:
+	var grid_op := 0.7
+	var wire_op := 1.0
+	var sel_op := 1.0
+	var hov_op := 1.0
+	if _settings != null:
+		if _settings.has_setting("poibuilder/display/grid_opacity"):
+			grid_op = float(_settings.get_setting("poibuilder/display/grid_opacity"))
+		if _settings.has_setting("poibuilder/display/wireframe_opacity"):
+			wire_op = float(_settings.get_setting("poibuilder/display/wireframe_opacity"))
+		if _settings.has_setting("poibuilder/display/selection_opacity"):
+			sel_op = float(_settings.get_setting("poibuilder/display/selection_opacity"))
+		if _settings.has_setting("poibuilder/display/hover_opacity"):
+			hov_op = float(_settings.get_setting("poibuilder/display/hover_opacity"))
+
+	grid_view.grid_opacity = grid_op
+	gizmo_plugin.apply_display_opacities(wire_op, sel_op, hov_op)
+	tool_overlay.sync_display_settings(grid_op, wire_op, sel_op, hov_op)
+
+func _on_display_setting_changed(setting_name: StringName, value: float) -> void:
+	match setting_name:
+		&"grid_opacity":
+			grid_view.grid_opacity = value
+		&"wireframe_opacity":
+			gizmo_plugin.apply_display_opacities(value, gizmo_plugin.selection_opacity, gizmo_plugin.hover_opacity)
+			if editor.active_mesh != null:
+				editor.active_mesh.update_gizmos()
+		&"selection_opacity":
+			gizmo_plugin.apply_display_opacities(gizmo_plugin.wireframe_opacity, value, gizmo_plugin.hover_opacity)
+			if editor.active_mesh != null:
+				editor.active_mesh.update_gizmos()
+		&"hover_opacity":
+			gizmo_plugin.apply_display_opacities(gizmo_plugin.wireframe_opacity, gizmo_plugin.selection_opacity, value)
+			if editor.active_mesh != null:
+				editor.active_mesh.update_gizmos()
+	if _settings != null:
+		_settings.set_setting("poibuilder/display/" + String(setting_name), value)
+		_settings.save()
+
+func _on_display_reset() -> void:
+	_on_display_setting_changed(&"grid_opacity", 0.7)
+	_on_display_setting_changed(&"wireframe_opacity", 1.0)
+	_on_display_setting_changed(&"selection_opacity", 1.0)
+	_on_display_setting_changed(&"hover_opacity", 1.0)
+	tool_overlay.sync_display_settings(0.7, 1.0, 1.0, 1.0)
 
 ## Focuses the Material & UV dock.
 func focus_material_dock() -> void:

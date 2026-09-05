@@ -18,7 +18,7 @@ extends RefCounted
 
 ## Grayish light-blue palette (less punchy than cyan, distinct from drag/hover overlays).
 const COLOR_MINOR := Color(0.46, 0.58, 0.70, 0.22)
-const COLOR_MAJOR := Color(0.52, 0.68, 0.82, 0.55)
+const COLOR_MAJOR := Color(0.52, 0.68, 0.82, 0.70)
 const COLOR_AXIS_X := Color(0.90, 0.38, 0.38, 0.85)
 const COLOR_AXIS_Z := Color(0.38, 0.56, 0.90, 0.85)
 
@@ -38,6 +38,7 @@ uniform vec4 axis_x_color : source_color = vec4(0.90, 0.38, 0.38, 0.85);
 uniform vec4 axis_z_color : source_color = vec4(0.38, 0.56, 0.90, 0.85);
 uniform float fade_distance = 800.0;
 uniform bool orthogonal = false;
+uniform float grid_opacity = 0.7;
 
 varying vec3 world_pos;
 
@@ -109,7 +110,7 @@ void fragment() {
 	float cam_dist = length(CAMERA_POSITION_WORLD - world_pos);
 	float dist_fade = 1.0 - smoothstep(fade_distance * 0.4, fade_distance, cam_dist);
 
-	a *= angle_fade * dist_fade;
+	a *= angle_fade * dist_fade * grid_opacity;
 
 	if (a <= 0.001) {
 		discard;
@@ -121,6 +122,13 @@ void fragment() {
 """
 
 var grid: PBGrid = null
+
+## Master grid opacity (default 0.7).
+var grid_opacity: float = 0.7:
+	set(v):
+		if not is_equal_approx(grid_opacity, v):
+			grid_opacity = v
+			_dirty = true
 var logger: PBLogger = null
 
 ## RenderingServer resource IDs
@@ -221,6 +229,7 @@ func update(cam: Camera3D) -> bool:
 		RenderingServer.material_set_param(_material_rid, &"orthogonal", cam.projection == Camera3D.PROJECTION_ORTHOGONAL)
 		var fade_dist := clampf(cam.far, 300.0, 1500.0)
 		RenderingServer.material_set_param(_material_rid, &"fade_distance", fade_dist)
+		RenderingServer.material_set_param(_material_rid, &"grid_opacity", grid_opacity)
 
 	var focus := _focus_cam(xf, elev)
 	_rebuild_lines(focus, elev, height)

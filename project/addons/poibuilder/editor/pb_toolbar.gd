@@ -54,6 +54,9 @@ signal reset_panel_requested
 signal grid_panel_toggled(open: bool)
 
 ## Emitted when the user clicks the Material & UV dock button to focus it.
+
+## Emitted when the user toggles the Display Settings section in the overlay.
+signal settings_panel_toggled(open: bool)
 signal materials_dock_requested
 # ==============================================================================
 # Icons
@@ -80,6 +83,7 @@ var _btn_overlay: Button
 var _btn_recover_overlay: Button
 var _btn_materials: Button
 var _op_buttons: Dictionary = {}
+var _btn_settings: Button
 
 var _btn_grid_panel: Button
 var _lbl_grid_state: Label
@@ -238,6 +242,19 @@ func _build_ui() -> void:
 	_btn_materials.tooltip_text = "Material & UV: Focus the material picker and UV mapping dock"
 	_btn_materials.pressed.connect(func(): materials_dock_requested.emit())
 	add_child(_btn_materials)
+
+	# Display Settings button (opens settings in overlay panel)
+	_btn_settings = Button.new()
+	_btn_settings.name = "SettingsButton"
+	_btn_settings.icon = _load_icon("icon_settings.svg")
+	if _btn_settings.icon == null:
+		_btn_settings.text = "Settings"
+	_btn_settings.flat = true
+	_btn_settings.toggle_mode = true
+	_btn_settings.focus_mode = Control.FOCUS_NONE
+	_btn_settings.tooltip_text = "Display settings (grid, wireframe, selection, hover opacity)"
+	_btn_settings.toggled.connect(func(on: bool): settings_panel_toggled.emit(on))
+	add_child(_btn_settings)
 func _label_space() -> void:
 	add_child(VSeparator.new())
 
@@ -445,6 +462,10 @@ func set_grid_panel_open(open: bool) -> void:
 func set_materials_dock_active(active: bool) -> void:
 	if _btn_materials != null and _btn_materials.button_pressed != active:
 		_btn_materials.set_pressed_no_signal(active)
+
+func set_settings_panel_open(open: bool) -> void:
+	if _btn_settings != null and _btn_settings.button_pressed != open:
+		_btn_settings.set_pressed_no_signal(open)
 
 func new_shape_button() -> MenuButton:
 	return _btn_new_shape

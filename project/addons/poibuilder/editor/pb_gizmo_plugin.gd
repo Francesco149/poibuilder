@@ -36,12 +36,12 @@ const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 1.0)
 ## strokes (half offset, one stack pair instead of two).
 const EDGE_MODE_WIREFRAME_COLOR := Color(0.2, 0.9, 1.0, 0.8)
 ## Selection is YELLOW (thick strokes for edges / solid-ish fills for faces).
-const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.85)
-const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.32)
+const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.425)
+const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.16)
 ## Hover highlight: CYAN — the same language ProBuilder uses to say "this is
 ## under your cursor, not selected". Selected stays yellow.
-const HOVER_COLOR := Color(0.2, 0.9, 1.0, 0.75)
-const HOVER_FACE_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.22)
+const HOVER_COLOR := Color(0.2, 0.9, 1.0, 0.375)
+const HOVER_FACE_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.11)
 const VERTEX_COLOR := Color(0.05, 0.05, 0.05, 1.0)
 const VERTEX_DOT_SIZE: float = 7.0
 const VERTEX_DOT_SELECTED_SIZE: float = 11.0
@@ -115,6 +115,20 @@ var _vertex_dot_hover_material: StandardMaterial3D
 var _face_fill_material: StandardMaterial3D
 var _face_hover_fill_material: StandardMaterial3D
 var _creation_fill_material: StandardMaterial3D
+
+## Display opacities (multipliers from Settings panel).
+var wireframe_opacity: float = 1.0
+var selection_opacity: float = 1.0
+var hover_opacity: float = 1.0
+
+func apply_display_opacities(p_wireframe: float, p_selection: float, p_hover: float) -> void:
+	wireframe_opacity = p_wireframe
+	selection_opacity = p_selection
+	hover_opacity = p_hover
+	if _face_fill_material != null:
+		_face_fill_material.albedo_color = Color(FACE_FILL_COLOR.r, FACE_FILL_COLOR.g, FACE_FILL_COLOR.b, FACE_FILL_COLOR.a * selection_opacity)
+	if _face_hover_fill_material != null:
+		_face_hover_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
 
 # ==============================================================================
 # Lifecycle
@@ -588,7 +602,9 @@ func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 	if fill == null:
 		return
 	if _face_fill_material == null:
-		_face_fill_material = _make_face_fill_material(FACE_FILL_COLOR)
+		_face_fill_material = _make_face_fill_material(Color(FACE_FILL_COLOR.r, FACE_FILL_COLOR.g, FACE_FILL_COLOR.b, FACE_FILL_COLOR.a * selection_opacity))
+	else:
+		_face_fill_material.albedo_color = Color(FACE_FILL_COLOR.r, FACE_FILL_COLOR.g, FACE_FILL_COLOR.b, FACE_FILL_COLOR.a * selection_opacity)
 	gizmo.add_mesh(fill, _face_fill_material)
 
 ## The hovered (not selected) face as a translucent yellow fill — same yellow
@@ -603,7 +619,9 @@ func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 	if fill == null:
 		return
 	if _face_hover_fill_material == null:
-		_face_hover_fill_material = _make_face_fill_material(HOVER_FACE_FILL_COLOR)
+		_face_hover_fill_material = _make_face_fill_material(Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity))
+	else:
+		_face_hover_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
 	gizmo.add_mesh(fill, _face_hover_fill_material)
 
 ## Selected edges as bright on-top strokes (thick in EDGE mode). Loop
