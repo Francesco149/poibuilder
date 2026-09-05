@@ -479,22 +479,42 @@ static func create_stairs(
 		var t3 := Vector3( hw, y1, z0)
 		_add_quad(positions, textures0, faces, t0, t1, t2, t3)
 
-		if sides:
-			# Left side wall quad under step s (normal -X)
-			var ls0 := Vector3(-hw, -hh, z0)
-			var ls1 := Vector3(-hw, -hh, z1)
-			var ls2 := Vector3(-hw,  y1, z1)
-			var ls3 := Vector3(-hw,  y1, z0)
-			_add_quad(positions, textures0, faces, ls0, ls1, ls2, ls3)
-
-			# Right side wall quad under step s (normal +X)
-			var rs0 := Vector3(hw, -hh, z0)
-			var rs1 := Vector3(hw,  y1, z0)
-			var rs2 := Vector3(hw,  y1, z1)
-			var rs3 := Vector3(hw, -hh, z1)
-			_add_quad(positions, textures0, faces, rs0, rs1, rs2, rs3)
-
 	if sides:
+		# Build the 2D profile polygon in (Z, Y): bottom-front -> bottom-back -> top-back -> stepped descent
+		var side_poly := PackedVector2Array()
+		side_poly.append(Vector2(-hd, -hh))
+		side_poly.append(Vector2(hd, -hh))
+		side_poly.append(Vector2(hd, hh))
+		for s in range(num_steps - 1, -1, -1):
+			var y0: float = -hh + float(s) * step_h
+			var y1: float = -hh + float(s + 1) * step_h
+			var z0: float = -hd + float(s) * step_d
+			side_poly.append(Vector2(z0, y1))
+			if s > 0:
+				side_poly.append(Vector2(z0, y0))
+
+		var corner_tris := _triangulate_2d(side_poly)
+
+		# Left side wall: one merged n-gon face (normal -X)
+		var base_l: int = positions.size()
+		for p in side_poly:
+			positions.append(Vector3(-hw, p.y, p.x))
+			textures0.append(Vector2(p.x, p.y))
+		var l_indexes := PackedInt32Array()
+		for t in corner_tris:
+			l_indexes.append_array(PackedInt32Array([base_l + int(t[0]), base_l + int(t[1]), base_l + int(t[2])]))
+		faces.append(PBFace.new(l_indexes))
+
+		# Right side wall: one merged n-gon face (normal +X, reversed triangle winding)
+		var base_r: int = positions.size()
+		for p in side_poly:
+			positions.append(Vector3(hw, p.y, p.x))
+			textures0.append(Vector2(p.x, p.y))
+		var r_indexes := PackedInt32Array()
+		for t in corner_tris:
+			r_indexes.append_array(PackedInt32Array([base_r + int(t[0]), base_r + int(t[2]), base_r + int(t[1])]))
+		faces.append(PBFace.new(r_indexes))
+
 		# Back wall quad (normal +Z)
 		var b0 := Vector3(-hw, -hh, hd)
 		var b1 := Vector3( hw, -hh, hd)

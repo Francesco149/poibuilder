@@ -159,9 +159,9 @@ func test_stairs_default():
 	assert_eq(md.validate(), "", "Stairs should validate")
 	assert_gt(md.face_count(), 0)
 	assert_gt(md.vertex_count(), 0)
-	# 6 steps × 2 (riser+tread) + 6 left + 6 right + 1 back = 25 faces
-	assert_eq(md.face_count(), 25)
-	assert_eq(md.vertex_count(), 100)
+	# 6 steps × 2 (riser+tread) + 1 left + 1 right + 1 back = 15 faces
+	assert_eq(md.face_count(), 15)
+	assert_eq(md.vertex_count(), 80)
 
 func test_stairs_step_count():
 	var md = PBShapeComplex.create_stairs(Vector3(1, 1, 2), 4, false)
@@ -174,9 +174,19 @@ func test_stairs_with_sides():
 	var md = PBShapeComplex.create_stairs(Vector3(1, 1, 2), 4, true)
 	assert_eq(md.validate(), "")
 	assert_gt(md.face_count(), 8, "With sides should have more faces")
-	# 4 × 2 + 4 + 4 + 1 = 17 faces
-	assert_eq(md.face_count(), 17)
-	assert_eq(md.vertex_count(), 68)
+	# 4 × 2 (steps) + 1 (back) + 1 (left side) + 1 (right side) = 11 faces
+	assert_eq(md.face_count(), 11)
+	assert_eq(md.vertex_count(), 56)
+	var left_faces: int = 0
+	var right_faces: int = 0
+	for f in md.faces:
+		var fn := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if fn.dot(Vector3.LEFT) > 0.99:
+			left_faces += 1
+		elif fn.dot(Vector3.RIGHT) > 0.99:
+			right_faces += 1
+	assert_eq(left_faces, 1, "Left side is 1 merged face")
+	assert_eq(right_faces, 1, "Right side is 1 merged face")
 
 func test_stairs_compiles():
 	var md = PBShapeComplex.create_stairs()

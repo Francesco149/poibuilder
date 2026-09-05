@@ -159,6 +159,13 @@ func test_unpressed_and_echo_events_never_match():
 	var echo := _key(KEY_H)
 	echo.echo = true
 	assert_eq(String(PBActions.action_for(echo)), "")
+	# Grid raise / lower actions DO match on echo (auto-repeat)
+	var echo_raise := _key(KEY_BRACKETRIGHT)
+	echo_raise.echo = true
+	assert_eq(String(PBActions.action_for(echo_raise)), "grid_raise", "grid_raise repeats on echo")
+	var echo_lower := _key(KEY_BRACKETLEFT)
+	echo_lower.echo = true
+	assert_eq(String(PBActions.action_for(echo_lower)), "grid_lower", "grid_lower repeats on echo")
 
 class FakeEditorSettings:
 	var shortcuts: Dictionary = {}

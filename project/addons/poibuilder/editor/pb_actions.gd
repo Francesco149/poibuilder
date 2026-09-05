@@ -201,25 +201,30 @@ static func action_for(event: InputEvent, settings: Object = null) -> StringName
 	if not (event is InputEventKey):
 		return &""
 	var key_event := event as InputEventKey
-	if not key_event.pressed or key_event.echo:
+	if not key_event.pressed:
 		return &""
 	if settings != null and settings.has_method("is_shortcut"):
 		for id: String in ACTIONS:
 			var path := PREFIX + id
 			if settings.has_shortcut(path) and settings.is_shortcut(path, key_event):
-				return StringName(id)
+				var act := StringName(id)
+				if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
+					return act
 		# Fallback: if settings shortcut matching missed due to keycode vs physical_keycode layout mismatch
 		for id: String in ACTIONS:
 			for spec: Array in ACTIONS[id]["keys"]:
 				if _match_default(key_event, spec):
-					return StringName(id)
+					var act := StringName(id)
+					if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
+						return act
 	else:
 		for id: String in ACTIONS:
 			for spec: Array in ACTIONS[id]["keys"]:
 				if _match_default(key_event, spec):
-					return StringName(id)
+					var act := StringName(id)
+					if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
+						return act
 	return &""
-
 ## Default-table matching: physical keycode (layout-independent), with the
 ## keycode as fallback, and EXACT modifier equality.
 static func _match_default(event: InputEventKey, spec: Array) -> bool:
