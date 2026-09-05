@@ -5,7 +5,7 @@ extends GutTest
 func test_shape_ids_not_empty():
 	var ids := PBShapeFactory.get_shape_ids()
 	assert_gt(ids.size(), 0, "Must have at least one shape")
-	assert_eq(ids.size(), 13, "Factory exposes 13 shape types")
+	assert_eq(ids.size(), 14, "Factory exposes 14 shape types")
 
 func test_shape_ids_unique():
 	var ids := PBShapeFactory.get_shape_ids()
@@ -18,7 +18,7 @@ func test_shape_ids_contain_all_types():
 	var ids := PBShapeFactory.get_shape_ids()
 	for expected in [&"cube", &"prism", &"plane", &"sprite",
 		&"cylinder", &"cone", &"pipe",
-		&"sphere", &"torus", &"arch", &"stair", &"curved_stair", &"door"]:
+		&"sphere", &"torus", &"arch", &"stair", &"curved_stair", &"door", &"ngon"]:
 		assert_true(ids.has(expected), "Missing shape: %s" % expected)
 
 # = is_valid_shape =
@@ -125,6 +125,12 @@ func test_create_door():
 	assert_eq(md.vertex_count(), 70)
 	assert_eq(md.face_count(), 13)
 
+
+func test_create_ngon():
+	var md := PBShapeFactory.create_shape(&"ngon")
+	assert_not_null(md)
+	assert_eq(md.validate(), "")
+	assert_eq(md.face_count(), 8) # 6 sides + 2 caps
 func test_create_unknown():
 	var md := PBShapeFactory.create_shape(&"nonexistent")
 	assert_null(md, "Unknown shape returns null")

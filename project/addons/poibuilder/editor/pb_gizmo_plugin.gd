@@ -73,6 +73,9 @@ var element_editor: PBElementEditor = PBElementEditor.new()
 ## plugin pauses element interaction and this plugin draws the creation
 ## overlays instead. May be null (creation never started).
 var shape_creator: PBShapeCreator = null
+## Interactive N-gon drawing session (Knife tool / N-Gon shape extrusion)
+var ngon_drawer: PBNgonDrawer = null
+
 
 ## The face currently hovered during shape creation (cyan highlight).
 var creation_hover_node: PBMesh = null
@@ -335,6 +338,14 @@ func _redraw(gizmo) -> void:
 				and creation_hover_face < mesh_data.faces.size():
 			_draw_creation_hover(gizmo, mesh_data, creation_hover_face)
 			return
+
+	# N-gon drawing session (Knife tool or N-Gon shape extrusion)
+	if ngon_drawer != null and ngon_drawer.is_active():
+		if ngon_drawer.state == PBNgonDrawer.State.HEIGHT and ngon_drawer.preview_node == node:
+			_draw_ngon_height_preview(gizmo, mesh_data, ngon_drawer)
+			return
+		if ngon_drawer.preview_node == node or ngon_drawer.target_mesh == node or (ngon_drawer.target_mesh == null and _node_selected(node)):
+			_draw_ngon_drawer_overlay(gizmo, mesh_data, ngon_drawer)
 
 	if not _node_selected(node):
 		if node.show_collider and node.collider_type != PBMesh.ColliderType.OFF:
@@ -844,6 +855,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 			PackedVector3Array([creator.base_start, creator.base_end]))
 		return
 
+
 	# HEIGHT / PARAMS: box bounds around the live preview mesh.
 	var aabb := PBShapeCreator._aabb_of(mesh_data)
 	var p0 := aabb.position
@@ -903,6 +915,87 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 			var to_local := node.global_transform.affine_inverse()
 			_add_vert_squares(gizmo, to_local, PackedVector3Array([creation_hover_point]))
 
+## Draws the polygon vertices, connecting lines, and live line to cursor for Knife / N-Gon drawing.
+func _draw_ngon_drawer_overlay(gizmo, mesh_data: PBMeshData, drawer: PBNgonDrawer) -> void:
+	_creation_materials()
+	var node := gizmo.get_node_3d() as Node3D
+	if node == null:
+		return
+	var to_local := node.global_transform.affine_inverse()
+	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+
+	# 1. Drawn lines between placed vertices
+	var pts := drawer.points
+	if pts.size() >= 2:
+		var lines := PackedVector3Array()
+		for i in range(pts.size() - 1):
+			lines.append(to_local * pts[i])
+			lines.append(to_local * pts[i + 1])
+		_add_thick_lines(gizmo, lines, _creation_edge_material, creation_offset)
+
+	# 2. Live line from last vertex to cursor
+	if not pts.is_empty() and drawer.live_cursor_point != Vector3.ZERO:
+		var last_p := pts[pts.size() - 1]
+		if last_p.distance_to(drawer.live_cursor_point) > 0.001:
+			var live_line := PackedVector3Array([to_local * last_p, to_local * drawer.live_cursor_point])
+			_add_thick_lines(gizmo, live_line, _creation_edge_material, creation_offset)
+
+	# 3. If hovering near first vertex (and >= 3 vertices), draw closing line preview
+	if pts.size() >= 3 and drawer.hovered_vert_idx == 0:
+		var close_line := PackedVector3Array([to_local * drawer.live_cursor_point, to_local * pts[0]])
+		_add_thick_lines(gizmo, close_line, _creation_edge_material, creation_offset)
+
+	# 4. Placed vertices (yellow squares)
+	if not pts.is_empty():
+		var vert_pts := PackedVector3Array()
+		for p in pts:
+			vert_pts.append(p)
+		_add_vert_squares(gizmo, to_local, vert_pts)
+
+	# 5. Live cursor point square (under mouse)
+	if drawer.live_cursor_point != Vector3.ZERO:
+		_add_vert_squares(gizmo, to_local, PackedVector3Array([drawer.live_cursor_point]))
+
+## Draws the live 3D extrusion bounds for N-Gon shape extrusion in HEIGHT state.
+func _draw_ngon_height_preview(gizmo, mesh_data: PBMeshData, drawer: PBNgonDrawer) -> void:
+	_creation_materials()
+	var node := gizmo.get_node_3d() as Node3D
+	if node == null:
+		return
+	var to_local := node.global_transform.affine_inverse()
+	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+
+	var pts := drawer.points
+	var n := pts.size()
+	if n < 3:
+		return
+
+	var h_offset := drawer.plane_normal * drawer.height
+
+	var lines := PackedVector3Array()
+	# Bottom cap edges
+	for i in range(n):
+		var j := (i + 1) % n
+		lines.append(to_local * pts[i])
+		lines.append(to_local * pts[j])
+	# Top cap edges
+	for i in range(n):
+		var j := (i + 1) % n
+		lines.append(to_local * (pts[i] + h_offset))
+		lines.append(to_local * (pts[j] + h_offset))
+	# Side vertical edges
+	for i in range(n):
+		lines.append(to_local * pts[i])
+		lines.append(to_local * (pts[i] + h_offset))
+
+	_add_thick_lines(gizmo, lines, _creation_edge_material, creation_offset)
+
+	# Vertex squares at bottom and top
+	var vert_pts := PackedVector3Array()
+	for p in pts:
+		vert_pts.append(p)
+		vert_pts.append(p + h_offset)
+	_add_vert_squares(gizmo, to_local, vert_pts)
 ## Collider inspection overlay over the node's ACTIVE physics shape.
 ##
 ## Two layers:

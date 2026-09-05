@@ -950,6 +950,72 @@ func _run() -> void:
 		else:
 			_fail("OBJECT-SNAP: translate snap not restored (%.3f)" % ts2)
 
+
+	# ── Test 16: Knife Tool cuts face and splits it into two selectable n-gons ──
+	b.pb_mesh_data = PBMeshData.create_cube(1.0)
+	b.position = Vector3(3, 0, 0)
+	await _frames(8)
+	sel.clear()
+	sel.add_node(b)
+	await _frames(6)
+	plugin.editor.select_mode = PBEditor.SelectMode.FACE
+	await _frames(6)
+
+	var top_face_idx := -1
+	for fi in range(b.pb_mesh_data.faces.size()):
+		var n := PBMath.normal_from_positions(b.pb_mesh_data.positions, b.pb_mesh_data.faces[fi].get_indexes())
+		if n.dot(Vector3.UP) > 0.9:
+			top_face_idx = fi
+			break
+
+	var orig_face_count: int = b.pb_mesh_data.faces.size()
+	plugin._on_operation_requested("knife_tool")
+	await _frames(4)
+
+	if not plugin.ngon_drawer.is_active() or plugin.ngon_drawer.mode != PBNgonDrawer.Mode.KNIFE:
+		_fail("KNIFE: tool did not activate in KNIFE mode")
+	else:
+		_pass("KNIFE: armed in KNIFE mode")
+		var p_start := Vector3(3.0, 0.5, -0.49)
+		var p_end := Vector3(3.0, 0.5, 0.49)
+		plugin.ngon_drawer.begin(p_start, Vector3.UP, b, top_face_idx)
+		plugin.ngon_drawer.add_point(p_end)
+		await _frames(4)
+		plugin._on_ngon_drawer_complete()
+		await _frames(6)
+		var new_face_count: int = b.pb_mesh_data.faces.size()
+		if new_face_count == orig_face_count + 1:
+			_pass("KNIFE: face cut split face into two n-gons (faces: %d -> %d)" % [orig_face_count, new_face_count])
+		else:
+			_fail("KNIFE: face count mismatch after cut (expected %d, got %d)" % [orig_face_count + 1, new_face_count])
+
+	# ── Test 17: N-Gon shape extrusion creates custom 3D prism ──
+	plugin._on_shape_requested(&"ngon")
+	await _frames(4)
+	if not plugin.ngon_drawer.is_active() or plugin.ngon_drawer.mode != PBNgonDrawer.Mode.NGON_EXTRUDE:
+		_fail("NGON-EXTRUDE: did not arm in NGON_EXTRUDE mode")
+	else:
+		_pass("NGON-EXTRUDE: armed in NGON_EXTRUDE mode")
+		plugin.ngon_drawer.begin(Vector3(5, 0, 0), Vector3.UP)
+		plugin.ngon_drawer.add_point(Vector3(7, 0, 0))
+		plugin.ngon_drawer.add_point(Vector3(6, 0, 2))
+		await _frames(4)
+		plugin._on_ngon_drawer_complete()
+		await _frames(4)
+		if plugin.ngon_drawer.state != PBNgonDrawer.State.HEIGHT:
+			_fail("NGON-EXTRUDE: Enter did not transition to HEIGHT state")
+		else:
+			_pass("NGON-EXTRUDE: Enter transitioned to HEIGHT state")
+			plugin.ngon_drawer.height = 2.0
+			plugin._refresh_ngon_preview()
+			await _frames(4)
+			plugin._on_ngon_drawer_confirm_height()
+			await _frames(6)
+			var created_ngon := get_tree().get_edited_scene_root().get_node_or_null("Shape_Ngon")
+			if created_ngon != null and created_ngon is PBMesh:
+				_pass("NGON-EXTRUDE: created Shape_Ngon PBMesh node (faces: %d)" % created_ngon.pb_mesh_data.faces.size())
+			else:
+				_fail("NGON-EXTRUDE: Shape_Ngon node not found in scene tree")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

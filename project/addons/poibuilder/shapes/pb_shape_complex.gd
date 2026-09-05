@@ -986,3 +986,107 @@ static func create_door(
 	mesh_data.shared_textures = []
 	mesh_data.invalidate_caches()
 	return mesh_data
+
+## Creates a 3D extruded prism from an arbitrary n-gon polygon.
+## Both the top and bottom caps are emitted as single merged n-gon PBFace instances,
+## and side walls are emitted as individual quad PBFace instances.
+## polygon: base vertices in 3D (at least 3 vertices)
+## height: extrusion distance along normal (positive or negative)
+## normal: extrusion direction (if ZERO, computed from polygon vertices)
+static func create_ngon_prism(
+	polygon: PackedVector3Array,
+	height: float = 1.0,
+	normal: Vector3 = Vector3.ZERO
+) -> PBMeshData:
+	if polygon.size() < 3:
+		return null
+
+	var n := normal
+	if n.length_squared() < 0.0001:
+		n = PBMath.normal_from_positions(polygon, PackedInt32Array(range(polygon.size())))
+		if n.length_squared() < 0.0001:
+			n = Vector3.UP
+	n = n.normalized()
+
+	var up := Vector3.UP if absf(n.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u_axis := n.cross(up).normalized()
+	var v_axis := n.cross(u_axis).normalized()
+	var origin := polygon[0]
+
+	var pts2d := PackedVector2Array()
+	for p in polygon:
+		pts2d.append(Vector2((p - origin).dot(u_axis), (p - origin).dot(v_axis)))
+
+	var area := 0.0
+	var num_pts := pts2d.size()
+	for i in range(num_pts):
+		var j := (i + 1) % num_pts
+		area += pts2d[i].x * pts2d[j].y - pts2d[j].x * pts2d[i].y
+
+	var poly_3d := polygon.duplicate()
+	if area < 0.0:
+		pts2d.reverse()
+		var poly_rev := PackedVector3Array()
+		for i in range(poly_3d.size() - 1, -1, -1):
+			poly_rev.append(poly_3d[i])
+		poly_3d = poly_rev
+
+	var tris := _triangulate_2d(pts2d)
+	if tris.is_empty():
+		return null
+
+	var eff_height := height if absf(height) > 0.0001 else 0.001
+	var extrusion_offset := n * eff_height
+
+	var positions := PackedVector3Array()
+	var textures0 := PackedVector2Array()
+	var faces: Array[PBFace] = []
+
+	# Bottom Cap (at base) - normal points -N
+	var base_bottom := positions.size()
+	for p in poly_3d:
+		positions.append(p)
+		textures0.append(Vector2((p - origin).dot(u_axis), (p - origin).dot(v_axis)))
+	var bottom_idxs := PackedInt32Array()
+	for t in tris:
+		if eff_height >= 0.0:
+			bottom_idxs.append_array(PackedInt32Array([base_bottom + int(t[0]), base_bottom + int(t[2]), base_bottom + int(t[1])]))
+		else:
+			bottom_idxs.append_array(PackedInt32Array([base_bottom + int(t[0]), base_bottom + int(t[1]), base_bottom + int(t[2])]))
+	faces.append(PBFace.new(bottom_idxs))
+
+	# Top Cap (at base + extrusion_offset) - normal points +N
+	var base_top := positions.size()
+	for p in poly_3d:
+		positions.append(p + extrusion_offset)
+		textures0.append(Vector2((p - origin).dot(u_axis), (p - origin).dot(v_axis)))
+	var top_idxs := PackedInt32Array()
+	for t in tris:
+		if eff_height >= 0.0:
+			top_idxs.append_array(PackedInt32Array([base_top + int(t[0]), base_top + int(t[1]), base_top + int(t[2])]))
+		else:
+			top_idxs.append_array(PackedInt32Array([base_top + int(t[0]), base_top + int(t[2]), base_top + int(t[1])]))
+	faces.append(PBFace.new(top_idxs))
+
+	# Side Quads (connecting base to top for each perimeter edge)
+	var n_corners := poly_3d.size()
+	for i in range(n_corners):
+		var j := (i + 1) % n_corners
+		var b_i := poly_3d[i]
+		var b_j := poly_3d[j]
+		var t_i := poly_3d[i] + extrusion_offset
+		var t_j := poly_3d[j] + extrusion_offset
+		if eff_height >= 0.0:
+			_add_quad(positions, textures0, faces, b_i, b_j, t_j, t_i)
+		else:
+			_add_quad(positions, textures0, faces, b_i, t_i, t_j, b_j)
+
+	var mesh_data := PBMeshData.new()
+	mesh_data.positions = positions
+	mesh_data.textures0 = textures0
+	mesh_data.faces = faces
+	mesh_data.shared_vertices = _build_shared_vertices(positions)
+	mesh_data.shared_textures = []
+	mesh_data.calculate_normals()
+	mesh_data.invalidate_caches()
+	return mesh_data

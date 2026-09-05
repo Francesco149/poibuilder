@@ -94,6 +94,12 @@ static func get_param_defs(shape_id: StringName) -> Array:
 				_value_def("outer_radius", "Outer Radius", 0.1, 50.0, 0.5, "m"),
 				_value_def("tube_radius", "Tube Radius", 0.01, 25.0, 0.15, "m"),
 			]
+		&"ngon":
+			return [
+				_value_def("radius", "Radius", 0.05, 50.0, 1.0, "m"),
+				_value_def("height", "Height", 0.05, 100.0, 2.0, "m"),
+				_count_def("sides", "Sides", 3, 64, 6),
+			]
 	return []
 
 ## Default value per parameter name (defaults live with the defs so the
@@ -143,6 +149,15 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 		&"torus":
 			var inner: float = maxf(0.01, v["outer_radius"] - v["tube_radius"])
 			data = PBShapeComplex.create_torus(inner, v["tube_radius"])
+		&"ngon":
+			var sides: int = int(v["sides"]) if v.has("sides") else 6
+			var radius: float = float(v["radius"]) if v.has("radius") else 1.0
+			var height: float = float(v["height"]) if v.has("height") else 2.0
+			var poly := PackedVector3Array()
+			for i in range(sides):
+				var angle: float = float(i) * TAU / float(sides)
+				poly.append(Vector3(cos(angle) * radius, 0.0, sin(angle) * radius))
+			data = PBShapeComplex.create_ngon_prism(poly, height, Vector3.UP)
 	if data != null:
 		data.shape_id = shape_id
 		data.shape_params = v.duplicate()

@@ -24,6 +24,10 @@ var _settings: Object = null
 ## editor's 3D SubViewport; it never pollutes the edited scene).
 var grid_view: PBGridView = PBGridView.new(grid)
 
+## Shape creation and interactive polygon drawing controllers
+var shape_creator: PBShapeCreator = PBShapeCreator.new()
+var ngon_drawer: PBNgonDrawer = PBNgonDrawer.new()
+
 # ==============================================================================
 # UI Components
 # ==============================================================================
@@ -59,7 +63,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.42"
+const VERSION := "0.9.43"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -79,6 +83,8 @@ func _enter_tree():
 	gizmo_plugin.element_editor.grid = grid
 	gizmo_plugin.shape_creator = shape_creator
 	shape_creator.grid = grid
+	gizmo_plugin.ngon_drawer = ngon_drawer
+	ngon_drawer.grid = grid
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
 
@@ -192,6 +198,13 @@ func _exit_tree():
 		logger.info("plugin", "PoiBuilder plugin exiting tree")
 
 	# Drop a half-created shape preview (it never entered the undo history).
+	if ngon_drawer.is_active():
+		var node := ngon_drawer.preview_node
+		ngon_drawer.reset()
+		if node != null and is_instance_valid(node) and node.get_parent() != null:
+			node.get_parent().remove_child(node)
+			node.queue_free()
+
 	if shape_creator.is_active():
 		var node := shape_creator.preview_node
 		shape_creator.reset()
@@ -344,6 +357,10 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
 		gizmo_plugin.element_editor.track_mouse(camera, event.position)
 
+	# Interactive N-gon drawing / Knife tool owns the mouse while active
+	if ngon_drawer.is_active():
+		return _ngon_drawer_input(camera, event)
+
 	# Shape creation owns the mouse while armed/dragging/modal (checked even
 	# when nothing is selected — creation needs no editing context).
 	if shape_creator.is_active():
@@ -398,7 +415,7 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
 	var editing := editor.is_editing()
-	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active()
+	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active()
 	match action:
 		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
 		# nothing PoiBuilder-related active, scene-tree search fields would
@@ -444,7 +461,7 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
 	if action == &"toggle_snap":
-		if editor.is_editing() or editor.active_mesh != null or shape_creator.is_active():
+		if editor.is_editing() or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active():
 			grid.enabled = not grid.enabled
 			return AFTER_GUI_INPUT_STOP
 		return AFTER_GUI_INPUT_PASS
@@ -715,7 +732,9 @@ func _update_editing_context() -> void:
 		# or shape creation armed) the engine's stock grid hides and our cyan
 		# grid draws (PBGridView); in OBJECT mode the engine's own transform
 		# snap also tracks our grid so node-level drags match element drags.
-		var pb_context := mesh_selected or shape_creator.is_active() or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
+		var sc_active := shape_creator != null and shape_creator.is_active()
+		var ng_active := ngon_drawer != null and ngon_drawer.is_active()
+		var pb_context := mesh_selected or sc_active or ng_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
 		var cam3d: Camera3D = null
 		var vp := get_editor_interface().get_editor_viewport_3d(0)
 		if vp != null:
@@ -760,7 +779,9 @@ func _process(_delta: float) -> void:
 ## selected — object mode included — or shape creation is armed, or drawing
 ## on an elevated/custom grid, or grid settings panel is open).
 func show_grid_should_draw() -> bool:
-	return editor.active_mesh != null or shape_creator.is_active() or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
+	var sc_active := shape_creator != null and shape_creator.is_active()
+	var ng_active := ngon_drawer != null and ngon_drawer.is_active()
+	return editor.active_mesh != null or sc_active or ng_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
 func _attach_grid_view_scenario() -> void:
 	if grid_view == null:
 		return
@@ -1058,6 +1079,10 @@ func _on_operation_requested(op_name: String) -> void:
 	if op_name == "detach_faces":
 		_perform_detach(mesh, selection.selected_faces.duplicate())
 		return
+	if op_name == "knife_tool":
+		_start_knife_tool()
+		return
+
 
 	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
 	if logger:
@@ -1157,13 +1182,13 @@ const OP_ACTION_NAMES := {
 	"extrude_edges": "Extrude Edges",
 	"insert_edge_loop": "Insert Edge Loop",
 	"weld_vertices": "Weld Vertices",
+	"knife_tool": "Knife Cut",
 }
 
 # ==============================================================================
 # Shape Creation (drag base → height → params, ProBuilder-style)
 # ==============================================================================
 
-var shape_creator: PBShapeCreator = PBShapeCreator.new()
 
 ## What the overlay params modal is editing: "create" (a just-placed shape)
 ## or "edit" (Edit Params on a pristine factory shape).
@@ -1182,6 +1207,13 @@ func _on_shape_requested(shape_id: StringName) -> void:
 		_on_params_applied()
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
+	elif ngon_drawer.is_active():
+		_ngon_drawer_abort("a new shape was picked")
+
+	if shape_id == &"ngon" or shape_id == &"ngon_draw":
+		_start_ngon_shape_tool()
+		return
+
 	shape_creator.arm(shape_id)
 	# Arming is a PoiBuilder context change too: the engine grid hides and
 	# the elevated PB grid shows while drawing (engine-bridge a no-op).
@@ -1602,6 +1634,270 @@ func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
 	while scene_root.get_node_or_null(NodePath("%s%d" % [base, i])) != null:
 		i += 1
 	return "%s%d" % [base, i]
+
+# ==============================================================================
+# Interactive N-Gon Drawing & Knife Tool
+# ==============================================================================
+
+func _start_knife_tool() -> void:
+	if shape_creator.is_active():
+		_creation_abort("switched to knife tool")
+	if ngon_drawer.is_active():
+		_ngon_drawer_abort("switched to knife tool")
+	var target_m: PBMesh = editor.active_mesh
+	var target_f: int = -1
+	if editor.selection != null and editor.selection.selected_face_count() > 0:
+		target_f = editor.selection.selected_faces[0]
+	ngon_drawer.arm(PBNgonDrawer.Mode.KNIFE, target_m, target_f)
+	_update_editing_context()
+	_set_creation_hint("Knife: click on a face to place vertices, drag to move, Enter to cut (Esc cancels)")
+	if target_m != null:
+		target_m.update_gizmos()
+	if logger:
+		logger.info("plugin", "Knife tool active — click on a face to place vertices")
+
+func _start_ngon_shape_tool() -> void:
+	if shape_creator.is_active():
+		_creation_abort("switched to n-gon tool")
+	if ngon_drawer.is_active():
+		_ngon_drawer_abort("switched to n-gon tool")
+	ngon_drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
+	_update_editing_context()
+	_set_creation_hint("N-Gon: click a surface to place vertices, drag to move, Enter to size height (Esc cancels)")
+	if logger:
+		logger.info("plugin", "N-Gon Extrude active — click a surface to draw polygon")
+
+func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
+	if event is InputEventMouseMotion:
+		_last_mouse_pos = event.position
+		_last_mouse_camera = camera
+		var ray_o: Vector3 = camera.project_ray_origin(event.position)
+		var ray_d: Vector3 = camera.project_ray_normal(event.position)
+
+		match ngon_drawer.state:
+			PBNgonDrawer.State.HEIGHT:
+				var ref := PBShapeCreator.height_reference_point(camera.global_position,
+					-camera.global_transform.basis.z, ray_o, ray_d, ngon_drawer.plane_point)
+				ngon_drawer.update_height_point(ref)
+				_refresh_ngon_preview()
+			PBNgonDrawer.State.ARMED:
+				_update_creation_hover(camera, event.position)
+			PBNgonDrawer.State.DRAWING, PBNgonDrawer.State.DRAGGING_VERT:
+				var hit := PBNgonDrawer.ray_plane_intersect(ray_o, ray_d,
+					ngon_drawer.plane_point, ngon_drawer.plane_normal)
+				if hit != PBNgonDrawer.RAY_MISS:
+					ngon_drawer.update_cursor_plane(hit)
+					if ngon_drawer.preview_node != null:
+						ngon_drawer.preview_node.update_gizmos()
+					elif ngon_drawer.target_mesh != null:
+						ngon_drawer.target_mesh.update_gizmos()
+					elif editor.active_mesh != null:
+						editor.active_mesh.update_gizmos()
+		return AFTER_GUI_INPUT_PASS
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			match ngon_drawer.state:
+				PBNgonDrawer.State.ARMED:
+					if _ngon_drawer_begin_from_surface(camera, event.position):
+						return AFTER_GUI_INPUT_STOP
+					return AFTER_GUI_INPUT_PASS
+				PBNgonDrawer.State.DRAWING:
+					if ngon_drawer.hovered_vert_idx >= 0:
+						if ngon_drawer.hovered_vert_idx == 0 and ngon_drawer.points.size() >= 3:
+							_on_ngon_drawer_complete()
+							return AFTER_GUI_INPUT_STOP
+						else:
+							ngon_drawer.start_drag_vert(ngon_drawer.hovered_vert_idx)
+							return AFTER_GUI_INPUT_STOP
+					else:
+						ngon_drawer.add_point(ngon_drawer.live_cursor_point)
+						if ngon_drawer.preview_node != null:
+							ngon_drawer.preview_node.update_gizmos()
+						elif ngon_drawer.target_mesh != null:
+							ngon_drawer.target_mesh.update_gizmos()
+						elif editor.active_mesh != null:
+							editor.active_mesh.update_gizmos()
+						return AFTER_GUI_INPUT_STOP
+				PBNgonDrawer.State.HEIGHT:
+					_on_ngon_drawer_confirm_height()
+					return AFTER_GUI_INPUT_STOP
+		else:
+			if ngon_drawer.state == PBNgonDrawer.State.DRAGGING_VERT:
+				ngon_drawer.end_drag_vert()
+				if ngon_drawer.preview_node != null:
+					ngon_drawer.preview_node.update_gizmos()
+				elif ngon_drawer.target_mesh != null:
+					ngon_drawer.target_mesh.update_gizmos()
+				return AFTER_GUI_INPUT_STOP
+
+	if event is InputEventKey and event.pressed:
+		var k := event as InputEventKey
+		if k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER:
+			if ngon_drawer.state == PBNgonDrawer.State.DRAWING or ngon_drawer.state == PBNgonDrawer.State.DRAGGING_VERT:
+				_on_ngon_drawer_complete()
+				return AFTER_GUI_INPUT_STOP
+			elif ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+				_on_ngon_drawer_confirm_height()
+				return AFTER_GUI_INPUT_STOP
+		elif k.keycode == KEY_ESCAPE:
+			_ngon_drawer_abort("cancelled with Escape")
+			return AFTER_GUI_INPUT_STOP
+		elif not k.echo or _is_repeatable_grid_key(k):
+			if _handle_grid_action_key(k) == AFTER_GUI_INPUT_STOP:
+				return AFTER_GUI_INPUT_STOP
+
+	return AFTER_GUI_INPUT_PASS
+
+func _ngon_drawer_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool:
+	var hit := _pick_creation_surface(camera, screen_pos)
+	if hit.is_empty():
+		return false
+
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	var best_mesh: PBMesh = null
+	var best_face: int = -1
+	var best_dist := INF
+
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root != null:
+		for node in _collect_pbmeshes(scene_root):
+			if node.pb_mesh_data == null:
+				continue
+			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+			if res.face_index >= 0 and res.distance < best_dist:
+				best_dist = res.distance
+				best_mesh = node
+				best_face = res.face_index
+
+	if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE:
+		if best_mesh == null or best_face < 0:
+			return false
+		ngon_drawer.begin(hit["point"], hit["normal"], best_mesh, best_face)
+		_clear_creation_hover()
+		_set_creation_hint("Knife: click to place cut vertices, drag to move, Enter to complete cut")
+		best_mesh.update_gizmos()
+		return true
+	else:
+		ngon_drawer.begin(hit["point"], hit["normal"], best_mesh, best_face)
+		_clear_creation_hover()
+		_set_creation_hint("N-Gon: click to place vertices, drag to move, Enter to extrude")
+		_make_ngon_preview_node()
+		_refresh_ngon_preview()
+		return true
+
+func _make_ngon_preview_node() -> void:
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		_ngon_drawer_abort("no edited scene")
+		return
+	var node := PBMesh.new()
+	node.name = _unique_shape_name(scene_root, &"ngon")
+	scene_root.add_child(node)
+	node.owner = scene_root
+	ngon_drawer.preview_node = node
+
+func _refresh_ngon_preview() -> void:
+	var node := ngon_drawer.preview_node
+	if node == null:
+		return
+	var data := ngon_drawer.build_preview_data()
+	if data == null:
+		return
+	node.transform = Transform3D.IDENTITY
+	node.pb_mesh_data = data
+	node.mesh = null
+	node.update_gizmos()
+
+func _on_ngon_drawer_complete() -> void:
+	if ngon_drawer.mode == PBNgonDrawer.Mode.NGON_EXTRUDE:
+		if ngon_drawer.points.size() < 3:
+			_set_creation_hint("N-Gon requires at least 3 vertices to extrude")
+			return
+		var res := ngon_drawer.complete()
+		if res.get("ok", false):
+			if ngon_drawer.preview_node == null:
+				_make_ngon_preview_node()
+			_refresh_ngon_preview()
+			_set_creation_hint("move mouse to size height, click to confirm (Esc cancels)")
+	elif ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE:
+		var target_m := ngon_drawer.target_mesh
+		var target_f := ngon_drawer.target_face_index
+		if target_m == null or target_m.pb_mesh_data == null or target_f < 0:
+			_ngon_drawer_abort("Knife target face lost")
+			return
+
+		var cmd := CmdMeshOp.new(target_m.pb_mesh_data, "Knife Cut", target_m)
+		if logger:
+			cmd.logger = logger
+
+		var res := ngon_drawer.complete()
+		if not res.get("ok", false):
+			if logger:
+				logger.warn("mesh_ops", "Knife cut failed: %s" % res.get("error", "?"))
+			_set_creation_hint("Knife cut failed: %s" % res.get("error", "?"))
+			return
+
+		cmd.capture_after()
+		if not cmd.is_noop():
+			cmd.add_to_undo_manager(get_undo_redo())
+
+		_finish_mesh_op(target_m, "knife_tool", int(res.get("new_face_ids", []).size()))
+		_set_creation_hint("")
+		if logger:
+			logger.info("plugin", "Knife cut completed on '%s' face %d" % [target_m.name, target_f])
+		ngon_drawer.reset()
+		_update_editing_context()
+
+func _on_ngon_drawer_confirm_height() -> void:
+	var node := ngon_drawer.preview_node
+	var res := ngon_drawer.confirm_height()
+	if not res.get("ok", false) or node == null:
+		_ngon_drawer_abort("Failed to finalize N-Gon")
+		return
+
+	var data: PBMeshData = res["data"]
+	var xf: Transform3D = res["transform"]
+	node.transform = xf
+	node.pb_mesh_data = data
+	node._update_collider()
+
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	var undo := get_undo_redo()
+	undo.create_action("Add Custom N-Gon", UndoRedo.MERGE_DISABLE, node)
+	undo.add_do_method(self, "_attach_detached", node, scene_root)
+	undo.add_do_method(self, "_own_node", node)
+	undo.add_do_reference(node)
+	undo.add_undo_method(self, "_detach_node", node)
+	undo.commit_action()
+
+	_set_creation_hint("")
+	var editor_selection := get_editor_interface().get_selection()
+	if editor_selection != null and is_instance_valid(node):
+		editor_selection.clear()
+		editor_selection.add_node(node)
+		editor.active_mesh = node
+
+	node.update_gizmos()
+	if logger:
+		logger.info("plugin", "Created custom N-Gon '%s'" % node.name)
+	_update_editing_context()
+
+func _ngon_drawer_abort(reason: String) -> void:
+	var node := ngon_drawer.preview_node
+	var prev_mesh := ngon_drawer.target_mesh
+	ngon_drawer.reset()
+	if node != null and is_instance_valid(node) and node.get_parent() != null:
+		node.get_parent().remove_child(node)
+		node.queue_free()
+	if prev_mesh != null and is_instance_valid(prev_mesh):
+		prev_mesh.update_gizmos()
+	_clear_creation_hover()
+	_set_creation_hint("")
+	_update_editing_context()
+	if logger:
+		logger.info("plugin", "N-gon drawing aborted (%s)" % reason)
 
 # ==============================================================================
 # Shape Params modal (create + edit sessions)

@@ -78,6 +78,7 @@ var _btn_edge: Button
 var _btn_face: Button
 var _btn_space: Button
 var _btn_new_shape: MenuButton
+var _btn_ngon: Button
 var _btn_edit_params: Button
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
@@ -169,6 +170,7 @@ func _build_ui() -> void:
 	# Mesh operations on the current selection with SVG icons.
 	_make_op_button("Extrude", "extrude_faces", "Extrude selected faces/edges along their normal (Shift+Move does this live)", "icon_extrude.svg")
 	_make_op_button("Inset", "inset_faces", "Inset selected faces (Shift+Scale does this live)", "icon_inset.svg")
+	_make_op_button("Knife", "knife_tool", "Knife: Cut faces by placing vertices (Enter to complete cut)", "icon_knife.svg")
 	_make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge", "icon_loop_cut.svg")
 	_make_op_button("Merge", "merge_faces", "Merge edge-adjacent selected faces into one n-gon", "icon_merge.svg")
 	_make_op_button("Subdiv", "subdivide_faces", "Subdivide the selected quads into 4", "icon_subdivide.svg")
@@ -191,6 +193,17 @@ func _build_ui() -> void:
 		popup.add_item(String(shape_id).capitalize(), popup.item_count)
 	popup.id_pressed.connect(_on_shape_menu_pressed)
 	add_child(_btn_new_shape)
+
+	# N-Gon button: draw a custom polygon and extrude to 3D
+	_btn_ngon = Button.new()
+	_btn_ngon.name = "NgonTool"
+	_btn_ngon.icon = _load_icon("icon_ngon.svg")
+	if _btn_ngon.icon == null:
+		_btn_ngon.text = "N-Gon"
+	_btn_ngon.flat = true
+	_btn_ngon.tooltip_text = "N-Gon: Draw custom polygon and extrude into 3D (Enter to size height)"
+	_btn_ngon.pressed.connect(func(): shape_requested.emit(&"ngon"))
+	add_child(_btn_ngon)
 
 	# Edit Params: re-open parameter modal with SVG icon.
 	_btn_edit_params = Button.new()
@@ -378,9 +391,10 @@ func _on_selection_info_changed(_arg = null) -> void:
 			and not (in_edge and edges_selected)
 	if _op_buttons.has("inset_faces"):
 		_op_buttons["inset_faces"].disabled = not (in_face and faces_selected)
+	if _op_buttons.has("knife_tool"):
+		_op_buttons["knife_tool"].disabled = editor == null or editor.active_mesh == null
 	if _op_buttons.has("insert_edge_loop"):
 		_op_buttons["insert_edge_loop"].disabled = not (in_edge and edges_selected)
-	if _op_buttons.has("merge_faces"):
 		_op_buttons["merge_faces"].disabled = not (in_face and faces_selected)
 	if _op_buttons.has("subdivide_faces"):
 		_op_buttons["subdivide_faces"].disabled = not (in_face and faces_selected)

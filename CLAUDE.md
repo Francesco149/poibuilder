@@ -775,6 +775,33 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.43 round complete ✓ — knife tool & interactive n-gon shape extrusion:
+- UNIFIED POLYGON DRAWING CONTROLLER (`PBNgonDrawer`, `editor/pb_ngon_drawer.gd`):
+  - Common UX for Knife tool and N-gon shape extrusion:
+    - Click on any surface (or grid) to place vertices.
+    - Live visible overlay shows placed vertices connected by lines, with a line to the cursor and indicator point under mouse.
+    - Click and drag placed vertices to reposition them along the surface plane.
+    - Full multi-tier snapping: snaps to placed vertices, target mesh edges and vertices, and PBGrid.
+    - Enter confirms/completes:
+      - Knife: cuts the face (edge-to-edge cut splits face in two; closed loop cuts inner/outer n-gons).
+      - N-Gon: transitions to HEIGHT phase to adjust 3rd dimension by moving mouse, LMB click confirms extrusion.
+    - ESC cancels/aborts cleanly without leaving stray preview nodes.
+- CORE FACE-CUTTING MATH (`PBMeshOps.cut_face`, `mesh_ops/pb_mesh_ops.gd`):
+  - Splits a face by an edge-to-edge cut path into two clean `PBFace` n-gons with ear-clipped triangulation.
+  - Closed-loop interior cut splices the hole into the outer perimeter via mutually visible bridge pairs (slit edges cancel out in `PBFace._cache_edges()`), producing two distinct selectable n-gon faces: the inner shape and the outer frame with hole.
+  - Adjacent face edges sharing the cut points are automatically split to preserve a closed 2-manifold mesh without T-junctions.
+  - Full undo/redo integration via `CmdMeshOp`.
+- ARBITRARY N-GON EXTRUSION PRIMITIVES (`PBShapeComplex.create_ngon_prism`, `shapes/pb_shape_complex.gd`):
+  - Generates 3D prisms from arbitrary 2D or 3D polygons with outward normals and watertight 2-manifold topology.
+  - Both top and bottom caps are emitted as single merged n-gon `PBFace` instances; side walls are quad `PBFace` instances.
+  - Registered `&"ngon"` in `PBShapeFactory` and `PBShapeParams`.
+- TOOLBAR & UI INTEGRATION (`PBToolbar`, `PBActions`):
+  - Added Knife tool button (`icon_knife.svg`) in the operations group and registered `op_knife` in `PBActions`.
+  - Added N-Gon Extrude button (`icon_ngon.svg`) next to New Shape and added Ngon to New Shape dropdown.
+- COMPREHENSIVE TESTS:
+  - 10 new unit tests in `tests/test_pb_knife_and_ngon.gd` (738/738 GUT unit tests passing).
+  - Extended GUI integration harness in `test_scenes/editor_gui_test.gd` (40/40 real editor GUI tests passing).
+
 v0.9.42 round complete ✓ — persistent object-space texture anchor, seam-continuous extrude UVs, corner-anchored 45° diagonal tiling:
 - PERSISTENT OBJECT-SPACE TEXTURE ANCHOR (`PBMeshData.texture_anchor`):
   - Faces previously anchored UVs to their own dynamic bounding box minimum (`min_u, min_v`),

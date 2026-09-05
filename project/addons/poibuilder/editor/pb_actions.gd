@@ -57,6 +57,7 @@ const ACTIONS: Dictionary = {
 	"op_weld":         { "label": "Mesh Op: Weld Vertices",   "keys": [] },
 	"op_detach":       { "label": "Mesh Op: Detach Faces",    "keys": [] },
 	"op_delete":       { "label": "Mesh Op: Delete Faces",    "keys": [] },
+	"op_knife":        { "label": "Mesh Op: Knife Tool",     "keys": [] },
 }
 
 ## Mesh-op action id → the op string the toolbar/plugin pipeline expects.
@@ -69,6 +70,7 @@ const OP_ACTION_TO_OPERATION: Dictionary = {
 	"op_weld": "weld_vertices",
 	"op_detach": "detach_faces",
 	"op_delete": "delete_faces",
+	"op_knife": "knife_tool",
 }
 
 # ==============================================================================

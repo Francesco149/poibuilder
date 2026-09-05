@@ -37,6 +37,7 @@ const TYPE_NAMES: Array[StringName] = [
 	&"arch",
 	&"sphere",
 	&"torus",
+	&"ngon",
 ]
 
 ## Returns all available shape type identifiers.
@@ -111,6 +112,14 @@ static func create_shape(id: StringName, size: Vector3 = Vector3.ONE) -> PBMeshD
 			var tube_r: float = clampf(outer_r * 0.3, 0.01, outer_r - 0.01)
 			data = PBShapeComplex.create_torus(outer_r - tube_r, tube_r)
 
+		&"ngon":
+			var radius: float = minf(size.x, size.z) * 0.5
+			var sides: int = 6
+			var poly := PackedVector3Array()
+			for i in range(sides):
+				var angle: float = float(i) * TAU / float(sides)
+				poly.append(Vector3(cos(angle) * radius, 0.0, sin(angle) * radius))
+			data = PBShapeComplex.create_ngon_prism(poly, size.y, Vector3.UP)
 		_:
 			push_warning("[PBShapeFactory] Unknown shape ID: %s" % id)
 			return null

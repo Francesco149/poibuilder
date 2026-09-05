@@ -682,6 +682,449 @@ static func edge_usage_counts(mesh_data: PBMeshData) -> Dictionary:
 			counts[key] = counts.get(key, 0) + 1
 	return counts
 
+## Cuts a face with a path of 3D points.
+## - Edge-to-edge cut: if cut_points start and end on the boundary edges or
+##   vertices, splits the face into two n-gon PBFace instances along the path.
+## - Closed-loop cut: if cut_points form an interior loop (or is_closed is true),
+##   cuts that shape into the face, producing an inner n-gon face and a
+##   surrounding outer n-gon face.
+## Both resulting faces are clean PBFace instances selectable as individual faces.
+static func cut_face(
+	mesh_data: PBMeshData,
+	face_index: int,
+	cut_points: PackedVector3Array,
+	is_closed: bool = false
+) -> Dictionary:
+	if mesh_data == null or face_index < 0 or face_index >= mesh_data.faces.size():
+		return _fail("Cut face: invalid face index")
+	if cut_points.size() < 2:
+		return _fail("Cut face: path must have at least 2 points")
+	var face: PBFace = mesh_data.faces[face_index]
+	if face == null or face.get_indexes().is_empty():
+		return _fail("Cut face: empty face")
+	var loop := _ordered_loop(face)
+	if loop.size() < 3:
+		return _fail("Cut face: face boundary is not a simple loop")
+
+	var normal := _face_area_normal(mesh_data, face).normalized()
+	if normal.length_squared() < 0.0001:
+		return _fail("Cut face: zero area face")
+	var up := Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u_axis := normal.cross(up).normalized()
+	var v_axis := normal.cross(u_axis).normalized()
+	var origin := mesh_data.positions[loop[0]]
+
+	var to_2d := func(p3: Vector3) -> Vector2:
+		var d := p3 - origin
+		return Vector2(d.dot(u_axis), d.dot(v_axis))
+
+	var to_3d := func(p2: Vector2) -> Vector3:
+		return origin + u_axis * p2.x + v_axis * p2.y
+
+	var loop_2d := PackedVector2Array()
+	for idx in loop:
+		loop_2d.append(to_2d.call(mesh_data.positions[idx]))
+	var loop_area := _polygon_area_2d(loop_2d)
+	if loop_area < 0.0:
+		u_axis = -u_axis
+		v_axis = normal.cross(u_axis).normalized()
+		loop_2d.clear()
+		for idx in loop:
+			loop_2d.append(to_2d.call(mesh_data.positions[idx]))
+		loop_area = _polygon_area_2d(loop_2d)
+
+	var raw_cut_2d := PackedVector2Array()
+	for p3 in cut_points:
+		raw_cut_2d.append(to_2d.call(p3))
+	var cut_2d := PackedVector2Array()
+	for pt in raw_cut_2d:
+		if cut_2d.is_empty() or cut_2d[cut_2d.size() - 1].distance_to(pt) > 0.0001:
+			cut_2d.append(pt)
+	if cut_2d.size() < 2:
+		return _fail("Cut face: cut points collapsed to < 2 distinct points")
+
+	var start_info := _find_best_edge_for_point_2d(loop_2d, cut_2d[0])
+	var end_info := _find_best_edge_for_point_2d(loop_2d, cut_2d[cut_2d.size() - 1])
+	var snap_thresh: float = 0.20  # 20cm tolerance to snap to perimeter edges
+
+	var is_edge_to_edge := false
+	if not is_closed:
+		if float(start_info["dist"]) <= snap_thresh and float(end_info["dist"]) <= snap_thresh:
+			if cut_2d[0].distance_to(cut_2d[cut_2d.size() - 1]) > 0.001:
+				is_edge_to_edge = true
+
+	if is_edge_to_edge:
+		cut_2d[0] = start_info["snapped"]
+		cut_2d[cut_2d.size() - 1] = end_info["snapped"]
+
+		# Check if start or end split an edge (not already at a vertex)
+		var start_p3 := to_3d.call(cut_2d[0])
+		var end_p3 := to_3d.call(cut_2d[cut_2d.size() - 1])
+		var edge_i: int = start_info["edge_idx"]
+		var edge_j: int = end_info["edge_idx"]
+		var n_loop := loop_2d.size()
+
+		if not bool(start_info["is_vertex"]):
+			var pa := mesh_data.positions[loop[edge_i]]
+			var pb := mesh_data.positions[loop[(edge_i + 1) % n_loop]]
+			_split_edge_in_adjacent_faces(mesh_data, face_index, pa, pb, start_p3)
+		if not bool(end_info["is_vertex"]):
+			var pa := mesh_data.positions[loop[edge_j]]
+			var pb := mesh_data.positions[loop[(edge_j + 1) % n_loop]]
+			_split_edge_in_adjacent_faces(mesh_data, face_index, pa, pb, end_p3)
+
+		var split_loops := _split_polygon_by_path_2d(loop_2d, cut_2d, start_info, end_info)
+		if split_loops.size() < 2:
+			return _fail("Cut face: could not split face boundary")
+
+		var poly_A: PackedVector2Array = split_loops[0]
+		var poly_B: PackedVector2Array = split_loops[1]
+
+		if _polygon_area_2d(poly_A) < 0.0:
+			poly_A.reverse()
+		if _polygon_area_2d(poly_B) < 0.0:
+			poly_B.reverse()
+
+		var tris_A := PBShapeComplex._triangulate_2d(poly_A)
+		var tris_B := PBShapeComplex._triangulate_2d(poly_B)
+		if tris_A.is_empty() or tris_B.is_empty():
+			return _fail("Cut face: triangulation failed on split parts")
+
+		var base_A := mesh_data.positions.size()
+		for p2 in poly_A:
+			mesh_data.positions.append(to_3d.call(p2))
+			mesh_data.textures0.append(Vector2(p2.x, p2.y))
+		var idxs_A := PackedInt32Array()
+		for t in tris_A:
+			var cp: float = (poly_A[t[1]] - poly_A[t[0]]).cross(poly_A[t[2]] - poly_A[t[0]])
+			if cp > 0.0:
+				idxs_A.append_array(PackedInt32Array([base_A + int(t[0]), base_A + int(t[1]), base_A + int(t[2])]))
+			else:
+				idxs_A.append_array(PackedInt32Array([base_A + int(t[0]), base_A + int(t[2]), base_A + int(t[1])]))
+		var face_A := PBFace.new(idxs_A)
+		face_A.submesh_index = face.submesh_index
+		face_A.smoothing_group = face.smoothing_group
+		face_A.manual_uv = face.manual_uv
+
+		var base_B := mesh_data.positions.size()
+		for p2 in poly_B:
+			mesh_data.positions.append(to_3d.call(p2))
+			mesh_data.textures0.append(Vector2(p2.x, p2.y))
+		var idxs_B := PackedInt32Array()
+		for t in tris_B:
+			var cp: float = (poly_B[t[1]] - poly_B[t[0]]).cross(poly_B[t[2]] - poly_B[t[0]])
+			if cp > 0.0:
+				idxs_B.append_array(PackedInt32Array([base_B + int(t[0]), base_B + int(t[1]), base_B + int(t[2])]))
+			else:
+				idxs_B.append_array(PackedInt32Array([base_B + int(t[0]), base_B + int(t[2]), base_B + int(t[1])]))
+		var face_B := PBFace.new(idxs_B)
+		face_B.submesh_index = face.submesh_index
+		face_B.smoothing_group = face.smoothing_group
+		face_B.manual_uv = face.manual_uv
+
+		var res := _replace_faces(mesh_data, {face_index: true}, [face_A, face_B], [])
+		_rebuild_topology(mesh_data)
+		return res
+	else:
+		# Closed loop cut inside the face
+		if cut_2d.size() < 3:
+			return _fail("Cut face: closed cut requires at least 3 vertices")
+		if cut_2d[0].distance_to(cut_2d[cut_2d.size() - 1]) < 0.0001:
+			cut_2d.remove_at(cut_2d.size() - 1)
+		if cut_2d.size() < 3:
+			return _fail("Cut face: closed cut requires at least 3 vertices")
+
+		var hole_poly := cut_2d.duplicate()
+		if _polygon_area_2d(hole_poly) < 0.0:
+			hole_poly.reverse()
+
+		var tris_inner := PBShapeComplex._triangulate_2d(hole_poly)
+		if tris_inner.is_empty():
+			return _fail("Cut face: triangulation failed on inner shape")
+
+		var base_inner := mesh_data.positions.size()
+		for p2 in hole_poly:
+			mesh_data.positions.append(to_3d.call(p2))
+			mesh_data.textures0.append(Vector2(p2.x, p2.y))
+		var idxs_inner := PackedInt32Array()
+		for t in tris_inner:
+			var cp: float = (hole_poly[t[1]] - hole_poly[t[0]]).cross(hole_poly[t[2]] - hole_poly[t[0]])
+			if cp > 0.0:
+				idxs_inner.append_array(PackedInt32Array([base_inner + int(t[0]), base_inner + int(t[1]), base_inner + int(t[2])]))
+			else:
+				idxs_inner.append_array(PackedInt32Array([base_inner + int(t[0]), base_inner + int(t[2]), base_inner + int(t[1])]))
+		var face_inner := PBFace.new(idxs_inner)
+		face_inner.submesh_index = face.submesh_index
+		face_inner.smoothing_group = face.smoothing_group
+		face_inner.manual_uv = face.manual_uv
+
+		var outer_spliced := _cut_hole_into_polygon_2d(loop_2d, hole_poly)
+		if outer_spliced.is_empty():
+			return _fail("Cut face: failed to splice hole into outer boundary")
+		var tris_outer := PBShapeComplex._triangulate_2d(outer_spliced)
+		if tris_outer.is_empty():
+			return _fail("Cut face: triangulation failed on outer face")
+
+		var base_outer := mesh_data.positions.size()
+		for p2 in outer_spliced:
+			mesh_data.positions.append(to_3d.call(p2))
+			mesh_data.textures0.append(Vector2(p2.x, p2.y))
+		var idxs_outer := PackedInt32Array()
+		for t in tris_outer:
+			var cp: float = (outer_spliced[t[1]] - outer_spliced[t[0]]).cross(outer_spliced[t[2]] - outer_spliced[t[0]])
+			if cp > 0.0:
+				idxs_outer.append_array(PackedInt32Array([base_outer + int(t[0]), base_outer + int(t[1]), base_outer + int(t[2])]))
+			else:
+				idxs_outer.append_array(PackedInt32Array([base_outer + int(t[0]), base_outer + int(t[2]), base_outer + int(t[1])]))
+		var face_outer := PBFace.new(idxs_outer)
+		face_outer.submesh_index = face.submesh_index
+		face_outer.smoothing_group = face.smoothing_group
+		face_outer.manual_uv = face.manual_uv
+
+		var res := _replace_faces(mesh_data, {face_index: true}, [face_inner, face_outer], [])
+		_rebuild_topology(mesh_data)
+		return res
+
+static func _polygon_area_2d(poly: PackedVector2Array) -> float:
+	var area := 0.0
+	var n := poly.size()
+	for i in range(n):
+		var j := (i + 1) % n
+		area += poly[i].x * poly[j].y - poly[j].x * poly[i].y
+	return area * 0.5
+
+static func _point_to_segment_distance_2d(p: Vector2, a: Vector2, b: Vector2) -> Dictionary:
+	var ab := b - a
+	var ab_len2 := ab.length_squared()
+	if ab_len2 < 0.00000001:
+		return {"dist": p.distance_to(a), "closest": a, "t": 0.0}
+	var t := clampf((p - a).dot(ab) / ab_len2, 0.0, 1.0)
+	var closest := a + ab * t
+	return {"dist": p.distance_to(closest), "closest": closest, "t": t}
+
+static func _find_best_edge_for_point_2d(loop: PackedVector2Array, pt: Vector2) -> Dictionary:
+	var best_dist := INF
+	var best_edge := -1
+	var best_closest := pt
+	var is_vert := false
+	var vert_idx := -1
+	var n := loop.size()
+	for i in range(n):
+		var j := (i + 1) % n
+		var res := _point_to_segment_distance_2d(pt, loop[i], loop[j])
+		var d: float = res["dist"]
+		if d < best_dist:
+			best_dist = d
+			best_edge = i
+			best_closest = res["closest"]
+			var t: float = res["t"]
+			if t <= 0.001:
+				is_vert = true
+				vert_idx = i
+			elif t >= 0.999:
+				is_vert = true
+				vert_idx = j
+			else:
+				is_vert = false
+				vert_idx = -1
+	return {
+		"edge_idx": best_edge,
+		"snapped": best_closest,
+		"is_vertex": is_vert,
+		"vert_idx": vert_idx,
+		"dist": best_dist
+	}
+
+static func _clean_polygon_2d(poly: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p in poly:
+		if out.is_empty() or out[out.size() - 1].distance_to(p) > 0.0005:
+			out.append(p)
+	if out.size() > 1 and out[0].distance_to(out[out.size() - 1]) < 0.0005:
+		out.remove_at(out.size() - 1)
+	return out
+
+static func _split_polygon_by_path_2d(
+	loop_2d: PackedVector2Array,
+	cut_2d: PackedVector2Array,
+	start_info: Dictionary,
+	end_info: Dictionary
+) -> Array[PackedVector2Array]:
+	var n := loop_2d.size()
+	var i: int = start_info["edge_idx"]
+	var j: int = end_info["edge_idx"]
+	var c_start: Vector2 = cut_2d[0]
+	var c_end: Vector2 = cut_2d[cut_2d.size() - 1]
+
+	var poly_A := PackedVector2Array()
+	var poly_B := PackedVector2Array()
+
+	for p in cut_2d:
+		poly_A.append(p)
+
+	if i == j:
+		var edge_vec := loop_2d[(i + 1) % n] - loop_2d[i]
+		var len2 := edge_vec.length_squared()
+		var t0 := (c_start - loop_2d[i]).dot(edge_vec) / len2 if len2 > 0.000001 else 0.0
+		var t1 := (c_end - loop_2d[i]).dot(edge_vec) / len2 if len2 > 0.000001 else 1.0
+		if t0 < t1:
+			var cur := (i + 1) % n
+			while true:
+				if poly_A[poly_A.size() - 1].distance_to(loop_2d[cur]) > 0.001:
+					poly_A.append(loop_2d[cur])
+				if cur == i:
+					break
+				cur = (cur + 1) % n
+			for k in range(cut_2d.size() - 1, -1, -1):
+				poly_B.append(cut_2d[k])
+		else:
+			var cur := (i + 1) % n
+			for k in range(cut_2d.size() - 1, -1, -1):
+				poly_B.append(cut_2d[k])
+			while true:
+				if poly_B[poly_B.size() - 1].distance_to(loop_2d[cur]) > 0.001:
+					poly_B.append(loop_2d[cur])
+				if cur == i:
+					break
+				cur = (cur + 1) % n
+	else:
+		var cur := (j + 1) % n
+		while true:
+			if poly_A[poly_A.size() - 1].distance_to(loop_2d[cur]) > 0.001:
+				poly_A.append(loop_2d[cur])
+			if cur == i:
+				break
+			cur = (cur + 1) % n
+
+		for k in range(cut_2d.size() - 1, -1, -1):
+			poly_B.append(cut_2d[k])
+		cur = (i + 1) % n
+		while true:
+			if poly_B[poly_B.size() - 1].distance_to(loop_2d[cur]) > 0.001:
+				poly_B.append(loop_2d[cur])
+			if cur == j:
+				break
+			cur = (cur + 1) % n
+
+	poly_A = _clean_polygon_2d(poly_A)
+	poly_B = _clean_polygon_2d(poly_B)
+	return [poly_A, poly_B]
+
+static func _segments_intersect_2d(a: Vector2, b: Vector2, c: Vector2, d: Vector2) -> bool:
+	var d1 := (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+	var d2 := (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x)
+	var d3 := (d.x - c.x) * (a.y - c.y) - (d.y - c.y) * (a.x - c.x)
+	var d4 := (d.x - c.x) * (b.y - c.y) - (d.y - c.y) * (b.x - c.x)
+	if ((d1 > 0.00001 and d2 < -0.00001) or (d1 < -0.00001 and d2 > 0.00001)) and \
+	   ((d3 > 0.00001 and d4 < -0.00001) or (d3 < -0.00001 and d4 > 0.00001)):
+		return true
+	return false
+
+static func _cut_hole_into_polygon_2d(outer_2d: PackedVector2Array, hole_2d: PackedVector2Array) -> PackedVector2Array:
+	var n_out := outer_2d.size()
+	var n_hole := hole_2d.size()
+	if n_out < 3 or n_hole < 3:
+		return PackedVector2Array()
+
+	var best_dist := INF
+	var best_b := 0
+	var best_a := 0
+
+	for a in range(n_hole):
+		var ha := hole_2d[a]
+		for b in range(n_out):
+			var vb := outer_2d[b]
+			var dist := ha.distance_to(vb)
+			if dist < 0.0001 or dist >= best_dist:
+				continue
+			var intersects := false
+			for i in range(n_out):
+				var i_next := (i + 1) % n_out
+				if i == b or i_next == b:
+					continue
+				if _segments_intersect_2d(vb, ha, outer_2d[i], outer_2d[i_next]):
+					intersects = true
+					break
+			if intersects:
+				continue
+			for j in range(n_hole):
+				var j_next := (j + 1) % n_hole
+				if j == a or j_next == a:
+					continue
+				if _segments_intersect_2d(vb, ha, hole_2d[j], hole_2d[j_next]):
+					intersects = true
+					break
+			if not intersects:
+				best_dist = dist
+				best_b = b
+				best_a = a
+
+	var merged := PackedVector2Array()
+	for k in range(0, best_b + 1):
+		merged.append(outer_2d[k])
+	for k in range(n_hole + 1):
+		var h_idx := (best_a - k + n_hole) % n_hole
+		merged.append(hole_2d[h_idx])
+	merged.append(outer_2d[best_b])
+	for k in range(best_b + 1, n_out):
+		merged.append(outer_2d[k])
+
+	return merged
+
+static func _split_edge_in_adjacent_faces(
+	mesh_data: PBMeshData,
+	ignore_face_idx: int,
+	p_a: Vector3,
+	p_b: Vector3,
+	p_split: Vector3
+) -> void:
+	for fi in range(mesh_data.faces.size()):
+		if fi == ignore_face_idx:
+			continue
+		var f := mesh_data.faces[fi]
+		if f == null:
+			continue
+		var idxs := f.get_indexes()
+		var n_tris := idxs.size() / 3
+		var found_tri := -1
+		var edge_i0 := -1
+		var edge_i1 := -1
+		var opposite_i := -1
+
+		for t in range(n_tris):
+			var i0: int = idxs[t * 3]
+			var i1: int = idxs[t * 3 + 1]
+			var i2: int = idxs[t * 3 + 2]
+			var p0: Vector3 = mesh_data.positions[i0]
+			var p1: Vector3 = mesh_data.positions[i1]
+			var p2: Vector3 = mesh_data.positions[i2]
+
+			if (p0.distance_to(p_a) < 0.001 and p1.distance_to(p_b) < 0.001) or (p0.distance_to(p_b) < 0.001 and p1.distance_to(p_a) < 0.001):
+				found_tri = t; edge_i0 = i0; edge_i1 = i1; opposite_i = i2; break
+			if (p1.distance_to(p_a) < 0.001 and p2.distance_to(p_b) < 0.001) or (p1.distance_to(p_b) < 0.001 and p2.distance_to(p_a) < 0.001):
+				found_tri = t; edge_i0 = i1; edge_i1 = i2; opposite_i = i0; break
+			if (p2.distance_to(p_a) < 0.001 and p0.distance_to(p_b) < 0.001) or (p2.distance_to(p_b) < 0.001 and p0.distance_to(p_a) < 0.001):
+				found_tri = t; edge_i0 = i2; edge_i1 = i0; opposite_i = i1; break
+
+		if found_tri >= 0:
+			var new_v_idx := mesh_data.positions.size()
+			mesh_data.positions.append(p_split)
+			var uv0: Vector2 = mesh_data.textures0[edge_i0] if edge_i0 < mesh_data.textures0.size() else Vector2.ZERO
+			var uv1: Vector2 = mesh_data.textures0[edge_i1] if edge_i1 < mesh_data.textures0.size() else Vector2.ZERO
+			var total_dist := p_a.distance_to(p_b)
+			var t_factor := p_a.distance_to(p_split) / total_dist if total_dist > 0.0001 else 0.5
+			mesh_data.textures0.append(uv0.lerp(uv1, t_factor))
+
+			var new_idxs := PackedInt32Array()
+			for t in range(n_tris):
+				if t == found_tri:
+					new_idxs.append_array(PackedInt32Array([edge_i0, new_v_idx, opposite_i]))
+					new_idxs.append_array(PackedInt32Array([new_v_idx, edge_i1, opposite_i]))
+				else:
+					new_idxs.append_array(PackedInt32Array([idxs[t * 3], idxs[t * 3 + 1], idxs[t * 3 + 2]]))
+			f.set_indexes(new_idxs)
+			f.invalidate_cache()
+
 # ==============================================================================
 # Internals
 # ==============================================================================
