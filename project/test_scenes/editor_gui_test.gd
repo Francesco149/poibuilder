@@ -696,6 +696,191 @@ func _run() -> void:
 	else:
 		_pass("COLLIDER: winding overlay drawn, red contained (green=%d, red=%d)" % [green_px, red_px])
 
+	# ── Test 11: grid snapping on a move drag (0.13 → 0.2 at step 0.2) ──────
+	# Scene reset: b becomes a fresh cube back in frame, fresh camera framing.
+	stairs.visible = false
+	a.visible = true
+	b.pb_mesh_data = PBMeshData.create_cube(1.0)
+	b.position = Vector3(3, 0, 0)
+	await _frames(8)
+	plugin.editor.tool_mode = PBEditor.ToolMode.MOVE
+	var grid11: PBGrid = plugin.grid
+	grid11.enabled = true
+	grid11.unit = 1.0
+	grid11.subdivisions = 5
+	grid11.reset_origin()
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(1.5, 2.5, 4.0)) \
+		.looking_at(Vector3(1.5, 0, 0), Vector3.UP)
+	await _frames(10)
+	sel.clear()
+	sel.add_node(b)
+	await _frames(8)
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
+	await _frames(12)
+	if gizmo.get_subgizmo_selection().is_empty():
+		_fail("SNAP-MOVE: top face click selected nothing")
+	else:
+		var md11: PBMeshData = b.pb_mesh_data
+		var ed11 = plugin.gizmo_plugin.element_editor
+		var top_id: int = gizmo.get_subgizmo_selection()[0]
+		var start11: Transform3D = ed11.get_subgizmo_transform(md11, b, top_id)
+		var before11: PackedVector3Array = md11.positions.duplicate()
+		ed11.set_subgizmo_transform_with_shift(b, PackedInt32Array([top_id]), top_id,
+			start11.translated(Vector3(0.13, 0, 0)), false)
+		var ok_snap := true
+		for idx in ed11.element_indices(md11, top_id):
+			var d: Vector3 = md11.positions[idx] - before11[idx]
+			if absf(d.x - 0.2) > 0.001 or absf(d.y) > 0.001 or absf(d.z) > 0.001:
+				ok_snap = false
+		ed11.commit_subgizmos(b, PackedInt32Array([top_id]), false)
+		await _frames(5)
+		if ok_snap:
+			_pass("SNAP-MOVE: 0.13 drag landed on the 0.2 step")
+		else:
+			_fail("SNAP-MOVE: drag did not snap to the 0.2 grid step")
+
+	# ── Test 12: Draw On Grid — creation ignores meshes, lands on the
+	#    elevated grid plane, extents snap ────────────────────────────────────
+	plugin.grid.draw_on_grid = true
+	plugin.grid.raise()
+	plugin.grid.raise()
+	if absf(plugin.grid.elevation() - 0.4) > 0.001:
+		_fail("GRID: two raises should reach 0.4 (got %.4f)" % plugin.grid.elevation())
+	plugin._on_shape_requested(&"cube")
+	await _frames(8)
+	if not plugin.shape_creator.is_active():
+		_fail("GRID-CREATE: creator not armed")
+	else:
+		# This point lies on the y=0.4 elevated plane; cube faces are ignored.
+		var gp1 := _window_pos(vp, host, Vector3(0.3, 0.4, 0.6))
+		var gp2 := _window_pos(vp, host, Vector3(0.96, 0.4, -0.22))
+		_mouse_motion(gp1)
+		await _frames(3)
+		_mouse_button(gp1, true)
+		await _frames(3)
+		var sc: PBShapeCreator = plugin.shape_creator
+		if sc.state != PBShapeCreator.State.BASE:
+			_fail("GRID-CREATE: press did not enter BASE (state=%d)" % sc.state)
+		elif absf(sc.plane_point.y - 0.4) > 0.001 or absf(sc.plane_normal.y) < 0.99:
+			_fail("GRID-CREATE: plane is y=%.3f normal=%s (want elevated 0.4 UP)" % [
+				sc.plane_point.y, str(sc.plane_normal)])
+		elif absf(fposmod(sc.base_start.x, 0.2)) > 0.001 \
+				or absf(fposmod(sc.base_start.z, 0.2)) > 0.001:
+			_fail("GRID-CREATE: press point not snapped (base_start=%s)" % str(sc.base_start))
+		else:
+			_pass("GRID-CREATE: press landed snapped on the elevated grid plane")
+		for i in range(1, 5):
+			_mouse_motion(gp1.lerp(gp2, float(i) / 4.0))
+			await _frames(2)
+		_mouse_button(gp2, false)
+		await _frames(5)
+		if sc.state != PBShapeCreator.State.HEIGHT:
+			_fail("GRID-CREATE: base drag did not reach HEIGHT (state=%d)" % sc.state)
+		elif absf(fposmod(sc.u_size, 0.2)) > 0.001 or absf(fposmod(sc.v_size, 0.2)) > 0.001:
+			_fail("GRID-CREATE: extents not snapped (u=%.3f v=%.3f)" % [sc.u_size, sc.v_size])
+		else:
+			_pass("GRID-CREATE: extents snapped (u=%.2f v=%.2f)" % [sc.u_size, sc.v_size])
+		# ESC aborts — on-grid creation must not leave orphan nodes.
+		await _press_and_release_key(KEY_ESCAPE)
+		await _frames(5)
+		if plugin.shape_creator.is_active():
+			_fail("GRID-CREATE: ESC did not abort")
+		else:
+			_pass("GRID-CREATE: ESC aborted cleanly")
+	plugin.grid.draw_on_grid = false
+	plugin.grid.reset_origin()
+
+	# ── Test 13: keybind routing — grid keys global, Y contextual ────────────
+	# Viewport keypresses only reach plugins while the VIEWPORT holds focus —
+	# a programmatic selection change can silently move focus into the scene
+	# dock (the K/J/Ctrl+Z arrows above got there via clicks), and a click at
+	# a world point that projects OUTSIDE the frame focuses nothing at all.
+	# Click an empty area INSIDE the frame: (1.5, 0, -1.4) — the camera frames
+	# (1.5, 0, 0); every mesh sits at z >= -1 or x <= 0.5, this is free.
+	sel.clear()
+	await _frames(5)
+	await _click(_window_pos(vp, host, Vector3(1.5, 0, -1.4)))
+	await _frames(6)
+	# No PBMesh selected: Y is the ENGINE's Use Snap — ours must not toggle.
+	await _press_and_release_key(KEY_Y)
+	await _frames(4)
+	if not plugin.grid.enabled:
+		_fail("KEYS: Y toggled PoiBuilder snapping with no PBMesh context")
+	else:
+		_pass("KEYS: Y stays the engine's outside a PBMesh context")
+	# Grid keys are global: subdivision adjustments work with nothing selected.
+	var sub_before: int = plugin.grid.subdivisions
+	await _press_and_release_key(KEY_EQUAL)
+	await _frames(4)
+	var sub_up: int = plugin.grid.subdivisions
+	await _press_and_release_key(KEY_MINUS)
+	await _frames(4)
+	if sub_up == sub_before + 1 and plugin.grid.subdivisions == sub_before:
+		_pass("KEYS: = / - adjust subdivisions with nothing selected")
+	else:
+		_fail("KEYS: subdivision keys broken (%d → %d → %d)" % [
+			sub_before, sub_up, plugin.grid.subdivisions])
+	# Grid raise/lower via ] and \, mid-air with no selection.
+	await _press_and_release_key(KEY_BRACKETRIGHT)
+	await _frames(4)
+	var elev_after_raise: float = plugin.grid.elevation()
+	await _press_and_release_key(KEY_BACKSLASH)
+	await _frames(4)
+	if absf(elev_after_raise - 0.2) < 0.001 and plugin.grid.elevation() == 0.0:
+		_pass("KEYS: ] raises elevation by a step, \\ resets")
+	else:
+		_fail("KEYS: elevation keys broken (raised to %.3f, reset %.3f)" % [
+			elev_after_raise, plugin.grid.elevation()])
+	# With a PBMesh actively edited: Y toggles OUR snap (and gets restored).
+	sel.add_node(b)
+	await _frames(5)
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))  # focus + keep context
+	await _frames(6)
+	await _press_and_release_key(KEY_Y)
+	await _frames(4)
+	if plugin.grid.enabled:
+		_fail("KEYS: Y did not toggle PoiBuilder snapping in a PBMesh context")
+	else:
+		await _press_and_release_key(KEY_Y)
+		await _frames(4)
+		if plugin.grid.enabled:
+			_pass("KEYS: Y toggles PoiBuilder snapping while editing (restored on)")
+		else:
+			_fail("KEYS: PoiBuilder snapping did not toggle back on")
+
+	# ── Test 14: the PoiBuilder grid overlay actually draws ──────────────────
+	# The grid draws via _forward_3d_draw_over_viewport — a WINDOW-level
+	# Control over the viewport, NOT part of the SubViewport's 3D texture.
+	# Capture the editor WINDOW (root viewport) and diff only the viewport-
+	# surface region, toggling JUST show_grid (toolbar labels settle first,
+	# so they cannot fake a nonzero diff).
+	sel.clear()
+	await _frames(4)
+	plugin.grid.raise()
+	plugin.grid.raise()
+	plugin.grid.show_grid = true
+	await _frames(6)
+	var win_on: Image = get_tree().root.get_texture().get_image()
+	plugin.grid.show_grid = false
+	await _frames(6)
+	var win_off: Image = get_tree().root.get_texture().get_image()
+	var view_region := Rect2i(host.get_global_rect()).grow(-12)
+	var grid_diff := 0
+	for py14 in range(view_region.position.y, view_region.end.y):
+		for px14 in range(view_region.position.x, view_region.end.x):
+			var ca: Color = win_on.get_pixel(px14, py14)
+			var cb: Color = win_off.get_pixel(px14, py14)
+			if absf(ca.r - cb.r) > 0.031 or absf(ca.g - cb.g) > 0.031 \
+					or absf(ca.b - cb.b) > 0.031:
+				grid_diff += 1
+	plugin.grid.show_grid = true
+	plugin.grid.reset_origin()
+	await _frames(3)
+	if grid_diff > 300:
+		_pass("GRID VIEW: overlay redraws with show_grid (pixel_diff=%d)" % grid_diff)
+	else:
+		_fail("GRID VIEW: show_grid toggle changes nothing on screen (pixel_diff=%d)" % grid_diff)
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

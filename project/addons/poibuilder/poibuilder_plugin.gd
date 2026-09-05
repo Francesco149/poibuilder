@@ -11,6 +11,15 @@ var editor: PBEditor = PBEditor.new()
 var gizmo_plugin: PBGizmoPlugin = PBGizmoPlugin.new()
 var tool_bridge: PBToolBridge = PBToolBridge.new()
 
+## The plugin's own grid/snapping state (independent of the editor's 3D
+## grid): element drags, the extrude gesture, and shape creation snap to it;
+## `draw_on_grid` routes creation onto the grid plane at the grid elevation.
+var grid: PBGrid = PBGrid.new()
+
+## Live EditorSettings instance (null in headless test runs) — shortcut
+## rebinds and grid persistence go through it.
+var _settings: Object = null
+
 # ==============================================================================
 # UI Components
 # ==============================================================================
@@ -43,7 +52,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.29"
+const VERSION := "0.9.30"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -53,6 +62,11 @@ func _enter_tree():
 	# editing context (the engine otherwise only forwards viewport input to
 	# plugins whose _handles() matches the currently edited object).
 	set_input_event_forwarding_always_enabled()
+	# ...same for the viewport OVERLAY draw: a plugin only joins the "over"
+	# draw list while it EDITS a selected object (EditorNode::_plugin_over_edit)
+	# — the grid must render with nothing selected, so we draw from the
+	# force-list hook instead.
+	set_force_draw_over_forwarding_enabled()
 
 	# Wire up subsystems
 	editor.logger = logger
@@ -60,9 +74,19 @@ func _enter_tree():
 	gizmo_plugin.logger = logger
 	gizmo_plugin.element_editor.editor = editor
 	gizmo_plugin.element_editor.undo = get_undo_redo()
+	gizmo_plugin.element_editor.grid = grid
 	gizmo_plugin.shape_creator = shape_creator
+	shape_creator.grid = grid
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
+
+	# Register every plugin action into the editor's shortcut store (rebinds
+	# live in Editor Settings → Shortcuts like native editor commands) and
+	# load the persisted grid settings.
+	_settings = get_editor_interface().get_editor_settings()
+	PBActions.register(_settings)
+	_load_grid_settings()
+	grid.changed.connect(_on_grid_changed)
 
 	# Connect editor signals
 	editor.active_mesh_changed.connect(_on_active_mesh_changed)
@@ -95,7 +119,14 @@ func _enter_tree():
 	toolbar.edit_params_requested.connect(_on_edit_params_requested)
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
+	toolbar.snap_toggled.connect(func(enabled: bool): grid.enabled = enabled)
+	toolbar.draw_on_grid_toggled.connect(func(enabled: bool): grid.draw_on_grid = enabled)
+	toolbar.grid_unit_changed.connect(func(unit: float): grid.unit = unit)
+	toolbar.grid_subdivisions_changed.connect(func(s: int): grid.subdivisions = s)
+	toolbar.grid_raise_requested.connect(func(): grid.raise())
+	toolbar.grid_lower_requested.connect(func(): grid.lower())
 	_add_toolbar_row_below_3d_toolbar()
+	toolbar.sync_grid(grid)
 
 	# Tool overlay panel floating in the 3D viewport (readouts + params
 	# modal; logging goes to the Godot console via PBLogger).
@@ -281,6 +312,13 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if shape_creator.is_active():
 		return _creation_input(camera, event)
 
+	# Everything key-driven funnels through the rebindable action table BEFORE
+	# the editing gate: grid keys work with nothing selected (the grid must be
+	# adjustable before use), while action-internal context gates keep unbound
+	# keys passing through as before.
+	if event is InputEventKey and event.pressed and not event.echo:
+		return _handle_action_key(event as InputEventKey)
+
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
 
@@ -310,30 +348,253 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				node.update_gizmos()
 			return AFTER_GUI_INPUT_PASS
 
-	# Element mode hotkeys (matching ProBuilder: H vertex, J edge, K face,
-	# X cycles gizmo space). Move/rotate/scale are the plugin's OWN tool
-	# buttons (and W/E/R mirror in via the engine tool buttons).
-	if event is InputEventKey and event.pressed and not event.echo:
-		var key_event: InputEventKey = event as InputEventKey
-		match key_event.keycode:
-			KEY_H:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.select_mode = PBEditor.SelectMode.VERTEX
-					return AFTER_GUI_INPUT_STOP
-			KEY_J:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.select_mode = PBEditor.SelectMode.EDGE
-					return AFTER_GUI_INPUT_STOP
-			KEY_K:
-				if not key_event.ctrl_pressed and not key_event.alt_pressed:
-					editor.select_mode = PBEditor.SelectMode.FACE
-					return AFTER_GUI_INPUT_STOP
-			KEY_X:
-				# X = Cycle orientation space (Element → Object → World)
-				if not key_event.ctrl_pressed and not key_event.alt_pressed and not key_event.shift_pressed:
-					editor.cycle_orientation_space()
-					return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
+
+## Maps a viewport keypress to a rebindable PoiBuilder action. Actions with
+## an editing context consume the event (STOP); everything else PASSES so
+## the engine's own shortcuts keep working untouched.
+func _handle_action_key(key_event: InputEventKey) -> int:
+	var grid_result := _handle_grid_action_key(key_event)
+	if grid_result == AFTER_GUI_INPUT_STOP:
+		return AFTER_GUI_INPUT_STOP
+	var action := PBActions.action_for(key_event, _settings)
+	if action == &"":
+		return AFTER_GUI_INPUT_PASS
+	var editing := editor.is_editing()
+	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active()
+	match action:
+		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
+		# nothing PoiBuilder-related active, scene-tree search fields would
+		# lose the letters to a no-op).
+		&"select_vertex":
+			if not pb_context:
+				return AFTER_GUI_INPUT_PASS
+			editor.select_mode = PBEditor.SelectMode.VERTEX
+		&"select_edge":
+			if not pb_context:
+				return AFTER_GUI_INPUT_PASS
+			editor.select_mode = PBEditor.SelectMode.EDGE
+		&"select_face":
+			if not pb_context:
+				return AFTER_GUI_INPUT_PASS
+			editor.select_mode = PBEditor.SelectMode.FACE
+		&"select_object":
+			if not pb_context:
+				return AFTER_GUI_INPUT_PASS
+			editor.select_mode = PBEditor.SelectMode.OBJECT
+		&"cycle_space":
+			if not editing:
+				return AFTER_GUI_INPUT_PASS
+			editor.cycle_orientation_space()
+		&"snap_selection":
+			if not editing:
+				return AFTER_GUI_INPUT_PASS
+			_on_snap_selection_to_grid()
+		_:
+			# Mesh operation keys route into the toolbar ops pipeline; the
+			# op itself validates the selection context.
+			if not editing or not PBActions.OP_ACTION_TO_OPERATION.has(action):
+				return AFTER_GUI_INPUT_PASS
+			_on_operation_requested(PBActions.OP_ACTION_TO_OPERATION[action])
+	return AFTER_GUI_INPUT_STOP
+
+## Grid + snap toggles work in EVERY context (nothing selected, mid-drag of
+## a new shape, editing) — the grid must be adjustable before and during
+## use. toggle_snap is the exception: with no PoiBuilder context at all the
+## engine's own Use Snap button keeps its Y binding.
+func _handle_grid_action_key(key_event: InputEventKey) -> int:
+	var action := PBActions.action_for(key_event, _settings)
+	if action == &"":
+		return AFTER_GUI_INPUT_PASS
+	if action == &"toggle_snap":
+		if editor.is_editing() or editor.active_mesh != null or shape_creator.is_active():
+			grid.enabled = not grid.enabled
+			return AFTER_GUI_INPUT_STOP
+		return AFTER_GUI_INPUT_PASS
+	elif action == &"toggle_on_grid":
+		grid.draw_on_grid = not grid.draw_on_grid
+	elif action == &"toggle_grid":
+		grid.show_grid = not grid.show_grid
+	elif action == &"subdiv_increase":
+		grid.subdivisions_up()
+	elif action == &"subdiv_decrease":
+		grid.subdivisions_down()
+	elif action == &"unit_increase":
+		grid.unit_up()
+	elif action == &"unit_decrease":
+		grid.unit_down()
+	elif action == &"grid_raise":
+		grid.raise()
+	elif action == &"grid_lower":
+		grid.lower()
+	elif action == &"grid_reset":
+		grid.reset_origin()
+	else:
+		return AFTER_GUI_INPUT_PASS
+	return AFTER_GUI_INPUT_STOP
+
+# ==============================================================================
+# Grid + Snapping (own grid, independent of the engine's 3D grid)
+# ==============================================================================
+
+## Persisted grid settings (Editor Settings keys; origin/elevation is
+## session-only — a floating grid from yesterday's session would surprise).
+const GRID_SETTING_PREFIX := "poibuilder/grid/"
+const GRID_SETTING_KEYS := ["enabled", "unit", "subdivisions",
+	"draw_on_grid", "show_grid", "rotate_step_deg"]
+
+func _load_grid_settings() -> void:
+	if _settings == null or not _settings.has_method("has_setting"):
+		return
+	for key in GRID_SETTING_KEYS:
+		var path: String = GRID_SETTING_PREFIX + key
+		if _settings.has_setting(path):
+			grid.set(key, _settings.get_setting(path))
+	_on_grid_changed()
+
+func _on_grid_changed() -> void:
+	if _settings != null and _settings.has_method("set_setting"):
+		for key in GRID_SETTING_KEYS:
+			_settings.set_setting(GRID_SETTING_PREFIX + key, grid.get(key))
+	if toolbar != null:
+		toolbar.sync_grid(grid)
+	if logger != null:
+		logger.info("grid", "unit=%s subdivs=%d step=%s snap=%s on_grid=%s show=%s elev=%s rot_step=%s" % [
+			str(grid.unit), grid.subdivisions, str(grid.step()), str(grid.enabled),
+			str(grid.draw_on_grid), str(grid.show_grid), str(grid.origin.y),
+			str(grid.rotate_step_deg)])
+	# The grid overlay is draw-over-viewport API: request a repaint.
+	update_overlays()
+
+## PoiBuilder draws its OWN grid: subdivision lines (the snap step) overlay
+## the engine's 1m grid; when the grid is ELEVATED the full grid shows at
+## that height, making the working plane obvious. Drawn from the FORCE hook
+## because the normal draw hook stops firing the moment no PBMesh is edited.
+func _forward_3d_force_draw_over_viewport(viewport_control: Control) -> void:
+	if grid == null or not grid.show_grid:
+		return
+	var editor_viewport := get_editor_interface().get_editor_viewport_3d(0)
+	if editor_viewport == null:
+		return
+	var cam := editor_viewport.get_camera_3d()
+	if cam == null:
+		return
+	_draw_grid_overlay(viewport_control, cam)
+
+func _draw_grid_overlay(overlay: Control, cam: Camera3D) -> void:
+	var step := grid.step()
+	var half := 24.0
+	# Thin the linework when the view is far out: spacing escalates by
+	# powers of two over the step so the overlay stays readable instead of
+	# collapsing into a solid field.
+	var spacing := step
+	while 2.0 * half / spacing > 160.0:
+		spacing *= 2.0
+
+	var focus := Vector3.ZERO
+	if editor.active_mesh != null:
+		focus = editor.active_mesh.global_transform.origin
+	elif shape_creator != null and shape_creator.is_active() \
+			and shape_creator.plane_point != Vector3.ZERO:
+		focus = shape_creator.plane_point
+	var cx: float = PBGrid.snap_val_exact(focus.x - grid.origin.x, spacing) + grid.origin.x
+	var cz: float = PBGrid.snap_val_exact(focus.z - grid.origin.z, spacing) + grid.origin.z
+	var cy: float = grid.origin.y
+
+	# At elevation 0 the engine already draws its own unit lines — only the
+	# subdivisions need drawing. An elevated grid draws everything.
+	var on_zero_plane := absf(cy) < 0.0001
+	var minor := Color(0.62, 0.78, 1.0, 0.25)
+	var major := Color(0.62, 0.78, 1.0, 0.5)
+
+	var i_min := int(floorf((cx - half - grid.origin.x) / spacing))
+	var i_max := int(ceilf((cx + half - grid.origin.x) / spacing))
+	for i in range(i_min, i_max + 1):
+		var x := grid.origin.x + i * spacing
+		var is_major := is_zero_approx(fposmod(x - grid.origin.x, grid.unit))
+		if on_zero_plane and is_major:
+			continue
+		_draw_grid_line(overlay, cam, Vector3(x, cy, cz - half), Vector3(x, cy, cz + half),
+			major if is_major else minor)
+	var j_min := int(floorf((cz - half - grid.origin.z) / spacing))
+	var j_max := int(ceilf((cz + half - grid.origin.z) / spacing))
+	for j in range(j_min, j_max + 1):
+		var z := grid.origin.z + j * spacing
+		var is_major := is_zero_approx(fposmod(z - grid.origin.z, grid.unit))
+		if on_zero_plane and is_major:
+			continue
+		_draw_grid_line(overlay, cam, Vector3(cx - half, cy, z), Vector3(cx + half, cy, z),
+			major if is_major else minor)
+
+## Draws a world-space line onto the 2D viewport overlay, shortening segments
+## whose far end sits behind the camera (unprojection mirrors those points).
+func _draw_grid_line(overlay: Control, cam: Camera3D, a: Vector3, b: Vector3,
+		color: Color) -> void:
+	var a_behind := cam.is_position_behind(a)
+	var b_behind := cam.is_position_behind(b)
+	if a_behind and b_behind:
+		return
+	if a_behind or b_behind:
+		var cam_z := cam.global_transform.basis.z
+		var near_plane := Plane(cam_z, cam_z.dot(
+			cam.global_position + cam_z * (cam.near + 0.05)))
+		var cut = near_plane.intersects_segment(a, b)
+		if cut == null:
+			return
+		if a_behind:
+			a = cut
+		else:
+			b = cut
+	overlay.draw_line(cam.unproject_position(a), cam.unproject_position(b), color, 1.0, true)
+
+## Quantizes every selected element's positions onto the world grid
+## (ProBuilder/ProGrids "push to grid"): positions move, indexes unchanged —
+## weld groups keep topology sound, undo is a full-mesh snapshot.
+func _on_snap_selection_to_grid() -> void:
+	if not editor.is_editing() or editor.active_mesh == null:
+		return
+	var mesh := editor.active_mesh
+	var mesh_data: PBMeshData = mesh.pb_mesh_data
+	if mesh_data == null:
+		return
+	var indices := PackedInt32Array()
+	match editor.select_mode:
+		PBEditor.SelectMode.VERTEX:
+			for group_idx in editor.selection.selected_vertices:
+				if group_idx >= 0 and group_idx < mesh_data.shared_vertices.size():
+					var sv: PBSharedVertex = mesh_data.shared_vertices[group_idx]
+					if sv != null:
+						for idx: int in sv.indices:
+							indices.append(idx)
+		PBEditor.SelectMode.EDGE:
+			indices = mesh_data.get_coincident_vertices_from_edges(editor.selection.selected_edges)
+		PBEditor.SelectMode.FACE:
+			indices = mesh_data.get_coincident_vertices_from_faces(editor.selection.selected_faces)
+	if indices.is_empty():
+		return
+	var cmd := CmdMeshOp.new(mesh_data, "Snap Selection To Grid", mesh)
+	if logger:
+		cmd.logger = logger
+	var basis := mesh.global_transform.basis
+	var inv := basis.inverse()
+	var moved := false
+	for idx: int in indices:
+		if idx < 0 or idx >= mesh_data.positions.size():
+			continue
+		var world: Vector3 = mesh.global_transform.origin + basis * mesh_data.positions[idx]
+		var snapped := grid.snap_point(world)
+		var local: Vector3 = inv * (snapped - mesh.global_transform.origin)
+		if not (mesh_data.positions[idx] as Vector3).is_equal_approx(local):
+			mesh_data.positions[idx] = local
+			moved = true
+	if not moved:
+		return
+	mesh_data.invalidate_caches()
+	mesh_data.calculate_normals()
+	cmd.capture_after()
+	if not cmd.is_noop():
+		cmd.add_to_undo_manager(get_undo_redo())
+	_finish_mesh_op(mesh, "snap_selection", 0)
 
 # ==============================================================================
 # Object Selection Handling
@@ -563,6 +824,10 @@ const OP_INSET_AMOUNT := 0.25
 func _on_operation_requested(op_name: String) -> void:
 	if not editor.is_editing() or editor.active_mesh == null:
 		return
+	# Extrude is ONE action: face mode extrudes faces, edge mode extrudes
+	# fins (both the toolbar button and the op key route here).
+	if op_name == "extrude_faces" and editor.select_mode == PBEditor.SelectMode.EDGE:
+		op_name = "extrude_edges"
 	var mesh := editor.active_mesh
 	var mesh_data: PBMeshData = mesh.pb_mesh_data
 	if mesh_data == null:
@@ -746,6 +1011,11 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 				return AFTER_GUI_INPUT_STOP
 
 	if event is InputEventKey and event.pressed and not event.echo:
+		# Grid keys keep working mid-creation (raise the grid, change the
+		# step, toggle snapping) — they never conflict with LMB/ESC/ENTER.
+		if shape_creator.state != PBShapeCreator.State.PARAMS \
+				and _handle_grid_action_key(event as InputEventKey) == AFTER_GUI_INPUT_STOP:
+			return AFTER_GUI_INPUT_STOP
 		if shape_creator.state == PBShapeCreator.State.PARAMS:
 			if event.keycode == KEY_ESCAPE:
 				_on_params_canceled()
@@ -763,12 +1033,20 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 			_creation_abort("cancelled with Escape")
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
-## Nearest surface under the cursor: PBMesh faces (world space) with the
-## editor grid plane (y=0) as the fallback, like ProBuilder dragging on the
-## grid. Returns {point, normal} or {} on a miss.
+## Nearest surface under the cursor: PBMesh faces (world space) with
+## PoiBuilder's grid plane as the fallback, like ProBuilder dragging on the
+## grid. With "Draw on Grid" ON, surface picking is skipped entirely — every
+## new shape is drawn on the (possibly elevated) grid plane. Returns
+## {point, normal} or {} on a miss.
 func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	if grid.draw_on_grid:
+		var on_grid := PBShapeCreator.ray_plane_intersect(ray_o, ray_d,
+			grid.origin, Vector3.UP)
+		if on_grid != PBShapeCreator.RAY_MISS:
+			return {"point": on_grid, "normal": Vector3.UP}
+		return {}
 	var best_t := INF
 	var best := {}
 	var scene_root := get_editor_interface().get_edited_scene_root()
@@ -784,7 +1062,7 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 				best = {"point": res.hit_point,
 					"normal": (node.global_transform.basis * normal).normalized()}
 	if best.is_empty():
-		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, Vector3.ZERO, Vector3.UP)
+		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:
 			best = {"point": hit, "normal": Vector3.UP}
 	return best

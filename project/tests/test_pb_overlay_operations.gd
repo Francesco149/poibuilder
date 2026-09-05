@@ -74,7 +74,9 @@ func test_edge_ops_enable_in_edge_mode():
 	var edges := _mesh.pb_mesh_data.get_common_edges()
 	_ed.selection.set_edges([edges[2]])
 	assert_false(_op(tb, "insert_edge_loop").disabled, "Loop cut enables with an edge selection")
-	assert_true(_op(tb, "extrude_faces").disabled, "Face ops stay greyed in edge mode")
+	# One Extrude action, routed by mode: enabled in edge mode (extrude fins).
+	assert_false(_op(tb, "extrude_faces").disabled, "Extrude enables in edge mode (fins)")
+	assert_true(_op(tb, "inset_faces").disabled, "Inset stays greyed in edge mode")
 
 func test_weld_enables_with_two_vertices():
 	var tb := _make_toolbar()

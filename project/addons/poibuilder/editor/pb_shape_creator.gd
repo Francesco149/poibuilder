@@ -104,6 +104,12 @@ const ASPECT_BIAS_THRESHOLD := 0.20
 ## supplies data + placement for it). Null while nothing is being drawn.
 var preview_node: PBMesh = null
 
+## The plugin's grid/snapping state (null = unsnapped). When active, the
+## press point snaps to the grid on CARDINAL surfaces (the surface-normal
+## axis is masked, so walls keep their exact plane coordinate), the base
+## extents and the height quantize to the snap step.
+var grid: PBGrid = null
+
 # ── Queries ──────────────────────────────────────────────────────────────────
 
 func is_active() -> bool:
@@ -162,8 +168,15 @@ func arm(p_shape_id: StringName) -> void:
 ## horizontal drags feel natural on walls too.
 func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> void:
 	state = State.BASE
-	plane_point = surface_point
 	plane_normal = surface_normal.normalized()
+	# Snap the press point onto the grid on world-ALIGNED surfaces only —
+	# the masked axis keeps the rect coplanar with walls at arbitrary offsets.
+	# Arbitrary (sloped) surfaces keep the exact press point and snap the
+	# drag extents incrementally instead (ProBuilder behavior).
+	var press := surface_point
+	if grid != null and grid.enabled and PBGrid.is_cardinal(plane_normal):
+		press = grid.snap_point_masked(surface_point, plane_normal)
+	plane_point = press
 	# Seed the drag axis: camera forward projected into the plane, falling
 	# back to the plane-perpendicular-of-up and then world X.
 	var seed_dir: Vector3 = _project_on_plane(-view_z, plane_normal)
@@ -172,8 +185,8 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	if seed_dir.length_squared() < 0.01:
 		seed_dir = _project_on_plane(Vector3.UP.cross(plane_normal), plane_normal)
 	u_dir = seed_dir.normalized() if seed_dir.length_squared() > 0.0001 else Vector3.RIGHT
-	base_start = surface_point
-	rect_center = surface_point
+	base_start = press
+	rect_center = press
 	u_size = 0.0
 	v_size = 0.0
 	height = 0.0
@@ -181,8 +194,8 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	_user_nudged = false
 	_nudged_axis = Vector3.ZERO
 	_has_initial_base = false
-	base_end = surface_point
-	_last_point = surface_point
+	base_end = press
+	_last_point = press
 	# At rest the forward arrow sits along v (perpendicular to the drag seed)
 	# so the initial extent mapping matches "u → width, v → depth"; the first
 	# significant movement re-points it via the heuristic.
@@ -203,14 +216,20 @@ func update_base(point_on_plane: Vector3) -> void:
 		if drag_in_plane.length_squared() > 0.0001:
 			u_dir = _snap_axis(drag_in_plane)
 			_u_locked = true
-	var along_u := drag.dot(u_dir)
 	var v_dir := plane_normal.cross(u_dir).normalized()
+	var along_u := drag.dot(u_dir)
 	var along_v := drag.dot(v_dir)
+	if grid != null and grid.enabled:
+		# Quantize the two in-plane extents to the snap step (incremental —
+		# ProBuilder's GetPoint on the draw state's delta).
+		along_u = grid.snap_val(along_u)
+		along_v = grid.snap_val(along_v)
+	var snapped_drag := u_dir * along_u + v_dir * along_v
 	u_size = absf(along_u)
 	v_size = absf(along_v)
-	rect_center = base_start + drag * 0.5
-	base_end = point_on_plane
-	_update_facing(point_on_plane, v_dir)
+	rect_center = base_start + snapped_drag * 0.5
+	base_end = base_start + snapped_drag
+	_update_facing(base_end, v_dir)
 	_apply_drag_extents()
 
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
@@ -252,6 +271,8 @@ func update_height_point(world_point: Vector3) -> void:
 	if state != State.HEIGHT and state != State.OFFSET:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
+	if grid != null and grid.enabled:
+		height = grid.snap_val(height)
 	if state == State.OFFSET:
 		height = maxf(0.0, height)
 	_apply_drag_extents()
