@@ -775,6 +775,29 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.38 round complete ✓ — concave extrusion face flip fix, live grid repeat viewport redraw:
+- EXTRUSION FLIPPED FACES FIX (CONCAVE / STEPPED PROFILES):
+  In `PBElementEditor`, the side quad live-flip check during `EXTRUDE_MOVE`
+  previously computed `outward := wall_center - translated_center`. For concave
+  or stepped profiles (stairs, notched shapes), lower steps sit below the
+  centroid while their treads face UP (+Y), making the radial dot product
+  negative and mistakenly inverting treads and risers inside-out.
+  Fixed to use the exact ground truth outward direction:
+  `seed_outward := e1.cross(_drag_extrude_normal)`. A side wall now flips if
+  and only if `winding_n.dot(seed_outward) < 0.0` (i.e. when pushed back
+  through zero), keeping all extruded walls facing outward on any profile.
+- LIVE GRID REPEAT VIEWPORT REDRAW:
+  While holding `]` or `[`, the mouse is stationary, so the idle editor
+  viewport previously did not re-render between key repeats, making repeat
+  elevation changes appear stalled until the next mouse motion.
+  `_redraw_viewport()` now sets `vp.render_target_update_mode = SubViewport.UPDATE_ONCE`
+  and queues container redraws on every repeat tick, rendering each elevation
+  step live on screen. Echo repeats are also accepted during active shape creation.
+- TESTS:
+  Added `test_extrude_stair_side_never_flips_faces` in `tests/test_pb_mesh_ops.gd`
+  confirming all 14 extrusion side quads maintain outward axial normals.
+  704/704 GUT unit tests + GUI test harness passing.
+
 v0.9.37 round complete ✓ — grid raise/lower key auto-repeat, merged stairs side faces:
 - GRID ELEVATION AUTO-REPEAT:
   `PBActions.action_for()` and `poibuilder_plugin.gd` key forwarder now allow
