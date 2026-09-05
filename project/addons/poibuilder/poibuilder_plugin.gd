@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.35"
+const VERSION := "0.9.36"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -447,17 +447,19 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 ## session-only — a floating grid from yesterday's session would surprise).
 const GRID_SETTING_PREFIX := "poibuilder/grid/"
 const GRID_SETTING_KEYS := ["enabled", "unit", "subdivisions",
-	"draw_on_grid", "show_grid", "rotate_step_deg"]
+	"show_grid", "rotate_step_deg"]
 
 func _load_grid_settings() -> void:
+	grid.draw_on_grid = false
 	if _settings == null or not _settings.has_method("has_setting"):
 		return
+	if _settings.has_setting(GRID_SETTING_PREFIX + "draw_on_grid"):
+		_settings.set_setting(GRID_SETTING_PREFIX + "draw_on_grid", false)
 	for key in GRID_SETTING_KEYS:
 		var path: String = GRID_SETTING_PREFIX + key
 		if _settings.has_setting(path):
 			grid.set(key, _settings.get_setting(path))
 	_on_grid_changed()
-
 func _on_grid_changed() -> void:
 	if _settings != null and _settings.has_method("set_setting"):
 		for key in GRID_SETTING_KEYS:
@@ -539,10 +541,9 @@ func _on_selection_changed() -> void:
 		if node is PBMesh:
 			pb_mesh = node as PBMesh
 			break
-
-	if pb_mesh != null:
-		editor.active_mesh = pb_mesh
-	# Note: _make_visible(false) handles deselection
+	# Unconditionally update active_mesh: if a non-PBMesh (or nothing) is selected,
+	# active_mesh becomes null so PoiBuilder mode deactivates cleanly.
+	editor.active_mesh = pb_mesh
 
 	# Selecting something else while a params session is open cancels it:
 	# unconfirmed changes are reverted like clicking Cancel.
@@ -703,11 +704,11 @@ func _process(_delta: float) -> void:
 	var cam: Camera3D = null
 	if vp != null:
 		cam = vp.get_camera_3d()
-		if not grid_view.is_active():
-			var w3d := vp.find_world_3d()
-			if w3d != null:
-				grid_view.attach_scenario(w3d.get_scenario())
-	if wants and cam != null:
+		var w3d := vp.find_world_3d()
+		if w3d != null:
+			var cur_scenario := w3d.get_scenario()
+			if grid_view.get_scenario() != cur_scenario:
+				grid_view.attach_scenario(cur_scenario)
 		grid_view.update(cam)
 	grid_view.set_visible(wants)
 	if tool_bridge != null and tool_bridge.is_ready():
@@ -1097,6 +1098,41 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 				best_t = res.distance
 				best = {"point": res.hit_point,
 					"normal": (node.global_transform.basis * normal).normalized()}
+
+		for node in _collect_mesh_instances(scene_root):
+			if not node.is_visible_in_tree() or node.mesh == null:
+				continue
+			var tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
+			if tmesh != null:
+				var inv_xf := node.global_transform.affine_inverse()
+				var local_o := inv_xf * ray_o
+				var local_d := (inv_xf.basis * ray_d).normalized()
+				var faces: PackedVector3Array = tmesh.get_faces()
+				for i in range(0, faces.size() - 2, 3):
+					var hit := PBMath.ray_intersects_triangle(local_o, local_d, faces[i], faces[i + 1], faces[i + 2])
+					if hit.get("hit", false):
+						var world_hit: Vector3 = node.global_transform * (hit["point"] as Vector3)
+						var dist: float = ray_o.distance_to(world_hit)
+						if dist < best_t:
+							var fn := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).normalized()
+							best_t = dist
+							best = {
+								"point": world_hit,
+								"normal": (node.global_transform.basis * fn).normalized()
+							}
+
+		var w3d := camera.get_world_3d()
+		if w3d != null and w3d.direct_space_state != null:
+			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
+			var phys_hit := w3d.direct_space_state.intersect_ray(ray_query)
+			if not phys_hit.is_empty() and phys_hit.has("position") and phys_hit.has("normal"):
+				var dist: float = ray_o.distance_to(phys_hit["position"])
+				if dist < best_t:
+					best_t = dist
+					best = {
+						"point": phys_hit["position"],
+						"normal": phys_hit["normal"]
+					}
 	if best.is_empty():
 		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:
@@ -1109,6 +1145,14 @@ func _collect_pbmeshes(root: Node) -> Array[PBMesh]:
 		out.append(root)
 	for child in root.get_children():
 		out.append_array(_collect_pbmeshes(child))
+	return out
+
+func _collect_mesh_instances(root: Node) -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	if root is MeshInstance3D and not (root is PBMesh):
+		out.append(root as MeshInstance3D)
+	for child in root.get_children():
+		out.append_array(_collect_mesh_instances(child))
 	return out
 
 func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool:
@@ -1213,6 +1257,40 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 				best_node = node
 				best_face = res.face_index
 				best_point = res.hit_point
+		for node in _collect_mesh_instances(scene_root):
+			if not node.is_visible_in_tree() or node.mesh == null:
+				continue
+			var tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
+			if tmesh != null:
+				var inv_xf := node.global_transform.affine_inverse()
+				var local_o := inv_xf * ray_o
+				var local_d := (inv_xf.basis * ray_d).normalized()
+				var faces: PackedVector3Array = tmesh.get_faces()
+				for i in range(0, faces.size() - 2, 3):
+					var hit := PBMath.ray_intersects_triangle(local_o, local_d, faces[i], faces[i + 1], faces[i + 2])
+					if hit.get("hit", false):
+						var world_hit: Vector3 = node.global_transform * (hit["point"] as Vector3)
+						var dist: float = ray_o.distance_to(world_hit)
+						if dist < best_t:
+							best_t = dist
+							best_node = null
+							best_face = -1
+							best_point = world_hit
+		var w3d := camera.get_world_3d()
+		if w3d != null and w3d.direct_space_state != null:
+			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
+			var phys_hit := w3d.direct_space_state.intersect_ray(ray_query)
+			if not phys_hit.is_empty() and phys_hit.has("position"):
+				var dist: float = ray_o.distance_to(phys_hit["position"])
+				if dist < best_t:
+					best_t = dist
+					best_node = null
+					best_face = -1
+					best_point = phys_hit["position"]
+	if best_point == Vector3.ZERO:
+		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
+		if hit != PBShapeCreator.RAY_MISS:
+			best_point = hit
 	var prev_node := gizmo_plugin.creation_hover_node
 	if best_node != prev_node or best_face != gizmo_plugin.creation_hover_face:
 		gizmo_plugin.creation_hover_node = best_node

@@ -181,7 +181,10 @@ static func _make_shortcut(id: String) -> Shortcut:
 ## Builds the InputEventKey for a table entry [physical_key, ctrl, shift, alt].
 static func make_event(spec: Array) -> InputEventKey:
 	var ev := InputEventKey.new()
-	ev.physical_keycode = spec[0] as Key
+	var code := spec[0] as Key
+	ev.keycode = code
+	ev.physical_keycode = code
+	ev.key_label = code
 	ev.ctrl_pressed = bool(spec[1])
 	ev.shift_pressed = bool(spec[2])
 	ev.alt_pressed = bool(spec[3])
@@ -203,13 +206,13 @@ static func action_for(event: InputEvent, settings: Object = null) -> StringName
 	if settings != null and settings.has_method("is_shortcut"):
 		for id: String in ACTIONS:
 			var path := PREFIX + id
-			if settings.has_shortcut(path):
-				if settings.is_shortcut(path, key_event):
+			if settings.has_shortcut(path) and settings.is_shortcut(path, key_event):
+				return StringName(id)
+		# Fallback: if settings shortcut matching missed due to keycode vs physical_keycode layout mismatch
+		for id: String in ACTIONS:
+			for spec: Array in ACTIONS[id]["keys"]:
+				if _match_default(key_event, spec):
 					return StringName(id)
-			else:
-				for spec: Array in ACTIONS[id]["keys"]:
-					if _match_default(key_event, spec):
-						return StringName(id)
 	else:
 		for id: String in ACTIONS:
 			for spec: Array in ACTIONS[id]["keys"]:
@@ -220,7 +223,8 @@ static func action_for(event: InputEvent, settings: Object = null) -> StringName
 ## Default-table matching: physical keycode (layout-independent), with the
 ## keycode as fallback, and EXACT modifier equality.
 static func _match_default(event: InputEventKey, spec: Array) -> bool:
-	var key_match: bool = event.physical_keycode == spec[0] or event.keycode == spec[0]
+	var target := spec[0] as Key
+	var key_match: bool = event.physical_keycode == target or event.keycode == target or event.key_label == target
 	return key_match \
 		and event.ctrl_pressed == bool(spec[1]) \
 		and event.shift_pressed == bool(spec[2]) \

@@ -187,6 +187,9 @@ func is_visible() -> bool:
 func is_active() -> bool:
 	return _instance_rid.is_valid()
 
+func get_scenario() -> RID:
+	return _scenario_rid
+
 ## Updates the grid position and shader parameters from the camera.
 func update(cam: Camera3D) -> bool:
 	if cam == null or grid == null:
