@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.32"
+const VERSION := "0.9.33"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -83,7 +83,7 @@ func _enter_tree():
 	# live in Editor Settings → Shortcuts like native editor commands) and
 	# load the persisted grid settings.
 	_settings = get_editor_interface().get_editor_settings()
-	PBActions.register(_settings)
+	PBActions.register(_settings, logger)
 	_load_grid_settings()
 	grid.changed.connect(_on_grid_changed)
 	grid_view.logger = logger
