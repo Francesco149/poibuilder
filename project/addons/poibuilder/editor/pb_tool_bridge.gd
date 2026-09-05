@@ -81,6 +81,23 @@ var _local_coords_before_editing: bool = false
 var _use_snap_btn: BaseButton = null
 var _use_snap_before_editing: bool = false
 
+## The engine's 3D grid renders on editor gizmo layer 25; the View > View
+## Grid menu only toggles this cull bit on the viewport camera
+## (node_3d_editor_viewport.cpp case VIEW_GRID). We drive the same bit.
+const GIZMO_GRID_LAYER := 25
+
+## Camera whose grid cull bit we drive (captured on first hide).
+var _engine_grid_cam: Camera3D = null
+
+## The Snap Settings dialog's spinners (Translate / Rotate / Scale),
+## discovered by label. Written only while OBJECT mode follows our grid.
+var _snap_spins: Dictionary = {}
+
+## Engine snap values to restore when a PBMesh context ends.
+var _engine_snap_backup: Dictionary = {}
+var _engine_snap_applied: bool = false
+var _engine_grid_hidden_by_us: bool = false
+
 ## True while apply_orientation_space is pressing the toggle; lets the
 ## `toggled` listener ignore our own programmatic flips.
 var _applying_space: bool = false
@@ -131,6 +148,7 @@ func setup(n3d: Node) -> bool:
 		else:
 			logger.warn("tools", "Engine local-coords toggle NOT found — gizmo space will stay world")
 			_dump_button_candidates(candidates)
+	_find_snap_dialog()
 	return _all_tools_found()
 
 ## One line per shortcut-less/toggle candidate under the Node3DEditor — the
@@ -155,6 +173,11 @@ func _all_tools_found() -> bool:
 
 ## Releases signal connections and restores all engine buttons to enabled.
 func teardown() -> void:
+	# Never leave the editor with our grid/snap overrides active.
+	restore_engine_snap()
+	if _engine_grid_hidden_by_us:
+		set_engine_grid_hidden(false)
+		_engine_grid_hidden_by_us = false
 	_disconnect_buttons()
 	if _local_coords_btn != null and is_instance_valid(_local_coords_btn):
 		if _local_coords_btn.toggled.is_connected(_on_local_coords_toggled):
@@ -401,3 +424,147 @@ func _on_engine_tool_pressed(path: String) -> void:
 			on_tool_selected.call(PBEditor.ToolMode.ROTATE)
 		PATH_SCALE:
 			on_tool_selected.call(PBEditor.ToolMode.SCALE)
+
+# ==============================================================================
+# Engine grid visibility (camera cull layer 25, same as View > View Grid)
+# ==============================================================================
+
+## Is the engine's own 3D grid cull layer enabled on the tracked camera?
+func engine_grid_visible() -> bool:
+	return _engine_grid_cam != null and is_instance_valid(_engine_grid_cam) \
+		and (_engine_grid_cam.cull_mask & (1 << (GIZMO_GRID_LAYER - 1))) != 0
+
+## Hides/restores the engine's stock grid by flipping the grid cull layer on
+## the viewport camera — exactly what the View > View Grid menu entry does
+## (node_3d_editor_viewport.cpp case VIEW_GRID), but reachable from script.
+## NOTE: the per-layer setter CLI (set_cull_mask_value) refuses layers > 20
+## ("Render layer number must be between 1 and 20") — the 25-32 editor
+## layers are only reachable through the raw cull_mask property.
+func set_engine_grid_hidden(hidden: bool, cam: Camera3D = null) -> bool:
+	if cam == null:
+		cam = _engine_grid_cam
+	if cam == null or not is_instance_valid(cam):
+		return false
+	_engine_grid_cam = cam
+	var bit: int = 1 << (GIZMO_GRID_LAYER - 1)
+	if hidden:
+		cam.cull_mask = cam.cull_mask & ~bit
+	else:
+		cam.cull_mask = cam.cull_mask | bit
+	_engine_grid_hidden_by_us = hidden
+	return true
+
+# ==============================================================================
+# Engine snap-value sync (OBJECT mode follows PoiBuilder's grid)
+# ==============================================================================
+
+## Locates controls hanging off the EDITOR's main tree (the engine's popup
+## menus and dialogs are NOT descendants of the Node3DEditor node itself —
+## they live on the editor window tree). The plugin passes the editor base
+## control here; falls back to the Node3DEditor when absent.
+func find_editor_menus(search_root: Node) -> void:
+	_find_snap_dialog(search_root)
+
+## Finds the Snap Settings dialog's (translate, rotate, scale) spinners.
+## STRUCTURAL match: a ConfirmationDialog with exactly three EditorSpinSlider
+## children, in dialog order (translate, rotate, scale) — the spinners carry
+## no label text on 4.7.2, and translated titles are unreliable.
+func _find_snap_dialog(search_root: Node = null) -> void:
+	_snap_spins.clear()
+	var root: Node = search_root if search_root != null else _n3d
+	if root == null or not is_instance_valid(root):
+		return
+	var dialogs: Array[ConfirmationDialog] = []
+	_collect_dialogs(root, dialogs)
+	var found: ConfirmationDialog = null
+	for dlg in dialogs:
+		var spins: Array[EditorSpinSlider] = []
+		_collect_spins(dlg, spins)
+		if spins.size() == 3:
+			found = dlg
+			_snap_spins["translate"] = spins[0]
+			_snap_spins["rotate"] = spins[1]
+			_snap_spins["scale"] = spins[2]
+			if dlg.title.containsn("Snap"):
+				# A dialog titled Snap-something wins outright.
+				if logger != null:
+					logger.info("tools", "Snap dialog found: '%s'" % dlg.title)
+				return
+	if _snap_spins.is_empty():
+		if logger != null:
+			logger.warn("tools", "Snap dialog spinners not found — object-mode grid sync disabled")
+	elif logger != null:
+		logger.info("tools", "Snap dialog found structurally (3 spinners, untitled Snap hint)")
+
+func _collect_dialogs(node: Node, out: Array[ConfirmationDialog]) -> void:
+	for child in node.get_children():
+		if child is ConfirmationDialog:
+			out.append(child)
+		_collect_dialogs(child, out)
+
+func _collect_spins(node: Node, out: Array[EditorSpinSlider]) -> void:
+	for child in node.get_children():
+		if child is EditorSpinSlider:
+			out.append(child)
+		_collect_spins(child, out)
+
+## The Snap Settings dialog lives under the Node3DEditor; emitting its
+## 'confirmed' signal runs the engine's own applier (spinner values → live
+## viewport snap parameters), without ever showing the dialog.
+func _confirm_snap_spinners() -> void:
+	if _snap_spins.is_empty():
+		return
+	for dlg in _snap_dialog_ancestors():
+		dlg.emit_signal("confirmed")
+		return
+
+func _snap_dialog_ancestors() -> Array:
+	# The ConfirmationDialog is the nearest ancestor chain start of a spin.
+	var out: Array = []
+	var node: Node = _snap_spins.get("translate")
+	if node != null:
+		var p := node.get_parent()
+		while p != null:
+			if p is ConfirmationDialog:
+				out.append(p)
+				return out
+			p = p.get_parent()
+	return out
+
+## While a PBMesh is selected in OBJECT mode the engine's transform snap
+## tracks our grid: values are written into the live snap dialog and
+## 'confirmed' (the engine's own applier), and the engine's Use Snap state
+## becomes `snap_on`. The user's pre-PoiBuilder values are stored and
+## restored by restore_engine_snap().
+func apply_engine_snap(step: float, rotate_deg: float, snap_on: bool) -> void:
+	if _snap_spins.is_empty():
+		return
+	if not _engine_snap_applied:
+		_engine_snap_backup["translate"] = _snap_spins["translate"].value
+		_engine_snap_backup["rotate"] = _snap_spins["rotate"].value
+		_engine_snap_backup["scale"] = _snap_spins["scale"].value
+		_engine_snap_backup["use_snap"] = _use_snap_btn.button_pressed if _use_snap_btn != null else false
+		_engine_snap_applied = true
+	_snap_spins["translate"].set_value_no_signal(step)
+	_snap_spins["rotate"].set_value_no_signal(rotate_deg)
+	_confirm_snap_spinners()
+	if _use_snap_btn != null and is_instance_valid(_use_snap_btn) \
+			and _use_snap_btn.button_pressed != snap_on:
+		_use_snap_btn.button_pressed = snap_on
+	# Keep PoiBuilder's element-mode semantics unchanged: while editing,
+	# engine snap stays forced off (our layer owns element drags).
+	if editing_active and _use_snap_btn != null and is_instance_valid(_use_snap_btn):
+		if _use_snap_btn.button_pressed:
+			_use_snap_btn.button_pressed = false
+
+## Restores the engine snap values captured before the first apply.
+func restore_engine_snap() -> void:
+	if not _engine_snap_applied or _snap_spins.is_empty():
+		return
+	_snap_spins["translate"].set_value_no_signal(_engine_snap_backup.get("translate", 1.0))
+	_snap_spins["rotate"].set_value_no_signal(_engine_snap_backup.get("rotate", 15.0))
+	_snap_spins["scale"].set_value_no_signal(_engine_snap_backup.get("scale", 10.0))
+	_confirm_snap_spinners()
+	if _use_snap_btn != null and is_instance_valid(_use_snap_btn):
+		_use_snap_btn.button_pressed = _engine_snap_backup.get("use_snap", false)
+	_engine_snap_applied = false

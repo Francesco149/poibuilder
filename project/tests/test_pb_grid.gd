@@ -325,6 +325,54 @@ func test_extrude_cap_distance_snaps():
 		max_y = maxf(max_y, p.y)
 	assert_almost_eq(max_y, 0.9, 0.001, "cap top = 0.5 + snapped 0.4")
 
+# ==============================================================================
+# PBGridView line builder (drives the gizmo-drawn grid)
+# ==============================================================================
+
+func test_grid_view_builds_and_caches():
+	var g := PBGrid.new()
+	var view := PBGridView.new(g)
+	var cam := Camera3D.new()
+	add_child_autofree(cam)
+	cam.position = Vector3(0, 8, 10)
+	cam.rotation_degrees = Vector3(-50, 0, 0)
+	assert_true(view.update(cam), "first update rebuilds")
+	assert_gt(view._lines.size(), 100, "subdivision + axis lines exist")
+	assert_false(view.update(cam), "same focus = cached, no churn")
+	# Elevation shifts the whole lattice by the new origin.
+	g.raise()
+	assert_true(view.update(cam), "grid change rebuilds")
+	for p in view._lines:
+		assert_almost_eq(p.y, 0.2, 0.001, "every line lies on the elevated plane")
+
+func test_grid_view_fades_far_lines():
+	var g := PBGrid.new()
+	var view := PBGridView.new(g)
+	var cam := Camera3D.new()
+	add_child_autofree(cam)
+	cam.position = Vector3(6, 24, 6)  # high camera → wide extent
+	cam.rotation = Basis.from_euler(Vector3(-1.0, 0.8, 0.0)).get_euler()
+	assert_true(view.update(cam))
+	var focus := PBGridView._focus_cam(PBGridView._cam_transform(cam), g.origin.y)
+	# Fade gates on SEGMENT MIDPOINT distance from the focus.
+	var max_mid_d := 0.0
+	for seg in range(0, view._lines.size(), 2):
+		var mid := (view._lines[seg] + view._lines[seg + 1]) * 0.5
+		max_mid_d = maxf(max_mid_d, Vector2(mid.x - focus.x, mid.z - focus.z).length())
+	var near_alpha := -1.0
+	var far_alpha := 1.0
+	for seg in range(0, view._lines.size(), 2):
+		var mid := (view._lines[seg] + view._lines[seg + 1]) * 0.5
+		var dmid := Vector2(mid.x - focus.x, mid.z - focus.z).length()
+		var a: float = view._colors[seg].a
+		if dmid < 6.0:
+			near_alpha = maxf(near_alpha, a)
+		if dmid > 0.95 * max_mid_d:
+			far_alpha = minf(far_alpha, a)
+	assert_gt(view._lines.size(), 100, "high camera draws a wide-extent grid")
+	assert_gt(near_alpha, 0.1, "near lines are visible")
+	assert_lt(far_alpha, 0.05, "horizon lines have dissolved")
+
 func test_extrude_unsnapped_when_disabled():
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
 	var mesh: PBMesh = s["mesh"]

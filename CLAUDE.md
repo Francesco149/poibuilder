@@ -775,6 +775,41 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.31 round complete ✓ — grid visual rewrite + panel + engine sync, from
+the first sign-off of the 0.9.30 grid:
+- GRID VISUALS: the 2D `_forward_3d_draw_over_viewport` line overlay
+  degenerated at the horizon (finite patch + hairline 1px draw_line) and
+  couldn't reach the sky properly. REPLACED by world-space gizmo drawing:
+  PBGridView (editor/pb_grid_view.gd) caches a WORLD-space vertex-color line
+  soup (majors + minors + X/Z axis stripes, cyan palette) and the active
+  mesh's gizmo draws it (transformed to node-local) — node gizmos are the
+  ONE render channel that reliably re-renders when content changes. The
+  SubViewport-injected MeshInstance3D prototype died: visibility flips on
+  injected nodes never re-render an idle editor viewport.
+- FADE MODEL: subdivision lines draw only within a ProGrids-style local
+  radius (~40 steps around the focus); major lines fade by SEGMENT-MIDPOINT
+  distance (per-vertex radial fade zeroed every line — its endpoints always
+  live at the patch rim).
+- ENGINE GRID: hidden while ANY PoiBuilder context is active (element modes,
+  object mode, an armed shape session). The View > Grid toggle is just the
+  camera cull-mask bit 25 — SET IT DIRECTLY via `cam.cull_mask` (the
+  `set_cull_mask_value` API silently rejects layers > 20). Restored on exit
+  / deselect.
+- GRID PANEL: toolbar inline widgets replaced by the "Grid" toggle button +
+  one-line status readout ("0.2m ↕+0.4"); the overlay gained a GRID &
+  SNAPPING section (open from the toolbar button): instant-apply controls
+  (snap, draw-on-grid, show-grid, unit, subdivisions, rotate step, elevation
+  ▲▼/spin) and a Reset button that restores stock defaults.
+- OBJECT MODE follows our grid: while a PBMesh is selected in OBJECT mode
+  the bridge writes our step/rotate-step into the engine's SNAP SETTINGS
+  dialog spinners (structurally matched: ConfirmationDialog with exactly 3
+  EditorSpinSliders) and confirms it — engine-side node drags then quantize
+  to OUR values; on deselect they restore. Element modes keep our own layer
+  (engine Use Snap stays force-off there — same as before).
+- Grid keys ([ ] \ = - G Y ...) work in EVERY context including mid-creation
+  — the dispatcher sits ABOVE the `is_editing` gate in the input forwarder
+  (a regression during this round proved them otherwise gated).
+
 v0.9.30 round complete ✓ — PoiBuilder's own grid & snapping system:
 - PBGrid (editor/pb_grid.gd): the plugin's OWN grid, independent of Godot's.
   unit (1m major lines) / subdivisions (5) → snap step 0.2m; full 3D origin
@@ -808,18 +843,19 @@ v0.9.30 round complete ✓ — PoiBuilder's own grid & snapping system:
   our layer sees it — while editing, PBToolBridge holds the engine's Y
   toggle OFF and disabled (same pattern as the local-coords toggle).
   OBJECT-mode node drags still use the ENGINE's snap/grid (documented cut:
-  the node gizmo's drag application is engine-opaque), element editing and
-  creation are ours.
-- Grid overlay drawing: _forward_3d_draw_over_viewport draws subdivision
-  lines (minor/major alpha differ; at elevation 0 the unit-multiple lines
-  are skipped since the engine draws those). update_overlays() repaints on
-  grid changes (viewport input events keep it live during camera moves).
-  Grid keys work in EVERY context: mid-creation (don't conflict with
-  LMB/ESC/ENTER) and with nothing selected.
-- v0.9.30 also: the toolbar gained the grid section (Snap/On Grid toggles,
-  unit/subdiv SpinBoxes, step + elevation readout, ▲▼ elevation buttons);
-  Extrude is one action routed by mode (face extrude + edge fins share the
-  button and the Alt+E binding).
+  the node gizmo's drag application is engine-opaque). IN v0.9.31 the bridge
+  also syncs the engine snap VALUES (Snap Settings dialog spinners) while
+  OBJECT mode is active — object drags follow our grid too; element editing
+  and creation remain ours.
+- Grid overlay drawing (SUPERSEDED by v0.9.31 — now a gizmo-drawn world line
+  soup): the initial 2D `_forward_3d_draw_over_viewport` approach proved
+  unfit (plugin leaves the "over" draw list when no object is edited, and
+  hairline canvas lines degenerate at the horizon). Kept: grid keys work
+  in EVERY context — mid-creation (never conflicting with LMB/ESC/ENTER)
+  and with nothing selected.
+- v0.9.30 also: Extrude became ONE action routed by mode (face extrude +
+  edge fins share the toolbar button and Alt+E); the inline toolbar grid
+  section shipped then moved into the overlay's grid panel in v0.9.31.
 
 v0.9.21 round complete ✓ (nightly workflow, crisp wireframe/arrow, facing bias)
 - NIGHTLY WORKFLOW: `gh release delete --cleanup-tag` deleted the local and
