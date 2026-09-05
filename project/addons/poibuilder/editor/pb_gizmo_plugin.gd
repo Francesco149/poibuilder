@@ -886,36 +886,17 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 ## session is still ARMED (no drag yet), also draws the yellow vertex square
 ## under the cursor.
 func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
-	_creation_materials()
 	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
 	if fill != null:
-		if _creation_fill_material == null:
-			_creation_fill_material = _make_face_fill_material(Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity))
+		if _face_hover_fill_material == null:
+			_face_hover_fill_material = _make_face_fill_material(Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity))
 		else:
-			_creation_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity)
-		gizmo.add_mesh(fill, _creation_fill_material)
+			_face_hover_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity)
+		gizmo.add_mesh(fill, _face_hover_fill_material)
 
-	var face := mesh_data.faces[face_index]
-	if face == null:
-		return
-	var positions := mesh_data.positions
-	var loop := face.get_distinct_indexes()
-	var lines := PackedVector3Array()
-	var n := loop.size()
-	for i in range(n):
-		var a: int = loop[i]
-		var b: int = loop[(i + 1) % n]
-		if a >= 0 and a < positions.size() and b >= 0 and b < positions.size():
-			lines.append(positions[a])
-			lines.append(positions[b])
-	if lines.size() >= 2:
-		if _creation_edge_material == null:
-			_creation_edge_material = _make_overlay_material(Color(HOVER_COLOR.r, HOVER_COLOR.g, HOVER_COLOR.b, hover_opacity))
-		else:
-			_creation_edge_material.albedo_color = Color(HOVER_COLOR.r, HOVER_COLOR.g, HOVER_COLOR.b, hover_opacity)
-		gizmo.add_lines(lines, _creation_edge_material)
 	# ARMED: one square under the cursor (on the hovered surface point).
 	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
+		_creation_materials()
 		var node := gizmo.get_node_3d() as Node3D
 		if node != null:
 			var to_local := node.global_transform.affine_inverse()
