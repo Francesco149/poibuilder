@@ -1249,14 +1249,17 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 		if w3d != null and w3d.direct_space_state != null:
 			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
 			var phys_hit := w3d.direct_space_state.intersect_ray(ray_query)
-			if not phys_hit.is_empty() and phys_hit.has("position") and phys_hit.has("normal"):
-				var dist: float = ray_o.distance_to(phys_hit["position"])
-				if dist < best_t:
-					best_t = dist
-					best = {
-						"point": phys_hit["position"],
-						"normal": phys_hit["normal"]
-					}
+			if not phys_hit.is_empty() and phys_hit.has("position") and phys_hit.has("normal") and phys_hit.has("collider"):
+				var col = phys_hit["collider"]
+				var is_pbmesh_col := (col is Node and col.get_parent() is PBMesh)
+				if not is_pbmesh_col:
+					var dist: float = ray_o.distance_to(phys_hit["position"])
+					if dist < best_t - 0.001:
+						best_t = dist
+						best = {
+							"point": phys_hit["position"],
+							"normal": phys_hit["normal"]
+						}
 	if best.is_empty():
 		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:
@@ -1404,13 +1407,16 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 		if w3d != null and w3d.direct_space_state != null:
 			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
 			var phys_hit := w3d.direct_space_state.intersect_ray(ray_query)
-			if not phys_hit.is_empty() and phys_hit.has("position"):
-				var dist: float = ray_o.distance_to(phys_hit["position"])
-				if dist < best_t:
-					best_t = dist
-					best_node = null
-					best_face = -1
-					best_point = phys_hit["position"]
+			if not phys_hit.is_empty() and phys_hit.has("position") and phys_hit.has("collider"):
+				var col = phys_hit["collider"]
+				var is_pbmesh_col := (col is Node and col.get_parent() is PBMesh)
+				if not is_pbmesh_col:
+					var dist: float = ray_o.distance_to(phys_hit["position"])
+					if dist < best_t - 0.001:
+						best_t = dist
+						best_node = null
+						best_face = -1
+						best_point = phys_hit["position"]
 	if best_point == Vector3.ZERO:
 		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:

@@ -43,11 +43,6 @@ varying vec3 world_pos;
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	// Clip-space depth bias: pushes depth slightly towards camera (smaller Z)
-	// Prevents Z-fighting with coplanar geometry (floor at exact grid elevation)
-	// without showing through 3D geometry.
-	POSITION = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
-	POSITION.z -= 0.00025 * POSITION.w;
 }
 
 float get_line_alpha(vec2 pos, float step_size, float width_px) {
@@ -211,8 +206,8 @@ func update(cam: Camera3D) -> bool:
 	_ensure_resources()
 	if _instance_rid.is_valid():
 		# The quad follows the camera on XZ so it always reaches the horizon,
-		# positioned at elevation Y (+ 1mm offset to eliminate Z-fighting with coplanar floors).
-		var xform := Transform3D(Basis(), Vector3(cam_pos.x, elev + 0.001, cam_pos.z))
+		# positioned at elevation Y (+ 2mm offset to eliminate Z-fighting with coplanar floors).
+		var xform := Transform3D(Basis(), Vector3(cam_pos.x, elev + 0.002, cam_pos.z))
 		RenderingServer.instance_set_transform(_instance_rid, xform)
 
 		# Update shader uniforms
