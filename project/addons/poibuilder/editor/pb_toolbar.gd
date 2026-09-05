@@ -47,6 +47,15 @@ signal overlay_toggled(pinned: bool)
 
 ## Emitted when the user clicks the explicit Reset Panel button on the toolbar.
 signal reset_panel_requested
+
+## Grid section: the toggle/Spins mirror into PBGrid (the plugin owns the
+## state; these only signal requests).
+signal snap_toggled(enabled: bool)
+signal draw_on_grid_toggled(enabled: bool)
+signal grid_unit_changed(unit: float)
+signal grid_subdivisions_changed(subdivisions: int)
+signal grid_raise_requested
+signal grid_lower_requested
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -71,6 +80,15 @@ var _btn_edit_params: Button
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
 var _op_buttons: Dictionary = {}
+
+var _btn_snap: Button
+var _btn_on_grid: Button
+var _spin_unit: SpinBox
+var _spin_subdiv: SpinBox
+var _lbl_step: Label
+var _lbl_elev: Label
+var _btn_elev_up: Button
+var _btn_elev_down: Button
 
 var _tool_group: ButtonGroup = ButtonGroup.new()
 var _mode_group: ButtonGroup = ButtonGroup.new()
@@ -127,6 +145,9 @@ func _build_ui() -> void:
 	_btn_space.tooltip_text = "Gizmo orientation space (X to cycle): Element, Object, World"
 	_btn_space.pressed.connect(_on_space_button_pressed)
 	add_child(_btn_space)
+
+	_label_space()
+	_build_grid_section()
 
 	_label_space()
 
@@ -310,7 +331,10 @@ func _on_selection_info_changed(_arg = null) -> void:
 	var in_vertex: bool = mode == PBEditor.SelectMode.VERTEX
 
 	if _op_buttons.has("extrude_faces"):
-		_op_buttons["extrude_faces"].disabled = not (in_face and faces_selected)
+		# Face mode extrudes faces; edge mode extrudes fins — same button and
+		# the same key action (the plugin routes by mode).
+		_op_buttons["extrude_faces"].disabled = not (in_face and faces_selected) \
+			and not (in_edge and edges_selected)
 	if _op_buttons.has("inset_faces"):
 		_op_buttons["inset_faces"].disabled = not (in_face and faces_selected)
 	if _op_buttons.has("insert_edge_loop"):
@@ -375,6 +399,95 @@ func set_editing_active(active: bool) -> void:
 
 func set_overlay_pinned(pinned: bool) -> void:
 	_btn_overlay.set_pressed_no_signal(pinned)
+
+# ==============================================================================
+# Grid section (PoiBuilder's own grid; the plugin owns the PBGrid state)
+# ==============================================================================
+
+func _build_grid_section() -> void:
+	_btn_snap = Button.new()
+	_btn_snap.name = "SnapToggle"
+	_btn_snap.text = "Snap"
+	_btn_snap.toggle_mode = true
+	_btn_snap.flat = true
+	_btn_snap.focus_mode = Control.FOCUS_NONE
+	_btn_snap.tooltip_text = "PoiBuilder snapping (Y): element drags and shape creation quantize to the grid step — NO effect on engine-side node drags"
+	_btn_snap.toggled.connect(func(pressed: bool): snap_toggled.emit(pressed))
+	add_child(_btn_snap)
+
+	_btn_on_grid = Button.new()
+	_btn_on_grid.name = "OnGridToggle"
+	_btn_on_grid.text = "On Grid"
+	_btn_on_grid.toggle_mode = true
+	_btn_on_grid.flat = true
+	_btn_on_grid.focus_mode = Control.FOCUS_NONE
+	_btn_on_grid.tooltip_text = "Draw On Grid (G): new shapes draw on the grid plane at its elevation instead of the clicked surface"
+	_btn_on_grid.toggled.connect(func(pressed: bool): draw_on_grid_toggled.emit(pressed))
+	add_child(_btn_on_grid)
+
+	_spin_unit = SpinBox.new()
+	_spin_unit.name = "GridUnit"
+	_spin_unit.min_value = 0.25
+	_spin_unit.max_value = 64.0
+	_spin_unit.step = 0.25
+	_spin_unit.value = 1.0
+	_spin_unit.custom_minimum_size = Vector2(74, 0)
+	_spin_unit.tooltip_text = "Grid unit — major line spacing in meters (Shift+= / Shift+- double/halve it)"
+	_spin_unit.value_changed.connect(func(v: float): grid_unit_changed.emit(v))
+	add_child(_spin_unit)
+
+	_spin_subdiv = SpinBox.new()
+	_spin_subdiv.name = "GridSubdiv"
+	_spin_subdiv.min_value = 1
+	_spin_subdiv.max_value = 128
+	_spin_subdiv.step = 1.0
+	_spin_subdiv.value = 5
+	_spin_subdiv.custom_minimum_size = Vector2(56, 0)
+	_spin_subdiv.tooltip_text = "Subdivisions per unit — snap step = unit / subdivisions (= / - keys adjust)"
+	_spin_subdiv.value_changed.connect(func(v: float): grid_subdivisions_changed.emit(int(v)))
+	add_child(_spin_subdiv)
+
+	_lbl_step = Label.new()
+	_lbl_step.name = "GridStepLabel"
+	_lbl_step.text = "⇒ 0.2m"
+	_lbl_step.tooltip_text = "Effective snap step (unit / subdivisions)"
+	add_child(_lbl_step)
+
+	_btn_elev_down = Button.new()
+	_btn_elev_down.name = "GridLower"
+	_btn_elev_down.text = "▼"
+	_btn_elev_down.flat = true
+	_btn_elev_down.focus_mode = Control.FOCUS_NONE
+	_btn_elev_down.tooltip_text = "Lower the grid elevation by one snap step ( [ )"
+	_btn_elev_down.pressed.connect(func(): grid_lower_requested.emit())
+	add_child(_btn_elev_down)
+
+	_btn_elev_up = Button.new()
+	_btn_elev_up.name = "GridRaise"
+	_btn_elev_up.text = "▲"
+	_btn_elev_up.flat = true
+	_btn_elev_up.focus_mode = Control.FOCUS_NONE
+	_btn_elev_up.tooltip_text = "Raise the grid elevation by one snap step ( ] )"
+	_btn_elev_up.pressed.connect(func(): grid_raise_requested.emit())
+	add_child(_btn_elev_up)
+
+	_lbl_elev = Label.new()
+	_lbl_elev.name = "GridElevation"
+	_lbl_elev.text = ""
+	_lbl_elev.tooltip_text = "Grid elevation — the On Grid drawing plane's height (\\ resets to 0)"
+	add_child(_lbl_elev)
+
+## Mirrors PBGrid into the section WITHOUT re-emitting requests (no-signal
+## setters) — the plugin owns the state, the toolbar only displays/edits it.
+func sync_grid(g: PBGrid) -> void:
+	if g == null:
+		return
+	_btn_snap.set_pressed_no_signal(g.enabled)
+	_btn_on_grid.set_pressed_no_signal(g.draw_on_grid)
+	_spin_unit.set_value_no_signal(g.unit)
+	_spin_subdiv.set_value_no_signal(g.subdivisions)
+	_lbl_step.text = "⇒ %sm" % str(snappedf(g.step(), 0.0001))
+	_lbl_elev.text = g.elevation_summary()
 
 func new_shape_button() -> MenuButton:
 	return _btn_new_shape

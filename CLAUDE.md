@@ -775,6 +775,52 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.30 round complete ✓ — PoiBuilder's own grid & snapping system:
+- PBGrid (editor/pb_grid.gd): the plugin's OWN grid, independent of Godot's.
+  unit (1m major lines) / subdivisions (5) → snap step 0.2m; full 3D origin
+  (origin.y = grid ELEVATION, moved by [ / ] in step increments; \ resets);
+  draw_on_grid (new shapes draw on the grid plane at its elevation instead
+  of the clicked surface — picking bypasses meshes entirely); show_grid.
+  Persisted in EditorSettings under poibuilder/grid/* (elevation is
+  session-only). All math is ProBuilder parity (ProBuilderSnapping.Snap):
+  quantized to step·round(v/step), normal-masked press points on cardinal
+  surfaces only.
+- SNAP APPLICATION POINTS (single authority, all in PBElementEditor /
+  PBShapeCreator): move drags snap the translation DELTA per world-space
+  component (incremental/relative mode — selection-internal offsets are
+  preserved and node rotation/scale-safe); ROTATE drags snap the angle to
+  rotate_step (15°) with the rotation CENTER recovered from the unsnapped
+  rel via the closed form c = ½·o⊥ + ½·cot(θ/2)·(axis × o⊥) (snapping the
+  basis alone drifts the pivot); EXTRUDE caps snap their world distance
+  along the normal (tangential passes through); SCALE/INSET unsnapped;
+  creation press/extents/height snap. "Snap Selection To Grid" (registered
+  action, unbound default) quantizes selected elements absolutely.
+- PBActions (editor/pb_actions.gd): EVERY plugin keybind lives in one table
+  and registers via EditorSettings.add_shortcut("poibuilder/...") — the same
+  array the engine's ED_SHORTCUT macro feeds — so all actions appear under
+  Editor Settings → Shortcuts and rebinds persist (add_shortcut keeps
+  user-saved events across restarts). Defaults: H/J/K/X modes/space, Y =
+  toggle our snapping (contextual: passes to the engine when no PBMesh is
+  active), G = draw-on-grid, =/- subdivisions, Shift+=/- unit ×2/÷2, Alt+E
+  extrude, Alt+I inset, remaining ops registered unbound (rebindable).
+- ENGINE SNAP ISOLATION: the engine's own Use Snap quantizes the subgizmo
+  drag DELIVERY (apply_transform) at its project step (default 1m) BEFORE
+  our layer sees it — while editing, PBToolBridge holds the engine's Y
+  toggle OFF and disabled (same pattern as the local-coords toggle).
+  OBJECT-mode node drags still use the ENGINE's snap/grid (documented cut:
+  the node gizmo's drag application is engine-opaque), element editing and
+  creation are ours.
+- Grid overlay drawing: _forward_3d_draw_over_viewport draws subdivision
+  lines (minor/major alpha differ; at elevation 0 the unit-multiple lines
+  are skipped since the engine draws those). update_overlays() repaints on
+  grid changes (viewport input events keep it live during camera moves).
+  Grid keys work in EVERY context: mid-creation (don't conflict with
+  LMB/ESC/ENTER) and with nothing selected.
+- v0.9.30 also: the toolbar gained the grid section (Snap/On Grid toggles,
+  unit/subdiv SpinBoxes, step + elevation readout, ▲▼ elevation buttons);
+  Extrude is one action routed by mode (face extrude + edge fins share the
+  button and the Alt+E binding).
+
 v0.9.21 round complete ✓ (nightly workflow, crisp wireframe/arrow, facing bias)
 - NIGHTLY WORKFLOW: `gh release delete --cleanup-tag` deleted the local and
   remote tag, causing immediate `src refspec nightly does not match any` on

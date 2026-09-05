@@ -26,6 +26,12 @@ extends RefCounted
 ## Shared editor state (select mode, orientation space, selection).
 var editor: PBEditor = null
 
+## The plugin's grid/snapping state (null = snapping off; injected by the
+## plugin). MOVE drags snap the translation delta, ROTATE drags snap the
+## angle, EXTRUDE snaps the cap distance along the normal; scale and inset
+## stay unsnapped (ProBuilder parity).
+var grid: PBGrid = null
+
 ## Undo manager (EditorUndoRedoManager in the editor; duck-typed fake in tests).
 var undo: Object = null
 
@@ -1101,6 +1107,15 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 						if not _drag_mouse_driven and logger != null:
 							logger.warn("drag", "EXTRUDE MISMATCH — engine rel along normal=%.3f but cursor says %.3f (px_per_world=%.1f); driving the cap from the cursor" % [rel_normal_dist, mouse_world_dist, _extrude_px_per_world])
 						_drag_mouse_driven = true
+				# Grid snapping (incremental, ProBuilder's relative mode):
+				# plain MOVE quantizes the translation DELTA per world
+				# component; the EXTRUDE cap snaps its world-space distance
+				# ALONG the extrude normal (tangential motion passes through).
+				if grid != null and grid.enabled:
+					if _drag_gesture == DragGesture.EXTRUDE_MOVE:
+						motion = _snap_extrude_motion(node, motion)
+					else:
+						motion = grid.snap_local_delta(node.global_transform.basis, motion)
 				# Spec (VertexManipulationTool.cs): shift+move extrudes at
 				# begin, then ApplyTranslation pulls the new faces along the
 				# translation delta — the cap follows the cursor.
@@ -1114,10 +1129,25 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 						union.size(), str(_drag_mouse_driven)])
 				_emit_drag_update(true, motion, Vector3.ZERO, Vector3.ONE)
 			else:
+				# Grid snapping: rotation drags quantize the delivered angle
+				# to the rotate step (SCALE stays free — ProBuilder parity).
+				# The engine delivers rotation-about-center as
+				# rel = (R, c − R·c) — with local coords on c is the element
+				# origin, off it's the shared gizmo center. With the basis
+				# snapped to R' the origin MUST be rebuilt with the SAME
+				# center, recovered from the unsnapped rel, or the selection
+				# drifts ("rotate snaps and slides").
+				var applied_rel := rel
+				if grid != null and grid.enabled and _drag_gesture == DragGesture.NORMAL \
+						and editor != null and editor.tool_mode == PBEditor.ToolMode.ROTATE:
+					var snapped_basis := grid.snap_rotation(rel.basis)
+					if not snapped_basis.is_equal_approx(rel.basis) and _drag_start_xf.has(_drag_latest_id):
+						var center := _rotation_center(rel, _drag_start_xf[_drag_latest_id].origin)
+						applied_rel = Transform3D(snapped_basis, center - snapped_basis * center)
 				for idx in union:
 					if idx >= 0 and idx < pos_count:
-						new_positions[idx] = rel * _drag_original_positions[idx]
-				_emit_drag_update(true, rel.origin, _rel_rotation_deg(rel), rel.basis.get_scale())
+						new_positions[idx] = applied_rel * _drag_original_positions[idx]
+				_emit_drag_update(true, applied_rel.origin, _rel_rotation_deg(applied_rel), applied_rel.basis.get_scale())
 
 	mesh_data.positions = new_positions
 
@@ -1173,6 +1203,38 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 		mesh_data.update_normals_for(union)
 		node.rebuild_positions()
 	return true
+
+## Recovers the rotation center of an engine rotation delivery
+## rel = Transform3D(R, c − R·c): c = ½·o⊥ + ½·cot(θ/2)·(axis × o⊥), with
+## the axis-line component anchored on the element origin (any point along
+## the axis line is the same rotation).
+static func _rotation_center(rel: Transform3D, axis_anchor: Vector3) -> Vector3:
+	var q := rel.basis.get_rotation_quaternion()
+	var axis := q.get_axis()
+	var angle := q.get_angle()
+	if axis.length_squared() < 0.25 or absf(angle) < 0.000001:
+		return axis_anchor
+	axis = axis.normalized()
+	var o_perp: Vector3 = rel.origin - axis * axis.dot(rel.origin)
+	var center := 0.5 * o_perp + axis.cross(o_perp) * (0.5 / tan(angle * 0.5))
+	return center + axis * axis.dot(axis_anchor)
+
+## Snaps an EXTRUDE motion's world-space distance along the extrude normal
+## (tangential motion passes through untouched). Positions are node-local, so
+## the distance is measured in world space and the quantized result converted
+## back — the visual step on screen always matches the grid.
+func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
+	if grid == null or node == null:
+		return motion
+	var basis := node.global_transform.basis
+	var world := basis * motion
+	var world_normal := _extrude_normal_world.normalized()
+	if world_normal.length_squared() < 0.5:
+		return grid.snap_local_delta(basis, motion)  # fallback: plain delta snap
+	var dist := world.dot(world_normal)
+	var snapped := grid.snap_val(dist)
+	return basis.inverse() * (world + world_normal * (snapped - dist))
+
 # ==============================================================================
 # Center scale handle (uniform scale + inset, ProBuilder-style)
 # ==============================================================================

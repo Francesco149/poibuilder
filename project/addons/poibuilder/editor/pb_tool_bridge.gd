@@ -35,6 +35,7 @@ const PATH_SCALE := "spatial_editor/tool_scale"        # R
 const PATH_UNIVERSAL := "spatial_editor/tool_transform" # Q — universal gizmo
 const PATH_SELECT := "spatial_editor/tool_select"      # V
 const PATH_LOCAL_COORDS := "spatial_editor/local_coords" # T — gizmo local/global
+const PATH_USE_SNAP := "spatial_editor/snap"           # Y — engine Use Snap
 
 ## Fallback physical keys, used when the EditorSettings shortcut instance
 ## cannot be matched by identity (e.g. remapped or unavailable).
@@ -45,6 +46,7 @@ const KEY_BY_PATH := {
 	PATH_UNIVERSAL: KEY_Q,
 	PATH_SELECT: KEY_V,
 	PATH_LOCAL_COORDS: KEY_T,
+	PATH_USE_SNAP: KEY_Y,
 }
 
 # ==============================================================================
@@ -70,6 +72,14 @@ var _local_coords_btn: BaseButton = null
 
 ## Local-coords toggle state to restore when editing ends.
 var _local_coords_before_editing: bool = false
+
+## The engine's "Use Snap" toggle (optional). While EDITING it is held OFF
+## and disabled: PoiBuilder's own grid snapping is then the ONLY snapping
+## layer on element drags — the engine would otherwise quantize its subgizmo
+## drag deliveries at the project metadata step (default 1m) before our
+## layer even sees them, producing nested quantization.
+var _use_snap_btn: BaseButton = null
+var _use_snap_before_editing: bool = false
 
 ## True while apply_orientation_space is pressing the toggle; lets the
 ## `toggled` listener ignore our own programmatic flips.
@@ -99,6 +109,9 @@ func setup(n3d: Node) -> bool:
 	_local_coords_btn = _buttons.get(PATH_LOCAL_COORDS)
 	if _local_coords_btn == null:
 		_buttons.erase(PATH_LOCAL_COORDS)
+	_use_snap_btn = _buttons.get(PATH_USE_SNAP)
+	if _use_snap_btn == null:
+		_buttons.erase(PATH_USE_SNAP)
 
 	# Sync listeners: engine tool changed via W/E/R or its own toolbar.
 	for path: String in [PATH_MOVE, PATH_ROTATE, PATH_SCALE]:
@@ -242,6 +255,19 @@ func set_editing_active(active: bool) -> void:
 		else:
 			_local_coords_btn.disabled = false
 			_press_local_coords(_local_coords_before_editing)
+	# Hold the engine's own Use Snap OFF while editing: our grid snapping is
+	# applied in PBElementEditor on the delivered delta, and any engine-side
+	# quantization of the delivery itself would fight it (it lives upstream).
+	if _use_snap_btn != null and is_instance_valid(_use_snap_btn):
+		if active:
+			_use_snap_before_editing = _use_snap_btn.button_pressed
+			_use_snap_btn.disabled = true
+			if _use_snap_btn.button_pressed:
+				_use_snap_btn.button_pressed = false
+		else:
+			_use_snap_btn.disabled = false
+			if _use_snap_btn.button_pressed != _use_snap_before_editing:
+				_use_snap_btn.button_pressed = _use_snap_before_editing
 
 ## Whether the engine's local-coords toggle must be ON for `space`
 ## (a PBEditor.OrientationSpace value).
