@@ -624,7 +624,6 @@ func _run() -> void:
 	await _frames(6)
 	var shot_pre := vp.get_texture().get_image()
 	await _press_undo()
-	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	await _frames(15)
 	var post_undo_img := vp.get_texture().get_image()
 	var post_pos: int = b.pb_mesh_data.positions.size()
@@ -664,7 +663,6 @@ func _run() -> void:
 		_fail("COLLIDER: curved stairs ramp should be ConcavePolygonShape3D")
 	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(2.6, 2.1, 10.1)) \
 		.looking_at(Vector3(6, 0, 6.2), Vector3.UP)
-	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	await _frames(20)
 	var shot_col := vp.get_texture().get_image()
 	shot_col.save_png("/tmp/pb_collider_overlay.png")
@@ -888,14 +886,13 @@ func _run() -> void:
 	# the gizmo path guarantees an actual re-render (unlike a bare
 	# MeshInstance visibility flip, which the idle editor viewport skips).
 	plugin.grid.show_grid = false
-	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	b.update_gizmos()
 	await _frames(8)
 	var shot_grid_off: Image = vp.get_texture().get_image()
 	plugin.grid.show_grid = true
-	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	b.update_gizmos()
 	await _frames(8)
 	var shot_grid_on: Image = vp.get_texture().get_image()
-	shot_grid_on.save_png("/tmp/pb_grid_cyan.png")
 	var grid_diff := _img_diff(shot_grid_off, shot_grid_on)
 	if grid_diff > 800:
 		_pass("GRID VIEW: show_grid toggle changes the 3D frame (pixel_diff=%d)" % grid_diff)
