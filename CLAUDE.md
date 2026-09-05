@@ -775,6 +775,24 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.37 round complete ✓ — grid raise/lower key auto-repeat, merged stairs side faces:
+- GRID ELEVATION AUTO-REPEAT:
+  `PBActions.action_for()` and `poibuilder_plugin.gd` key forwarder now allow
+  `key_event.echo` events specifically for `grid_raise` and `grid_lower`.
+  Holding down `]` or `[` continuously raises or lowers the grid elevation
+  step-by-step. All other actions continue to reject echo events.
+- MERGED STAIRS SIDES (ONE FACE PER SIDE):
+  `PBShapeComplex.create_stairs()` previously generated individual quads under
+  each step. The left (-X) and right (+X) side walls are now generated as
+  single continuous 2D profile polygons and ear-clipped via `_triangulate_2d`,
+  emitting exactly one `PBFace` per side. Selecting either side in Face mode
+  selects the entire side out of the box as a single face.
+- TESTS:
+  - `tests/test_pb_grid.gd`: asserts `grid_raise` and `grid_lower` match on echo
+    while actions like `select_vertex` (H) reject echo.
+  - `tests/test_pb_shapes_complex.gd`: asserts `create_stairs` with sides produces
+    exactly 1 left face (normal -X) and 1 right face (normal +X).
+
 v0.9.36 round complete ✓ — keybind layout matching, grid lifecycle per mode, surface picking default:
 - KEYBIND MATCHING FIX (`[` and `]` without reassignment):
   `make_event(spec)` previously only set `ev.physical_keycode` while `ev.keycode`

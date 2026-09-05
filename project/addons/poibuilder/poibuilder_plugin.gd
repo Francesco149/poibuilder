@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.36"
+const VERSION := "0.9.37"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -322,7 +322,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# the editing gate: grid keys work with nothing selected (the grid must be
 	# adjustable before use), while action-internal context gates keep unbound
 	# keys passing through as before.
-	if event is InputEventKey and event.pressed and not event.echo:
+	if event is InputEventKey and event.pressed:
 		return _handle_action_key(event as InputEventKey)
 
 	if not editor.is_editing():
