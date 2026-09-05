@@ -12,7 +12,7 @@ extends RefCounted
 
 ## Plugin version, shown in the dock and logged at startup so a stale build
 ## is immediately obvious when behavior "doesn't match" what was fixed.
-const PLUGIN_VERSION := "0.9.34"
+const PLUGIN_VERSION := "0.9.35"
 
 # ==============================================================================
 # Selection Mode

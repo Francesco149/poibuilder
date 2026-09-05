@@ -811,6 +811,20 @@ func _run() -> void:
 		_fail("KEYS: Y toggled PoiBuilder snapping with no PBMesh context")
 	else:
 		_pass("KEYS: Y stays the engine's outside a PBMesh context")
+	var ed_settings := iface.get_editor_settings()
+	var raise_sc: Shortcut = ed_settings.get_shortcut("poibuilder/grid_raise")
+	var lower_sc: Shortcut = ed_settings.get_shortcut("poibuilder/grid_lower")
+	if raise_sc == null or lower_sc == null:
+		_fail("SHORTCUTS: grid_raise or grid_lower missing from EditorSettings")
+	elif raise_sc.get_name() != "Grid: Raise Elevation" or lower_sc.get_name() != "Grid: Lower Elevation":
+		_fail("SHORTCUTS: labels mismatch (raise='%s', lower='%s')" % [
+			raise_sc.get_name(), lower_sc.get_name()])
+	elif not raise_sc.has_meta("original") or not lower_sc.has_meta("original"):
+		_fail("SHORTCUTS: meta original missing on shortcuts")
+	elif raise_sc.events.is_empty() or lower_sc.events.is_empty():
+		_fail("SHORTCUTS: raise or lower has empty events")
+	else:
+		_pass("SHORTCUTS: grid_raise and grid_lower properly registered with labels and events")
 	# Grid keys are global: subdivision adjustments work with nothing selected.
 	var sub_before: int = plugin.grid.subdivisions
 	await _press_and_release_key(KEY_EQUAL)
