@@ -129,6 +129,25 @@ func test_extrude_adjacent_faces_extrude_as_one_region():
 		assert_true(absf(center.y) > 0.5 or absf(center.z) > 0.5,
 			"Cap moved along the diagonal region normal (center=%s)" % center)
 
+func test_extrude_stair_side_never_flips_faces():
+	var md := PBShapeComplex.create_stairs(Vector3(1, 1, 2), 6, true)
+	var right_side := -1
+	for fi in range(md.faces.size()):
+		var fn := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		if fn.dot(Vector3.RIGHT) > 0.99:
+			right_side = fi
+			break
+	assert_true(right_side >= 0)
+	var res := PBMeshOps.extrude_faces(md, PackedInt32Array([right_side]), 0.5)
+	assert_true(res["ok"])
+	assert_eq(md.validate(), "")
+	# Verify all newly generated side faces have outward axial normals
+	for fi in range(15, md.faces.size()):
+		var f: PBFace = md.faces[fi]
+		var fn := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		assert_true(fn.dot(Vector3.UP) > 0.99 or fn.dot(Vector3.DOWN) > 0.99 or fn.dot(Vector3.FORWARD) > 0.99 or fn.dot(Vector3.BACK) > 0.99,
+			"Side face normal must be outward axial, got: " + str(fn))
+
 func test_extrude_preserves_welded_drag_groups():
 	var data := _cube()
 	var result := PBMeshOps.extrude_faces(data, PackedInt32Array([4]), 0.25)

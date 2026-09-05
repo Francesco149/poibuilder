@@ -624,6 +624,7 @@ func _run() -> void:
 	await _frames(6)
 	var shot_pre := vp.get_texture().get_image()
 	await _press_undo()
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	await _frames(15)
 	var post_undo_img := vp.get_texture().get_image()
 	var post_pos: int = b.pb_mesh_data.positions.size()
@@ -663,6 +664,7 @@ func _run() -> void:
 		_fail("COLLIDER: curved stairs ramp should be ConcavePolygonShape3D")
 	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(2.6, 2.1, 10.1)) \
 		.looking_at(Vector3(6, 0, 6.2), Vector3.UP)
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	await _frames(20)
 	var shot_col := vp.get_texture().get_image()
 	shot_col.save_png("/tmp/pb_collider_overlay.png")
@@ -851,7 +853,7 @@ func _run() -> void:
 	# With a PBMesh actively edited: Y toggles OUR snap (and gets restored).
 	sel.add_node(b)
 	await _frames(5)
-	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))  # focus + keep context
+	await _click(b_click)  # focus + keep context
 	await _frames(6)
 	await _press_and_release_key(KEY_Y)
 	await _frames(4)
@@ -871,7 +873,6 @@ func _run() -> void:
 	sel.clear()
 	sel.add_node(b)
 	await _frames(6)
-	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
 	await _frames(8)
 	plugin.grid.reset_origin()
 	plugin.grid.show_grid = true
@@ -887,12 +888,12 @@ func _run() -> void:
 	# the gizmo path guarantees an actual re-render (unlike a bare
 	# MeshInstance visibility flip, which the idle editor viewport skips).
 	plugin.grid.show_grid = false
-	b.update_gizmos()
-	await _frames(6)
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await _frames(8)
 	var shot_grid_off: Image = vp.get_texture().get_image()
 	plugin.grid.show_grid = true
-	b.update_gizmos()
-	await _frames(6)
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	await _frames(8)
 	var shot_grid_on: Image = vp.get_texture().get_image()
 	shot_grid_on.save_png("/tmp/pb_grid_cyan.png")
 	var grid_diff := _img_diff(shot_grid_off, shot_grid_on)

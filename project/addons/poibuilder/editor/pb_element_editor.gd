@@ -1167,24 +1167,16 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
 			and applied_motion.length_squared() > 0.000000001:
 		var sweep := applied_motion
-		var translated_center := _drag_extrude_region_center + sweep
 		for i in range(_drag_side_faces.size()):
 			var tris: PackedInt32Array = _drag_side_tris[i]
-			var a: Vector3 = mesh_data.positions[tris[0]]
-			var b: Vector3 = mesh_data.positions[tris[1]]
-			var a2: Vector3 = mesh_data.positions[tris[4]]
 			var e1 := _drag_side_base_e1[i]
 			var winding_n := e1.cross(sweep)
 			if winding_n.length_squared() < 0.000000001:
 				continue
-			var wall_center := (a + b + a2 * 2.0) * 0.25
-			var outward := wall_center - translated_center
-			# Combine both references: the radial handles normal-axis
-			# crossings; the extrude normal handles walls folded by sideways
-			# sweeps. A wall whose winding disagrees with either enough to
-			# go negative is inside-out.
-			var wants_flipped: bool = winding_n.normalized().dot(
-				(outward.normalized() + _drag_extrude_normal).normalized()) < 0.0
+			var seed_outward := e1.cross(_drag_extrude_normal)
+			if seed_outward.length_squared() < 0.000000001:
+				continue
+			var wants_flipped: bool = winding_n.dot(seed_outward) < 0.0
 			if wants_flipped != bool(_drag_side_flipped[i]):
 				_drag_side_flipped[i] = 1 if wants_flipped else 0
 				_set_face_winding(_drag_side_faces[i], tris, wants_flipped)

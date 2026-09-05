@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.37"
+const VERSION := "0.9.38"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -431,13 +431,32 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 		grid.unit_down()
 	elif action == &"grid_raise":
 		grid.raise()
+		_redraw_viewport()
 	elif action == &"grid_lower":
 		grid.lower()
+		_redraw_viewport()
 	elif action == &"grid_reset":
 		grid.reset_origin()
+		_redraw_viewport()
 	else:
 		return AFTER_GUI_INPUT_PASS
 	return AFTER_GUI_INPUT_STOP
+func _redraw_viewport() -> void:
+	var vp := get_editor_interface().get_editor_viewport_3d(0)
+	if vp != null:
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		var p := vp.get_parent()
+		if p != null and p is CanvasItem:
+			p.queue_redraw()
+		if p != null and p.get_parent() != null and p.get_parent() is CanvasItem:
+			p.get_parent().queue_redraw()
+	if editor != null and editor.active_mesh != null:
+		editor.active_mesh.update_gizmos()
+
+func _is_repeatable_grid_key(k: InputEventKey) -> bool:
+	var act := PBActions.action_for(k, _settings)
+	return act == &"grid_raise" or act == &"grid_lower"
+
 
 # ==============================================================================
 # Grid + Snapping (own grid, independent of the engine's 3D grid)
@@ -474,6 +493,7 @@ func _on_grid_changed() -> void:
 			str(grid.draw_on_grid), str(grid.show_grid), str(grid.origin.y),
 			str(grid.rotate_step_deg)])
 	grid_view.mark_dirty()
+	_redraw_viewport()
 	# Object-mode engine snap tracks live grid changes while a PBMesh is
 	# selected (element modes never use it — see _update_editing_context).
 	if editor.active_mesh != null and not editor.is_editing():
@@ -709,7 +729,8 @@ func _process(_delta: float) -> void:
 			var cur_scenario := w3d.get_scenario()
 			if grid_view.get_scenario() != cur_scenario:
 				grid_view.attach_scenario(cur_scenario)
-		grid_view.update(cam)
+		if wants:
+			grid_view.update(cam)
 	grid_view.set_visible(wants)
 	if tool_bridge != null and tool_bridge.is_ready():
 		tool_bridge.set_engine_grid_hidden(wants, cam)
@@ -1047,12 +1068,12 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 				_creation_end_base()
 				return AFTER_GUI_INPUT_STOP
 
-	if event is InputEventKey and event.pressed and not event.echo:
-		# Grid keys keep working mid-creation (raise the grid, change the
-		# step, toggle snapping) — they never conflict with LMB/ESC/ENTER.
-		if shape_creator.state != PBShapeCreator.State.PARAMS \
-				and _handle_grid_action_key(event as InputEventKey) == AFTER_GUI_INPUT_STOP:
-			return AFTER_GUI_INPUT_STOP
+	if event is InputEventKey and event.pressed:
+		var k := event as InputEventKey
+		if not k.echo or _is_repeatable_grid_key(k):
+			if shape_creator.state != PBShapeCreator.State.PARAMS \
+					and _handle_grid_action_key(k) == AFTER_GUI_INPUT_STOP:
+				return AFTER_GUI_INPUT_STOP
 		if shape_creator.state == PBShapeCreator.State.PARAMS:
 			if event.keycode == KEY_ESCAPE:
 				_on_params_canceled()
