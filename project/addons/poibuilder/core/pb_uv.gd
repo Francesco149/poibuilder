@@ -45,25 +45,24 @@ const DIAGONAL_SCALE_FACTOR := 0.7071067811865475
 ##   This ensures that looking directly at any wall or slope, U always points to the
 ##   viewer's right and V always points upward along the surface slope.
 ## - Vertical surfaces (|normal.y| >= 0.9999, e.g. floors, ceilings):
-##   Top (normal.y > 0): U = Vector3.RIGHT (+X), V = Vector3.BACK (+Z), anchored to -Z edge.
-##   Bottom (normal.y < 0): U = Vector3.RIGHT (+X), V = Vector3.FORWARD (-Z).
+##   Top and Bottom: U = Vector3.RIGHT (+X), V = Vector3.BACK (+Z), anchored to -Z edge.
 static func get_planar_basis(normal: Vector3) -> Dictionary:
 	var n := normal.normalized()
 	var u := Vector3.ZERO
 	var v := Vector3.ZERO
 
 	if absf(n.y) < 0.9999:
-		u = Vector3.UP.cross(n).normalized()
-		if u.length_squared() < 0.0001:
-			u = Vector3.RIGHT.cross(n).normalized()
-		v = n.cross(u).normalized()
-	else:
-		if n.y > 0.0:
-			u = Vector3.RIGHT
-			v = Vector3.BACK
+		if absf(n.x - 1.0) < 0.001:
+			u = Vector3.BACK
+			v = Vector3.UP
 		else:
-			u = Vector3.RIGHT
-			v = Vector3.FORWARD
+			u = Vector3.UP.cross(n).normalized()
+			if u.length_squared() < 0.0001:
+				u = Vector3.RIGHT.cross(n).normalized()
+			v = n.cross(u).normalized()
+	else:
+		u = Vector3.RIGHT
+		v = Vector3.BACK
 	return {"u": u, "v": v, "normal": n}
 
 # ==============================================================================

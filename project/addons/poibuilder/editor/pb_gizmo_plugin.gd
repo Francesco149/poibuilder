@@ -888,10 +888,11 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
 	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
 	if fill != null:
+		var col := Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
 		if _face_hover_fill_material == null:
-			_face_hover_fill_material = _make_face_fill_material(Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity))
+			_face_hover_fill_material = _make_face_fill_material(col)
 		else:
-			_face_hover_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, hover_opacity)
+			_face_hover_fill_material.albedo_color = col
 		gizmo.add_mesh(fill, _face_hover_fill_material)
 
 	# ARMED: one square under the cursor (on the hovered surface point).

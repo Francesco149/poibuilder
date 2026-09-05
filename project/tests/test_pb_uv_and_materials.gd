@@ -79,7 +79,7 @@ func test_planar_basis_vertical_surfaces():
 	# Ceiling (-Y)
 	var ceiling_basis := PBUv.get_planar_basis(Vector3.DOWN)
 	assert_eq(ceiling_basis["u"], Vector3.RIGHT, "Ceiling U is +X")
-	assert_eq(ceiling_basis["v"], Vector3.FORWARD, "Ceiling V is -Z")
+	assert_eq(ceiling_basis["v"], Vector3.BACK, "Ceiling V is +Z (anchored to -Z edge)")
 
 func test_planar_basis_cardinal_walls():
 	# Front Wall (+Z normal)
@@ -90,8 +90,8 @@ func test_planar_basis_cardinal_walls():
 
 	# Right Wall (+X normal)
 	var right_basis := PBUv.get_planar_basis(Vector3(1, 0, 0))
-	# Looking at +X wall: -Z is right, +Y is up
-	assert_almost_eq(right_basis["u"].z, -1.0, 0.001, "Right wall U points right (-Z)")
+	# Right wall U points along +Z (anchors to -Z edge)
+	assert_almost_eq(right_basis["u"].z, 1.0, 0.001, "Right wall U points along +Z")
 	assert_almost_eq(right_basis["v"].y, 1.0, 0.001, "Right wall V points up (+Y)")
 
 	# Back Wall (-Z normal)
