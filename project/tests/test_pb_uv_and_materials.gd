@@ -74,7 +74,7 @@ func test_planar_basis_vertical_surfaces():
 	# Floor (+Y)
 	var floor_basis := PBUv.get_planar_basis(Vector3.UP)
 	assert_eq(floor_basis["u"], Vector3.RIGHT, "Floor/Top U is +X")
-	assert_eq(floor_basis["v"], Vector3.FORWARD, "Floor V is -Z (anchors front-left)")
+	assert_eq(floor_basis["v"], Vector3.BACK, "Floor/Top V is +Z (anchors -Z edge)")
 
 	# Ceiling (-Y)
 	var ceiling_basis := PBUv.get_planar_basis(Vector3.DOWN)

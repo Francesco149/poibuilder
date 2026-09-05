@@ -129,6 +129,10 @@ func apply_display_opacities(p_wireframe: float, p_selection: float, p_hover: fl
 		_face_fill_material.albedo_color = Color(FACE_FILL_COLOR.r, FACE_FILL_COLOR.g, FACE_FILL_COLOR.b, FACE_FILL_COLOR.a * selection_opacity)
 	if _face_hover_fill_material != null:
 		_face_hover_fill_material.albedo_color = Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
+	if _creation_fill_material != null:
+		_creation_fill_material.albedo_color = Color(CREATION_FILL_COLOR.r, CREATION_FILL_COLOR.g, CREATION_FILL_COLOR.b, hover_opacity)
+	if _creation_edge_material != null:
+		_creation_edge_material.albedo_color = Color(CREATION_COLOR.r, CREATION_COLOR.g, CREATION_COLOR.b, clampf(hover_opacity * 2.0, 0.1, 1.0))
 
 # ==============================================================================
 # Lifecycle
@@ -887,7 +891,9 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
 	if fill != null:
 		if _creation_fill_material == null:
-			_creation_fill_material = _make_face_fill_material(CREATION_FILL_COLOR)
+			_creation_fill_material = _make_face_fill_material(Color(CREATION_FILL_COLOR.r, CREATION_FILL_COLOR.g, CREATION_FILL_COLOR.b, hover_opacity))
+		else:
+			_creation_fill_material.albedo_color = Color(CREATION_FILL_COLOR.r, CREATION_FILL_COLOR.g, CREATION_FILL_COLOR.b, hover_opacity)
 		gizmo.add_mesh(fill, _creation_fill_material)
 
 	var face := mesh_data.faces[face_index]
@@ -904,6 +910,8 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 			lines.append(positions[a])
 			lines.append(positions[b])
 	if lines.size() >= 2:
+		if _creation_edge_material != null:
+			_creation_edge_material.albedo_color = Color(CREATION_COLOR.r, CREATION_COLOR.g, CREATION_COLOR.b, clampf(hover_opacity * 2.0, 0.1, 1.0))
 		_add_thick_lines(gizmo, lines, _creation_edge_material, THICK_LINE_OFFSET * 1.5)
 
 	# ARMED: one square under the cursor (on the hovered surface point).
