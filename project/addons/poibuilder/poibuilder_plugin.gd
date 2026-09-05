@@ -20,6 +20,10 @@ var grid: PBGrid = PBGrid.new()
 ## rebinds and grid persistence go through it.
 var _settings: Object = null
 
+## The viewport-rendered cyan grid (PBGridView injects a line mesh into the
+## editor's 3D SubViewport; it never pollutes the edited scene).
+var grid_view: PBGridView = PBGridView.new(grid)
+
 # ==============================================================================
 # UI Components
 # ==============================================================================
@@ -52,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.30"
+const VERSION := "0.9.31"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -62,11 +66,6 @@ func _enter_tree():
 	# editing context (the engine otherwise only forwards viewport input to
 	# plugins whose _handles() matches the currently edited object).
 	set_input_event_forwarding_always_enabled()
-	# ...same for the viewport OVERLAY draw: a plugin only joins the "over"
-	# draw list while it EDITS a selected object (EditorNode::_plugin_over_edit)
-	# — the grid must render with nothing selected, so we draw from the
-	# force-list hook instead.
-	set_force_draw_over_forwarding_enabled()
 
 	# Wire up subsystems
 	editor.logger = logger
@@ -87,6 +86,9 @@ func _enter_tree():
 	PBActions.register(_settings)
 	_load_grid_settings()
 	grid.changed.connect(_on_grid_changed)
+	grid_view.logger = logger
+	gizmo_plugin.grid_view = grid_view
+	set_process(true)
 
 	# Connect editor signals
 	editor.active_mesh_changed.connect(_on_active_mesh_changed)
@@ -119,12 +121,7 @@ func _enter_tree():
 	toolbar.edit_params_requested.connect(_on_edit_params_requested)
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
-	toolbar.snap_toggled.connect(func(enabled: bool): grid.enabled = enabled)
-	toolbar.draw_on_grid_toggled.connect(func(enabled: bool): grid.draw_on_grid = enabled)
-	toolbar.grid_unit_changed.connect(func(unit: float): grid.unit = unit)
-	toolbar.grid_subdivisions_changed.connect(func(s: int): grid.subdivisions = s)
-	toolbar.grid_raise_requested.connect(func(): grid.raise())
-	toolbar.grid_lower_requested.connect(func(): grid.lower())
+	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
 	_add_toolbar_row_below_3d_toolbar()
 	toolbar.sync_grid(grid)
 
@@ -137,6 +134,9 @@ func _enter_tree():
 	tool_overlay.params_applied.connect(_on_params_applied)
 	tool_overlay.params_canceled.connect(_on_params_canceled)
 	tool_overlay.param_changed.connect(_on_param_changed)
+	tool_overlay.grid_setting_changed.connect(_on_grid_ui_setting)
+	tool_overlay.grid_reset_pressed.connect(_on_grid_reset)
+	tool_overlay.sync_grid(grid)
 	_add_overlay_to_3d_viewport(tool_overlay)
 
 	# Half-size manipulator gizmos by default (the engine default of 80px is
@@ -155,6 +155,9 @@ func _enter_tree():
 			logger.info("plugin", "Tool bridge attached to the editor's Move/Rotate/Scale buttons; Q/V pin out while editing")
 		else:
 			logger.warn("plugin", "Engine tool buttons not found — plugin tool modes will not drive the editor gizmo")
+		# The engine's View-Grid menu + Snap Settings dialog live under the
+		# editor's main tree, not the Node3DEditor subtree.
+		tool_bridge.find_editor_menus(get_editor_interface().get_base_control())
 	else:
 		logger.warn("plugin", "Node3DEditor not found — tool bridge inactive")
 
@@ -458,94 +461,18 @@ func _on_grid_changed() -> void:
 			_settings.set_setting(GRID_SETTING_PREFIX + key, grid.get(key))
 	if toolbar != null:
 		toolbar.sync_grid(grid)
+	if tool_overlay != null:
+		tool_overlay.sync_grid(grid)
 	if logger != null:
 		logger.info("grid", "unit=%s subdivs=%d step=%s snap=%s on_grid=%s show=%s elev=%s rot_step=%s" % [
 			str(grid.unit), grid.subdivisions, str(grid.step()), str(grid.enabled),
 			str(grid.draw_on_grid), str(grid.show_grid), str(grid.origin.y),
 			str(grid.rotate_step_deg)])
-	# The grid overlay is draw-over-viewport API: request a repaint.
-	update_overlays()
-
-## PoiBuilder draws its OWN grid: subdivision lines (the snap step) overlay
-## the engine's 1m grid; when the grid is ELEVATED the full grid shows at
-## that height, making the working plane obvious. Drawn from the FORCE hook
-## because the normal draw hook stops firing the moment no PBMesh is edited.
-func _forward_3d_force_draw_over_viewport(viewport_control: Control) -> void:
-	if grid == null or not grid.show_grid:
-		return
-	var editor_viewport := get_editor_interface().get_editor_viewport_3d(0)
-	if editor_viewport == null:
-		return
-	var cam := editor_viewport.get_camera_3d()
-	if cam == null:
-		return
-	_draw_grid_overlay(viewport_control, cam)
-
-func _draw_grid_overlay(overlay: Control, cam: Camera3D) -> void:
-	var step := grid.step()
-	var half := 24.0
-	# Thin the linework when the view is far out: spacing escalates by
-	# powers of two over the step so the overlay stays readable instead of
-	# collapsing into a solid field.
-	var spacing := step
-	while 2.0 * half / spacing > 160.0:
-		spacing *= 2.0
-
-	var focus := Vector3.ZERO
-	if editor.active_mesh != null:
-		focus = editor.active_mesh.global_transform.origin
-	elif shape_creator != null and shape_creator.is_active() \
-			and shape_creator.plane_point != Vector3.ZERO:
-		focus = shape_creator.plane_point
-	var cx: float = PBGrid.snap_val_exact(focus.x - grid.origin.x, spacing) + grid.origin.x
-	var cz: float = PBGrid.snap_val_exact(focus.z - grid.origin.z, spacing) + grid.origin.z
-	var cy: float = grid.origin.y
-
-	# At elevation 0 the engine already draws its own unit lines — only the
-	# subdivisions need drawing. An elevated grid draws everything.
-	var on_zero_plane := absf(cy) < 0.0001
-	var minor := Color(0.62, 0.78, 1.0, 0.25)
-	var major := Color(0.62, 0.78, 1.0, 0.5)
-
-	var i_min := int(floorf((cx - half - grid.origin.x) / spacing))
-	var i_max := int(ceilf((cx + half - grid.origin.x) / spacing))
-	for i in range(i_min, i_max + 1):
-		var x := grid.origin.x + i * spacing
-		var is_major := is_zero_approx(fposmod(x - grid.origin.x, grid.unit))
-		if on_zero_plane and is_major:
-			continue
-		_draw_grid_line(overlay, cam, Vector3(x, cy, cz - half), Vector3(x, cy, cz + half),
-			major if is_major else minor)
-	var j_min := int(floorf((cz - half - grid.origin.z) / spacing))
-	var j_max := int(ceilf((cz + half - grid.origin.z) / spacing))
-	for j in range(j_min, j_max + 1):
-		var z := grid.origin.z + j * spacing
-		var is_major := is_zero_approx(fposmod(z - grid.origin.z, grid.unit))
-		if on_zero_plane and is_major:
-			continue
-		_draw_grid_line(overlay, cam, Vector3(cx - half, cy, z), Vector3(cx + half, cy, z),
-			major if is_major else minor)
-
-## Draws a world-space line onto the 2D viewport overlay, shortening segments
-## whose far end sits behind the camera (unprojection mirrors those points).
-func _draw_grid_line(overlay: Control, cam: Camera3D, a: Vector3, b: Vector3,
-		color: Color) -> void:
-	var a_behind := cam.is_position_behind(a)
-	var b_behind := cam.is_position_behind(b)
-	if a_behind and b_behind:
-		return
-	if a_behind or b_behind:
-		var cam_z := cam.global_transform.basis.z
-		var near_plane := Plane(cam_z, cam_z.dot(
-			cam.global_position + cam_z * (cam.near + 0.05)))
-		var cut = near_plane.intersects_segment(a, b)
-		if cut == null:
-			return
-		if a_behind:
-			a = cut
-		else:
-			b = cut
-	overlay.draw_line(cam.unproject_position(a), cam.unproject_position(b), color, 1.0, true)
+	grid_view.mark_dirty()
+	# Object-mode engine snap tracks live grid changes while a PBMesh is
+	# selected (element modes never use it — see _update_editing_context).
+	if editor.active_mesh != null and not editor.is_editing():
+		tool_bridge.apply_engine_snap(grid.step(), grid.rotate_step_deg, grid.enabled)
 
 ## Quantizes every selected element's positions onto the world grid
 ## (ProBuilder/ProGrids "push to grid"): positions move, indexes unchanged —
@@ -739,7 +666,99 @@ func _update_editing_context() -> void:
 		if editing:
 			tool_bridge.editor_space = editor.orientation_space
 			tool_bridge.apply_orientation_space(editor.orientation_space)
+		# Grid jurisdiction swap: inside ANY PoiBuilder context (mesh selected
+		# or shape creation armed) the engine's stock grid hides and our cyan
+		# grid draws (PBGridView); in OBJECT mode the engine's own transform
+		# snap also tracks our grid so node-level drags match element drags.
+		var pb_context := mesh_selected or shape_creator.is_active()
+		var cam3d: Camera3D = null
+		var vp := get_editor_interface().get_editor_viewport_3d(0)
+		if vp != null:
+			cam3d = vp.get_camera_3d()
+		tool_bridge.set_engine_grid_hidden(pb_context, cam3d)
+		if not editing and mesh_selected:
+			tool_bridge.apply_engine_snap(grid.step(), grid.rotate_step_deg, grid.enabled)
+		else:
+			tool_bridge.restore_engine_snap()
+	else:
+		# Bridge-less contexts can't sync engine internals — grid view still
+		# follows the context via _process.
+		pass
 	_update_engine_tool()
+
+## Grid driver, once per editor frame: the grid is drawn on the ACTIVE
+## node's gizmo (PBGridView caches world-space lines; the camera focus +
+## grid settings gate rebuilds), so a redraw is only requested on real
+## staleness — gizmo redraws are the native re-render trigger.
+var _grid_drawn_last := false
+
+func _process(_delta: float) -> void:
+	if grid_view == null:
+		return
+	var wants := show_grid_should_draw() and grid.show_grid
+	var stale := false
+	if wants:
+		var vp := get_editor_interface().get_editor_viewport_3d(0)
+		if vp == null:
+			return
+		var cam := vp.get_camera_3d()
+		if cam != null:
+			stale = grid_view.update(cam)
+	if stale or wants != _grid_drawn_last:
+		_grid_drawn_last = wants
+		var host: PBMesh = editor.active_mesh
+		if host == null and shape_creator.is_active():
+			host = shape_creator.preview_node
+		if host != null:
+			host.update_gizmos()
+
+## The grid renders while any PoiBuilder context is active (a PBMesh is
+## selected — object mode included — or shape creation is armed).
+func show_grid_should_draw() -> bool:
+	return editor.active_mesh != null or shape_creator.is_active()
+
+## Grid panel button on the toolbar toggles the overlay's grid section.
+func _on_grid_panel_toggled(open: bool) -> void:
+	if open:
+		tool_overlay.panel_enabled = true
+		toolbar.set_overlay_pinned(true)
+		tool_overlay.open_grid()
+	else:
+		tool_overlay.close_grid()
+
+## Instant-apply grid edits from the overlay panel (no Apply/Cancel).
+func _on_grid_ui_setting(key: StringName, value: float) -> void:
+	match key:
+		&"enabled":
+			grid.enabled = value > 0.5
+		&"draw_on_grid":
+			grid.draw_on_grid = value > 0.5
+		&"show_grid":
+			grid.show_grid = value > 0.5
+		&"unit":
+			grid.unit = value
+		&"subdivisions":
+			grid.subdivisions = int(value)
+		&"rotate_step_deg":
+			grid.rotate_step_deg = value
+		&"elevation":
+			grid.origin.y = value
+		&"elev_up":
+			grid.raise()
+		&"elev_down":
+			grid.lower()
+
+## The panel's Reset button: back to the stock defaults.
+func _on_grid_reset() -> void:
+	grid.enabled = true
+	grid.draw_on_grid = false
+	grid.show_grid = true
+	grid.unit = 1.0
+	grid.subdivisions = 5
+	grid.rotate_step_deg = 15.0
+	grid.origin = Vector3.ZERO
+	if logger != null:
+		logger.info("grid", "grid settings reset to defaults")
 
 ## Keeps the ENGINE's transform gizmo in the right state:
 ## - OBJECT mode: our Move/Rotate/Scale drives the whole-node gizmo (the
@@ -965,6 +984,9 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
 	shape_creator.arm(shape_id)
+	# Arming is a PoiBuilder context change too: the engine grid hides and
+	# the elevated PB grid shows while drawing (engine-bridge a no-op).
+	_update_editing_context()
 	if PBShapeParams.height_drags_offset(shape_id):
 		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
 			% String(shape_id).capitalize())
@@ -1266,6 +1288,7 @@ func _creation_abort(reason: String) -> void:
 		node.queue_free()
 	_clear_creation_hover()
 	_set_creation_hint("")
+	_update_editing_context()
 	if logger:
 		logger.info("plugin", "Shape creation aborted (%s)" % reason)
 

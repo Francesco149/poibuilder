@@ -848,38 +848,82 @@ func _run() -> void:
 		else:
 			_fail("KEYS: PoiBuilder snapping did not toggle back on")
 
-	# ── Test 14: the PoiBuilder grid overlay actually draws ──────────────────
-	# The grid draws via _forward_3d_draw_over_viewport — a WINDOW-level
-	# Control over the viewport, NOT part of the SubViewport's 3D texture.
-	# Capture the editor WINDOW (root viewport) and diff only the viewport-
-	# surface region, toggling JUST show_grid (toolbar labels settle first,
-	# so they cannot fake a nonzero diff).
+	# ── Test 14: the PoiBuilder grid renders THROUGH the active mesh's gizmo
+	#    (the reliable re-render channel), and the engine's stock grid is
+	#    hidden inside a PoiBuilder context ──────────────────────────────────
 	sel.clear()
-	await _frames(4)
-	plugin.grid.raise()
-	plugin.grid.raise()
-	plugin.grid.show_grid = true
+	sel.add_node(b)
 	await _frames(6)
-	var win_on: Image = get_tree().root.get_texture().get_image()
-	plugin.grid.show_grid = false
-	await _frames(6)
-	var win_off: Image = get_tree().root.get_texture().get_image()
-	var view_region := Rect2i(host.get_global_rect()).grow(-12)
-	var grid_diff := 0
-	for py14 in range(view_region.position.y, view_region.end.y):
-		for px14 in range(view_region.position.x, view_region.end.x):
-			var ca: Color = win_on.get_pixel(px14, py14)
-			var cb: Color = win_off.get_pixel(px14, py14)
-			if absf(ca.r - cb.r) > 0.031 or absf(ca.g - cb.g) > 0.031 \
-					or absf(ca.b - cb.b) > 0.031:
-				grid_diff += 1
-	plugin.grid.show_grid = true
+	await _click(_window_pos(vp, host, Vector3(3, 0.5001, 0)))
+	await _frames(8)
 	plugin.grid.reset_origin()
-	await _frames(3)
-	if grid_diff > 300:
-		_pass("GRID VIEW: overlay redraws with show_grid (pixel_diff=%d)" % grid_diff)
+	plugin.grid.show_grid = true
+	await _frames(6)
+	var gv: PBGridView = plugin.grid_view
+	if gv == null or gv._lines.size() < 8:
+		_fail("GRID VIEW: grid line cache is empty (%d verts)" % (gv._lines.size() if gv != null else -1))
+	elif plugin.tool_bridge.engine_grid_visible():
+		_fail("GRID VIEW: engine stock grid still visible in a PBMesh context")
 	else:
-		_fail("GRID VIEW: show_grid toggle changes nothing on screen (pixel_diff=%d)" % grid_diff)
+		_pass("GRID VIEW: grid lines cached in a PBMesh context; engine grid hidden")
+	# Visual diff: show_grid off must remove the grid from the 3D texture —
+	# the gizmo path guarantees an actual re-render (unlike a bare
+	# MeshInstance visibility flip, which the idle editor viewport skips).
+	plugin.grid.show_grid = false
+	b.update_gizmos()
+	await _frames(6)
+	var shot_grid_off: Image = vp.get_texture().get_image()
+	plugin.grid.show_grid = true
+	b.update_gizmos()
+	await _frames(6)
+	var shot_grid_on: Image = vp.get_texture().get_image()
+	shot_grid_on.save_png("/tmp/pb_grid_cyan.png")
+	var grid_diff := _img_diff(shot_grid_off, shot_grid_on)
+	if grid_diff > 800:
+		_pass("GRID VIEW: show_grid toggle changes the 3D frame (pixel_diff=%d)" % grid_diff)
+	else:
+		_fail("GRID VIEW: show_grid toggle changes nothing (pixel_diff=%d)" % grid_diff)
+	# Leaving the PB context the engine grid comes back.
+	sel.clear()
+	sel.add_node(a)
+	await _frames(2)
+	sel.clear()
+	await _frames(6)
+	if plugin.tool_bridge.engine_grid_visible():
+		_pass("GRID VIEW: engine grid restored after deselect")
+	else:
+		_fail("GRID VIEW: engine grid was not restored after deselect")
+
+	# ── Test 15: object mode follows our grid through the engine snap ────────
+	# While a PBMesh sits selected in OBJECT mode, the engine's Snap Settings
+	# values mirror the PoiBuilder grid (translate step + 15° rotate) and the
+	# engine Use Snap button follows grid.enabled; deselecting restores them.
+	sel.clear()
+	sel.add_node(b)
+	await _frames(6)
+	plugin.editor.select_mode = PBEditor.SelectMode.OBJECT
+	await _frames(6)
+	var spins: Dictionary = plugin.tool_bridge._snap_spins
+	if spins.size() != 3:
+		_fail("OBJECT-SNAP: snap dialog spinners not found (%d) — object-mode grid sync inert" % spins.size())
+	else:
+		var ts: float = spins["translate"].value
+		var rs: float = spins["rotate"].value
+		var engine_snap_on: bool = plugin.tool_bridge._use_snap_btn.button_pressed
+		if absf(ts - 0.2) < 0.001 and absf(rs - 15.0) < 0.001 and engine_snap_on == plugin.grid.enabled:
+			_pass("OBJECT-SNAP: engine snap tracks the PoiBuilder grid (%.2f / %.0f° / on=%s)" % [
+				ts, rs, str(engine_snap_on)])
+		else:
+			_fail("OBJECT-SNAP: engine values not synced (translate=%.3f rotate=%.1f snap=%s)" % [
+				ts, rs, str(engine_snap_on)])
+		# Deselect restores the stock values (fresh harness editor: 1m / 15°).
+		sel.clear()
+		await _frames(8)
+		var ts2: float = spins["translate"].value
+		if absf(ts2 - 1.0) < 0.001:
+			_pass("OBJECT-SNAP: engine snap values restored after deselect (%.2f)" % ts2)
+		else:
+			_fail("OBJECT-SNAP: translate snap not restored (%.3f)" % ts2)
 
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()

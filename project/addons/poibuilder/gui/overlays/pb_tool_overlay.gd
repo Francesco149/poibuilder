@@ -39,6 +39,14 @@ signal params_applied
 ## Emitted when the user presses Cancel in the params modal.
 signal params_canceled
 
+## A grid setting changed in the grid panel (key matches a PBGrid property,
+## or "elevation" for the grid's origin.y). Instant-apply — the panel has no
+## Apply/Cancel.
+signal grid_setting_changed(key: StringName, value: float)
+
+## The panel's Reset button restores all grid defaults.
+signal grid_reset_pressed
+
 # ==============================================================================
 # UI
 # ==============================================================================
@@ -57,6 +65,12 @@ var _params_grid: GridContainer
 var _params_hint: Label
 var _creation_row: HBoxContainer
 var _creation_label: Label
+var _grid_section: VBoxContainer
+var _grid_step_label: Label
+var _grid_controls: Dictionary = {}
+
+## Grid settings panel state (opened by the toolbar Grid button).
+var grid_panel_open: bool = false
 
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
@@ -308,6 +322,8 @@ func _ensure_ui() -> void:
 	cancel_btn.pressed.connect(func(): params_canceled.emit())
 	buttons_row.add_child(cancel_btn)
 
+	_build_grid_section()
+
 	_params_section.visible = false
 	_selection_row.visible = false
 	_drag_row.visible = false
@@ -550,6 +566,175 @@ func _on_param_toggled(pressed: bool, param_name: String) -> void:
 		param_changed.emit(param_name, 1.0 if pressed else 0.0)
 
 # ==============================================================================
+# Grid & Snapping panel (instant-apply, opened by the toolbar Grid button)
+# ==============================================================================
+
+## Builds the grid settings section (fixed controls, built once).
+func _build_grid_section() -> void:
+	_grid_section = VBoxContainer.new()
+	_grid_section.name = "GridSection"
+	_grid_section.add_theme_constant_override("separation", 3)
+	_body.add_child(_grid_section)
+
+	var title := Label.new()
+	title.text = "GRID & SNAPPING"
+	title.add_theme_font_size_override("font_size", 10)
+	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_grid_section.add_child(title)
+
+	var rows := GridContainer.new()
+	rows.columns = 2
+	rows.add_theme_constant_override("h_separation", 8)
+	rows.add_theme_constant_override("v_separation", 2)
+	_grid_section.add_child(rows)
+
+	# Toggles
+	var snap_check := CheckBox.new()
+	snap_check.name = "GridSnap"
+	snap_check.text = "Snap"
+	snap_check.tooltip_text = "Element drags and shape creation quantize to the grid step (Y)"
+	snap_check.focus_mode = Control.FOCUS_NONE
+	snap_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"enabled", 1.0 if on else 0.0))
+	rows.add_child(snap_check)
+	_grid_controls["enabled"] = snap_check
+
+	var on_grid_check := CheckBox.new()
+	on_grid_check.name = "GridOnGrid"
+	on_grid_check.text = "Draw On Grid"
+	on_grid_check.tooltip_text = "New shapes draw on the grid plane at its elevation (G)"
+	on_grid_check.focus_mode = Control.FOCUS_NONE
+	on_grid_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"draw_on_grid", 1.0 if on else 0.0))
+	rows.add_child(on_grid_check)
+	_grid_controls["draw_on_grid"] = on_grid_check
+
+	var show_check := CheckBox.new()
+	show_check.name = "GridShow"
+	show_check.text = "Show Grid"
+	show_check.tooltip_text = "Draw the PoiBuilder grid (cyan) while editing"
+	show_check.focus_mode = Control.FOCUS_NONE
+	show_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"show_grid", 1.0 if on else 0.0))
+	rows.add_child(show_check)
+	_grid_controls["show_grid"] = show_check
+
+	# Numeric rows
+	var unit_spin := SpinBox.new()
+	unit_spin.name = "GridUnit"
+	unit_spin.min_value = 0.25
+	unit_spin.max_value = 64.0
+	unit_spin.step = 0.25
+	unit_spin.suffix = "m"
+	unit_spin.tooltip_text = "Major grid unit in meters (Shift+= / Shift+- doubles/halves)"
+	unit_spin.value_changed.connect(func(v: float): grid_setting_changed.emit(&"unit", v))
+	rows.add_child(_make_row_label("Unit"))
+	rows.add_child(unit_spin)
+	_grid_controls["unit"] = unit_spin
+
+	var subdiv_spin := SpinBox.new()
+	subdiv_spin.name = "GridSubdiv"
+	subdiv_spin.min_value = 1
+	subdiv_spin.max_value = 128
+	subdiv_spin.step = 1
+	subdiv_spin.tooltip_text = "Subdivisions per unit — snap step = unit / subdivisions (= / - keys)"
+	subdiv_spin.value_changed.connect(func(v: float): grid_setting_changed.emit(&"subdivisions", v))
+	rows.add_child(_make_row_label("Subdivisions"))
+	rows.add_child(subdiv_spin)
+	_grid_controls["subdivisions"] = subdiv_spin
+
+	var rot_spin := SpinBox.new()
+	rot_spin.name = "GridRotStep"
+	rot_spin.min_value = 1.0
+	rot_spin.max_value = 90.0
+	rot_spin.step = 5.0
+	rot_spin.suffix = "°"
+	rot_spin.tooltip_text = "Rotation snap step in degrees"
+	rot_spin.value_changed.connect(func(v: float): grid_setting_changed.emit(&"rotate_step_deg", v))
+	rows.add_child(_make_row_label("Rotate step"))
+	rows.add_child(rot_spin)
+	_grid_controls["rotate_step_deg"] = rot_spin
+
+	# Elevation: spin + raise/lower buttons in one row
+	var elev_spin := SpinBox.new()
+	elev_spin.name = "GridElevation"
+	elev_spin.min_value = -1000.0
+	elev_spin.max_value = 1000.0
+	elev_spin.step = 0.2
+	elev_spin.suffix = "m"
+	elev_spin.tooltip_text = "Grid elevation (drawing plane height when elevating the grid — [ / ] step it, \\ resets)"
+	elev_spin.value_changed.connect(func(v: float): grid_setting_changed.emit(&"elevation", v))
+	rows.add_child(_make_row_label("Elevation"))
+	var elev_row := HBoxContainer.new()
+	elev_row.add_theme_constant_override("separation", 2)
+	elev_row.add_child(elev_spin)
+	_grid_controls["elevation"] = elev_spin
+	var down_btn := Button.new()
+	down_btn.text = "▼"
+	down_btn.focus_mode = Control.FOCUS_NONE
+	down_btn.tooltip_text = "Lower one snap step ( [ )"
+	down_btn.pressed.connect(func(): grid_setting_changed.emit(&"elev_down", 1.0))
+	elev_row.add_child(down_btn)
+	var up_btn := Button.new()
+	up_btn.text = "▲"
+	up_btn.focus_mode = Control.FOCUS_NONE
+	up_btn.tooltip_text = "Raise one snap step ( ] )"
+	up_btn.pressed.connect(func(): grid_setting_changed.emit(&"elev_up", 1.0))
+	elev_row.add_child(up_btn)
+	rows.add_child(elev_row)
+
+	# Readout + reset row
+	var footer := HBoxContainer.new()
+	footer.add_theme_constant_override("separation", 6)
+	_grid_section.add_child(footer)
+	_grid_step_label = _make_value_label()
+	_grid_step_label.name = "GridStepReadout"
+	footer.add_child(_grid_step_label)
+	var space := Control.new()
+	space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.add_child(space)
+	var reset_btn := Button.new()
+	reset_btn.name = "GridReset"
+	reset_btn.text = "Reset"
+	reset_btn.focus_mode = Control.FOCUS_NONE
+	reset_btn.tooltip_text = "Reset all grid settings to defaults (1m unit, 5 subdivisions, 0 elevation, snapping on)"
+	reset_btn.pressed.connect(func(): grid_reset_pressed.emit())
+	footer.add_child(reset_btn)
+
+	_grid_section.visible = false
+
+## Opens the grid settings panel (toolbar Grid button).
+func open_grid() -> void:
+	grid_panel_open = true
+	panel_enabled = true
+	_ensure_ui()
+	_grid_section.visible = true
+	reset_size()
+	expand()
+	refresh()
+
+func close_grid() -> void:
+	grid_panel_open = false
+	if _ui_built:
+		_grid_section.visible = false
+	reset_size()
+	refresh()
+
+## Mirrors PBGrid into the panel controls WITHOUT re-emitting
+## grid_setting_changed (no-signal setters).
+func sync_grid(g: PBGrid) -> void:
+	if g == null:
+		return
+	build_ui()
+	_grid_controls["enabled"].set_pressed_no_signal(g.enabled)
+	_grid_controls["draw_on_grid"].set_pressed_no_signal(g.draw_on_grid)
+	_grid_controls["show_grid"].set_pressed_no_signal(g.show_grid)
+	_grid_controls["unit"].set_value_no_signal(g.unit)
+	_grid_controls["subdivisions"].set_value_no_signal(float(g.subdivisions))
+	_grid_controls["rotate_step_deg"].set_value_no_signal(g.rotate_step_deg)
+	var elev_spin: SpinBox = _grid_controls["elevation"]
+	elev_spin.step = g.step()
+	elev_spin.set_value_no_signal(g.origin.y)
+	_grid_step_label.text = "step %sm" % str(snappedf(g.step(), 0.0001))
+
+# ==============================================================================
 # Editor Binding
 # ==============================================================================
 
@@ -634,7 +819,7 @@ func refresh() -> void:
 		drag_value_label.text = element_editor.drag_readout()
 
 	# Content presence: is there anything meaningful to display in the body?
-	var has_content := params_open or has_creation_hint() or dragging or has_selection
+	var has_content := params_open or grid_panel_open or has_creation_hint() or dragging or has_selection
 
 	# "empty panel is auto collapsed to just the header, not displayed empty."
 	if editor != null and not has_content:
@@ -662,7 +847,7 @@ func update_visibility() -> void:
 	var mesh_selected := editor.active_mesh != null
 	visible = (mesh_selected and (pinned or params_open or _has_selection() \
 		or (element_editor != null and element_editor.drag_active))) \
-		or creation_hint
+		or creation_hint or grid_panel_open
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
 		return false
