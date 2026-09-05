@@ -30,6 +30,9 @@ var grid_view: PBGridView = PBGridView.new(grid)
 
 var tool_overlay: PBToolOverlay
 var toolbar: PBToolbar
+var material_dock: PBMaterialDock = null
+var material_drop_overlay: PBMaterialDropOverlay = null
+
 
 ## Hover id already reflected in the last gizmo redraw (avoids redundant
 ## update_gizmos calls on every motion event).
@@ -56,7 +59,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.40"
+const VERSION := "0.9.41"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -123,6 +126,7 @@ func _enter_tree():
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
+	toolbar.materials_dock_toggled.connect(_on_materials_dock_toggled)
 	_add_toolbar_row_below_3d_toolbar()
 	toolbar.sync_grid(grid)
 
@@ -140,6 +144,16 @@ func _enter_tree():
 	tool_overlay.sync_grid(grid)
 	_add_overlay_to_3d_viewport(tool_overlay)
 
+	# Material drag-and-drop overlay in the 3D viewport
+	material_drop_overlay = PBMaterialDropOverlay.new()
+	material_drop_overlay.plugin = self
+	_add_overlay_to_3d_viewport(material_drop_overlay)
+	# Material & UV Dock panel (DOCK_SLOT_RIGHT_UL)
+	material_dock = PBMaterialDock.new()
+	material_dock.plugin = self
+	material_dock.editor = editor
+	material_dock.visible = false
+	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	# Half-size manipulator gizmos by default (the engine default of 80px is
 	# huge next to PoiBuilder's element work). Respect user customization:
 	# only applied while the setting still sits at the engine default.
@@ -208,6 +222,18 @@ func _exit_tree():
 			tool_overlay.get_parent().remove_child(tool_overlay)
 			tool_overlay.queue_free()
 		tool_overlay = null
+
+	# Remove material dock and drop overlay
+	if material_dock != null:
+		remove_control_from_docks(material_dock)
+		if is_instance_valid(material_dock):
+			material_dock.queue_free()
+		material_dock = null
+
+	if material_drop_overlay != null:
+		if is_instance_valid(material_drop_overlay):
+			material_drop_overlay.queue_free()
+		material_drop_overlay = null
 
 	# Remove custom type
 	remove_custom_type("PBMesh")
@@ -599,6 +625,8 @@ func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	else:
 		editor.hover_id = -1
 	_update_editing_context()
+	if material_dock != null:
+		material_dock.sync_selection()
 
 ## Selects the element under the last click position on `mesh` (single-id
 ## subgizmo selection — the engine's script API) so the element gizmo shows
@@ -626,6 +654,8 @@ func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 		editor.active_mesh.clear_subgizmo_selection()
 		editor.active_mesh.update_gizmos()
 	_update_editing_context()
+	if material_dock != null:
+		material_dock.sync_selection()
 
 func _on_element_selection_changed() -> void:
 	if tool_overlay:
@@ -633,6 +663,8 @@ func _on_element_selection_changed() -> void:
 	# Deferred: this fires from inside a gizmo redraw (the engine-selection
 	# mirror) — the engine tool must not be flipped re-entrantly.
 	_update_engine_tool.call_deferred()
+	if material_dock != null:
+		material_dock.sync_selection()
 
 func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 	# The engine's transform gizmo only adopts a subgizmo's basis while its
@@ -821,6 +853,40 @@ func _on_reset_panel_requested() -> void:
 		tool_overlay.update_visibility()
 		if logger:
 			logger.info("plugin", "Overlay panel recovered to bottom-left corner")
+
+## Toolbar Material & UV button toggle -> opens/closes the Material & UV dock.
+func _on_materials_dock_toggled(open: bool) -> void:
+	if material_dock == null:
+		return
+	material_dock.visible = open
+	if open:
+		var parent := material_dock.get_parent() as TabContainer
+		if parent != null:
+			parent.current_tab = material_dock.get_index()
+		material_dock.sync_selection()
+
+## Applies a material to the given faces of a mesh with full undo/redo.
+func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material) -> void:
+	if mesh == null or mesh.pb_mesh_data == null or target_faces.is_empty() or material == null:
+		return
+
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	mesh.pb_mesh_data.set_faces_material(target_faces, material)
+	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+
+	var undo := get_undo_redo()
+	undo.create_action("Apply Material to Faces", UndoRedo.MERGE_DISABLE, mesh)
+	undo.add_do_method(self, "_restore_mesh_snapshot", mesh.get_instance_id(), after)
+	undo.add_undo_method(self, "_restore_mesh_snapshot", mesh.get_instance_id(), before)
+	undo.commit_action()
+
+	mesh.rebuild()
+	mesh.update_gizmos()
+	if material_dock != null:
+		material_dock.sync_selection()
+	if logger:
+		var mat_name := material.resource_name if not material.resource_name.is_empty() else material.resource_path.get_file()
+		logger.info("materials", "Applied material '%s' to %d face(s) on %s" % [mat_name, target_faces.size(), mesh.name])
 ## Drag lifecycle signal. Hover is cleared when a drag STARTS; per-update
 ## refreshes are deliberately NOT done here — the delivery path
 ## (_set_subgizmo_transform) already redraws the gizmo every motion, and a

@@ -40,6 +40,9 @@ extends Resource
 @export var shape_params: Dictionary = {}
 @export var shape_edited: bool = false
 
+## Materials associated with submesh slots (index matches submesh_index on faces).
+@export var materials: Array[Material] = []
+
 # ==============================================================================
 # Non-Serialized / Cached Fields
 # ==============================================================================
@@ -505,6 +508,18 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 	# get_normals() (not calculate_normals() directly): the cache may be hot
 	# (incremental drag updates keep it fresh) — recompute only when stale.
 	var normals: PackedVector3Array = get_normals()
+	# Ensure UVs are up-to-date and non-stretching
+	if textures0.size() != positions.size():
+		PBUv.refresh_mesh_uvs(self)
+	else:
+		var needs_uv_refresh := false
+		for face in faces:
+			if face != null and not face.manual_uv:
+				needs_uv_refresh = true
+				break
+		if needs_uv_refresh:
+			PBUv.refresh_mesh_uvs(self)
+
 
 	if not use_cached_indices or _submesh_indices_cache.is_empty():
 		# Group faces by submesh_index and compile triangle index buffers
@@ -560,9 +575,88 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 		arrays[Mesh.ARRAY_INDEX] = indices
 
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var surf_idx: int = mesh.get_surface_count() - 1
+		var mat: Material = null
+		if s_idx >= 0 and s_idx < materials.size():
+			mat = materials[s_idx]
+		if mat == null and not materials.is_empty():
+			mat = materials[0]
+		if mat == null:
+			mat = get_default_material()
+		if mat != null:
+			mesh.surface_set_material(surf_idx, mat)
 
 	return mesh
 
+
+## Cached default material reference.
+static var _cached_default_material: Material = null
+
+## Returns the default PoiBuilder material (stock 2x2 soft dark gray checkerboard).
+static func get_default_material() -> Material:
+	if _cached_default_material == null:
+		if ResourceLoader.exists("res://addons/poibuilder/materials/pb_default_material.tres"):
+			_cached_default_material = load("res://addons/poibuilder/materials/pb_default_material.tres") as Material
+	return _cached_default_material
+
+## Returns the material assigned to a face, or null if unassigned.
+func get_face_material(face: PBFace) -> Material:
+	if face == null:
+		return null
+	var idx: int = face.submesh_index
+	if idx >= 0 and idx < materials.size():
+		return materials[idx]
+	return null
+
+## Assigns a material to a face. Allocates or reuses a submesh slot.
+func set_face_material(face: PBFace, mat: Material) -> void:
+	if face == null:
+		return
+	set_faces_material([face], mat)
+
+## Assigns a material to multiple faces. Allocates or reuses a submesh slot.
+func set_faces_material(target_faces: Array, mat: Material) -> void:
+	if target_faces.is_empty():
+		return
+
+	if materials.is_empty():
+		var def := get_default_material()
+		materials.append(def)
+
+	var idx := -1
+	if mat != null:
+		var all_faces_changing: bool = true
+		for f in faces:
+			if f != null and not target_faces.has(f):
+				all_faces_changing = false
+				break
+
+		if all_faces_changing:
+			materials = [mat]
+			idx = 0
+		else:
+			idx = materials.find(mat)
+			if idx == -1:
+				var used_slots: Dictionary = {}
+				for f in faces:
+					if f != null and not target_faces.has(f):
+						used_slots[f.submesh_index] = true
+				for i in range(materials.size()):
+					if not used_slots.has(i):
+						materials[i] = mat
+						idx = i
+						break
+				if idx == -1:
+					idx = materials.size()
+					materials.append(mat)
+	else:
+		idx = 0
+
+	for f in target_faces:
+		if f is PBFace:
+			f.submesh_index = idx
+
+	invalidate_caches()
 # ==============================================================================
 # Utility: Clear
 # ==============================================================================

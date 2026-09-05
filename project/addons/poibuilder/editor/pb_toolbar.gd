@@ -52,6 +52,9 @@ signal reset_panel_requested
 ## this button); the toolbar keeps only a lightweight grid-status readout
 ## that mirrors PBGrid.
 signal grid_panel_toggled(open: bool)
+
+## Emitted when the user toggles the Material & UV dock.
+signal materials_dock_toggled(open: bool)
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -75,6 +78,7 @@ var _btn_new_shape: MenuButton
 var _btn_edit_params: Button
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
+var _btn_materials: Button
 var _op_buttons: Dictionary = {}
 
 var _btn_grid_panel: Button
@@ -221,6 +225,20 @@ func _build_ui() -> void:
 	_btn_recover_overlay.tooltip_text = "Reset Panel: Recover overlay panel and dock to bottom-left corner"
 	_btn_recover_overlay.pressed.connect(func(): reset_panel_requested.emit())
 	add_child(_btn_recover_overlay)
+
+	_label_space()
+
+	# Material & UV Dock toggle
+	_btn_materials = Button.new()
+	_btn_materials.name = "MaterialsToggle"
+	_btn_materials.icon = _load_icon("icon_materials.svg")
+	if _btn_materials.icon == null:
+		_btn_materials.text = "Material"
+	_btn_materials.flat = true
+	_btn_materials.toggle_mode = true
+	_btn_materials.tooltip_text = "Material & UV: Open the material picker and UV mapping dock"
+	_btn_materials.toggled.connect(func(pressed: bool): materials_dock_toggled.emit(pressed))
+	add_child(_btn_materials)
 func _label_space() -> void:
 	add_child(VSeparator.new())
 
@@ -423,6 +441,11 @@ func sync_grid(g: PBGrid) -> void:
 ## Lets the plugin reflect external close events back on the button.
 func set_grid_panel_open(open: bool) -> void:
 	_btn_grid_panel.set_pressed_no_signal(open)
+
+## Reflects materials dock open/closed state on the button.
+func set_materials_dock_active(active: bool) -> void:
+	if _btn_materials != null and _btn_materials.button_pressed != active:
+		_btn_materials.set_pressed_no_signal(active)
 
 func new_shape_button() -> MenuButton:
 	return _btn_new_shape

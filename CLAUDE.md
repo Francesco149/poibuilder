@@ -775,6 +775,60 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.41 round complete ✓ — auto UV management, texturing, material picker dock, and drag-and-drop:
+- AUTO-UV PROJECTION & NON-STRETCHING HEURISTIC (`PBUv`, `core/pb_uv.gd`):
+  - Default auto-calculated UVs project a uniform 1x1 meter repeat pattern in
+    face plane coordinates.
+  - Planar basis heuristic:
+    - Walls and slopes (|N.y| < 0.9999): U = (Vector3.UP × N).normalized()
+      (runs horizontally across the wall/slope, always pointing to viewer's
+      right when facing it), V = (N × U).normalized() (points straight up the
+      wall/slope).
+    - Floors (N.y > 0): U = Vector3.RIGHT (+X), V = Vector3.BACK (+Z).
+    - Ceilings (N.y < 0): U = Vector3.RIGHT (+X), V = Vector3.FORWARD (-Z).
+  - Resizing faces never stretches textures: UV coordinates are reprojected from
+    vertex 3D positions, keeping the texture uniformly tiled at the fixed meter repeat.
+  - 45-degree diagonal button sets 1/sqrt(2) scale (~0.7071) and 45° rotation with
+    clean alignment so triangulated quads cleanly map texture corners to vertices.
+  - Quick scale `x2` / `/2`, manual U/V tiling, offset U/V, rotation angle,
+    flips, and manual UV preservation.
+- STOCK CHECKERBOARD TEXTURE & DEFAULT MATERIAL:
+  - Added `res://addons/poibuilder/materials/textures/checkerboard_2x2.png`
+    (soft dark gray #3c3f41 and #2c2e30 2x2 pattern).
+  - Added `res://addons/poibuilder/materials/pb_default_material.tres`
+    (`StandardMaterial3D` with linear mipmapped filtering, roughness 0.8, and
+    `vertex_color_use_as_albedo = true` for face tinting).
+  - New shapes created via `PBShapeParams` automatically get this default material
+    assigned.
+- MULTI-MATERIAL & FACE ASSIGNMENT (`PBMeshData`, `PBMesh`):
+  - `materials: Array[Material] = []` on `PBMeshData`.
+  - `get_face_material()`, `set_face_material()`, `set_faces_material()` with
+    automatic submesh slot allocation, reuse, and compaction.
+  - `to_array_mesh()` creates surfaces per submesh and sets materials via
+    `mesh.surface_set_material(surface_idx, mat)` with default fallback.
+  - `PBCommand.copy_mesh_data` and `restore_mesh_data` duplicate and restore
+    `materials` array for undo/redo.
+  - Face tinting via vertex color array.
+- TOGGLEABLE MATERIAL & UV DOCK (`PBMaterialDock`, `gui/docks/pb_material_dock.gd`):
+  - Docks to `DOCK_SLOT_RIGHT_UL` (to the right of the 3D viewport, to the left
+    of the Inspector).
+  - Starts closed/hidden to preserve viewport layout; toggleable from the
+    PoiBuilder toolbar via new "Material" button (`icon_materials.svg`).
+  - Material picker grid with thumbnail swatches, resource names, left-click to
+    apply to selected face(s), right-click context menu ("Set as Default for New
+    Shapes", "Apply to Selection", "Copy Path").
+  - Default material badged with star indicator icon (★).
+  - Synchronizes live with editor element selection changes.
+- DRAG-AND-DROP MATERIAL ASSIGNMENT (`PBMaterialDropOverlay`, `gui/docks/pb_material_card_drag.gd`):
+  - Drag a material from FileSystem or Material Dock onto a face -> face instantly
+    gets that material.
+  - If multiple faces selected and dragged onto one of the selected faces -> applies
+    to the entire selection.
+  - Dragging onto an unselected face targets only that face.
+  - Full undo/redo integration with snapshot restoration.
+  - Notification-driven mouse filter (`NOTIFICATION_DRAG_BEGIN` / `NOTIFICATION_DRAG_END`)
+    ensures zero interference with normal viewport input.
+
 v0.9.40 round complete ✓ — demo scratch project mouse capture & recapture:
 - DEMO SCRATCH PROJECT MOUSE CAPTURE:
   Updated `scratch.sh` launcher and added `project/player.gd` + updated

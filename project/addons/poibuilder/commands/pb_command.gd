@@ -52,6 +52,7 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	copy.textures0 = source.textures0.duplicate()
 	copy.colors = source.colors.duplicate()
 	copy.tangents = source.tangents.duplicate()
+	copy.materials = source.materials.duplicate()
 
 	var new_faces: Array[PBFace] = []
 	for face in source.faces:
@@ -96,6 +97,7 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 	target.textures0 = snapshot.textures0.duplicate()
 	target.colors = snapshot.colors.duplicate()
 	target.tangents = snapshot.tangents.duplicate()
+	target.materials = snapshot.materials.duplicate()
 
 	var new_faces: Array[PBFace] = []
 	for face in snapshot.faces:
