@@ -886,16 +886,16 @@ func _run() -> void:
 		_pass("GRID VIEW: show_grid toggle changes the 3D frame (pixel_diff=%d)" % grid_diff)
 	else:
 		_fail("GRID VIEW: show_grid toggle changes nothing (pixel_diff=%d)" % grid_diff)
-	var cyan_px: int = 0
+	var blue_px: int = 0
 	for cy in range(shot_grid_on.get_height()):
 		for cx in range(shot_grid_on.get_width()):
 			var px: Color = shot_grid_on.get_pixel(cx, cy)
-			if px.b > 0.28 and px.g > 0.25 and px.b > px.r + 0.08 and px.g > px.r + 0.04:
-				cyan_px += 1
-	if cyan_px > 1000:
-		_pass("GRID VIEW: grid rendered in cyan (%d cyan pixels)" % cyan_px)
+			if px.b > 0.22 and px.b > px.r + 0.03 and px.g > px.r + 0.01:
+				blue_px += 1
+	if blue_px > 1000:
+		_pass("GRID VIEW: grid rendered in grayish light-blue (%d blue pixels)" % blue_px)
 	else:
-		_fail("GRID VIEW: grid not rendered in cyan (only %d cyan pixels)" % cyan_px)
+		_fail("GRID VIEW: grid not rendered in grayish light-blue (only %d blue pixels)" % blue_px)
 	# Leaving the PB context the engine grid comes back.
 	sel.clear()
 	sel.add_node(a)

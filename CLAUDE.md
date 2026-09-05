@@ -775,6 +775,17 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.34 round complete ✓ — grayish light-blue grid palette:
+- GRID PALETTE TUNING: replaced punchy saturated cyan with a soft, neutral,
+  grayish light-blue (`COLOR_MAJOR = Color(0.52, 0.68, 0.82, 0.55)`,
+  `COLOR_MINOR = Color(0.46, 0.58, 0.70, 0.22)`).
+- Distinct from active overlays: the subtle grayish light-blue keeps the cool
+  custom look while avoiding visual competition with bright cyan drag/hover
+  overlays (`Color(0.2, 0.9, 1.0)`) and yellow selections.
+- Axis lines kept crisp: red X (`Color(0.90, 0.38, 0.38, 0.85)`) and
+  blue Z (`Color(0.38, 0.56, 0.90, 0.85)`).
+- Updated GUI harness assertions for the new palette.
+
 v0.9.33 round complete ✓ — unbind conflicting stock Godot shortcuts (H, ], [),
 user warning & editor toast notification:
 - CONFLICTING STOCK SHORTCUTS: `H` collided with Godot's built-in
