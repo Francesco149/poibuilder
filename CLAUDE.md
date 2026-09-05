@@ -775,6 +775,30 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.33 round complete ✓ — unbind conflicting stock Godot shortcuts (H, ], [),
+user warning & editor toast notification:
+- CONFLICTING STOCK SHORTCUTS: `H` collided with Godot's built-in
+  `editor/toggle_selected_nodes_visibility`, causing `H` in the 3D editor to
+  hide selected nodes instead of entering Vertex mode. `]` collided with
+  `animation_editor/move_last_selected_key_to_cursor`, and `[` collided with
+  `animation_editor/move_first_selected_key_to_cursor`. Furthermore,
+  `PBActions.register()` previously skipped re-populating default events when
+  a shortcut entry existed with empty events, leaving keys seemingly unbound.
+- RESOLUTION (`PBActions.unbind_conflicts`):
+  Automatically inspects `EditorSettings` shortcuts and filters out bare
+  `KEY_H`, `KEY_BRACKETRIGHT`, and `KEY_BRACKETLEFT` events from stock
+  shortcuts, leaving non-colliding events untouched. `register()` also ensures
+  PoiBuilder actions with empty events are properly bound with defaults.
+- USER WARNING & NOTIFICATION:
+  Logs a clear warning via `logger.warn("actions", ...)` detailing the unbound
+  stock shortcuts and keys, and presents an in-editor toast notification via
+  `EditorInterface.get_editor_toaster().push_toast(...)` (SEVERITY_WARNING).
+- TESTING:
+  Added `test_unbind_conflicting_stock_shortcuts` in `tests/test_pb_grid.gd`
+  asserting that stock `H`, `]`, and `[` shortcuts are unbound, non-conflicting
+  shortcuts (Ctrl+S) remain untouched, and PoiBuilder actions register and
+  match. 703/703 GUT unit tests + GUI test harness passing.
+
 v0.9.32 round complete ✓ — procedural infinite horizon cyan grid via
 RenderingServer, immediate arming, engine grid cull fix:
 - PROCEDURAL INFINITE HORIZON GRID: the v0.9.31 gizmo-drawn line approach had

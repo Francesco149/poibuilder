@@ -160,6 +160,59 @@ func test_unpressed_and_echo_events_never_match():
 	echo.echo = true
 	assert_eq(String(PBActions.action_for(echo)), "")
 
+class FakeEditorSettings:
+	var shortcuts: Dictionary = {}
+	func add_shortcut(path: String, sc: Shortcut) -> void:
+		shortcuts[path] = sc
+	func has_shortcut(path: String) -> bool:
+		return shortcuts.has(path)
+	func get_shortcut(path: String) -> Shortcut:
+		return shortcuts.get(path, null)
+	func get_shortcut_list() -> PackedStringArray:
+		return PackedStringArray(shortcuts.keys())
+	func is_shortcut(path: String, event: InputEvent) -> bool:
+		var sc: Shortcut = shortcuts.get(path, null)
+		return sc != null and sc.matches_event(event)
+
+func test_unbind_conflicting_stock_shortcuts():
+	var settings := FakeEditorSettings.new()
+	var h_sc := Shortcut.new()
+	var h_ev := _key(KEY_H)
+	h_sc.events = [h_ev]
+	settings.add_shortcut("editor/toggle_selected_nodes_visibility", h_sc)
+
+	var rbrac_sc := Shortcut.new()
+	var rbrac_ev := _key(KEY_BRACKETRIGHT)
+	rbrac_sc.events = [rbrac_ev]
+	settings.add_shortcut("animation_editor/move_last_selected_key_to_cursor", rbrac_sc)
+
+	var lbrac_sc := Shortcut.new()
+	var lbrac_ev := _key(KEY_BRACKETLEFT)
+	lbrac_sc.events = [lbrac_ev]
+	settings.add_shortcut("animation_editor/move_first_selected_key_to_cursor", lbrac_sc)
+
+	var save_sc := Shortcut.new()
+	var save_ev := InputEventKey.new()
+	save_ev.physical_keycode = KEY_S
+	save_ev.ctrl_pressed = true
+	save_sc.events = [save_ev]
+	settings.add_shortcut("scene/save", save_sc)
+
+	var logger := PBLogger.new()
+	var unbound := PBActions.unbind_conflicts(settings, logger)
+	assert_eq(unbound.size(), 3)
+	assert_true(h_sc.events.is_empty(), "H shortcut was unbound")
+	assert_true(rbrac_sc.events.is_empty(), "] shortcut was unbound")
+	assert_true(lbrac_sc.events.is_empty(), "[ shortcut was unbound")
+	assert_eq(save_sc.events.size(), 1, "Ctrl+S remained untouched")
+
+	PBActions.register(settings, logger)
+	assert_true(settings.has_shortcut("poibuilder/select_vertex"))
+	assert_true(settings.has_shortcut("poibuilder/grid_raise"))
+	assert_true(settings.has_shortcut("poibuilder/grid_lower"))
+	assert_eq(String(PBActions.action_for(h_ev, settings)), "select_vertex")
+	assert_eq(String(PBActions.action_for(rbrac_ev, settings)), "grid_raise")
+	assert_eq(String(PBActions.action_for(lbrac_ev, settings)), "grid_lower")
 # ==============================================================================
 # Creation snapping (PBShapeCreator + PBGrid)
 # ==============================================================================

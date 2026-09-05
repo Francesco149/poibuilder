@@ -72,21 +72,93 @@ const OP_ACTION_TO_OPERATION: Dictionary = {
 }
 
 # ==============================================================================
-# Registration
+# Registration & Conflict Resolution
 # ==============================================================================
 
-## Registers every action into the EditorSettings shortcut store. Safe to
-## call repeatedly (plugin reloads): user-rebound events survive (the engine
-## keeps events loaded from the settings file over fresh defaults).
-static func register(settings: Object) -> void:
+## Known stock Godot shortcuts that conflict with PoiBuilder default viewport keys:
+## - H: toggles selected node visibility in editor
+## - ]: moves last animation key to cursor
+## - [: moves first animation key to cursor
+const CONFLICTING_STOCK_SHORTCUTS: Array[String] = [
+	"editor/toggle_selected_nodes_visibility",
+	"animation_editor/move_last_selected_key_to_cursor",
+	"animation_editor/move_first_selected_key_to_cursor",
+]
+
+## Unbinds stock Godot shortcuts that collide with PoiBuilder default keys (H, ], [)
+## so viewport element selection and grid elevation work cleanly without fighting
+## the editor. Warns the user via logger and editor toast.
+static func unbind_conflicts(settings: Object, logger: Object = null) -> Array[String]:
+	var unbound: Array[String] = []
+	if settings == null:
+		return unbound
+
+	var target_keys := [KEY_H, KEY_BRACKETRIGHT, KEY_BRACKETLEFT]
+	var list: Array = []
+	if settings.has_method("get_shortcut_list"):
+		list = Array(settings.get_shortcut_list())
+	else:
+		list = CONFLICTING_STOCK_SHORTCUTS.duplicate()
+
+	for path_variant in list:
+		var path := String(path_variant)
+		if path.begins_with(PREFIX):
+			continue
+		if not settings.has_shortcut(path):
+			continue
+		var sc: Shortcut = settings.get_shortcut(path)
+		if sc == null:
+			continue
+		var filtered: Array[InputEvent] = []
+		var changed := false
+		for ev in sc.events:
+			if ev is InputEventKey:
+				var k := ev as InputEventKey
+				if not k.ctrl_pressed and not k.shift_pressed and not k.alt_pressed and not k.meta_pressed:
+					var code := k.physical_keycode if k.physical_keycode != KEY_NONE else k.keycode
+					if code in target_keys:
+						changed = true
+						var key_name := OS.get_keycode_string(code)
+						var desc := sc.get_name() if not sc.get_name().is_empty() else path
+						unbound.append("'%s' [%s]" % [desc, key_name])
+						continue
+			filtered.append(ev)
+		if changed:
+			sc.events = filtered
+
+	if unbound.size() > 0:
+		var summary := ", ".join(unbound)
+		if logger != null and logger.has_method("warn"):
+			logger.warn("actions", "Unbound conflicting Godot shortcut(s): %s to allow PoiBuilder viewport keys. You can rebind them in Editor Settings > Shortcuts." % summary)
+		if Engine.is_editor_hint():
+			# Show a toast in the editor if EditorToaster is available
+			var toaster: Object = null
+			if ClassDB.class_exists("EditorInterface"):
+				var iface: Object = Engine.get_singleton("EditorInterface") if Engine.has_singleton("EditorInterface") else null
+				if iface != null and iface.has_method("get_editor_toaster"):
+					toaster = iface.get_editor_toaster()
+			if toaster != null and toaster.has_method("push_toast"):
+				toaster.push_toast(
+					"PoiBuilder: Unbound conflicting stock shortcut(s): %s" % summary,
+					1, # SEVERITY_WARNING
+					"Unbound to allow PoiBuilder viewport keys (H, ], [). Rebind in Editor Settings > Shortcuts."
+				)
+	return unbound
+
+## Registers every action into the EditorSettings shortcut store and unbinds
+## conflicting engine shortcuts. Safe to call repeatedly.
+static func register(settings: Object, logger: Object = null) -> void:
 	if settings == null or not settings.has_method("add_shortcut"):
 		return
+	unbind_conflicts(settings, logger)
 	for id: String in ACTIONS:
 		var path := PREFIX + id
-		if settings.has_shortcut(path):
-			continue
-		settings.add_shortcut(path, _make_shortcut(id))
-
+		if not settings.has_shortcut(path):
+			settings.add_shortcut(path, _make_shortcut(id))
+		else:
+			var sc: Shortcut = settings.get_shortcut(path)
+			if sc != null and sc.events.is_empty() and ACTIONS[id]["keys"].size() > 0:
+				sc.events = _make_shortcut(id).events
 static func _make_shortcut(id: String) -> Shortcut:
 	var sc := Shortcut.new()
 	var events: Array[InputEvent] = []
@@ -120,8 +192,13 @@ static func action_for(event: InputEvent, settings: Object = null) -> StringName
 	if settings != null and settings.has_method("is_shortcut"):
 		for id: String in ACTIONS:
 			var path := PREFIX + id
-			if settings.has_shortcut(path) and settings.is_shortcut(path, key_event):
-				return StringName(id)
+			if settings.has_shortcut(path):
+				if settings.is_shortcut(path, key_event):
+					return StringName(id)
+			else:
+				for spec: Array in ACTIONS[id]["keys"]:
+					if _match_default(key_event, spec):
+						return StringName(id)
 	else:
 		for id: String in ACTIONS:
 			for spec: Array in ACTIONS[id]["keys"]:
