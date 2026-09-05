@@ -126,7 +126,7 @@ func _enter_tree():
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
-	toolbar.materials_dock_toggled.connect(_on_materials_dock_toggled)
+	toolbar.materials_dock_requested.connect(focus_material_dock)
 	_add_toolbar_row_below_3d_toolbar()
 	toolbar.sync_grid(grid)
 
@@ -152,7 +152,7 @@ func _enter_tree():
 	material_dock = PBMaterialDock.new()
 	material_dock.plugin = self
 	material_dock.editor = editor
-	material_dock.visible = false
+	material_dock.visible = true
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
 	# Half-size manipulator gizmos by default (the engine default of 80px is
@@ -855,23 +855,32 @@ func _on_reset_panel_requested() -> void:
 		if logger:
 			logger.info("plugin", "Overlay panel recovered to bottom-left corner")
 
-## Toolbar Material & UV button toggle -> opens/closes the Material & UV dock.
-func _on_materials_dock_toggled(open: bool) -> void:
+## Focuses the Material & UV dock.
+func focus_material_dock() -> void:
 	if material_dock == null:
 		return
-	material_dock.visible = open
-	if open:
-		var parent := material_dock.get_parent() as TabContainer
-		if parent != null:
-			parent.current_tab = material_dock.get_index()
-		material_dock.sync_selection()
+	var editor_dock := material_dock.get_parent() as Control
+	if editor_dock != null:
+		editor_dock.show()
+		var tab_container := editor_dock.get_parent() as TabContainer
+		if tab_container != null:
+			tab_container.current_tab = editor_dock.get_index()
+			if tab_container.has_method("get_tab_bar"):
+				var tb = tab_container.call("get_tab_bar")
+				if tb != null and tb.has_method("grab_focus"):
+					tb.call("grab_focus", true)
+	material_dock.show()
+	material_dock.sync_selection()
 
 ## Moves Inspector and other standard docks from DockSlotRightUL to DockSlotRightUR,
 ## leaving DockSlotRightUL exclusively for PoiBuilder's Material & UV dock.
 func _setup_ideal_dock_layout() -> void:
 	if material_dock == null:
 		return
-	var ul_container := material_dock.get_parent() as TabContainer
+	var editor_dock := material_dock.get_parent() as Control
+	if editor_dock == null:
+		return
+	var ul_container := editor_dock.get_parent() as TabContainer
 	if ul_container == null:
 		return
 
@@ -900,7 +909,7 @@ func _setup_ideal_dock_layout() -> void:
 	# from DockSlotRightUL to DockSlotRightUR.
 	var to_move: Array[Node] = []
 	for child in ul_container.get_children():
-		if child != material_dock and not (child is TabBar) and not (child is Popup):
+		if child != editor_dock and not (child is TabBar) and not (child is Popup):
 			to_move.append(child)
 
 	for node in to_move:

@@ -121,30 +121,25 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 	var centroid: Vector2 = center_sum / float(indices.size())
 	var scale: Vector2 = face.uv_scale
 	var rotation: float = face.uv_rotation
-	var offset: Vector2 = face.uv_offset
 	var rot_rad: float = deg_to_rad(rotation)
 	var cos_r: float = cos(rot_rad)
 	var sin_r: float = sin(rot_rad)
-
-	var has_transform: bool = (scale != Vector2.ONE or rotation != 0.0 or offset != Vector2.ZERO)
-
+	var offset: Vector2 = face.uv_offset
 	for i in range(indices.size()):
 		var idx: int = indices[i]
 		var uv: Vector2 = raw_uvs[i]
 
-		if has_transform:
-			# Center-relative scaling and rotation
+		if rotation != 0.0:
+			# Center-relative scaling and rotation for angled/diagonal mapping
 			var rel: Vector2 = uv - centroid
 			var sx: float = rel.x * scale.x
 			var sy: float = rel.y * scale.y
-			if rotation != 0.0:
-				var rx: float = sx * cos_r - sy * sin_r
-				var ry: float = sx * sin_r + sy * cos_r
-				uv = centroid + Vector2(rx, ry) + offset
-			else:
-				uv = centroid + Vector2(sx, sy) + offset
+			var rx: float = sx * cos_r - sy * sin_r
+			var ry: float = sx * sin_r + sy * cos_r
+			uv = centroid + Vector2(rx, ry) + offset
 		else:
-			uv += offset
+			# Corner-anchored scaling: keeps (0, 0) at the corner for all scale factors (1x, 2x, etc.)
+			uv = Vector2(uv.x * scale.x, uv.y * scale.y) + offset
 
 		if face.uv_flip_u:
 			uv.x = -uv.x

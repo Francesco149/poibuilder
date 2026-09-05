@@ -142,11 +142,32 @@ func test_tiling_scale_helpers():
 func test_45_degree_diagonal_tiling():
 	var face := PBFace.new()
 	PBUv.set_face_45_degree_diagonal(face)
-
 	assert_almost_eq(face.uv_scale.x, PBUv.DIAGONAL_SCALE_FACTOR, 0.0001, "Scale X is 1/sqrt(2)")
 	assert_almost_eq(face.uv_scale.y, PBUv.DIAGONAL_SCALE_FACTOR, 0.0001, "Scale Y is 1/sqrt(2)")
 	assert_eq(face.uv_rotation, 45.0, "Rotation is 45 degrees")
 
+func test_scale_stays_corner_aligned():
+	var cube := PBMeshData.create_cube(1.0)
+	var face: PBFace = cube.faces[4] # top face (+Y)
+
+	# 1x scale
+	face.uv_scale = Vector2.ONE
+	var uvs_1x := PBUv.calculate_face_uvs(cube, face)
+	var min_idx := -1
+	var min_len := INF
+	for idx in uvs_1x:
+		if uvs_1x[idx].length_squared() < min_len:
+			min_len = uvs_1x[idx].length_squared()
+			min_idx = idx
+
+	assert_almost_eq(uvs_1x[min_idx].x, 0.0, 0.001, "At 1x, corner UV.x is 0.0")
+	assert_almost_eq(uvs_1x[min_idx].y, 0.0, 0.001, "At 1x, corner UV.y is 0.0")
+
+	# 2x scale: must remain exactly at (0.0, 0.0) at the corner!
+	face.uv_scale = Vector2(2.0, 2.0)
+	var uvs_2x := PBUv.calculate_face_uvs(cube, face)
+	assert_almost_eq(uvs_2x[min_idx].x, 0.0, 0.001, "At 2x, corner UV.x remains 0.0 (anchored to corner)")
+	assert_almost_eq(uvs_2x[min_idx].y, 0.0, 0.001, "At 2x, corner UV.y remains 0.0 (anchored to corner)")
 func test_manual_uv_preservation():
 	var cube := PBMeshData.create_cube(1.0)
 	var face: PBFace = cube.faces[0]
@@ -244,6 +265,21 @@ func test_face_tint_via_vertex_colors():
 	assert_not_null(colors, "Compiled mesh surface must carry vertex colors")
 	for idx in indices:
 		assert_eq(colors[idx], Color.RED, "Vertex color of face 0 must be Color.RED")
+
+
+func test_built_in_light_tiles_material():
+	var path := "res://addons/poibuilder/materials/pb_tiles_light.tres"
+	assert_true(ResourceLoader.exists(path), "Built-in light tile material exists")
+	var mat: StandardMaterial3D = load(path) as StandardMaterial3D
+	assert_not_null(mat, "Material is StandardMaterial3D")
+	assert_not_null(mat.albedo_texture, "Material has tile texture")
+	assert_true(mat.vertex_color_use_as_albedo, "Material supports vertex color tint")
+
+func test_demo_scratch_materials():
+	var brick_path := "res://materials/brick_dark_red.tres"
+	var wood_path := "res://materials/wood_planks.tres"
+	assert_true(ResourceLoader.exists(brick_path), "Demo brick material exists")
+	assert_true(ResourceLoader.exists(wood_path), "Demo wood material exists")
 
 # ==============================================================================
 # 6. Material Drop Overlay & Selection Routing

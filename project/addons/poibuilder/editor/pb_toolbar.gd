@@ -53,8 +53,8 @@ signal reset_panel_requested
 ## that mirrors PBGrid.
 signal grid_panel_toggled(open: bool)
 
-## Emitted when the user toggles the Material & UV dock.
-signal materials_dock_toggled(open: bool)
+## Emitted when the user clicks the Material & UV dock button to focus it.
+signal materials_dock_requested
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -228,16 +228,15 @@ func _build_ui() -> void:
 
 	_label_space()
 
-	# Material & UV Dock toggle
+	# Material & UV Dock button (focuses the dock)
 	_btn_materials = Button.new()
-	_btn_materials.name = "MaterialsToggle"
+	_btn_materials.name = "MaterialsButton"
 	_btn_materials.icon = _load_icon("icon_materials.svg")
 	if _btn_materials.icon == null:
 		_btn_materials.text = "Material"
 	_btn_materials.flat = true
-	_btn_materials.toggle_mode = true
-	_btn_materials.tooltip_text = "Material & UV: Open the material picker and UV mapping dock"
-	_btn_materials.toggled.connect(func(pressed: bool): materials_dock_toggled.emit(pressed))
+	_btn_materials.tooltip_text = "Material & UV: Focus the material picker and UV mapping dock"
+	_btn_materials.pressed.connect(func(): materials_dock_requested.emit())
 	add_child(_btn_materials)
 func _label_space() -> void:
 	add_child(VSeparator.new())
