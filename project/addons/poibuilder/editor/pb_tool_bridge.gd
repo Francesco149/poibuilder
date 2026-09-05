@@ -432,7 +432,7 @@ func _on_engine_tool_pressed(path: String) -> void:
 ## Is the engine's own 3D grid cull layer enabled on the tracked camera?
 func engine_grid_visible() -> bool:
 	return _engine_grid_cam != null and is_instance_valid(_engine_grid_cam) \
-		and (_engine_grid_cam.cull_mask & (1 << (GIZMO_GRID_LAYER - 1))) != 0
+		and (_engine_grid_cam.cull_mask & (1 << GIZMO_GRID_LAYER)) != 0
 
 ## Hides/restores the engine's stock grid by flipping the grid cull layer on
 ## the viewport camera — exactly what the View > View Grid menu entry does
@@ -446,7 +446,7 @@ func set_engine_grid_hidden(hidden: bool, cam: Camera3D = null) -> bool:
 	if cam == null or not is_instance_valid(cam):
 		return false
 	_engine_grid_cam = cam
-	var bit: int = 1 << (GIZMO_GRID_LAYER - 1)
+	var bit: int = 1 << GIZMO_GRID_LAYER
 	if hidden:
 		cam.cull_mask = cam.cull_mask & ~bit
 	else:

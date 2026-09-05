@@ -249,7 +249,10 @@ func _run() -> void:
 		await _frames(10)
 		if not plugin.shape_creator.is_active():
 			_fail("CREATE: creator not armed after shape request")
+		elif not plugin.grid_view.is_visible():
+			_fail("CREATE: grid did not arm immediately upon shape request")
 		else:
+			_pass("CREATE: grid armed immediately upon shape request")
 			var start := _window_pos(vp, host, Vector3(-1, 0.5001, 1.2))
 			var end := _window_pos(vp, host, Vector3(1.2, 0.5001, -1))
 			_mouse_motion(start)
@@ -883,6 +886,16 @@ func _run() -> void:
 		_pass("GRID VIEW: show_grid toggle changes the 3D frame (pixel_diff=%d)" % grid_diff)
 	else:
 		_fail("GRID VIEW: show_grid toggle changes nothing (pixel_diff=%d)" % grid_diff)
+	var cyan_px: int = 0
+	for cy in range(shot_grid_on.get_height()):
+		for cx in range(shot_grid_on.get_width()):
+			var px: Color = shot_grid_on.get_pixel(cx, cy)
+			if px.b > 0.28 and px.g > 0.25 and px.b > px.r + 0.08 and px.g > px.r + 0.04:
+				cyan_px += 1
+	if cyan_px > 1000:
+		_pass("GRID VIEW: grid rendered in cyan (%d cyan pixels)" % cyan_px)
+	else:
+		_fail("GRID VIEW: grid not rendered in cyan (only %d cyan pixels)" % cyan_px)
 	# Leaving the PB context the engine grid comes back.
 	sel.clear()
 	sel.add_node(a)
