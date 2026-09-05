@@ -53,12 +53,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_y(-event.relative.x * 0.003)
 		camera.rotate_x(-event.relative.y * 0.003)
 		camera.rotation.x = clamp(camera.rotation.x, -PI/2.2, PI/2.2)
+	elif event is InputEventMouseButton and event.pressed:
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-		else:
-			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= gravity * delta
