@@ -56,7 +56,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.31"
+const VERSION := "0.9.32"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -89,6 +89,7 @@ func _enter_tree():
 	grid_view.logger = logger
 	gizmo_plugin.grid_view = grid_view
 	set_process(true)
+	_attach_grid_view_scenario()
 
 	# Connect editor signals
 	editor.active_mesh_changed.connect(_on_active_mesh_changed)
@@ -210,6 +211,8 @@ func _exit_tree():
 
 	# Remove custom type
 	remove_custom_type("PBMesh")
+	if grid_view != null:
+		grid_view.detach_scenario()
 
 # ==============================================================================
 # 3D Editor UI Placement
@@ -670,7 +673,7 @@ func _update_editing_context() -> void:
 		# or shape creation armed) the engine's stock grid hides and our cyan
 		# grid draws (PBGridView); in OBJECT mode the engine's own transform
 		# snap also tracks our grid so node-level drags match element drags.
-		var pb_context := mesh_selected or shape_creator.is_active()
+		var pb_context := mesh_selected or shape_creator.is_active() or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
 		var cam3d: Camera3D = null
 		var vp := get_editor_interface().get_editor_viewport_3d(0)
 		if vp != null:
@@ -696,29 +699,40 @@ func _process(_delta: float) -> void:
 	if grid_view == null:
 		return
 	var wants := show_grid_should_draw() and grid.show_grid
-	var stale := false
-	if wants:
-		var vp := get_editor_interface().get_editor_viewport_3d(0)
-		if vp == null:
-			return
-		var cam := vp.get_camera_3d()
-		if cam != null:
-			stale = grid_view.update(cam)
-	if stale or wants != _grid_drawn_last:
-		_grid_drawn_last = wants
-		var host: PBMesh = editor.active_mesh
-		if host == null and shape_creator.is_active():
-			host = shape_creator.preview_node
-		if host != null:
-			host.update_gizmos()
+	var vp := get_editor_interface().get_editor_viewport_3d(0)
+	var cam: Camera3D = null
+	if vp != null:
+		cam = vp.get_camera_3d()
+		if not grid_view.is_active():
+			var w3d := vp.find_world_3d()
+			if w3d != null:
+				grid_view.attach_scenario(w3d.get_scenario())
+	if wants and cam != null:
+		grid_view.update(cam)
+	grid_view.set_visible(wants)
+	if tool_bridge != null and tool_bridge.is_ready():
+		tool_bridge.set_engine_grid_hidden(wants, cam)
 
 ## The grid renders while any PoiBuilder context is active (a PBMesh is
-## selected — object mode included — or shape creation is armed).
+## selected — object mode included — or shape creation is armed, or drawing
+## on an elevated/custom grid, or grid settings panel is open).
 func show_grid_should_draw() -> bool:
-	return editor.active_mesh != null or shape_creator.is_active()
+	return editor.active_mesh != null or shape_creator.is_active() or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
+
+func _attach_grid_view_scenario() -> void:
+	if grid_view == null:
+		return
+	var vp := get_editor_interface().get_editor_viewport_3d(0)
+	if vp != null:
+		var w3d := vp.find_world_3d()
+		if w3d != null:
+			grid_view.attach_scenario(w3d.get_scenario())
 
 ## Grid panel button on the toolbar toggles the overlay's grid section.
+var _grid_panel_open := false
+
 func _on_grid_panel_toggled(open: bool) -> void:
+	_grid_panel_open = open
 	if open:
 		tool_overlay.panel_enabled = true
 		toolbar.set_overlay_pinned(true)

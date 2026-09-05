@@ -775,6 +775,46 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.32 round complete ✓ — procedural infinite horizon cyan grid via
+RenderingServer, immediate arming, engine grid cull fix:
+- PROCEDURAL INFINITE HORIZON GRID: the v0.9.31 gizmo-drawn line approach had
+  critical defects: (1) `EditorNode3DGizmo.add_lines` discarded vertex colors
+  and drew lines in pure white; (2) `minor_radius = step * 40.0` cut minor
+  lines off at 8m and a power-of-two thinning loop doubled spacing so lines
+  didn't match the snap step; (3) drawing through active node gizmos meant the
+  grid was tied to node selection and couldn't arm immediately on New Shape;
+  (4) `GIZMO_GRID_LAYER` bitmask in `pb_tool_bridge.gd` was using
+  `1 << (25 - 1)` (bit 24 = MISC_TOOL_LAYER) instead of `1 << 25`, so the
+  engine stock gray grid was never actually hidden and bled through.
+- REPLACED BY SCENARIO-ATTACHED PROCEDURAL INFINITE GRID:
+  `PBGridView` now owns a `RenderingServer` instance in the editor's
+  `World3D.scenario`:
+  - 4000m x 4000m plane following the camera on XZ at elevation `y = grid.origin.y`.
+  - Spatial shader (`render_mode unshaded, blend_mix, depth_draw_always, cull_disabled, fog_disabled`):
+    screen-space 1px anti-aliased line coverage via `fwidth(uv)`, smooth
+    distance fading, and grazing-angle fading matching the stock Godot grid.
+  - True Cyan palette: `COLOR_MAJOR` (bright crisp cyan `Color(0.45, 0.88, 1.0, 0.65)`),
+    `COLOR_MINOR` (subtle cyan `Color(0.35, 0.78, 0.95, 0.25)`), crisp Red
+    X-axis and Blue Z-axis stripes crossing at `grid.origin`.
+  - Screen-space sub-pixel density fading for minor lines: when zooming out,
+    minor lines smoothly dissolve to prevent moiré while major unit lines
+    remain crisp.
+  - Step fidelity: 100% 1:1 match to `grid.step()` (cell_size) and `grid.unit`
+    (unit_size) with zero thinning or density jumps.
+- ARMS IMMEDIATELY:
+  Scenario attachment happens on plugin initialization (`_enter_tree()`).
+  Visibility is driven directly by `grid_view.set_visible(wants)` in `_process()`,
+  so the grid is visible the very instant "New Shape" is clicked, or upon
+  selecting a PBMesh, or opening the Grid panel, before any mouse motion or click.
+- ENGINE STOCK GRID HIDING FIXED:
+  Bitmask corrected to `1 << GIZMO_GRID_LAYER` (`1 << 25`). While PoiBuilder's
+  grid is shown, the engine's gray grid is cleanly culled; when inactive or
+  deselecting, it restores.
+- GUI HARNESS:
+  Verified with `./run_gui_tests.sh` + pixel inspection: 44,233 cyan pixels
+  in the viewport, immediate arming assertion, and smooth horizon fading
+  confirmed.
+
 v0.9.31 round complete ✓ — grid visual rewrite + panel + engine sync, from
 the first sign-off of the 0.9.30 grid:
 - GRID VISUALS: the 2D `_forward_3d_draw_over_viewport` line overlay

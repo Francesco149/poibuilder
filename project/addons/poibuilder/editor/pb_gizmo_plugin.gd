@@ -127,9 +127,6 @@ func _init() -> void:
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
 	create_handle_material("pb_center_handle")
 	create_material("pb_collider_debug", Color(0.1, 1.0, 0.4, 0.95), false, true, true)
-	# Grid lines: PER-VERTEX colors (the fade lives in the color array),
-	# depth-tested like the stock grid.
-	create_material("pb_grid", Color(1, 1, 1, 1), false, false, true)
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
@@ -312,10 +309,7 @@ func _redraw(gizmo) -> void:
 	# in the editor selection at all).
 	if shape_creator != null and shape_creator.is_active():
 		if shape_creator.preview_node == node:
-			# During an active drag the preview is the only gizmo host — the
-			# grid rides along so its plane stays visible while drawing.
-			if grid_view != null and grid_view.grid != null and grid_view.grid.show_grid:
-				grid_view.draw_onto(gizmo, node, self)
+			# During an active drag the preview is the only gizmo host.
 			_draw_creation_preview(gizmo, mesh_data, shape_creator)
 			return
 		if creation_hover_node == node and creation_hover_face >= 0 \
@@ -331,11 +325,6 @@ func _redraw(gizmo) -> void:
 	if node.show_collider and node.collider_type != PBMesh.ColliderType.OFF:
 		_draw_collider_debug(gizmo, node)
 
-	# PoiBuilder's own grid: drawn on the ACTIVE mesh's gizmo only (single
-	# source across the scene), under the selection highlights.
-	if grid_view != null and grid_view.grid != null and grid_view.grid.show_grid \
-			and editor != null and node == editor.active_mesh:
-		grid_view.draw_onto(gizmo, node, self)
 
 	_mirror_engine_selection(gizmo, node, mesh_data)
 
