@@ -100,15 +100,25 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 
 	# Compute raw planar projected UVs
 	var raw_uvs: Array[Vector2] = []
-	var center_sum := Vector2.ZERO
+	var min_u := INF
+	var min_v := INF
 	for idx in indices:
 		var p: Vector3 = mesh_data.positions[idx]
 		var uv0 := Vector2(u_axis.dot(p), v_axis.dot(p))
 		raw_uvs.append(uv0)
+		min_u = minf(min_u, uv0.x)
+		min_v = minf(min_v, uv0.y)
+
+	# Anchor face to (0, 0) at its minimum corner by default.
+	# This ensures the face corner aligns with full square boundaries without
+	# fractional quarter-square offsets at corners.
+	var center_sum := Vector2.ZERO
+	for i in range(raw_uvs.size()):
+		var uv0 := raw_uvs[i] - Vector2(min_u, min_v)
+		raw_uvs[i] = uv0
 		center_sum += uv0
 
 	var centroid: Vector2 = center_sum / float(indices.size())
-
 	var scale: Vector2 = face.uv_scale
 	var rotation: float = face.uv_rotation
 	var offset: Vector2 = face.uv_offset

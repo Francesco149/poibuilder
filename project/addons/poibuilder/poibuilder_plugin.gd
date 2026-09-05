@@ -154,6 +154,7 @@ func _enter_tree():
 	material_dock.editor = editor
 	material_dock.visible = false
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
+	_setup_ideal_dock_layout.call_deferred()
 	# Half-size manipulator gizmos by default (the engine default of 80px is
 	# huge next to PoiBuilder's element work). Respect user customization:
 	# only applied while the setting still sits at the engine default.
@@ -864,6 +865,49 @@ func _on_materials_dock_toggled(open: bool) -> void:
 		if parent != null:
 			parent.current_tab = material_dock.get_index()
 		material_dock.sync_selection()
+
+## Moves Inspector and other standard docks from DockSlotRightUL to DockSlotRightUR,
+## leaving DockSlotRightUL exclusively for PoiBuilder's Material & UV dock.
+func _setup_ideal_dock_layout() -> void:
+	if material_dock == null:
+		return
+	var ul_container := material_dock.get_parent() as TabContainer
+	if ul_container == null:
+		return
+
+	# Find the main split containing right_l_vsplit and right_r_vsplit
+	var vsplit_l := ul_container.get_parent()
+	if vsplit_l == null:
+		return
+	var main_hsplit := vsplit_l.get_parent()
+	if main_hsplit == null:
+		return
+
+	# Find right_r_vsplit and its DockSlotRightUR
+	var ur_container: TabContainer = null
+	for child in main_hsplit.get_children():
+		if child != vsplit_l and child.name == "DockVSplitRightR":
+			for sub in child.get_children():
+				if sub is TabContainer and sub.name == "DockSlotRightUR":
+					ur_container = sub
+					break
+			break
+
+	if ur_container == null:
+		return
+
+	# Move existing non-PoiBuilder docks (Inspector, Node, Groups, etc.)
+	# from DockSlotRightUL to DockSlotRightUR.
+	var to_move: Array[Node] = []
+	for child in ul_container.get_children():
+		if child != material_dock and not (child is TabBar) and not (child is Popup):
+			to_move.append(child)
+
+	for node in to_move:
+		node.reparent(ur_container)
+
+	if ur_container.get_tab_count() > 0:
+		ur_container.current_tab = 0
 
 ## Applies a material to the given faces of a mesh with full undo/redo.
 func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material) -> void:

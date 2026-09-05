@@ -1,0 +1,10 @@
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3]
+
+[ext_resource type="Texture2D" path="res://addons/poibuilder/materials/textures/tiles_light_4x4.png" id="1_tiles"]
+
+[resource]
+resource_name = "PB_Tiles_Light"
+vertex_color_use_as_albedo = true
+albedo_texture = ExtResource("1_tiles")
+roughness = 0.45
+texture_filter = 2
