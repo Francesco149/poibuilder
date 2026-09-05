@@ -56,7 +56,10 @@ static func _triangulate_2d(points: PackedVector2Array) -> Array:
 			for j in idxs:
 				if j == i0 or j == i1 or j == i2:
 					continue
-				if PBShapeComplex._point_in_triangle(points[j], a, b, c):
+				var pj: Vector2 = points[j]
+				if pj.distance_squared_to(a) < 0.000001 or pj.distance_squared_to(b) < 0.000001 or pj.distance_squared_to(c) < 0.000001:
+					continue
+				if PBShapeComplex._point_in_triangle(pj, a, b, c):
 					ear = false
 					break
 			if not ear:
@@ -75,6 +78,8 @@ static func _triangulate_2d(points: PackedVector2Array) -> Array:
 	return tris
 
 static func _point_in_triangle(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> bool:
+	if p.distance_squared_to(a) < 0.000001 or p.distance_squared_to(b) < 0.000001 or p.distance_squared_to(c) < 0.000001:
+		return false
 	var d1 := (b - a).cross(p - a)
 	var d2 := (c - b).cross(p - b)
 	var d3 := (a - c).cross(p - c)
@@ -1086,6 +1091,10 @@ static func create_ngon_prism(
 	mesh_data.textures0 = textures0
 	mesh_data.faces = faces
 	mesh_data.shared_vertices = _build_shared_vertices(positions)
+	if mesh_data.materials.is_empty():
+		var def_mat := PBMeshData.get_default_material()
+		if def_mat != null:
+			mesh_data.materials.append(def_mat)
 	mesh_data.shared_textures = []
 	mesh_data.calculate_normals()
 	mesh_data.invalidate_caches()

@@ -1819,7 +1819,9 @@ func _refresh_ngon_preview() -> void:
 		if data != null:
 			node.transform = Transform3D.IDENTITY
 			node.pb_mesh_data = data
-	node.mesh = null
+			node.rebuild()
+	else:
+		node.mesh = null
 	node.update_gizmos()
 func _on_ngon_drawer_complete() -> void:
 	if ngon_drawer.mode == PBNgonDrawer.Mode.NGON_EXTRUDE:

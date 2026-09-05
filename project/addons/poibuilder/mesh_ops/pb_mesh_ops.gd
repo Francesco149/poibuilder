@@ -906,6 +906,7 @@ static func _find_best_edge_for_point_2d(loop: PackedVector2Array, pt: Vector2) 
 	var best_dist := INF
 	var best_edge := -1
 	var best_closest := pt
+	var best_t: float = 0.0
 	var is_vert := false
 	var vert_idx := -1
 	var n := loop.size()
@@ -917,6 +918,7 @@ static func _find_best_edge_for_point_2d(loop: PackedVector2Array, pt: Vector2) 
 			best_dist = d
 			best_edge = i
 			best_closest = res["closest"]
+			best_t = res["t"]
 			var t: float = res["t"]
 			if t <= 0.001:
 				is_vert = true
@@ -932,7 +934,8 @@ static func _find_best_edge_for_point_2d(loop: PackedVector2Array, pt: Vector2) 
 		"snapped": best_closest,
 		"is_vertex": is_vert,
 		"vert_idx": vert_idx,
-		"dist": best_dist
+		"dist": best_dist,
+		"t": best_t
 	}
 
 static func _clean_polygon_2d(poly: PackedVector2Array) -> PackedVector2Array:
@@ -953,58 +956,82 @@ static func _split_polygon_by_path_2d(
 	var n := loop_2d.size()
 	var i: int = start_info["edge_idx"]
 	var j: int = end_info["edge_idx"]
-	var c_start: Vector2 = cut_2d[0]
-	var c_end: Vector2 = cut_2d[cut_2d.size() - 1]
+	var c0: Vector2 = cut_2d[0]
+	var c1: Vector2 = cut_2d[cut_2d.size() - 1]
+	var t0: float = start_info["t"]
+	var t1: float = end_info["t"]
 
-	var poly_A := PackedVector2Array()
-	var poly_B := PackedVector2Array()
-
-	for p in cut_2d:
-		poly_A.append(p)
-
-	if i == j:
-		var edge_vec := loop_2d[(i + 1) % n] - loop_2d[i]
-		var len2 := edge_vec.length_squared()
-		var t0 := (c_start - loop_2d[i]).dot(edge_vec) / len2 if len2 > 0.000001 else 0.0
-		var t1 := (c_end - loop_2d[i]).dot(edge_vec) / len2 if len2 > 0.000001 else 1.0
-		if t0 < t1:
-			var cur := (i + 1) % n
-			while true:
-				if poly_A[poly_A.size() - 1].distance_to(loop_2d[cur]) > 0.001:
-					poly_A.append(loop_2d[cur])
-				if cur == i:
-					break
-				cur = (cur + 1) % n
-			for k in range(cut_2d.size() - 1, -1, -1):
-				poly_B.append(cut_2d[k])
+	# Build augmented perimeter cycle with c0 and c1 cleanly inserted
+	var aug := PackedVector2Array()
+	for k in range(n):
+		aug.append(loop_2d[k])
+		if i == j and k == i:
+			if t0 < t1:
+				if t0 > 0.001 and t0 < 0.999:
+					aug.append(c0)
+				if t1 > 0.001 and t1 < 0.999:
+					aug.append(c1)
+			else:
+				if t1 > 0.001 and t1 < 0.999:
+					aug.append(c1)
+				if t0 > 0.001 and t0 < 0.999:
+					aug.append(c0)
 		else:
-			var cur := (i + 1) % n
-			for k in range(cut_2d.size() - 1, -1, -1):
-				poly_B.append(cut_2d[k])
-			while true:
-				if poly_B[poly_B.size() - 1].distance_to(loop_2d[cur]) > 0.001:
-					poly_B.append(loop_2d[cur])
-				if cur == i:
-					break
-				cur = (cur + 1) % n
-	else:
-		var cur := (j + 1) % n
-		while true:
-			if poly_A[poly_A.size() - 1].distance_to(loop_2d[cur]) > 0.001:
-				poly_A.append(loop_2d[cur])
-			if cur == i:
-				break
-			cur = (cur + 1) % n
+			if k == i and t0 > 0.001 and t0 < 0.999:
+				aug.append(c0)
+			elif k == j and t1 > 0.001 and t1 < 0.999:
+				aug.append(c1)
 
-		for k in range(cut_2d.size() - 1, -1, -1):
-			poly_B.append(cut_2d[k])
-		cur = (i + 1) % n
-		while true:
-			if poly_B[poly_B.size() - 1].distance_to(loop_2d[cur]) > 0.001:
-				poly_B.append(loop_2d[cur])
-			if cur == j:
-				break
-			cur = (cur + 1) % n
+	var cleaned_aug := _clean_polygon_2d(aug)
+	var m := cleaned_aug.size()
+	if m < 3:
+		return []
+
+	# Find indices of c0 and c1 in cleaned_aug
+	var idx0 := -1
+	var idx1 := -1
+	var d0 := INF
+	var d1 := INF
+	for k in range(m):
+		var dist0 := cleaned_aug[k].distance_to(c0)
+		if dist0 < d0:
+			d0 = dist0
+			idx0 = k
+		var dist1 := cleaned_aug[k].distance_to(c1)
+		if dist1 < d1:
+			d1 = dist1
+			idx1 = k
+
+	if idx0 == idx1 or idx0 < 0 or idx1 < 0:
+		return []
+
+	# Arc 1: along augmented perimeter from idx0 to idx1
+	var arc1 := PackedVector2Array()
+	var curr := idx0
+	while true:
+		arc1.append(cleaned_aug[curr])
+		if curr == idx1:
+			break
+		curr = (curr + 1) % m
+
+	# Arc 2: along augmented perimeter from idx1 to idx0
+	var arc2 := PackedVector2Array()
+	curr = idx1
+	while true:
+		arc2.append(cleaned_aug[curr])
+		if curr == idx0:
+			break
+		curr = (curr + 1) % m
+
+	# Poly A: Arc 1 + reversed cut interior points (c1 -> c0)
+	var poly_A := PackedVector2Array(arc1)
+	for k in range(cut_2d.size() - 2, 0, -1):
+		poly_A.append(cut_2d[k])
+
+	# Poly B: Arc 2 + forward cut interior points (c0 -> c1)
+	var poly_B := PackedVector2Array(arc2)
+	for k in range(1, cut_2d.size() - 1):
+		poly_B.append(cut_2d[k])
 
 	poly_A = _clean_polygon_2d(poly_A)
 	poly_B = _clean_polygon_2d(poly_B)

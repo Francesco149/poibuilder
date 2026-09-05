@@ -182,6 +182,46 @@ func test_knife_closed_loop_hole_cut():
 	assert_true(found_inner, "Inner face should exist with 4 edges")
 	assert_true(found_outer, "Outer face should exist with hole perimeter")
 
+func test_knife_closed_loop_pentagon_interior_cut():
+	var md := PBShapeGenerators.create_box(Vector3(4, 2, 4))
+	var top_face_idx := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		if n.dot(Vector3.UP) > 0.9:
+			top_face_idx = fi
+			break
+	assert_gt(top_face_idx, -1)
+
+	# Asymmetric 5-gon cut in the interior (matching Image #1)
+	var cut := PackedVector3Array([
+		Vector3(-0.3, 1, 0.2),
+		Vector3(0.2, 1, 0.5),
+		Vector3(0.6, 1, 0.1),
+		Vector3(0.5, 1, -0.4),
+		Vector3(-0.1, 1, -0.6)
+	])
+	var res := PBMeshOps.cut_face(md, top_face_idx, cut, true)
+	assert_true(res.get("ok", false), "Pentagon cut should succeed: %s" % res.get("error", ""))
+	assert_eq(md.faces.size(), 7)
+
+	# Verify area of inner + outer faces equals original face area (16.0)
+	var area_sum := 0.0
+	for fi in range(md.faces.size()):
+		var f := md.faces[fi]
+		var n := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.dot(Vector3.UP) > 0.9:
+			var idxs := f.get_indexes()
+			for t in range(0, idxs.size(), 3):
+				var p0: Vector3 = md.positions[idxs[t]]
+				var p1: Vector3 = md.positions[idxs[t + 1]]
+				var p2: Vector3 = md.positions[idxs[t + 2]]
+				area_sum += 0.5 * (p1 - p0).cross(p2 - p0).length()
+	assert_almost_eq(area_sum, 16.0, 0.01, "Area of inner + outer faces must equal original 4x4 face area")
+
+	var counts := PBMeshOps.edge_usage_counts(md)
+	for edge_key in counts:
+		assert_eq(counts[edge_key], 2, "Watertight manifold: edge %s used by 2 faces" % str(edge_key))
+
 func test_knife_edge_cases():
 	var md := PBShapeGenerators.create_box(Vector3(2, 2, 2))
 	# Less than 2 points
