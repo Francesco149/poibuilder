@@ -1644,6 +1644,7 @@ func _start_knife_tool() -> void:
 		_creation_abort("switched to knife tool")
 	if ngon_drawer.is_active():
 		_ngon_drawer_abort("switched to knife tool")
+	_clear_creation_hover()
 	var target_m: PBMesh = editor.active_mesh
 	var target_f: int = -1
 	if editor.selection != null and editor.selection.selected_face_count() > 0:
@@ -1661,6 +1662,14 @@ func _start_ngon_shape_tool() -> void:
 		_creation_abort("switched to n-gon tool")
 	if ngon_drawer.is_active():
 		_ngon_drawer_abort("switched to n-gon tool")
+	_clear_creation_hover()
+	if editor.active_mesh != null:
+		var prev: PBMesh = editor.active_mesh
+		editor.active_mesh = null
+		prev.update_gizmos()
+	var ed_sel := get_editor_interface().get_selection()
+	if ed_sel != null:
+		ed_sel.clear()
 	ngon_drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
 	_update_editing_context()
 	_set_creation_hint("N-Gon: click a surface to place vertices, drag to move, Enter to size height (Esc cancels)")
@@ -1794,22 +1803,24 @@ func _make_ngon_preview_node() -> void:
 		return
 	var node := PBMesh.new()
 	node.name = _unique_shape_name(scene_root, &"ngon")
+	node.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.01, 0.01, 0.01))
+	node.mesh = null
 	scene_root.add_child(node)
 	node.owner = scene_root
 	ngon_drawer.preview_node = node
+	node.update_gizmos()
 
 func _refresh_ngon_preview() -> void:
 	var node := ngon_drawer.preview_node
 	if node == null:
 		return
-	var data := ngon_drawer.build_preview_data()
-	if data == null:
-		return
-	node.transform = Transform3D.IDENTITY
-	node.pb_mesh_data = data
+	if ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+		var data := ngon_drawer.build_preview_data()
+		if data != null:
+			node.transform = Transform3D.IDENTITY
+			node.pb_mesh_data = data
 	node.mesh = null
 	node.update_gizmos()
-
 func _on_ngon_drawer_complete() -> void:
 	if ngon_drawer.mode == PBNgonDrawer.Mode.NGON_EXTRUDE:
 		if ngon_drawer.points.size() < 3:
@@ -1844,12 +1855,12 @@ func _on_ngon_drawer_complete() -> void:
 			cmd.add_to_undo_manager(get_undo_redo())
 
 		_finish_mesh_op(target_m, "knife_tool", int(res.get("new_face_ids", []).size()))
+		_clear_creation_hover()
 		_set_creation_hint("")
 		if logger:
 			logger.info("plugin", "Knife cut completed on '%s' face %d" % [target_m.name, target_f])
 		ngon_drawer.reset()
 		_update_editing_context()
-
 func _on_ngon_drawer_confirm_height() -> void:
 	var node := ngon_drawer.preview_node
 	var res := ngon_drawer.confirm_height()
@@ -1872,6 +1883,7 @@ func _on_ngon_drawer_confirm_height() -> void:
 	undo.add_undo_method(self, "_detach_node", node)
 	undo.commit_action()
 
+	_clear_creation_hover()
 	_set_creation_hint("")
 	var editor_selection := get_editor_interface().get_selection()
 	if editor_selection != null and is_instance_valid(node):

@@ -997,8 +997,11 @@ func _run() -> void:
 	else:
 		_pass("NGON-EXTRUDE: armed in NGON_EXTRUDE mode")
 		plugin.ngon_drawer.begin(Vector3(5, 0, 0), Vector3.UP)
+		plugin._make_ngon_preview_node()
 		plugin.ngon_drawer.add_point(Vector3(7, 0, 0))
 		plugin.ngon_drawer.add_point(Vector3(6, 0, 2))
+		plugin.ngon_drawer.update_cursor_plane(Vector3(5.5, 0, 1))
+		plugin.ngon_drawer.preview_node.update_gizmos()
 		await _frames(4)
 		plugin._on_ngon_drawer_complete()
 		await _frames(4)
@@ -1016,6 +1019,10 @@ func _run() -> void:
 				_pass("NGON-EXTRUDE: created Shape_Ngon PBMesh node (faces: %d)" % created_ngon.pb_mesh_data.faces.size())
 			else:
 				_fail("NGON-EXTRUDE: Shape_Ngon node not found in scene tree")
+			if plugin.gizmo_plugin.creation_hover_point == Vector3.ZERO:
+				_pass("NGON-EXTRUDE: hover and first vert points cleared after confirm")
+			else:
+				_fail("NGON-EXTRUDE: stale hover point remained after confirm")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

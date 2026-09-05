@@ -306,6 +306,18 @@ func _redraw(gizmo) -> void:
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null:
 		return
+	# N-gon drawing session (Knife tool or N-Gon shape extrusion)
+	# Checked FIRST: preview_node draws its overlay without requiring mesh_data!
+	if ngon_drawer != null and ngon_drawer.is_active():
+		if ngon_drawer.preview_node == node:
+			if ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+				_draw_ngon_height_preview(gizmo, node.pb_mesh_data, ngon_drawer)
+			else:
+				_draw_ngon_drawer_overlay(gizmo, node.pb_mesh_data, ngon_drawer)
+			return
+		elif ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE and ngon_drawer.target_mesh == node:
+			_draw_ngon_drawer_overlay(gizmo, node.pb_mesh_data, ngon_drawer)
+
 	var mesh_data: PBMeshData = node.pb_mesh_data
 	if mesh_data == null or mesh_data.positions.is_empty():
 		return
@@ -338,14 +350,6 @@ func _redraw(gizmo) -> void:
 				and creation_hover_face < mesh_data.faces.size():
 			_draw_creation_hover(gizmo, mesh_data, creation_hover_face)
 			return
-
-	# N-gon drawing session (Knife tool or N-Gon shape extrusion)
-	if ngon_drawer != null and ngon_drawer.is_active():
-		if ngon_drawer.state == PBNgonDrawer.State.HEIGHT and ngon_drawer.preview_node == node:
-			_draw_ngon_height_preview(gizmo, mesh_data, ngon_drawer)
-			return
-		if ngon_drawer.preview_node == node or ngon_drawer.target_mesh == node or (ngon_drawer.target_mesh == null and _node_selected(node)):
-			_draw_ngon_drawer_overlay(gizmo, mesh_data, ngon_drawer)
 
 	if not _node_selected(node):
 		if node.show_collider and node.collider_type != PBMesh.ColliderType.OFF:
@@ -908,7 +912,9 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 		gizmo.add_mesh(fill, _face_hover_fill_material)
 
 	# ARMED: one square under the cursor (on the hovered surface point).
-	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
+	var armed_drawing := (shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED) \
+		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.State.ARMED)
+	if armed_drawing:
 		_creation_materials()
 		var node := gizmo.get_node_3d() as Node3D
 		if node != null:
