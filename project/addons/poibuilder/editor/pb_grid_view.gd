@@ -16,11 +16,11 @@
 class_name PBGridView
 extends RefCounted
 
-## Cyan palette against the editor's warm-gray stock grid.
-const COLOR_MINOR := Color(0.35, 0.78, 0.95, 0.25)
-const COLOR_MAJOR := Color(0.45, 0.88, 1.00, 0.65)
-const COLOR_AXIS_X := Color(0.95, 0.35, 0.35, 0.85)
-const COLOR_AXIS_Z := Color(0.35, 0.55, 1.00, 0.85)
+## Grayish light-blue palette (less punchy than cyan, distinct from drag/hover overlays).
+const COLOR_MINOR := Color(0.46, 0.58, 0.70, 0.22)
+const COLOR_MAJOR := Color(0.52, 0.68, 0.82, 0.55)
+const COLOR_AXIS_X := Color(0.90, 0.38, 0.38, 0.85)
+const COLOR_AXIS_Z := Color(0.38, 0.56, 0.90, 0.85)
 
 const GRID_QUAD_HALF_SIZE := 2000.0
 
@@ -32,10 +32,10 @@ uniform vec2 grid_origin = vec2(0.0);
 uniform float cell_size = 0.2;
 uniform float unit_size = 1.0;
 uniform float line_width_pixels = 1.0;
-uniform vec4 minor_color : source_color = vec4(0.35, 0.78, 0.95, 0.25);
-uniform vec4 major_color : source_color = vec4(0.45, 0.88, 1.00, 0.65);
-uniform vec4 axis_x_color : source_color = vec4(0.95, 0.35, 0.35, 0.85);
-uniform vec4 axis_z_color : source_color = vec4(0.35, 0.55, 1.00, 0.85);
+uniform vec4 minor_color : source_color = vec4(0.46, 0.58, 0.70, 0.22);
+uniform vec4 major_color : source_color = vec4(0.52, 0.68, 0.82, 0.55);
+uniform vec4 axis_x_color : source_color = vec4(0.90, 0.38, 0.38, 0.85);
+uniform vec4 axis_z_color : source_color = vec4(0.38, 0.56, 0.90, 0.85);
 uniform float fade_distance = 800.0;
 uniform bool orthogonal = false;
 
