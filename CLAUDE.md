@@ -775,6 +775,17 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.40 round complete ✓ — demo scratch project mouse capture & recapture:
+- DEMO SCRATCH PROJECT MOUSE CAPTURE:
+  Updated `scratch.sh` launcher and added `project/player.gd` + updated
+  `project/main.tscn` with the complete 3D playground environment and character controller:
+  - Captures the mouse by default on startup (`Input.mouse_mode = Input.MOUSE_MODE_CAPTURED`).
+  - Pressing `ESC` releases the mouse (`Input.mouse_mode = Input.MOUSE_MODE_VISIBLE`).
+  - Clicking inside the game window (`InputEventMouseButton` pressed) recaptures
+    the mouse (`Input.mouse_mode = Input.MOUSE_MODE_CAPTURED`).
+  - F5 in the editor or running `./scratch.sh` both boot the interactive playground
+    directly with identical controls.
+
 v0.9.39 round complete ✓ — root-cause fix for 3D viewport freeze (render_target_update_mode):
 - ROOT CAUSE OF 3D SCENE FREEZE:
   In v0.9.38, `_redraw_viewport()` assigned `vp.render_target_update_mode = SubViewport.UPDATE_ONCE`
