@@ -168,6 +168,118 @@ func test_scale_stays_corner_aligned():
 	var uvs_2x := PBUv.calculate_face_uvs(cube, face)
 	assert_almost_eq(uvs_2x[min_idx].x, 0.0, 0.001, "At 2x, corner UV.x remains 0.0 (anchored to corner)")
 	assert_almost_eq(uvs_2x[min_idx].y, 0.0, 0.001, "At 2x, corner UV.y remains 0.0 (anchored to corner)")
+
+func test_45_degree_diagonal_stays_corner_anchored_on_resize():
+	var cube := PBMeshData.create_cube(1.0)
+	var face: PBFace = cube.faces[4] # top face (+Y)
+	PBUv.set_face_45_degree_diagonal(face)
+
+	var uvs_init := PBUv.calculate_face_uvs(cube, face)
+	var min_idx := -1
+	var min_len := INF
+	for idx in uvs_init:
+		if uvs_init[idx].length_squared() < min_len:
+			min_len = uvs_init[idx].length_squared()
+			min_idx = idx
+
+	assert_almost_eq(uvs_init[min_idx].x, 0.0, 0.001, "Initial 45° anchor corner UV.x is 0.0")
+	assert_almost_eq(uvs_init[min_idx].y, 0.0, 0.001, "Initial 45° anchor corner UV.y is 0.0")
+
+	# Resize face: extend in +X (moving right side by +2.0m)
+	for idx in face.get_distinct_indexes():
+		if cube.positions[idx].x > 0.0:
+			cube.positions[idx].x += 2.0
+
+	var uvs_resized_x := PBUv.calculate_face_uvs(cube, face)
+	assert_almost_eq(uvs_resized_x[min_idx].x, 0.0, 0.001, "After +X resize, anchor corner UV.x must stay at 0.0")
+	assert_almost_eq(uvs_resized_x[min_idx].y, 0.0, 0.001, "After +X resize, anchor corner UV.y must stay at 0.0")
+
+	# Resize face: extend in +Z (moving back side by +1.5m)
+	for idx in face.get_distinct_indexes():
+		if cube.positions[idx].z > 0.0:
+			cube.positions[idx].z += 1.5
+
+	var uvs_resized_xz := PBUv.calculate_face_uvs(cube, face)
+	assert_almost_eq(uvs_resized_xz[min_idx].x, 0.0, 0.001, "After +Z resize, anchor corner UV.x must stay at 0.0")
+	assert_almost_eq(uvs_resized_xz[min_idx].y, 0.0, 0.001, "After +Z resize, anchor corner UV.y must stay at 0.0")
+
+func test_extrude_face_matches_edge_uv_cutoff_on_non_unit_seam():
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	# Shift the cube so that one of its faces is non-unit aligned:
+	# Shift by (0.37, 0.42, 0.19)
+	var shift := Vector3(0.37, 0.42, 0.19)
+	for i in range(cube.positions.size()):
+		cube.positions[i] += shift
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	# Extrude the top face (+Y) by 0.5m
+	var top_face_idx := 4
+	var orig_face := cube.faces[top_face_idx]
+	var pre_extrude_uvs := PBUv.calculate_face_uvs(cube, orig_face)
+
+	var res := PBMeshOps.extrude_faces(cube, PackedInt32Array([top_face_idx]), 0.5)
+	assert_true(res.get("ok", false), "Extrude faces must succeed")
+
+	var new_ids: PackedInt32Array = res["new_face_ids"]
+	var cap_ids: PackedInt32Array = res["cap_face_ids"]
+
+	# Identify side faces: new faces that are not caps
+	var side_ids: Array[int] = []
+	for fid in new_ids:
+		if not (fid in cap_ids):
+			side_ids.append(fid)
+
+	assert_eq(side_ids.size(), 4, "Extruded quad must have 4 side faces")
+
+	# Recompute UVs across mesh
+	PBUv.refresh_mesh_uvs(cube)
+
+	# For each side face, the base vertices (qa, qb) must match the pre-extrude UVs
+	# where the texture was cut off at that edge!
+	for s_fi in side_ids:
+		var side_face: PBFace = cube.faces[s_fi]
+		assert_true(side_face.uv_use_world_space, "Side face must use world space / unanchored UVs")
+		var side_indices := side_face.get_distinct_indexes()
+		# Find the 2 base vertices (with minimum Y height, since extrusion is +Y)
+		var base_indices: Array[int] = []
+		var lifted_indices: Array[int] = []
+		var min_y := INF
+		for idx in side_indices:
+			min_y = minf(min_y, cube.positions[idx].y)
+		for idx in side_indices:
+			if absf(cube.positions[idx].y - min_y) < 0.001:
+				base_indices.append(idx)
+			else:
+				lifted_indices.append(idx)
+
+		assert_eq(base_indices.size(), 2, "Side face must have 2 base vertices at seam")
+		assert_eq(lifted_indices.size(), 2, "Side face must have 2 lifted vertices")
+
+		# Find which original edge vertices these base vertices coincide with
+		for b_idx in base_indices:
+			var b_pos: Vector3 = cube.positions[b_idx]
+			# Match against pre_extrude vertex
+			var matched_orig_idx := -1
+			for orig_idx in pre_extrude_uvs:
+				# Note: positions before extrude were shifted
+				if b_pos.distance_squared_to(cube.positions[orig_idx] if orig_idx < cube.positions.size() else b_pos) < 0.001:
+					matched_orig_idx = orig_idx
+					break
+			if matched_orig_idx != -1:
+				var expected_uv: Vector2 = pre_extrude_uvs[matched_orig_idx]
+				var actual_uv: Vector2 = cube.textures0[b_idx]
+				assert_almost_eq(actual_uv.x, expected_uv.x, 0.01,
+					"Base vertex UV.x must match pre-extrude texture cutoff at seam")
+				assert_almost_eq(actual_uv.y, expected_uv.y, 0.01,
+					"Base vertex UV.y must match pre-extrude texture cutoff at seam")
+
+		# Check lifted vertices have advanced by 0.5 along extrusion direction
+		for l_idx in lifted_indices:
+			# The lifted vertices are 0.5m higher in Y
+			assert_almost_eq(cube.positions[l_idx].y - min_y, 0.5, 0.001,
+				"Lifted vertex must be 0.5m above seam")
 func test_manual_uv_preservation():
 	var cube := PBMeshData.create_cube(1.0)
 	var face: PBFace = cube.faces[0]

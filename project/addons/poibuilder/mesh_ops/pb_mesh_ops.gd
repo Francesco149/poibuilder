@@ -91,7 +91,8 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 				qa, qb, qb2,
 				qb2, qa2, qa,
 			]))
-			side.submesh_index = submesh
+			var src_face: PBFace = mesh_data.faces[edge.get("face_idx", region[0])]
+			PBUv.setup_extruded_face_uvs(mesh_data, side, src_face, edge["a"], edge["b"], qa, qb)
 			sides.append(side)
 			drag_positions.append(qa2)
 			drag_positions.append(qb2)
@@ -592,6 +593,7 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		# Adjacent faces + a directed (winding-consistent) copy of the edge.
 		var normal_acc := Vector3.ZERO
 		var directed: PBEdge = null
+		var hit_face: PBFace = null
 		var submesh := 0
 		for fi in range(mesh_data.faces.size()):
 			var face := mesh_data.faces[fi]
@@ -607,8 +609,8 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 			normal_acc += _face_area_normal(mesh_data, face)
 			if directed == null:
 				directed = hit
+				hit_face = face
 				submesh = face.submesh_index
-
 		if directed == null:
 			continue
 		if normal_acc.length_squared() < 0.000000001:
@@ -625,7 +627,7 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 			qa, qb, qb2,
 			qb2, qa2, qa,
 		]))
-		fin.submesh_index = submesh
+		PBUv.setup_extruded_face_uvs(mesh_data, fin, hit_face, directed.a, directed.b, qa, qb)
 		new_faces.append(fin)
 		drag_positions.append(qa2)
 		drag_positions.append(qb2)
@@ -800,11 +802,11 @@ static func _region_boundary_edges(mesh_data: PBMeshData, region: PackedInt32Arr
 		for edge in mesh_data.faces[fi].get_edges():
 			var key := _coord_edge_key(mesh_data, edge.a, edge.b)
 			usage[key] = usage.get(key, 0) + 1
-			directed[key] = [edge.a, edge.b]
+			directed[key] = {"a": edge.a, "b": edge.b, "face_idx": fi}
 	var result: Array = []
 	for key in usage:
 		if usage[key] == 1:
-			result.append({"a": directed[key][0], "b": directed[key][1]})
+			result.append(directed[key])
 	return result
 
 static func _region_submesh(mesh_data: PBMeshData, region: PackedInt32Array) -> int:

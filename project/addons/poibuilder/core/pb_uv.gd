@@ -107,16 +107,12 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 		min_u = minf(min_u, uv0.x)
 		min_v = minf(min_v, uv0.y)
 
-	# Anchor face to (0, 0) at its minimum corner by default.
-	# This ensures the face corner aligns with full square boundaries without
-	# fractional quarter-square offsets at corners.
-	var center_sum := Vector2.ZERO
-	for i in range(raw_uvs.size()):
-		var uv0 := raw_uvs[i] - Vector2(min_u, min_v)
-		raw_uvs[i] = uv0
-		center_sum += uv0
+	# Anchor face to (0, 0) at its minimum corner by default unless world space UV is specified.
+	# World space UVs (uv_use_world_space) preserve continuous planar mapping across seams.
+	if not face.uv_use_world_space:
+		for i in range(raw_uvs.size()):
+			raw_uvs[i] -= Vector2(min_u, min_v)
 
-	var centroid: Vector2 = center_sum / float(indices.size())
 	var scale: Vector2 = face.uv_scale
 	var rotation: float = face.uv_rotation
 	var rot_rad: float = deg_to_rad(rotation)
@@ -127,18 +123,6 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 		var idx: int = indices[i]
 		var uv: Vector2 = raw_uvs[i]
 
-		if rotation != 0.0:
-			# Center-relative scaling and rotation for angled/diagonal mapping
-			var rel: Vector2 = uv - centroid
-			var sx: float = rel.x * scale.x
-			var sy: float = rel.y * scale.y
-			var rx: float = sx * cos_r - sy * sin_r
-			var ry: float = sx * sin_r + sy * cos_r
-			uv = centroid + Vector2(rx, ry) + offset
-		else:
-			# Corner-anchored scaling: keeps (0, 0) at the corner for all scale factors (1x, 2x, etc.)
-			uv = Vector2(uv.x * scale.x, uv.y * scale.y) + offset
-
 		if face.uv_flip_u:
 			uv.x = -uv.x
 		if face.uv_flip_v:
@@ -148,9 +132,82 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 			uv.x = uv.y
 			uv.y = tmp
 
+		if rotation != 0.0:
+			# Corner-anchored scaling and rotation: keeps (0, 0) anchored to the reference corner
+			var sx: float = uv.x * scale.x
+			var sy: float = uv.y * scale.y
+			var rx: float = sx * cos_r - sy * sin_r
+			var ry: float = sx * sin_r + sy * cos_r
+			uv = Vector2(rx, ry) + offset
+		else:
+			# Corner-anchored scaling: keeps (0, 0) at the corner for all scale factors (1x, 2x, etc.)
+			uv = Vector2(uv.x * scale.x, uv.y * scale.y) + offset
+
 		result[idx] = uv
 
 	return result
+
+## Configures an extruded side face's UV properties so that its UVs seamlessly
+## match wherever the texture was cut off at the base edge [qa, qb], instead of
+## anchoring from the beginning.
+static func setup_extruded_face_uvs(mesh_data: PBMeshData, side: PBFace,
+		source_face: PBFace, edge_a: int, edge_b: int, qa: int, qb: int) -> void:
+	if mesh_data == null or side == null:
+		return
+	if source_face != null:
+		side.submesh_index = source_face.submesh_index
+		side.uv_scale = source_face.uv_scale
+	side.uv_use_world_space = true
+	side.uv_rotation = 0.0
+	side.uv_anchor = Anchor.NONE
+	var uv_a := Vector2.ZERO
+	var uv_b := Vector2.ZERO
+	if mesh_data.textures0.size() > edge_a and mesh_data.textures0.size() > edge_b \
+			and (source_face == null or source_face.manual_uv or not mesh_data.textures0[edge_a].is_zero_approx()):
+		uv_a = mesh_data.textures0[edge_a]
+		uv_b = mesh_data.textures0[edge_b]
+	elif source_face != null:
+		var src_uvs := calculate_face_uvs(mesh_data, source_face)
+		uv_a = src_uvs.get(edge_a, Vector2.ZERO)
+		uv_b = src_uvs.get(edge_b, Vector2.ZERO)
+
+	var normal_side: Vector3 = PBMath.normal_from_positions(mesh_data.positions, side.get_indexes())
+	if normal_side.length_squared() < 0.0001:
+		normal_side = Vector3.UP
+	else:
+		normal_side = normal_side.normalized()
+
+	var basis := get_planar_basis(normal_side)
+	var u_axis: Vector3 = basis["u"]
+	var v_axis: Vector3 = basis["v"]
+
+	var pos_a: Vector3 = mesh_data.positions[qa]
+	var pos_b: Vector3 = mesh_data.positions[qb]
+	var raw_a := Vector2(u_axis.dot(pos_a), v_axis.dot(pos_a))
+	var raw_b := Vector2(u_axis.dot(pos_b), v_axis.dot(pos_b))
+
+	var delta_raw := raw_b - raw_a
+	var delta_src := uv_b - uv_a
+
+	if delta_raw.x * delta_src.x < -0.001:
+		side.uv_flip_u = true
+		raw_a.x = -raw_a.x
+		raw_b.x = -raw_b.x
+
+	if delta_raw.y * delta_src.y < -0.001:
+		side.uv_flip_v = true
+		raw_a.y = -raw_a.y
+		raw_b.y = -raw_b.y
+
+	var scaled_a := Vector2(raw_a.x * side.uv_scale.x, raw_a.y * side.uv_scale.y)
+	side.uv_offset = uv_a - scaled_a
+
+	# Apply to mesh_data.textures0 if available
+	if mesh_data.textures0.size() == mesh_data.positions.size():
+		var side_uvs := calculate_face_uvs(mesh_data, side)
+		for idx: int in side_uvs:
+			if idx >= 0 and idx < mesh_data.textures0.size():
+				mesh_data.textures0[idx] = side_uvs[idx]
 
 ## Refreshes UV coordinates in `mesh_data.textures0` for all faces.
 ## Faces with `manual_uv == true` are preserved unless `force_all` is true.

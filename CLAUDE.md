@@ -775,6 +775,28 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.42 round complete ✓ — seam-continuous extrude UVs, corner-anchored 45° diagonal tiling:
+- EXTRUDE SEAM-CONTINUOUS UV PROJECTION:
+  - When extruding a face, the newly generated side bridge faces now inherit the
+    exact UV cut-off values from the base seam edge (`[qa, qb]`) instead of
+    anchoring from (0, 0) ("anchoring from the beginning").
+  - `PBUv.setup_extruded_face_uvs()` calculates the planar projection of the side
+    face, checks if edge axes align with or need flipping (`uv_flip_u`, `uv_flip_v`),
+    sets `side.uv_use_world_space = true` (unanchored mode, bypassing the
+    minimum-corner normalization subtraction), and computes `side.uv_offset = uv_a - scaled_a`.
+  - Result: non-unit-aligned seams (e.g. cut at 0.37m or non-integer coords) wrap
+    textures across the extruded seam completely seamlessly with zero texture jump or seam defect.
+  - The base edge vertices stay locked to the pre-extrude cut-off throughout live
+    Shift+Move drags without texture swimming.
+- CORNER-ANCHORED 45° DIAGONAL TILING:
+  - `calculate_face_uvs()` previously rotated and scaled angled/diagonal UVs around
+    the face `centroid`. Resizing any side of the face shifted the centroid, causing
+    the entire 45° tiled pattern across the face to shift and swim.
+  - Angled scaling and rotation are now anchored to the face's reference corner
+    (`(0, 0)`), identical to non-angled corner-anchored scaling.
+  - Resizing any edge of the face keeps the texture firmly anchored to that corner
+    for complete consistency with non-angled tiling.
+
 v0.9.41 round complete ✓ — auto UV management, texturing, material picker dock, and drag-and-drop:
 - AUTO-UV PROJECTION & NON-STRETCHING HEURISTIC (`PBUv`, `core/pb_uv.gd`):
   - Default auto-calculated UVs project a uniform 1x1 meter repeat pattern in
