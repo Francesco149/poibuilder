@@ -152,72 +152,25 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 	return result
 
 ## Configures an extruded side face's UV properties so that its UVs seamlessly
-## match wherever the texture was cut off at the base edge [qa, qb], instead of
-## anchoring from the beginning.
+## align with the object's texture anchor and inherit material and UV parameters.
 static func setup_extruded_face_uvs(mesh_data: PBMeshData, side: PBFace,
-		source_face: PBFace, edge_a: int, edge_b: int, qa: int, qb: int) -> void:
+		source_face: PBFace, _edge_a: int = -1, _edge_b: int = -1, _qa: int = -1, _qb: int = -1) -> void:
 	if mesh_data == null or side == null:
 		return
 	if source_face != null:
 		side.submesh_index = source_face.submesh_index
 		side.uv_scale = source_face.uv_scale
 		side.uv_rotation = source_face.uv_rotation
+		side.uv_offset = source_face.uv_offset
 		side.uv_flip_u = source_face.uv_flip_u
 		side.uv_flip_v = source_face.uv_flip_v
 		side.uv_swap_uv = source_face.uv_swap_uv
-	side.uv_use_world_space = true
-	side.uv_anchor = Anchor.NONE
-	var uv_a := Vector2.ZERO
-	var uv_b := Vector2.ZERO
-	if mesh_data.textures0.size() > edge_a and mesh_data.textures0.size() > edge_b \
-			and (source_face == null or source_face.manual_uv or not mesh_data.textures0[edge_a].is_zero_approx()):
-		uv_a = mesh_data.textures0[edge_a]
-		uv_b = mesh_data.textures0[edge_b]
-	elif source_face != null:
-		var src_uvs := calculate_face_uvs(mesh_data, source_face)
-		uv_a = src_uvs.get(edge_a, Vector2.ZERO)
-		uv_b = src_uvs.get(edge_b, Vector2.ZERO)
-
-	var normal_side: Vector3 = PBMath.normal_from_positions(mesh_data.positions, side.get_indexes())
-	if normal_side.length_squared() < 0.0001:
-		normal_side = Vector3.UP
+		side.uv_fill = source_face.uv_fill
+		side.uv_anchor = source_face.uv_anchor
+		side.uv_use_world_space = source_face.uv_use_world_space
 	else:
-		normal_side = normal_side.normalized()
-
-	var basis := get_planar_basis(normal_side)
-	var u_axis: Vector3 = basis["u"]
-	var v_axis: Vector3 = basis["v"]
-
-	var pos_a: Vector3 = mesh_data.positions[qa]
-	var pos_b: Vector3 = mesh_data.positions[qb]
-	var raw_a := Vector2(u_axis.dot(pos_a), v_axis.dot(pos_a))
-	var raw_b := Vector2(u_axis.dot(pos_b), v_axis.dot(pos_b))
-
-	var delta_raw := raw_b - raw_a
-	var delta_src := uv_b - uv_a
-
-	if delta_raw.x * delta_src.x < -0.001:
-		side.uv_flip_u = not side.uv_flip_u
-		raw_a.x = -raw_a.x
-		raw_b.x = -raw_b.x
-
-	if delta_raw.y * delta_src.y < -0.001:
-		side.uv_flip_v = not side.uv_flip_v
-		raw_a.y = -raw_a.y
-		raw_b.y = -raw_b.y
-
-	var rot_rad: float = deg_to_rad(side.uv_rotation)
-	var cos_r: float = cos(rot_rad)
-	var sin_r: float = sin(rot_rad)
-	var sx: float = raw_a.x * side.uv_scale.x
-	var sy: float = raw_a.y * side.uv_scale.y
-	var sr_a: Vector2
-	if side.uv_rotation != 0.0:
-		sr_a = Vector2(sx * cos_r - sy * sin_r, sx * sin_r + sy * cos_r)
-	else:
-		sr_a = Vector2(sx, sy)
-
-	side.uv_offset = uv_a - sr_a
+		side.uv_use_world_space = false
+		side.uv_anchor = Anchor.LOWER_LEFT
 
 	# Apply to mesh_data.textures0 if available
 	if mesh_data.textures0.size() == mesh_data.positions.size():

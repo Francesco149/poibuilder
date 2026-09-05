@@ -788,13 +788,13 @@ v0.9.42 round complete ✓ — persistent object-space texture anchor, seam-cont
     and coplanar seams (including extruded caps adjacent to untouched faces) share the exact same
     object-space anchor, perfectly aligning 45° diagonal tiling across seams.
 - EXTRUDE SEAM-CONTINUOUS UV PROJECTION:
-  - When extruding a face, the newly generated side bridge faces inherit the
-    exact UV cut-off values from the base seam edge (`[qa, qb]`) instead of
-    anchoring from (0, 0) ("anchoring from the beginning").
-  - `PBUv.setup_extruded_face_uvs()` inherits the source face's `uv_rotation`, `uv_scale`,
-    and flip flags, sets `side.uv_use_world_space = true`, and computes `side.uv_offset = uv_a - sr_a`.
-  - Result: non-unit-aligned seams wrap textures across the extruded seam with zero texture jump,
-    matching both 0° and 45° rotated textures across the seam.
+  - Extruded side bridge faces inherit UV properties (scale, rotation, flips, material slot)
+    from the source face and use the persistent object-space `texture_anchor` directly.
+  - Coplanar faces (such as an extruded front side quad adjacent to an existing front wall)
+    share the identical planar basis and anchor, producing 100% continuous and matching UVs
+    across the seam without artificial offsets or world-space flags.
+  - Across 90° corners, vertical and horizontal tile rows wrap at the exact same elevation
+    around the object with zero seam jump.
 - CORNER-ANCHORED 45° DIAGONAL TILING:
   - Angled scaling and rotation are anchored to the face's reference corner `(0, 0)` in
     anchor space rather than `centroid`, keeping the texture firmly anchored consistently

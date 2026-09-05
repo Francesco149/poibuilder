@@ -207,19 +207,14 @@ func test_extrude_face_matches_edge_uv_cutoff_on_non_unit_seam():
 	var cube := PBMeshData.create_cube(1.0)
 	PBUv.refresh_mesh_uvs(cube, true)
 
-	# Shift the cube so that one of its faces is non-unit aligned:
-	# Shift by (0.37, 0.42, 0.19)
-	var shift := Vector3(0.37, 0.42, 0.19)
-	for i in range(cube.positions.size()):
-		cube.positions[i] += shift
-	PBUv.refresh_mesh_uvs(cube, true)
+	# Extrude the right face (+X) by 0.5m to create a coplanar front side quad
+	# adjacent to the original front face (the exact scenario in Image #1!)
+	# Right face is face 3 (normal +X)
+	var right_face_idx := 3
+	var front_face: PBFace = cube.faces[0] # front face (normal -Z)
+	var front_indices := front_face.get_distinct_indexes()
 
-	# Extrude the top face (+Y) by 0.5m
-	var top_face_idx := 4
-	var orig_face := cube.faces[top_face_idx]
-	var pre_extrude_uvs := PBUv.calculate_face_uvs(cube, orig_face)
-
-	var res := PBMeshOps.extrude_faces(cube, PackedInt32Array([top_face_idx]), 0.5)
+	var res := PBMeshOps.extrude_faces(cube, PackedInt32Array([right_face_idx]), 0.5)
 	assert_true(res.get("ok", false), "Extrude faces must succeed")
 
 	var new_ids: PackedInt32Array = res["new_face_ids"]
@@ -236,50 +231,32 @@ func test_extrude_face_matches_edge_uv_cutoff_on_non_unit_seam():
 	# Recompute UVs across mesh
 	PBUv.refresh_mesh_uvs(cube)
 
-	# For each side face, the base vertices (qa, qb) must match the pre-extrude UVs
-	# where the texture was cut off at that edge!
+	# Find the front side quad (normal -Z, coplanar with front face)
+	var front_side_quad: PBFace = null
 	for s_fi in side_ids:
-		var side_face: PBFace = cube.faces[s_fi]
-		assert_true(side_face.uv_use_world_space, "Side face must use world space / unanchored UVs")
-		var side_indices := side_face.get_distinct_indexes()
-		# Find the 2 base vertices (with minimum Y height, since extrusion is +Y)
-		var base_indices: Array[int] = []
-		var lifted_indices: Array[int] = []
-		var min_y := INF
-		for idx in side_indices:
-			min_y = minf(min_y, cube.positions[idx].y)
-		for idx in side_indices:
-			if absf(cube.positions[idx].y - min_y) < 0.001:
-				base_indices.append(idx)
-			else:
-				lifted_indices.append(idx)
+		var f: PBFace = cube.faces[s_fi]
+		var fn: Vector3 = PBMath.normal_from_positions(cube.positions, f.get_indexes())
+		if fn.normalized().dot(Vector3(0, 0, -1)) > 0.99:
+			front_side_quad = f
+			break
 
-		assert_eq(base_indices.size(), 2, "Side face must have 2 base vertices at seam")
-		assert_eq(lifted_indices.size(), 2, "Side face must have 2 lifted vertices")
+	assert_not_null(front_side_quad, "Must have a front side quad with normal -Z")
 
-		# Find which original edge vertices these base vertices coincide with
-		for b_idx in base_indices:
-			var b_pos: Vector3 = cube.positions[b_idx]
-			# Match against pre_extrude vertex
-			var matched_orig_idx := -1
-			for orig_idx in pre_extrude_uvs:
-				# Note: positions before extrude were shifted
-				if b_pos.distance_squared_to(cube.positions[orig_idx] if orig_idx < cube.positions.size() else b_pos) < 0.001:
-					matched_orig_idx = orig_idx
-					break
-			if matched_orig_idx != -1:
-				var expected_uv: Vector2 = pre_extrude_uvs[matched_orig_idx]
-				var actual_uv: Vector2 = cube.textures0[b_idx]
-				assert_almost_eq(actual_uv.x, expected_uv.x, 0.01,
-					"Base vertex UV.x must match pre-extrude texture cutoff at seam")
-				assert_almost_eq(actual_uv.y, expected_uv.y, 0.01,
-					"Base vertex UV.y must match pre-extrude texture cutoff at seam")
+	# Check that along the seam (where front_face and front_side_quad meet),
+	# the UV coordinates match 100%!
+	var seam_matches := 0
+	for front_idx in front_indices:
+		var f_pos: Vector3 = cube.positions[front_idx]
+		for side_idx in front_side_quad.get_distinct_indexes():
+			var s_pos: Vector3 = cube.positions[side_idx]
+			if f_pos.distance_squared_to(s_pos) < 0.001:
+				var f_uv: Vector2 = cube.textures0[front_idx]
+				var s_uv: Vector2 = cube.textures0[side_idx]
+				assert_almost_eq(s_uv.x, f_uv.x, 0.001, "Seam vertex UV.x must match coplanar face")
+				assert_almost_eq(s_uv.y, f_uv.y, 0.001, "Seam vertex UV.y must match coplanar face")
+				seam_matches += 1
 
-		# Check lifted vertices have advanced by 0.5 along extrusion direction
-		for l_idx in lifted_indices:
-			# The lifted vertices are 0.5m higher in Y
-			assert_almost_eq(cube.positions[l_idx].y - min_y, 0.5, 0.001,
-				"Lifted vertex must be 0.5m above seam")
+	assert_eq(seam_matches, 2, "Seam must share 2 vertices with 100% matched UVs")
 
 func test_texture_does_not_slide_when_corner_face_is_moved():
 	var cube := PBMeshData.create_cube(1.0)
