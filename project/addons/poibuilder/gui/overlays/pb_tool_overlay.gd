@@ -747,7 +747,7 @@ func _build_settings_section() -> void:
 	wire_spin.min_value = 0.0
 	wire_spin.max_value = 1.0
 	wire_spin.step = 0.05
-	wire_spin.value = 1.0
+	wire_spin.value = 0.7
 	wire_spin.tooltip_text = "Base mesh wireframe opacity"
 	wire_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"wireframe_opacity", v))
 	rows.add_child(_make_row_label("Wireframe"))
@@ -760,7 +760,7 @@ func _build_settings_section() -> void:
 	sel_spin.min_value = 0.0
 	sel_spin.max_value = 2.0
 	sel_spin.step = 0.05
-	sel_spin.value = 1.0
+	sel_spin.value = 0.25
 	sel_spin.tooltip_text = "Selection highlight opacity multiplier"
 	sel_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"selection_opacity", v))
 	rows.add_child(_make_row_label("Selection"))
@@ -773,7 +773,7 @@ func _build_settings_section() -> void:
 	hover_spin.min_value = 0.0
 	hover_spin.max_value = 2.0
 	hover_spin.step = 0.05
-	hover_spin.value = 1.0
+	hover_spin.value = 0.25
 	hover_spin.tooltip_text = "Cursor hover highlight opacity multiplier"
 	hover_spin.value_changed.connect(func(v: float): display_setting_changed.emit(&"hover_opacity", v))
 	rows.add_child(_make_row_label("Hover"))

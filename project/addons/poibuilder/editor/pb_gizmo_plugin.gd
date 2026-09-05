@@ -31,17 +31,17 @@ extends EditorNode3DGizmoPlugin
 # Constants
 # ==============================================================================
 
-const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 1.0)
+const WIREFRAME_COLOR := Color(0.28, 0.28, 0.28, 0.7)
 ## EDGE-mode base wireframe: cyan, drawn slightly thinner than hover/select
 ## strokes (half offset, one stack pair instead of two).
-const EDGE_MODE_WIREFRAME_COLOR := Color(0.2, 0.9, 1.0, 0.8)
+const EDGE_MODE_WIREFRAME_COLOR := Color(0.2, 0.9, 1.0, 0.7)
 ## Selection is YELLOW (thick strokes for edges / solid-ish fills for faces).
-const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.425)
-const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.16)
+const SELECTED_COLOR := Color(1.0, 0.9, 0.2, 0.25)
+const FACE_FILL_COLOR := Color(1.0, 0.9, 0.2, 0.25)
 ## Hover highlight: CYAN — the same language ProBuilder uses to say "this is
 ## under your cursor, not selected". Selected stays yellow.
-const HOVER_COLOR := Color(0.2, 0.9, 1.0, 0.375)
-const HOVER_FACE_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.11)
+const HOVER_COLOR := Color(0.2, 0.9, 1.0, 0.25)
+const HOVER_FACE_FILL_COLOR := Color(0.2, 0.9, 1.0, 0.25)
 const VERTEX_COLOR := Color(0.05, 0.05, 0.05, 1.0)
 const VERTEX_DOT_SIZE: float = 7.0
 const VERTEX_DOT_SELECTED_SIZE: float = 11.0
@@ -117,9 +117,9 @@ var _face_hover_fill_material: StandardMaterial3D
 var _creation_fill_material: StandardMaterial3D
 
 ## Display opacities (multipliers from Settings panel).
-var wireframe_opacity: float = 1.0
-var selection_opacity: float = 1.0
-var hover_opacity: float = 1.0
+var wireframe_opacity: float = 0.7
+var selection_opacity: float = 0.25
+var hover_opacity: float = 0.25
 
 func apply_display_opacities(p_wireframe: float, p_selection: float, p_hover: float) -> void:
 	wireframe_opacity = p_wireframe

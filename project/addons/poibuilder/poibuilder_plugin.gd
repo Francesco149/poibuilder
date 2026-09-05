@@ -869,9 +869,9 @@ func _on_settings_panel_toggled(open: bool) -> void:
 
 func _load_display_settings() -> void:
 	var grid_op := 0.7
-	var wire_op := 1.0
-	var sel_op := 1.0
-	var hov_op := 1.0
+	var wire_op := 0.7
+	var sel_op := 0.25
+	var hov_op := 0.25
 	if _settings != null:
 		if _settings.has_setting("poibuilder/display/grid_opacity"):
 			grid_op = float(_settings.get_setting("poibuilder/display/grid_opacity"))
@@ -908,10 +908,10 @@ func _on_display_setting_changed(setting_name: StringName, value: float) -> void
 
 func _on_display_reset() -> void:
 	_on_display_setting_changed(&"grid_opacity", 0.7)
-	_on_display_setting_changed(&"wireframe_opacity", 1.0)
-	_on_display_setting_changed(&"selection_opacity", 1.0)
-	_on_display_setting_changed(&"hover_opacity", 1.0)
-	tool_overlay.sync_display_settings(0.7, 1.0, 1.0, 1.0)
+	_on_display_setting_changed(&"wireframe_opacity", 0.7)
+	_on_display_setting_changed(&"selection_opacity", 0.25)
+	_on_display_setting_changed(&"hover_opacity", 0.25)
+	tool_overlay.sync_display_settings(0.7, 0.7, 0.25, 0.25)
 
 ## Focuses the Material & UV dock.
 func focus_material_dock() -> void:

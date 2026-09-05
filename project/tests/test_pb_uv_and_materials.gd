@@ -73,7 +73,7 @@ func test_auto_uv_non_stretching_on_face_resize():
 func test_planar_basis_vertical_surfaces():
 	# Floor (+Y)
 	var floor_basis := PBUv.get_planar_basis(Vector3.UP)
-	assert_eq(floor_basis["u"], Vector3.RIGHT, "Floor U is +X")
+	assert_eq(floor_basis["u"], Vector3.LEFT, "Floor/Top U is -X (matches front-left anchor)")
 	assert_eq(floor_basis["v"], Vector3.FORWARD, "Floor V is -Z (anchors front-left)")
 
 	# Ceiling (-Y)
