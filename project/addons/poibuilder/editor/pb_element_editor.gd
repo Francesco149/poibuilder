@@ -427,29 +427,63 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		camera: Camera3D, screen_pos: Vector2, record_side: bool = true) -> int:
 	if mesh_data == null or mesh_data.positions.is_empty() or camera == null:
 		return -1
+
+	var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var id: int = -1
+	var hit_dist: float = INF
+
 	match editor.select_mode:
 		PBEditor.SelectMode.FACE:
-			var ray_origin: Vector3 = camera.project_ray_origin(screen_pos)
-			var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
-			var fi: int = PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir).face_index
-			if fi >= 0 and record_side:
-				pick_side_faces[fi] = fi
-			return fi
+			var res := PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir)
+			id = res.face_index
+			hit_dist = res.distance
+			if id >= 0 and record_side:
+				pick_side_faces[id] = id
 		PBEditor.SelectMode.EDGE:
 			var result: PBPicking.EdgePickResult = PBPicking.pick_edge(mesh_data, mesh_transform, screen_pos, camera)
-			if result.edge == null:
-				return -1
-			var id := _common_edge_index(mesh_data, result.edge)
-			if id >= 0 and result.face_index >= 0 and record_side:
-				pick_side_faces[id] = result.face_index
-			return id
+			if result.edge != null:
+				id = _common_edge_index(mesh_data, result.edge)
+				if id >= 0:
+					hit_dist = camera.global_position.distance_to(mesh_transform * element_origin(mesh_data, id))
+					if result.face_index >= 0 and record_side:
+						pick_side_faces[id] = result.face_index
 		PBEditor.SelectMode.VERTEX:
 			var vresult: PBPicking.VertexPickResult = PBPicking.pick_vertex(mesh_data, mesh_transform, screen_pos, camera)
-			if vresult.common_index >= 0 and vresult.face_index >= 0 and record_side:
-				pick_side_faces[vresult.common_index] = vresult.face_index
-			return vresult.common_index
-	return -1
+			if vresult.common_index >= 0:
+				id = vresult.common_index
+				hit_dist = camera.global_position.distance_to(mesh_transform * element_origin(mesh_data, id))
+				if vresult.face_index >= 0 and record_side:
+					pick_side_faces[id] = vresult.face_index
+	if id < 0:
+		return -1
 
+	# Occlusion check: if another visible PBMesh in the scene intersects the ray
+	# closer to the camera than this element, this element is occluded. Returning -1
+	# allows the engine to fall through to selecting the closer object (e.g. clicking
+	# an object sitting on top of a massive floor selects the object, not the floor).
+	if _is_element_occluded_by_other_pbmesh(mesh_data, hit_dist, ray_origin, ray_dir, camera):
+		return -1
+
+	return id
+
+func _is_element_occluded_by_other_pbmesh(own_mesh_data: PBMeshData, own_dist: float, ray_o: Vector3, ray_d: Vector3, camera: Camera3D) -> bool:
+	if camera == null or not camera.is_inside_tree():
+		return false
+	var scene_root: Node = camera.get_tree().edited_scene_root
+	if scene_root == null:
+		return false
+
+	var stack: Array[Node] = [scene_root]
+	while not stack.is_empty():
+		var cur: Node = stack.pop_back()
+		if cur is PBMesh and cur.is_visible_in_tree() and cur.pb_mesh_data != null and cur.pb_mesh_data != own_mesh_data:
+			var res: PBPicking.FacePickResult = PBPicking.pick_face(cur.pb_mesh_data, cur.global_transform, ray_o, ray_d)
+			if res.face_index >= 0 and res.distance < own_dist - 0.001:
+				return true
+		for child in cur.get_children():
+			stack.append(child)
+	return false
 ## All element ids whose representative point lies inside the frustum planes.
 func pick_frustum(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		frustum_planes: Array, camera: Camera3D = null) -> PackedInt32Array:

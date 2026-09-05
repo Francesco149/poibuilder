@@ -602,6 +602,8 @@ func _on_uv_property_changed() -> void:
 	if sel_faces.is_empty():
 		return
 
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+
 	for face in sel_faces:
 		face.uv_scale = Vector2(_spin_tiling_u.value, _spin_tiling_v.value)
 		face.uv_offset = Vector2(_spin_offset_u.value, _spin_offset_v.value)
@@ -610,8 +612,8 @@ func _on_uv_property_changed() -> void:
 		face.uv_flip_v = _chk_flip_v.button_pressed
 
 	PBUv.refresh_mesh_uvs(mesh.pb_mesh_data)
-	mesh.rebuild()
-	mesh.update_gizmos()
+	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	_commit_mesh_action(mesh, "Change Face UVs", before, after)
 
 func _on_tint_changed(color: Color) -> void:
 	if _syncing:
@@ -622,6 +624,8 @@ func _on_tint_changed(color: Color) -> void:
 	var sel_faces := _get_target_faces(mesh)
 	if sel_faces.is_empty():
 		return
+
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 
 	var data := mesh.pb_mesh_data
 	var vc := data.positions.size()
@@ -634,7 +638,8 @@ func _on_tint_changed(color: Color) -> void:
 			if idx >= 0 and idx < vc:
 				data.colors[idx] = color
 
-	mesh.rebuild()
+	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	_commit_mesh_action(mesh, "Change Face Tint", before, after)
 	mesh.update_gizmos()
 
 func _get_target_faces(mesh: PBMesh) -> Array[PBFace]:

@@ -1359,9 +1359,9 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
 			shape_creator.update_height_point(ref)
 			_refresh_preview()
-			_update_creation_hover(camera, screen_pos)
+			_clear_creation_hover()
 		PBShapeCreator.State.PARAMS:
-			pass  # modal open — no preview updates, no hover
+			_clear_creation_hover()
 		_:
 			_update_creation_hover(camera, screen_pos)
 
