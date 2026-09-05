@@ -147,6 +147,7 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 		data.shape_id = shape_id
 		data.shape_params = v.duplicate()
 		data.shape_edited = false
+		data.get_texture_anchor()
 		if data.materials.is_empty():
 			var def_mat := PBMeshData.get_default_material()
 			if def_mat != null:

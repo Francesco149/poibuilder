@@ -280,6 +280,67 @@ func test_extrude_face_matches_edge_uv_cutoff_on_non_unit_seam():
 			# The lifted vertices are 0.5m higher in Y
 			assert_almost_eq(cube.positions[l_idx].y - min_y, 0.5, 0.001,
 				"Lifted vertex must be 0.5m above seam")
+
+func test_texture_does_not_slide_when_corner_face_is_moved():
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	var top_face: PBFace = cube.faces[4] # top face (+Y)
+	var indices := top_face.get_distinct_indexes()
+
+	# Record UVs of vertices on the +X side (unmoved side)
+	var plus_x_uvs: Dictionary = {}
+	for idx in indices:
+		if cube.positions[idx].x > 0.0:
+			plus_x_uvs[idx] = cube.textures0[idx]
+
+	assert_eq(plus_x_uvs.size(), 2, "Top face has 2 vertices with x > 0")
+
+	# Move the CORNER face (-X face): move vertices with x < 0 by -2.0m (from -0.5 to -2.5)
+	for idx in indices:
+		if cube.positions[idx].x < 0.0:
+			cube.positions[idx].x -= 2.0
+
+	# Recompute UVs
+	PBUv.refresh_mesh_uvs(cube)
+
+	# Assert that the unmoved vertices on the +X side have NOT shifted their UVs!
+	for idx in plus_x_uvs:
+		var orig_uv: Vector2 = plus_x_uvs[idx]
+		var new_uv: Vector2 = cube.textures0[idx]
+		assert_almost_eq(new_uv.x, orig_uv.x, 0.001,
+			"Moving -X corner face must NOT slide texture on +X side of object")
+		assert_almost_eq(new_uv.y, orig_uv.y, 0.001,
+			"Moving -X corner face must NOT slide texture on +X side of object")
+
+func test_45_degree_diagonal_extrude_seam_alignment():
+	var cube := PBMeshData.create_cube(1.0)
+	var top_face: PBFace = cube.faces[4] # top face (+Y)
+	PBUv.set_face_45_degree_diagonal(top_face)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	# Pre-extrude UV at the top face's corner
+	var top_indices := top_face.get_distinct_indexes()
+	var pre_uvs: Dictionary = {}
+	for idx in top_indices:
+		pre_uvs[idx] = cube.textures0[idx]
+
+	# Extrude top face by 0.5m
+	var res := PBMeshOps.extrude_faces(cube, PackedInt32Array([4]), 0.5)
+	assert_true(res.get("ok", false), "Extrude top face must succeed")
+
+	# Refresh mesh UVs
+	PBUv.refresh_mesh_uvs(cube)
+
+	# Check the side faces inherit 45-degree rotation and match the seam UVs
+	var new_ids: PackedInt32Array = res["new_face_ids"]
+	var cap_ids: PackedInt32Array = res["cap_face_ids"]
+	for fid in new_ids:
+		if not (fid in cap_ids):
+			var side_face: PBFace = cube.faces[fid]
+			assert_almost_eq(side_face.uv_rotation, 45.0, 0.001,
+				"Extruded side face must inherit 45° rotation from source face")
+			assert_almost_eq(side_face.uv_scale.x, PBUv.DIAGONAL_SCALE_FACTOR, 0.001,
+				"Extruded side face must inherit diagonal scale from source face")
 func test_manual_uv_preservation():
 	var cube := PBMeshData.create_cube(1.0)
 	var face: PBFace = cube.faces[0]

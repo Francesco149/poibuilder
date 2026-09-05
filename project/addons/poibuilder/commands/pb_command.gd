@@ -83,7 +83,8 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	copy.shape_id = source.shape_id
 	copy.shape_params = source.shape_params.duplicate()
 	copy.shape_edited = source.shape_edited
-
+	copy.texture_anchor = source.texture_anchor
+	copy.has_texture_anchor = source.has_texture_anchor
 	copy.invalidate_caches()
 	return copy
 
@@ -126,5 +127,7 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 	target.shape_id = snapshot.shape_id
 	target.shape_params = snapshot.shape_params.duplicate()
 	target.shape_edited = snapshot.shape_edited
+	target.texture_anchor = snapshot.texture_anchor
+	target.has_texture_anchor = snapshot.has_texture_anchor
 
 	target.invalidate_caches()

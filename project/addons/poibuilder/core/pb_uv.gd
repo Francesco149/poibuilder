@@ -107,11 +107,15 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 		min_u = minf(min_u, uv0.x)
 		min_v = minf(min_v, uv0.y)
 
-	# Anchor face to (0, 0) at its minimum corner by default unless world space UV is specified.
-	# World space UVs (uv_use_world_space) preserve continuous planar mapping across seams.
+	# Anchor face relative to the object's persistent texture anchor point.
+	# This ensures that as the object is resized (whichever face moves, even
+	# the one at the corner), texture tiling remains anchored to the same
+	# absolute object-space point and never slides relative to the object.
 	if not face.uv_use_world_space:
+		var anchor: Vector3 = mesh_data.get_texture_anchor() if mesh_data != null else Vector3.ZERO
+		var anchor_uv := Vector2(u_axis.dot(anchor), v_axis.dot(anchor))
 		for i in range(raw_uvs.size()):
-			raw_uvs[i] -= Vector2(min_u, min_v)
+			raw_uvs[i] -= anchor_uv
 
 	var scale: Vector2 = face.uv_scale
 	var rotation: float = face.uv_rotation
@@ -157,8 +161,11 @@ static func setup_extruded_face_uvs(mesh_data: PBMeshData, side: PBFace,
 	if source_face != null:
 		side.submesh_index = source_face.submesh_index
 		side.uv_scale = source_face.uv_scale
+		side.uv_rotation = source_face.uv_rotation
+		side.uv_flip_u = source_face.uv_flip_u
+		side.uv_flip_v = source_face.uv_flip_v
+		side.uv_swap_uv = source_face.uv_swap_uv
 	side.uv_use_world_space = true
-	side.uv_rotation = 0.0
 	side.uv_anchor = Anchor.NONE
 	var uv_a := Vector2.ZERO
 	var uv_b := Vector2.ZERO
@@ -190,17 +197,27 @@ static func setup_extruded_face_uvs(mesh_data: PBMeshData, side: PBFace,
 	var delta_src := uv_b - uv_a
 
 	if delta_raw.x * delta_src.x < -0.001:
-		side.uv_flip_u = true
+		side.uv_flip_u = not side.uv_flip_u
 		raw_a.x = -raw_a.x
 		raw_b.x = -raw_b.x
 
 	if delta_raw.y * delta_src.y < -0.001:
-		side.uv_flip_v = true
+		side.uv_flip_v = not side.uv_flip_v
 		raw_a.y = -raw_a.y
 		raw_b.y = -raw_b.y
 
-	var scaled_a := Vector2(raw_a.x * side.uv_scale.x, raw_a.y * side.uv_scale.y)
-	side.uv_offset = uv_a - scaled_a
+	var rot_rad: float = deg_to_rad(side.uv_rotation)
+	var cos_r: float = cos(rot_rad)
+	var sin_r: float = sin(rot_rad)
+	var sx: float = raw_a.x * side.uv_scale.x
+	var sy: float = raw_a.y * side.uv_scale.y
+	var sr_a: Vector2
+	if side.uv_rotation != 0.0:
+		sr_a = Vector2(sx * cos_r - sy * sin_r, sx * sin_r + sy * cos_r)
+	else:
+		sr_a = Vector2(sx, sy)
+
+	side.uv_offset = uv_a - sr_a
 
 	# Apply to mesh_data.textures0 if available
 	if mesh_data.textures0.size() == mesh_data.positions.size():

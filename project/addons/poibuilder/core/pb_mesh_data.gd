@@ -43,6 +43,12 @@ extends Resource
 ## Materials associated with submesh slots (index matches submesh_index on faces).
 @export var materials: Array[Material] = []
 
+## Persistent object-space texture anchor point. Set at shape creation to the
+## initial bounding box minimum corner so texture tiling never slides relative
+## to the object when faces are moved or resized.
+@export var texture_anchor: Vector3 = Vector3.ZERO
+@export var has_texture_anchor: bool = false
+
 # ==============================================================================
 # Non-Serialized / Cached Fields
 # ==============================================================================
@@ -248,6 +254,26 @@ func _build_common_edges() -> void:
 			_common_edge_indices.append(edge.b)
 	_common_edges_valid = true
 
+
+## Returns the object-space texture anchor, initializing it to the minimum
+## corner of positions if not already established.
+func get_texture_anchor() -> Vector3:
+	if not has_texture_anchor:
+		if positions.is_empty():
+			return Vector3.ZERO
+		var min_pos := Vector3(INF, INF, INF)
+		for p in positions:
+			min_pos.x = minf(min_pos.x, p.x)
+			min_pos.y = minf(min_pos.y, p.y)
+			min_pos.z = minf(min_pos.z, p.z)
+		texture_anchor = min_pos
+		has_texture_anchor = true
+	return texture_anchor
+
+## Sets the object-space texture anchor explicitly.
+func set_texture_anchor(anchor: Vector3) -> void:
+	texture_anchor = anchor
+	has_texture_anchor = true
 # ==============================================================================
 # Coincident Vertex Queries & Common Index Lookups
 # ==============================================================================
@@ -735,5 +761,7 @@ static func create_cube(size: float = 1.0) -> PBMeshData:
 	]
 
 	mesh_data.shared_textures = []
+	mesh_data.texture_anchor = Vector3(-h, -h, -h)
+	mesh_data.has_texture_anchor = true
 	mesh_data.invalidate_caches()
 	return mesh_data
