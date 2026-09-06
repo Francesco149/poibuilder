@@ -1658,6 +1658,7 @@ func _start_knife_tool() -> void:
 	if editor.selection != null and editor.selection.selected_face_count() > 0:
 		target_f = editor.selection.selected_faces[0]
 	ngon_drawer.arm(PBNgonDrawer.Mode.KNIFE, target_m, target_f)
+	_make_ngon_preview_node()
 	_update_editing_context()
 	_set_creation_hint("Knife: click on a face to place vertices, drag to move, Enter to cut (Esc cancels)")
 	if target_m != null:
@@ -1679,11 +1680,11 @@ func _start_ngon_shape_tool() -> void:
 	if ed_sel != null:
 		ed_sel.clear()
 	ngon_drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
+	_make_ngon_preview_node()
 	_update_editing_context()
 	_set_creation_hint("N-Gon: click a surface to place vertices, drag to move, Enter to size height (Esc cancels)")
 	if logger:
 		logger.info("plugin", "N-Gon Extrude active — click a surface to draw polygon")
-
 func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
 		_last_mouse_pos = event.position
@@ -1699,6 +1700,31 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 				_refresh_ngon_preview()
 			PBNgonDrawer.State.ARMED:
 				_update_creation_hover(camera, event.position)
+				var hit := _pick_creation_surface(camera, event.position)
+				if not hit.is_empty():
+					var pt: Vector3 = hit["point"]
+					var best_m: PBMesh = null
+					var best_f: int = -1
+					var best_dist := INF
+					var scene_root := get_editor_interface().get_edited_scene_root()
+					if scene_root != null:
+						for node in _collect_pbmeshes(scene_root):
+							if node == ngon_drawer.preview_node or node.pb_mesh_data == null:
+								continue
+							var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+							if res.face_index >= 0 and res.distance < best_dist:
+								best_dist = res.distance
+								best_m = node
+								best_f = res.face_index
+					if best_m != null and best_f >= 0:
+						pt = ngon_drawer.snap_to_face(best_m, best_f, pt)
+					elif grid != null and grid.enabled:
+						pt = grid.snap_point(pt)
+					ngon_drawer.live_cursor_point = pt
+					if ngon_drawer.preview_node != null:
+						ngon_drawer.preview_node.update_gizmos()
+					elif best_m != null:
+						best_m.update_gizmos()
 			PBNgonDrawer.State.DRAWING, PBNgonDrawer.State.DRAGGING_VERT:
 				# Knife mode: check if cursor hits an adjacent face to switch to
 				if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE and ngon_drawer.target_mesh != null:
@@ -1814,10 +1840,9 @@ func _ngon_drawer_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> b
 		return true
 
 func _make_ngon_preview_node() -> void:
-	var scene_root := get_editor_interface().get_edited_scene_root()
-	if scene_root == null:
-		_ngon_drawer_abort("no edited scene")
+	if ngon_drawer.preview_node != null and is_instance_valid(ngon_drawer.preview_node):
 		return
+	var scene_root := get_editor_interface().get_edited_scene_root()
 	var node := PBMesh.new()
 	node.name = _unique_shape_name(scene_root, &"ngon")
 	node.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.01, 0.01, 0.01))

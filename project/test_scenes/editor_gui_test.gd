@@ -996,6 +996,10 @@ func _run() -> void:
 		_fail("NGON-EXTRUDE: did not arm in NGON_EXTRUDE mode")
 	else:
 		_pass("NGON-EXTRUDE: armed in NGON_EXTRUDE mode")
+		if plugin.ngon_drawer.preview_node != null and is_instance_valid(plugin.ngon_drawer.preview_node):
+			_pass("NGON-EXTRUDE: preview node and gizmo exist immediately upon arming")
+		else:
+			_fail("NGON-EXTRUDE: preview node missing upon arming")
 		plugin.ngon_drawer.begin(Vector3(5, 0, 0), Vector3.UP)
 		plugin._make_ngon_preview_node()
 		plugin.ngon_drawer.add_point(Vector3(7, 0, 0))
