@@ -743,86 +743,109 @@ static func cut_face(
 	if cut_2d.size() < 2:
 		return _fail("Cut face: cut points collapsed to < 2 distinct points")
 
-	var start_info := _find_best_edge_for_point_2d(loop_2d, cut_2d[0])
-	var end_info := _find_best_edge_for_point_2d(loop_2d, cut_2d[cut_2d.size() - 1])
-	var snap_thresh: float = 0.20  # 20cm tolerance to snap to perimeter edges
+	var snap_thresh: float = 0.15  # 15cm tolerance to snap to perimeter edges
+	var boundary_indices: Array[int] = []
+	for k in range(cut_2d.size()):
+		var info := _find_best_edge_for_point_2d(loop_2d, cut_2d[k])
+		if float(info["dist"]) <= snap_thresh:
+			boundary_indices.append(k)
+			cut_2d[k] = info["snapped"]
 
-	var is_edge_to_edge := false
-	if not is_closed:
-		if float(start_info["dist"]) <= snap_thresh and float(end_info["dist"]) <= snap_thresh:
-			if cut_2d[0].distance_to(cut_2d[cut_2d.size() - 1]) > 0.001:
-				is_edge_to_edge = true
+	# Multi-slice condition:
+	# 1) Open cut with >= 2 boundary hits (e.g. zig-zag or edge-to-edge)
+	# 2) Closed cut that touches boundaries at 2 or more distinct points (e.g. Image #1)
+	var is_multi_slice := false
+	if not is_closed and boundary_indices.size() >= 2:
+		is_multi_slice = true
+	elif is_closed and boundary_indices.size() > 2:
+		# More than start and end (which are coincident)
+		is_multi_slice = true
 
-	if is_edge_to_edge:
-		cut_2d[0] = start_info["snapped"]
-		cut_2d[cut_2d.size() - 1] = end_info["snapped"]
-
-		# Check if start or end split an edge (not already at a vertex)
-		var start_p3 := to_3d.call(cut_2d[0])
-		var end_p3 := to_3d.call(cut_2d[cut_2d.size() - 1])
-		var edge_i: int = start_info["edge_idx"]
-		var edge_j: int = end_info["edge_idx"]
+	if is_multi_slice:
+		# Split adjacent faces for all boundary split points
 		var n_loop := loop_2d.size()
+		for b_k in boundary_indices:
+			var b_info := _find_best_edge_for_point_2d(loop_2d, cut_2d[b_k])
+			if not bool(b_info["is_vertex"]):
+				var edge_idx: int = b_info["edge_idx"]
+				var pa := mesh_data.positions[loop[edge_idx]]
+				var pb := mesh_data.positions[loop[(edge_idx + 1) % n_loop]]
+				var split_p := to_3d.call(cut_2d[b_k])
+				_split_edge_in_adjacent_faces(mesh_data, face_index, pa, pb, split_p)
 
-		if not bool(start_info["is_vertex"]):
-			var pa := mesh_data.positions[loop[edge_i]]
-			var pb := mesh_data.positions[loop[(edge_i + 1) % n_loop]]
-			_split_edge_in_adjacent_faces(mesh_data, face_index, pa, pb, start_p3)
-		if not bool(end_info["is_vertex"]):
-			var pa := mesh_data.positions[loop[edge_j]]
-			var pb := mesh_data.positions[loop[(edge_j + 1) % n_loop]]
-			_split_edge_in_adjacent_faces(mesh_data, face_index, pa, pb, end_p3)
+		# Sequentially slice polygons across all boundary chains
+		var current_polys: Array[PackedVector2Array] = [loop_2d]
+		for b_step in range(boundary_indices.size() - 1):
+			var start_idx: int = boundary_indices[b_step]
+			var end_idx: int = boundary_indices[b_step + 1]
+			if start_idx == end_idx:
+				continue
+			var chain := PackedVector2Array()
+			for c_i in range(start_idx, end_idx + 1):
+				chain.append(cut_2d[c_i])
+			if chain.size() < 2:
+				continue
+			if chain[0].distance_to(chain[chain.size() - 1]) < 0.001:
+				continue
 
-		var split_loops := _split_polygon_by_path_2d(loop_2d, cut_2d, start_info, end_info)
-		if split_loops.size() < 2:
-			return _fail("Cut face: could not split face boundary")
+			var mid_pt := chain[1] if chain.size() > 2 else (chain[0] + chain[1]) * 0.5
+			var target_poly_idx := -1
+			for p_i in range(current_polys.size()):
+				var poly := current_polys[p_i]
+				var e0 := _find_best_edge_for_point_2d(poly, chain[0])
+				var e1 := _find_best_edge_for_point_2d(poly, chain[chain.size() - 1])
+				if float(e0["dist"]) <= 0.08 and float(e1["dist"]) <= 0.08:
+					if chain.size() <= 2 or Geometry2D.is_point_in_polygon(mid_pt, poly):
+						target_poly_idx = p_i
+						break
 
-		var poly_A: PackedVector2Array = split_loops[0]
-		var poly_B: PackedVector2Array = split_loops[1]
+			if target_poly_idx >= 0:
+				var target_poly: PackedVector2Array = current_polys[target_poly_idx]
+				current_polys.remove_at(target_poly_idx)
+				var e0 := _find_best_edge_for_point_2d(target_poly, chain[0])
+				var e1 := _find_best_edge_for_point_2d(target_poly, chain[chain.size() - 1])
+				var parts := _split_polygon_by_path_2d(target_poly, chain, e0, e1)
+				if parts.size() >= 2:
+					current_polys.append(parts[0])
+					current_polys.append(parts[1])
+				else:
+					current_polys.append(target_poly)
 
-		if _polygon_area_2d(poly_A) < 0.0:
-			poly_A.reverse()
-		if _polygon_area_2d(poly_B) < 0.0:
-			poly_B.reverse()
+		if current_polys.size() < 2:
+			return _fail("Cut face: could not slice face boundary")
 
-		var tris_A := PBShapeComplex._triangulate_2d(poly_A)
-		var tris_B := PBShapeComplex._triangulate_2d(poly_B)
-		if tris_A.is_empty() or tris_B.is_empty():
-			return _fail("Cut face: triangulation failed on split parts")
+		var new_faces: Array[PBFace] = []
+		for poly in current_polys:
+			if _polygon_area_2d(poly) < 0.0:
+				poly.reverse()
+			var tris := PBShapeComplex._triangulate_2d(poly)
+			if tris.is_empty():
+				continue
+			var base_idx := mesh_data.positions.size()
+			for p2 in poly:
+				mesh_data.positions.append(to_3d.call(p2))
+				mesh_data.textures0.append(Vector2(p2.x, p2.y))
+			var idxs := PackedInt32Array()
+			for t in tris:
+				var cp: float = (poly[t[1]] - poly[t[0]]).cross(poly[t[2]] - poly[t[0]])
+				if absf(cp) < 0.00001:
+					continue
+				if cp > 0.0:
+					idxs.append_array(PackedInt32Array([base_idx + int(t[0]), base_idx + int(t[1]), base_idx + int(t[2])]))
+				else:
+					idxs.append_array(PackedInt32Array([base_idx + int(t[0]), base_idx + int(t[2]), base_idx + int(t[1])]))
+			if idxs.is_empty():
+				continue
+			var nf := PBFace.new(idxs)
+			nf.submesh_index = face.submesh_index
+			nf.smoothing_group = face.smoothing_group
+			nf.manual_uv = face.manual_uv
+			new_faces.append(nf)
 
-		var base_A := mesh_data.positions.size()
-		for p2 in poly_A:
-			mesh_data.positions.append(to_3d.call(p2))
-			mesh_data.textures0.append(Vector2(p2.x, p2.y))
-		var idxs_A := PackedInt32Array()
-		for t in tris_A:
-			var cp: float = (poly_A[t[1]] - poly_A[t[0]]).cross(poly_A[t[2]] - poly_A[t[0]])
-			if cp > 0.0:
-				idxs_A.append_array(PackedInt32Array([base_A + int(t[0]), base_A + int(t[1]), base_A + int(t[2])]))
-			else:
-				idxs_A.append_array(PackedInt32Array([base_A + int(t[0]), base_A + int(t[2]), base_A + int(t[1])]))
-		var face_A := PBFace.new(idxs_A)
-		face_A.submesh_index = face.submesh_index
-		face_A.smoothing_group = face.smoothing_group
-		face_A.manual_uv = face.manual_uv
+		if new_faces.is_empty():
+			return _fail("Cut face: triangulation failed on sliced pieces")
 
-		var base_B := mesh_data.positions.size()
-		for p2 in poly_B:
-			mesh_data.positions.append(to_3d.call(p2))
-			mesh_data.textures0.append(Vector2(p2.x, p2.y))
-		var idxs_B := PackedInt32Array()
-		for t in tris_B:
-			var cp: float = (poly_B[t[1]] - poly_B[t[0]]).cross(poly_B[t[2]] - poly_B[t[0]])
-			if cp > 0.0:
-				idxs_B.append_array(PackedInt32Array([base_B + int(t[0]), base_B + int(t[1]), base_B + int(t[2])]))
-			else:
-				idxs_B.append_array(PackedInt32Array([base_B + int(t[0]), base_B + int(t[2]), base_B + int(t[1])]))
-		var face_B := PBFace.new(idxs_B)
-		face_B.submesh_index = face.submesh_index
-		face_B.smoothing_group = face.smoothing_group
-		face_B.manual_uv = face.manual_uv
-
-		var res := _replace_faces(mesh_data, {face_index: true}, [face_A, face_B], [])
+		var res := _replace_faces(mesh_data, {face_index: true}, new_faces, [])
 		_rebuild_topology(mesh_data)
 		return res
 	else:
@@ -849,6 +872,8 @@ static func cut_face(
 		var idxs_inner := PackedInt32Array()
 		for t in tris_inner:
 			var cp: float = (hole_poly[t[1]] - hole_poly[t[0]]).cross(hole_poly[t[2]] - hole_poly[t[0]])
+			if absf(cp) < 0.00001:
+				continue
 			if cp > 0.0:
 				idxs_inner.append_array(PackedInt32Array([base_inner + int(t[0]), base_inner + int(t[1]), base_inner + int(t[2])]))
 			else:
@@ -872,6 +897,8 @@ static func cut_face(
 		var idxs_outer := PackedInt32Array()
 		for t in tris_outer:
 			var cp: float = (outer_spliced[t[1]] - outer_spliced[t[0]]).cross(outer_spliced[t[2]] - outer_spliced[t[0]])
+			if absf(cp) < 0.00001:
+				continue
 			if cp > 0.0:
 				idxs_outer.append_array(PackedInt32Array([base_outer + int(t[0]), base_outer + int(t[1]), base_outer + int(t[2])]))
 			else:

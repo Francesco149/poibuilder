@@ -341,3 +341,104 @@ func test_face_transition_across_edge():
 	assert_true(drawer.can_transition_to_face(right_face_idx), "Should allow transition across shared edge")
 	drawer.switch_target_face(right_face_idx)
 	assert_eq(drawer.target_face_index, right_face_idx)
+
+func test_knife_closed_shape_touching_two_edges():
+	# Image #1 scenario: 4x2 cube face cut with a closed polygon touching left and right edges
+	var md := PBShapeGenerators.create_box(Vector3(4, 2, 2))
+	var front_idx := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			front_idx = fi
+			break
+	assert_gt(front_idx, -1)
+
+	var cut := PackedVector3Array([
+		Vector3(-2.0, 0.0, 1.0),   # left edge
+		Vector3(-0.5, -0.5, 1.0),
+		Vector3(1.0, -0.3, 1.0),
+		Vector3(2.0, 0.5, 1.0),    # right edge
+		Vector3(0.5, 0.8, 1.0),
+		Vector3(-1.0, 0.5, 1.0),
+		Vector3(-2.0, 0.0, 1.0)    # closed back to left edge
+	])
+	var res := PBMeshOps.cut_face(md, front_idx, cut, true)
+	assert_true(res.get("ok", false), "Closed shape touching 2 edges should slice cleanly: %s" % res.get("error", ""))
+
+	# Total area of all front-facing faces must equal 8.0 (4x2 face)
+	var area_sum := 0.0
+	for fi in range(md.faces.size()):
+		var f := md.faces[fi]
+		var n := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			var idxs := f.get_indexes()
+			for t in range(0, idxs.size(), 3):
+				var p0: Vector3 = md.positions[idxs[t]]
+				var p1: Vector3 = md.positions[idxs[t + 1]]
+				var p2: Vector3 = md.positions[idxs[t + 2]]
+				area_sum += 0.5 * (p1 - p0).cross(p2 - p0).length()
+	assert_almost_eq(area_sum, 8.0, 0.02, "Total area of split pieces must equal 8.0 (no overlapping fanned triangles)")
+
+func test_knife_zigzag_hitting_edges_many_times():
+	# Image #3 scenario: zig-zag hitting top and bottom edges 5 times
+	var md := PBShapeGenerators.create_box(Vector3(4, 2, 2))
+	var front_idx := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			front_idx = fi
+			break
+	assert_gt(front_idx, -1)
+
+	var cut := PackedVector3Array([
+		Vector3(-1.5, -1.0, 1.0), # bottom edge
+		Vector3(-1.0, 1.0, 1.0),  # top edge
+		Vector3(-0.5, -1.0, 1.0), # bottom edge
+		Vector3(0.0, 1.0, 1.0),   # top edge
+		Vector3(0.5, -1.0, 1.0),  # bottom edge
+		Vector3(1.0, 1.0, 1.0)    # top edge
+	])
+	var res := PBMeshOps.cut_face(md, front_idx, cut, false)
+	assert_true(res.get("ok", false), "Zig-zag hitting edges 5 times should slice cleanly: %s" % res.get("error", ""))
+
+	var area_sum := 0.0
+	for fi in range(md.faces.size()):
+		var f := md.faces[fi]
+		var n := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			var idxs := f.get_indexes()
+			for t in range(0, idxs.size(), 3):
+				var p0: Vector3 = md.positions[idxs[t]]
+				var p1: Vector3 = md.positions[idxs[t + 1]]
+				var p2: Vector3 = md.positions[idxs[t + 2]]
+				area_sum += 0.5 * (p1 - p0).cross(p2 - p0).length()
+	assert_almost_eq(area_sum, 8.0, 0.02, "Total area of zig-zag pieces must equal 8.0")
+
+func test_knife_shading_pinch_normals_clean():
+	# Image #2 scenario: flat cube face cut where 1 point touches bottom edge
+	var md := PBShapeGenerators.create_box(Vector3(4, 2, 2))
+	var front_idx := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			front_idx = fi
+			break
+	assert_gt(front_idx, -1)
+
+	var cut := PackedVector3Array([
+		Vector3(0.0, -1.0, 1.0), # touches bottom edge
+		Vector3(0.5, 0.0, 1.0),
+		Vector3(-0.5, 0.0, 1.0)
+	])
+	var res := PBMeshOps.cut_face(md, front_idx, cut, true)
+	assert_true(res.get("ok", false))
+
+	var normals := md.calculate_normals()
+	for fi in range(md.faces.size()):
+		var f := md.faces[fi]
+		var n := PBMath.normal_from_positions(md.positions, f.get_indexes())
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			for idx in f.get_indexes():
+				assert_almost_eq(normals[idx].z, 1.0, 0.01, "Normal at vertex %d must be exactly +Z (no shading pinch)" % idx)
+				assert_almost_eq(normals[idx].x, 0.0, 0.01)
+				assert_almost_eq(normals[idx].y, 0.0, 0.01)

@@ -500,11 +500,12 @@ func calculate_normals() -> PackedVector3Array:
 			# Internal data is CCW-from-outside (Unity convention) —
 			# normal = edge1 × edge2 points outward
 			var cross_prod: Vector3 = edge1.cross(edge2)
-			var normal: Vector3 = cross_prod.normalized() if not cross_prod.is_zero_approx() else Vector3.ZERO
+			if cross_prod.is_zero_approx():
+				continue
+			var normal: Vector3 = cross_prod.normalized()
 			normals[i0] = normal
 			normals[i1] = normal
 			normals[i2] = normal
-
 	_normals = normals
 	return normals
 
