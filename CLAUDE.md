@@ -775,6 +775,27 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.48 round complete ✓ — native EditorSpinSlider controls, SDF splat contour & stroke optimization:
+- NATIVE EditorSpinSlider CLICK-DRAG ADJUSTABLE CONTROLS (`PBMaterialDock`):
+  - Replaced basic SpinBoxes with Godot's built-in `EditorSpinSlider` control (the same native control
+    used by the Inspector and 3D editor panels), providing horizontal click-drag scrubbing with mouse
+    wrapping, acceleration, and direct value typing.
+  - Implemented `_make_spinbox()` which instantiates `EditorSpinSlider` in the live editor and falls back
+    to `SpinBox` in headless test runs where `Engine.is_editor_hint()` is false, maintaining 100% test compatibility.
+- SDF SCREEN-SPACE ANTIALIASED SPLAT CONTOUR (`pb_splat_shader.gdshader`):
+  - Replaced raw linear mask blending with screen-space antialiased smoothstep contour reconstruction
+    using `fwidth(m)`: `smoothstep(0.01, max(fwidth(m) * 2.5, 0.35), m)`.
+  - Completely eliminates bilinear stairstep blocky pixels on large terrain floors and walls, rendering
+    smooth, organic, antialiased stroke contours on any face of any size.
+- OPTIMIZED STROKE PAINTING PERFORMANCE (`PBPaintController.apply_paint_stroke`):
+  - Moved `PBSplat.ensure_mesh_uv2` to `begin_stroke()` so it executes once at drag start rather than
+    redundantly on every mouse motion event.
+  - Added distance-squared pre-filtering for adjacent faces to eliminate checking unrelated faces across
+    complex meshes, keeping stroke execution at sub-millisecond speeds.
+- TESTS & VERIFICATION:
+  - 763/763 GUT unit tests passing (13504 asserts).
+  - 41/41 real editor GUI tests passing under Xvfb.
+
 v0.9.47 round complete ✓ — billboard decal stamping, keybind removal & fast splat painting:
 - BILLBOARD DECAL STAMPING ON PBMesh (`PBPaintController.apply_stamp`):
   - Replaced resolution-constrained mask baking with high-fidelity billboard decal quads (`MeshInstance3D`

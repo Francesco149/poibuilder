@@ -59,11 +59,11 @@ var _btn_x2: Button
 var _btn_half: Button
 var _btn_reset_uv: Button
 var _btn_diagonal: Button
-var _spin_tiling_u: SpinBox
-var _spin_tiling_v: SpinBox
-var _spin_offset_u: SpinBox
-var _spin_offset_v: SpinBox
-var _spin_angle: SpinBox
+var _spin_tiling_u: Range
+var _spin_tiling_v: Range
+var _spin_offset_u: Range
+var _spin_offset_v: Range
+var _spin_angle: Range
 var _chk_flip_u: CheckBox
 var _chk_flip_v: CheckBox
 
@@ -73,18 +73,18 @@ var _btn_reset_tint: Button
 
 # Paint Tool Controls
 var _active_paint_label: Label
-var _spin_brush_radius: SpinBox
-var _spin_brush_softness: SpinBox
-var _spin_brush_opacity: SpinBox
+var _spin_brush_radius: Range
+var _spin_brush_softness: Range
+var _spin_brush_opacity: Range
 var _chk_erase: CheckBox
-var _spin_paint_layer: SpinBox
+var _spin_paint_layer: Range
 var _btn_clear_layer: Button
 
 # Stamp Tool Controls
 var _active_stamp_label: Label
-var _spin_stamp_scale: SpinBox
-var _spin_stamp_rotation: SpinBox
-var _spin_stamp_opacity: SpinBox
+var _spin_stamp_scale: Range
+var _spin_stamp_rotation: Range
+var _spin_stamp_opacity: Range
 
 # Context Menu
 var _context_menu: PopupMenu
@@ -940,11 +940,11 @@ func sync_selection() -> void:
 	_btn_half.disabled = not has_selection
 	_btn_reset_uv.disabled = not has_selection
 	_btn_diagonal.disabled = not has_selection
-	_spin_tiling_u.editable = has_selection
-	_spin_tiling_v.editable = has_selection
-	_spin_offset_u.editable = has_selection
-	_spin_offset_v.editable = has_selection
-	_spin_angle.editable = has_selection
+	_set_slider_enabled(_spin_tiling_u, has_selection)
+	_set_slider_enabled(_spin_tiling_v, has_selection)
+	_set_slider_enabled(_spin_offset_u, has_selection)
+	_set_slider_enabled(_spin_offset_v, has_selection)
+	_set_slider_enabled(_spin_angle, has_selection)
 	_chk_flip_u.disabled = not has_selection
 	_chk_flip_v.disabled = not has_selection
 	_color_picker.disabled = not has_selection
@@ -1141,11 +1141,34 @@ func _make_label(text: String) -> Label:
 	l.text = text
 	return l
 
-func _make_spinbox(min_val: float, max_val: float, step_val: float, default_val: float) -> SpinBox:
-	var sb := SpinBox.new()
-	sb.min_value = min_val
-	sb.max_value = max_val
-	sb.step = step_val
-	sb.value = default_val
-	sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return sb
+func _make_spinbox(min_val: float, max_val: float, step_val: float, default_val: float, suffix_str: String = "") -> Range:
+	if Engine.is_editor_hint() and ClassDB.can_instantiate("EditorSpinSlider"):
+		var s := EditorSpinSlider.new()
+		s.min_value = min_val
+		s.max_value = max_val
+		s.step = step_val
+		s.value = default_val
+		if not suffix_str.is_empty():
+			s.suffix = suffix_str
+		s.flat = true
+		s.hide_slider = true
+		s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		return s
+	else:
+		var sb := SpinBox.new()
+		sb.min_value = min_val
+		sb.max_value = max_val
+		sb.step = step_val
+		sb.value = default_val
+		if not suffix_str.is_empty():
+			sb.suffix = suffix_str
+		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		return sb
+
+func _set_slider_enabled(slider: Range, enabled: bool) -> void:
+	if slider == null:
+		return
+	if slider is SpinBox:
+		(slider as SpinBox).editable = enabled
+	elif slider is EditorSpinSlider:
+		(slider as EditorSpinSlider).read_only = not enabled

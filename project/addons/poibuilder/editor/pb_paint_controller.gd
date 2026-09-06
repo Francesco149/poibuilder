@@ -298,8 +298,9 @@ func begin_stroke() -> void:
 	is_stroke_active = true
 	stroke_dirty = false
 	stroke_snapshot_before = PBCommand.copy_mesh_data(target_mesh.pb_mesh_data)
+	# Ensure UV2 channel is present once at stroke begin (not per motion event)
+	PBSplat.ensure_mesh_uv2(target_mesh.pb_mesh_data)
 	apply_paint_stroke()
-
 func apply_paint_stroke() -> void:
 	if not is_stroke_active or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
 		return
@@ -316,9 +317,6 @@ func apply_paint_stroke() -> void:
 	if splat_mat == null:
 		return
 
-	# Ensure UV2 channel is present for mask sampling
-	PBSplat.ensure_mesh_uv2(data)
-
 	# Convert world hit point to node local coordinates
 	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
 
@@ -331,16 +329,22 @@ func apply_paint_stroke() -> void:
 	if modified:
 		stroke_dirty = true
 
-	# Also paint any adjacent faces within brush radius
+	# Also paint any adjacent faces within brush radius (with distance pre-filtering)
+	var r_reach_sq := (brush_radius + 1.0) * (brush_radius + 1.0)
 	for i in range(data.faces.size()):
 		if i == target_face_idx:
 			continue
 		var other_face := data.faces[i]
 		if other_face == null:
 			continue
-		# Only paint if other face shares the same splat material
 		var other_mat = data.get_face_material(other_face)
 		if other_mat == splat_mat:
+			var idxs := other_face.get_distinct_indexes()
+			if idxs.is_empty():
+				continue
+			var p0: Vector3 = data.positions[idxs[0]]
+			if p0.distance_squared_to(local_hit) > r_reach_sq:
+				continue
 			var other_mod := PBSplat.paint_face_splat(
 				data, other_face, splat_mat, active_layer_idx,
 				local_hit, brush_radius, brush_softness, brush_opacity, erase_mode
