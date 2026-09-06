@@ -281,3 +281,63 @@ func test_ngon_drawer_state_machine_extrude():
 	assert_not_null(data)
 	assert_eq(data.validate(), "")
 	assert_false(drawer.is_active())
+
+func test_snap_to_face_and_boundary_clamping():
+	var node := PBMesh.new()
+	node.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 2, 2))
+	add_child_autofree(node)
+
+	var top_face_idx := -1
+	for fi in range(node.pb_mesh_data.faces.size()):
+		var n := PBMath.normal_from_positions(node.pb_mesh_data.positions, node.pb_mesh_data.faces[fi].get_indexes())
+		if n.dot(Vector3.UP) > 0.9:
+			top_face_idx = fi
+			break
+	assert_gt(top_face_idx, -1)
+
+	var drawer := PBNgonDrawer.new()
+	drawer.arm(PBNgonDrawer.Mode.KNIFE, node, top_face_idx)
+
+	# Point close to corner (1.0, 1.0, 1.0) should snap to corner
+	var near_corner := Vector3(0.95, 1.0, 0.95)
+	var snapped := drawer.snap_to_face(node, top_face_idx, near_corner)
+	assert_almost_eq(snapped.x, 1.0, 0.01)
+	assert_almost_eq(snapped.z, 1.0, 0.01)
+
+	# Point outside face should be clamped to perimeter
+	var outside_pt := Vector3(2.5, 1.0, 0.0) # way to the right of the 2x2 cube
+	var clamped := drawer._clamp_to_face_boundary(node, top_face_idx, outside_pt)
+	assert_almost_eq(clamped.x, 1.0, 0.01, "Clamped X should be on the boundary (1.0)")
+	assert_almost_eq(clamped.y, 1.0, 0.01)
+	assert_almost_eq(clamped.z, 0.0, 0.01)
+
+	# Point inside face should stay inside
+	var inside_pt := Vector3(0.2, 1.0, 0.3)
+	var inside_clamped := drawer._clamp_to_face_boundary(node, top_face_idx, inside_pt)
+	assert_almost_eq(inside_clamped.x, 0.2, 0.01)
+	assert_almost_eq(inside_clamped.z, 0.3, 0.01)
+
+func test_face_transition_across_edge():
+	var node := PBMesh.new()
+	node.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 2, 2))
+	add_child_autofree(node)
+
+	var drawer := PBNgonDrawer.new()
+	drawer.arm(PBNgonDrawer.Mode.KNIFE, node, 0)
+	assert_true(drawer.can_transition_to_face(1), "Empty drawer can transition to any face")
+
+	# Place a point on edge between top face and right face (X = 1.0, Y = 1.0)
+	drawer.begin(Vector3(1.0, 1.0, 0.0), Vector3.UP, node, 0)
+	# Find which face has normal +X
+	var right_face_idx := -1
+	for fi in range(node.pb_mesh_data.faces.size()):
+		var n := PBMath.normal_from_positions(node.pb_mesh_data.positions, node.pb_mesh_data.faces[fi].get_indexes())
+		if n.dot(Vector3.RIGHT) > 0.9:
+			right_face_idx = fi
+			break
+	assert_gt(right_face_idx, -1)
+
+	# Transition to right face should be allowed since last point is on the shared edge
+	assert_true(drawer.can_transition_to_face(right_face_idx), "Should allow transition across shared edge")
+	drawer.switch_target_face(right_face_idx)
+	assert_eq(drawer.target_face_index, right_face_idx)

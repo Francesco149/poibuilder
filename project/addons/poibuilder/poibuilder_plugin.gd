@@ -1513,17 +1513,25 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:
 			best_point = hit
+	if best_node != null and best_face >= 0 and ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED:
+		best_point = ngon_drawer.snap_to_face(best_node, best_face, best_point)
+	elif grid != null and grid.enabled and (ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED):
+		best_point = grid.snap_point(best_point)
+
 	var prev_node := gizmo_plugin.creation_hover_node
-	if best_node != prev_node or best_face != gizmo_plugin.creation_hover_face:
+	var node_changed := (best_node != prev_node or best_face != gizmo_plugin.creation_hover_face)
+	var pt_changed := gizmo_plugin.creation_hover_point.distance_to(best_point) > 0.001
+	if node_changed:
 		gizmo_plugin.creation_hover_node = best_node
 		gizmo_plugin.creation_hover_face = best_face
 		if prev_node != null and is_instance_valid(prev_node):
 			prev_node.update_gizmos()
 		if best_node != null:
 			best_node.update_gizmos()
+	elif pt_changed and best_node != null:
+		best_node.update_gizmos()
 	# Always tracked (cheap): the ARMED cursor square sits at this point.
 	gizmo_plugin.creation_hover_point = best_point
-
 func _clear_creation_hover() -> void:
 	var prev_node := gizmo_plugin.creation_hover_node
 	gizmo_plugin.creation_hover_node = null
@@ -1692,6 +1700,15 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 			PBNgonDrawer.State.ARMED:
 				_update_creation_hover(camera, event.position)
 			PBNgonDrawer.State.DRAWING, PBNgonDrawer.State.DRAGGING_VERT:
+				# Knife mode: check if cursor hits an adjacent face to switch to
+				if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE and ngon_drawer.target_mesh != null:
+					var tm: PBMesh = ngon_drawer.target_mesh
+					if tm.pb_mesh_data != null:
+						var pick_res := PBPicking.pick_face(tm.pb_mesh_data, tm.global_transform, ray_o, ray_d)
+						if pick_res.face_index >= 0 and pick_res.face_index != ngon_drawer.target_face_index:
+							if ngon_drawer.can_transition_to_face(pick_res.face_index):
+								ngon_drawer.switch_target_face(pick_res.face_index)
+
 				var hit := PBNgonDrawer.ray_plane_intersect(ray_o, ray_d,
 					ngon_drawer.plane_point, ngon_drawer.plane_normal)
 				if hit != PBNgonDrawer.RAY_MISS:

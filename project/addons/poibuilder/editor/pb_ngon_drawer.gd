@@ -117,12 +117,17 @@ func end_drag_vert() -> void:
 		state = State.DRAWING
 
 func update_cursor_plane(raw_point: Vector3) -> void:
-	if state == State.INACTIVE or state == State.ARMED or state == State.HEIGHT:
+	if state == State.INACTIVE or state == State.HEIGHT:
 		return
 
 	# Project point strictly onto plane
 	var proj := raw_point - plane_normal * plane_normal.dot(raw_point - plane_point)
 	var snapped_pt := _snap_point(proj)
+
+	# Restrict cut points to within the face boundary in KNIFE mode
+	if mode == Mode.KNIFE and target_mesh != null and target_mesh.pb_mesh_data != null and target_face_index >= 0:
+		snapped_pt = _clamp_to_face_boundary(target_mesh, target_face_index, snapped_pt)
+
 	live_cursor_point = snapped_pt
 
 	if state == State.DRAGGING_VERT and dragged_vert_idx >= 0 and dragged_vert_idx < points.size():
@@ -258,6 +263,128 @@ func reset() -> void:
 
 # ==============================================================================
 # Snapping & Geometry Helpers
+
+func can_transition_to_face(face_idx: int) -> bool:
+	if points.is_empty():
+		return true
+	if target_mesh == null or target_mesh.pb_mesh_data == null:
+		return false
+	var md: PBMeshData = target_mesh.pb_mesh_data
+	if face_idx < 0 or face_idx >= md.faces.size():
+		return false
+	var last_p := points[points.size() - 1]
+	var xf := target_mesh.global_transform
+	var face := md.faces[face_idx]
+	for edge in face.get_edges():
+		var wa: Vector3 = xf * md.positions[edge.a]
+		var wb: Vector3 = xf * md.positions[edge.b]
+		var ab := wb - wa
+		var len2 := ab.length_squared()
+		if len2 > 0.000001:
+			var t := clampf((last_p - wa).dot(ab) / len2, 0.0, 1.0)
+			var edge_pt := wa + ab * t
+			if last_p.distance_to(edge_pt) <= 0.08:
+				return true
+	return false
+
+func switch_target_face(face_idx: int) -> void:
+	if target_mesh == null or target_mesh.pb_mesh_data == null:
+		return
+	var md: PBMeshData = target_mesh.pb_mesh_data
+	if face_idx < 0 or face_idx >= md.faces.size():
+		return
+	target_face_index = face_idx
+	var face := md.faces[face_idx]
+	var norm := PBMath.normal_from_positions(md.positions, face.get_indexes()).normalized()
+	var xf := target_mesh.global_transform
+	plane_normal = (xf.basis * norm).normalized()
+	var idxs := face.get_indexes()
+	if not idxs.is_empty():
+		plane_point = xf * md.positions[idxs[0]]
+	var up := Vector3.UP if absf(plane_normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	u_axis = plane_normal.cross(up).normalized()
+	v_axis = plane_normal.cross(u_axis).normalized()
+
+func snap_to_face(node: PBMesh, face_index: int, p: Vector3) -> Vector3:
+	if node == null or node.pb_mesh_data == null or face_index < 0 or face_index >= node.pb_mesh_data.faces.size():
+		return p
+	var md: PBMeshData = node.pb_mesh_data
+	var xf := node.global_transform
+	var face := md.faces[face_index]
+	var dist_idxs := face.get_distinct_indexes()
+
+	# Snap to corners
+	for idx in dist_idxs:
+		var world_corner: Vector3 = xf * md.positions[idx]
+		if p.distance_to(world_corner) <= SNAP_VERT_DISTANCE:
+			return world_corner
+
+	# Snap to edges
+	for edge in face.get_edges():
+		var wa: Vector3 = xf * md.positions[edge.a]
+		var wb: Vector3 = xf * md.positions[edge.b]
+		var ab := wb - wa
+		var len2 := ab.length_squared()
+		if len2 > 0.000001:
+			var t := clampf((p - wa).dot(ab) / len2, 0.0, 1.0)
+			var edge_pt := wa + ab * t
+			if p.distance_to(edge_pt) <= SNAP_EDGE_DISTANCE:
+				return edge_pt
+
+	return p
+
+func _clamp_to_face_boundary(node: PBMesh, face_idx: int, world_pt: Vector3) -> Vector3:
+	if node == null or node.pb_mesh_data == null:
+		return world_pt
+	var md: PBMeshData = node.pb_mesh_data
+	if face_idx < 0 or face_idx >= md.faces.size():
+		return world_pt
+
+	var face := md.faces[face_idx]
+	var loop := PBMeshOps._ordered_loop(face)
+	if loop.size() < 3:
+		return world_pt
+
+	var xf := node.global_transform
+	var inv_xf := xf.affine_inverse()
+	var local_p := inv_xf * world_pt
+
+	var norm := PBMath.normal_from_positions(md.positions, face.get_indexes()).normalized()
+	if norm.length_squared() < 0.0001:
+		return world_pt
+
+	var up := Vector3.UP if absf(norm.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u := norm.cross(up).normalized()
+	var v := norm.cross(u).normalized()
+	var orig := md.positions[loop[0]]
+
+	var to_2d = func(p3: Vector3) -> Vector2:
+		var d := p3 - orig
+		return Vector2(d.dot(u), d.dot(v))
+
+	var to_3d = func(p2: Vector2) -> Vector3:
+		return orig + u * p2.x + v * p2.y
+
+	var loop_2d := PackedVector2Array()
+	for idx in loop:
+		loop_2d.append(to_2d.call(md.positions[idx]))
+
+	var p2 := to_2d.call(local_p)
+	if Geometry2D.is_point_in_polygon(p2, loop_2d):
+		return world_pt
+
+	var best_dist := INF
+	var best_closest := p2
+	var n_pts := loop_2d.size()
+	for i in range(n_pts):
+		var j := (i + 1) % n_pts
+		var res := PBMeshOps._point_to_segment_distance_2d(p2, loop_2d[i], loop_2d[j])
+		var d: float = res["dist"]
+		if d < best_dist:
+			best_dist = d
+			best_closest = res["closest"]
+
+	return xf * to_3d.call(best_closest)
 # ==============================================================================
 
 func _snap_point(p: Vector3) -> Vector3:
