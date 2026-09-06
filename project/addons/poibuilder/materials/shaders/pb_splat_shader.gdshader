@@ -65,6 +65,10 @@ uniform sampler2D layer_8_texture : source_color, filter_linear_mipmap, repeat_e
 uniform sampler2D layer_8_mask : hint_default_black, filter_linear, repeat_disable;
 uniform vec4 layer_8_color : source_color = vec4(1.0);
 uniform float layer_8_roughness : hint_range(0.0, 1.0) = 0.8;
+// Dedicated Stamp Layer (copied 1:1, sits on top of all splat layers)
+uniform bool stamp_layer_enabled = false;
+uniform sampler2D stamp_layer_texture : source_color, filter_linear, repeat_disable;
+
 
 void fragment() {
 	vec4 base_col = texture(base_texture, UV) * base_color;
@@ -126,6 +130,10 @@ void fragment() {
 		float blend = clamp(m * l_col.a, 0.0, 1.0);
 		albedo = mix(albedo, l_col.rgb, blend);
 		cur_roughness = mix(cur_roughness, layer_8_roughness, blend);
+	}
+	if (stamp_layer_enabled) {
+		vec4 stamp_col = texture(stamp_layer_texture, UV2);
+		albedo = mix(albedo, stamp_col.rgb, stamp_col.a);
 	}
 
 	ALBEDO = albedo;

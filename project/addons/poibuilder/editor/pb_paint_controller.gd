@@ -109,6 +109,9 @@ func set_mode(new_mode: Mode) -> void:
 	if is_stroke_active:
 		end_stroke()
 	mode = new_mode
+	if mode == Mode.STAMP:
+		_update_stamp_preview_texture()
+		_build_stamp_mesh()
 	_update_preview_visibility()
 	mode_changed.emit(mode)
 
@@ -157,8 +160,9 @@ func setup_previews(parent_node: Node) -> void:
 	stamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	stamp_mat.no_depth_test = true
 	stamp_mat.render_priority = 100
+	stamp_mat.albedo_texture = stamp_texture
 	stamp_mesh_instance.material_override = stamp_mat
-
+	_update_stamp_preview_texture()
 	_update_preview_mesh()
 	_update_preview_visibility()
 
@@ -288,18 +292,22 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 		return
 
 	preview_root.visible = true
-
-	# Construct orientation basis: Y aligned with surface normal
-	var n := cursor_normal
-	var up := Vector3.UP if absf(n.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
-	var tangent := n.cross(up).normalized()
-	var bitangent := n.cross(tangent).normalized()
+	# Align orientation basis to face's exact planar basis matching PBUv
+	var basis := PBUv.get_planar_basis(normal)
+	var u_axis: Vector3 = basis["u"]
+	var v_axis: Vector3 = basis["v"]
+	var n_axis: Vector3 = basis["normal"]
+	if mesh_node != null:
+		var xf_b := mesh_node.global_transform.basis
+		u_axis = (xf_b * u_axis).normalized()
+		v_axis = (xf_b * v_axis).normalized()
+		n_axis = (xf_b * n_axis).normalized()
 
 	# Normal offset to eliminate z-fighting
-	var offset_point := cursor_point + n * 0.005
+	var offset_point := cursor_point + n_axis * 0.005
 
 	if mode == Mode.PAINT and brush_mesh_instance != null:
-		var xf := Transform3D(Basis(tangent, n, bitangent), offset_point)
+		var xf := Transform3D(Basis(u_axis, n_axis, v_axis), offset_point)
 		brush_mesh_instance.global_transform = xf
 		brush_mesh_instance.visible = true
 		if stamp_mesh_instance != null:
@@ -308,14 +316,13 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 	elif mode == Mode.STAMP and stamp_mesh_instance != null:
 		# Apply stamp rotation around normal
 		var rot_rad := deg_to_rad(stamp_rotation)
-		var rot_tangent := cos(rot_rad) * tangent - sin(rot_rad) * bitangent
-		var rot_bitangent := sin(rot_rad) * tangent + cos(rot_rad) * bitangent
-		var xf := Transform3D(Basis(rot_tangent, n, rot_bitangent), offset_point)
+		var rot_u := cos(rot_rad) * u_axis - sin(rot_rad) * v_axis
+		var rot_v := sin(rot_rad) * u_axis + cos(rot_rad) * v_axis
+		var xf := Transform3D(Basis(rot_u, n_axis, rot_v), offset_point)
 		stamp_mesh_instance.global_transform = xf
 		stamp_mesh_instance.visible = true
 		if brush_mesh_instance != null:
 			brush_mesh_instance.visible = false
-
 func clear_cursor() -> void:
 	has_hit = false
 	target_mesh = null
@@ -423,18 +430,13 @@ func apply_stamp() -> void:
 
 	PBSplat.ensure_mesh_uv2(data)
 
-	# Ensure a layer exists for the stamp texture
-	var layer_idx := PBSplat.ensure_layer_for_texture(splat_mat, stamp_texture)
-	if layer_idx < 1:
-		return
-
 	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
 
+	# Stamp 1:1 directly onto the dedicated stamp layer on top of all splatting
 	var stamped := PBSplat.stamp_face(
-		data, face, splat_mat, layer_idx,
+		data, face, splat_mat,
 		stamp_img, local_hit, stamp_scale, stamp_rotation, stamp_opacity
 	)
-
 	if stamped:
 		var after := PBCommand.copy_mesh_data(data)
 		_commit_mesh_action(target_mesh, "Stamp Texture", before, after)
@@ -455,9 +457,6 @@ func get_stamp_image() -> Image:
 # ==============================================================================
 
 func _ensure_face_splat_material(mesh: PBMesh, face: PBFace) -> ShaderMaterial:
-	if mesh == null or mesh.pb_mesh_data == null or face == null:
-		return null
-
 	var current_mat := mesh.pb_mesh_data.get_face_material(face)
 	if PBSplat.is_splat_material(current_mat):
 		return current_mat as ShaderMaterial

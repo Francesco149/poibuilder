@@ -1064,6 +1064,47 @@ func _run() -> void:
 			plugin.paint_controller.stamp_rotation = 45.0
 			_pass("SPLAT-STAMP: configured stamp scale=%.1fm, rotation=%.1f°" % [plugin.paint_controller.stamp_scale, plugin.paint_controller.stamp_rotation])
 
+			# Verify stamp preview material has texture assigned (not white square)
+			if plugin.paint_controller.stamp_mesh_instance != null and plugin.paint_controller.stamp_mesh_instance.material_override != null:
+				var smat = plugin.paint_controller.stamp_mesh_instance.material_override as StandardMaterial3D
+				if smat.albedo_texture != null:
+					_pass("SPLAT-STAMP: stamp preview material has valid albedo texture")
+				else:
+					_fail("SPLAT-STAMP: stamp preview material albedo texture is null")
+
+			# Test wheel event with Shift -> rotates
+			var ev_shift_wheel := InputEventMouseButton.new()
+			ev_shift_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+			ev_shift_wheel.pressed = true
+			ev_shift_wheel.shift_pressed = true
+			var prev_rot = plugin.paint_controller.stamp_rotation
+			var res_rot = plugin._paint_controller_input(vp.get_camera_3d(), ev_shift_wheel)
+			if res_rot == EditorPlugin.AFTER_GUI_INPUT_STOP and plugin.paint_controller.stamp_rotation != prev_rot:
+				_pass("SPLAT-STAMP: Shift+Wheel rotates stamp")
+			else:
+				_fail("SPLAT-STAMP: Shift+Wheel failed to rotate stamp")
+
+			# Test wheel event with Ctrl -> scales
+			var ev_ctrl_wheel := InputEventMouseButton.new()
+			ev_ctrl_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+			ev_ctrl_wheel.pressed = true
+			ev_ctrl_wheel.ctrl_pressed = true
+			var prev_scale = plugin.paint_controller.stamp_scale
+			var res_scale = plugin._paint_controller_input(vp.get_camera_3d(), ev_ctrl_wheel)
+			if res_scale == EditorPlugin.AFTER_GUI_INPUT_STOP and plugin.paint_controller.stamp_scale != prev_scale:
+				_pass("SPLAT-STAMP: Ctrl+Wheel scales stamp")
+			else:
+				_fail("SPLAT-STAMP: Ctrl+Wheel failed to scale stamp")
+
+			# Test plain wheel event -> passes through to viewport zoom
+			var ev_plain_wheel := InputEventMouseButton.new()
+			ev_plain_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+			ev_plain_wheel.pressed = true
+			var res_plain = plugin._paint_controller_input(vp.get_camera_3d(), ev_plain_wheel)
+			if res_plain == EditorPlugin.AFTER_GUI_INPUT_PASS:
+				_pass("SPLAT-STAMP: plain wheel without modifiers passes through to zoom")
+			else:
+				_fail("SPLAT-STAMP: plain wheel was consumed instead of passing through")
 			# Reset back to MATERIAL mode
 			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			await _frames(2)

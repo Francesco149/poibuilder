@@ -63,8 +63,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.44"
+const VERSION := "0.9.45"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -2003,21 +2002,23 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		return AFTER_GUI_INPUT_PASS
 
 	if event is InputEventMouseButton:
-		# Stamp Mode: Mouse Wheel rotates, Ctrl + Mouse Wheel scales
+		# Stamp Mode: Shift + Mouse Wheel rotates, Ctrl + Mouse Wheel scales
+		# Plain Mouse Wheel without modifiers passes through to zoom the 3D scene!
 		if paint_controller.mode == PBPaintController.Mode.STAMP and event.pressed:
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				if event.ctrl_pressed:
 					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
-				else:
+					return AFTER_GUI_INPUT_STOP
+				elif event.shift_pressed:
 					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
-				return AFTER_GUI_INPUT_STOP
+					return AFTER_GUI_INPUT_STOP
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				if event.ctrl_pressed:
 					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
-				else:
+					return AFTER_GUI_INPUT_STOP
+				elif event.shift_pressed:
 					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
-				return AFTER_GUI_INPUT_STOP
-
+					return AFTER_GUI_INPUT_STOP
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				# Make sure hit is up-to-date at click time

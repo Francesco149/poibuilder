@@ -13,6 +13,8 @@ const SHADER_PATH := "res://addons/poibuilder/materials/shaders/pb_splat_shader.
 const MAX_LAYERS := 8
 const DEFAULT_MASK_RES := 256
 
+const DEFAULT_STAMP_LAYER_RES := 512
+
 ## Cached reference to the splat shader resource.
 static var _cached_shader: Shader = null
 
@@ -180,6 +182,52 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int) -> Image:
 	mat.set_meta(meta_key, new_img)
 	return new_img
 
+
+# ==============================================================================
+# Dedicated Stamp Layer Management
+# ==============================================================================
+
+## Returns true if the dedicated stamp layer is enabled on `mat`.
+static func has_stamp_layer(mat: ShaderMaterial) -> bool:
+	if mat == null:
+		return false
+	return mat.get_shader_parameter("stamp_layer_enabled") == true
+
+## Returns or initializes the dedicated stamp layer RGBA Image on `mat`.
+static func get_stamp_layer_image(mat: ShaderMaterial, res: int = DEFAULT_STAMP_LAYER_RES) -> Image:
+	if mat == null:
+		return null
+	if mat.has_meta("stamp_layer_image"):
+		var img = mat.get_meta("stamp_layer_image")
+		if img is Image:
+			return img
+
+	var tex = mat.get_shader_parameter("stamp_layer_texture") as Texture2D
+	if tex is ImageTexture:
+		var img := (tex as ImageTexture).get_image()
+		if img != null:
+			mat.set_meta("stamp_layer_image", img)
+			return img
+
+	# Create new transparent RGBA8 image
+	var new_img := Image.create(res, res, false, Image.FORMAT_RGBA8)
+	new_img.fill(Color(0, 0, 0, 0))
+	var new_tex := ImageTexture.create_from_image(new_img)
+	mat.set_shader_parameter("stamp_layer_enabled", true)
+	mat.set_shader_parameter("stamp_layer_texture", new_tex)
+	mat.set_meta("stamp_layer_image", new_img)
+	return new_img
+
+## Clears the dedicated stamp layer to transparent on `mat`.
+static func clear_stamp_layer(mat: ShaderMaterial) -> void:
+	if mat == null:
+		return
+	var img := get_stamp_layer_image(mat)
+	if img != null:
+		img.fill(Color(0, 0, 0, 0))
+		var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+		if tex != null:
+			tex.update(img)
 ## Clears the alpha mask for `layer_idx` to zero (transparent).
 static func clear_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 	if mat == null or layer_idx < 1 or layer_idx > MAX_LAYERS:
@@ -426,13 +474,13 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 ##
 ## Returns true if the stamp was successfully pasted.
 static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
-		layer_idx: int, stamp_img: Image, hit_point_local: Vector3, stamp_scale: float,
-		stamp_rotation_deg: float, stamp_opacity: float) -> bool:
+		stamp_img: Image, hit_point_local: Vector3, stamp_scale: float,
+		stamp_rotation_deg: float, stamp_opacity: float = 1.0, _legacy_layer_idx: int = -1) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or stamp_img == null or stamp_scale <= 0.0:
 		return false
 
-	var mask_img := get_layer_mask_image(splat_mat, layer_idx)
-	if mask_img == null:
+	var stamp_target_img := get_stamp_layer_image(splat_mat)
+	if stamp_target_img == null:
 		return false
 
 	var bounds := get_face_planar_bounds(mesh_data, face)
@@ -456,15 +504,14 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 	var hit_u := u_axis.dot(hit_point_local)
 	var hit_v := v_axis.dot(hit_point_local)
 
-	var w := mask_img.get_width()
-	var h := mask_img.get_height()
+	var w := stamp_target_img.get_width()
+	var h := stamp_target_img.get_height()
 	var sw := stamp_img.get_width()
 	var sh := stamp_img.get_height()
 
-	var half_scale := stamp_scale * 0.5
 	var diag_rad := stamp_scale * 0.7071
 
-	# Mask pixel bounding box covering the stamp footprint
+	# Bounding box of pixels in stamp layer image
 	var u_min_b := (hit_u - diag_rad - min_u) / range_u
 	var u_max_b := (hit_u + diag_rad - min_u) / range_u
 	var v_min_b := (hit_v - diag_rad - min_v) / range_v
@@ -495,21 +542,28 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 			if sx >= 0.0 and sx <= 1.0 and sy >= 0.0 and sy <= 1.0:
 				var sp_x := clampi(int(sx * (sw - 1)), 0, sw - 1)
 				var sp_y := clampi(int(sy * (sh - 1)), 0, sh - 1)
-				var stamp_col := stamp_img.get_pixel(sp_x, sp_y)
-				var stamp_a := stamp_col.a * stamp_opacity
+				var src_col := stamp_img.get_pixel(sp_x, sp_y)
+				var src_a := src_col.a * stamp_opacity
 
-				if stamp_a > 0.001:
-					var cur_a := mask_img.get_pixel(x, y).r
-					# Blend stamp alpha into mask
-					var new_a := clampf(cur_a + stamp_a * (1.0 - cur_a), 0.0, 1.0)
-					if absf(new_a - cur_a) > 0.001:
-						mask_img.set_pixel(x, y, Color(new_a, new_a, new_a, 1.0))
-						dirty = true
+				if src_a > 0.001:
+					var dst_col := stamp_target_img.get_pixel(x, y)
+					# Porter-Duff Over alpha blend 1:1 copy
+					var out_a := src_a + dst_col.a * (1.0 - src_a)
+					var out_r := 0.0
+					var out_g := 0.0
+					var out_b := 0.0
+					if out_a > 0.001:
+						out_r = (src_col.r * src_a + dst_col.r * dst_col.a * (1.0 - src_a)) / out_a
+						out_g = (src_col.g * src_a + dst_col.g * dst_col.a * (1.0 - src_a)) / out_a
+						out_b = (src_col.b * src_a + dst_col.b * dst_col.a * (1.0 - src_a)) / out_a
+
+					stamp_target_img.set_pixel(x, y, Color(out_r, out_g, out_b, out_a))
+					dirty = true
 
 	if dirty:
-		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
-		if mask_tex != null:
-			mask_tex.update(mask_img)
+		var tex = splat_mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+		if tex != null:
+			tex.update(stamp_target_img)
 
 	return dirty
 
@@ -547,5 +601,16 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 				var cloned_tex := ImageTexture.create_from_image(cloned_img)
 				clone.set_shader_parameter("layer_%d_mask" % i, cloned_tex)
 				clone.set_meta("layer_%d_mask_image" % i, cloned_img)
+
+	# Clone dedicated stamp layer if enabled
+	if source.get_shader_parameter("stamp_layer_enabled") == true:
+		clone.set_shader_parameter("stamp_layer_enabled", true)
+		var src_stamp_img := get_stamp_layer_image(source)
+		if src_stamp_img != null:
+			var cloned_stamp_img := Image.create(src_stamp_img.get_width(), src_stamp_img.get_height(), false, src_stamp_img.get_format())
+			cloned_stamp_img.copy_from(src_stamp_img)
+			var cloned_stamp_tex := ImageTexture.create_from_image(cloned_stamp_img)
+			clone.set_shader_parameter("stamp_layer_texture", cloned_stamp_tex)
+			clone.set_meta("stamp_layer_image", cloned_stamp_img)
 
 	return clone

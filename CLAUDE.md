@@ -775,6 +775,30 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.45 round complete ✓ — dedicated 1:1 stamp layer, preview texture fix & camera zoom passthrough:
+- DEDICATED 1:1 STAMP LAYER ON TOP OF SPLATTING (`pb_splat_shader.gdshader`, `core/pb_splat.gd`):
+  - Stamps are copied 1:1 onto a dedicated stamp layer (`stamp_layer_enabled`, `stamp_layer_texture`)
+    sampled via UV2 on top of all splatting layers.
+  - Full RGBA Porter-Duff alpha compositing (`PBSplat.stamp_face`): stamps preserve their exact
+    original colors and sharp alpha edges without blurring, tiling distortion, or being constrained
+    by the face's tiled base texture.
+  - Deep cloning support in `clone_splat_material` ensures full undo/redo coverage for stamped layers.
+- STAMP PREVIEW TEXTURE & ORIENTATION FIX:
+  - Fixed white square bug: `setup_previews()` and `_update_stamp_preview_texture()` now immediately
+    bind `stamp_texture` to `stamp_mesh_instance.material_override.albedo_texture`.
+  - Fixed preview misalignment: `PBPaintController.update_cursor` now adopts the face's exact planar
+    basis (`PBUv.get_planar_basis(normal)`), guaranteeing 1:1 coordinate, rotation, and scale alignment
+    between the in-viewport preview decal and the pasted stamp.
+- SHIFT+WHEEL ROTATION & CTRL+WHEEL SCALE:
+  - Changed stamp rotation binding from plain mouse wheel to `Shift + Mouse Wheel` (15° steps).
+  - `Ctrl + Mouse Wheel` scales stamp (10% increments).
+  - Plain Mouse Wheel without modifiers passes through (`AFTER_GUI_INPUT_PASS`) directly to the 3D
+    editor viewport camera zoom, completely resolving mouse wheel conflict.
+- TESTS & VERIFICATION:
+  - 758/758 GUT unit tests passing (13465 asserts).
+  - Live editor GUI test harness extended with stamp texture presence check, Shift+Wheel rotation,
+    Ctrl+Wheel scaling, and plain Wheel zoom passthrough assertions (41/41 passing).
+
 v0.9.44 round complete ✓ — texture splatting (multi-layer alpha mask brush painting) & stamping mode:
 - TEXTURE SPLATTING SHADER & MULTI-LAYER ENGINE (`PBSplat`, `core/pb_splat.gd`, `materials/shaders/pb_splat_shader.gdshader`):
   - Up to 8 splat layers blended over a face's base texture terrain-editor style.

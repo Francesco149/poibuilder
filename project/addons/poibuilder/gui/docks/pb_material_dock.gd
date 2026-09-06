@@ -506,7 +506,7 @@ func _build_ui() -> void:
 	_stamp_tool_section.add_child(stamp_grid)
 
 	var stamp_hint := Label.new()
-	stamp_hint.text = "Hover mesh for live preview. LMB click to paste.\nWheel: Rotate | Ctrl+Wheel: Scale"
+	stamp_hint.text = "Hover mesh for live preview. LMB click to paste.\nShift+Wheel: Rotate (15°) | Ctrl+Wheel: Scale (10%)"
 	stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(stamp_hint)

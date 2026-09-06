@@ -203,20 +203,26 @@ func test_stamp_face_pasting_with_rotation_and_scale() -> void:
 
 	var mat := PBSplat.create_splat_material()
 	var stamp_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
-	stamp_img.fill(Color(1, 0, 0, 1)) # Solid red stamp
-	var stamp_tex := ImageTexture.create_from_image(stamp_img)
-	var layer_idx := PBSplat.add_layer(mat, stamp_tex)
+	stamp_img.fill(Color(0.2, 0.6, 0.9, 1.0)) # Rich blue stamp
 	var center_local := Vector3.ZERO
 	var idxs := face.get_distinct_indexes()
 	for idx in idxs:
 		center_local += data.positions[idx]
 	center_local /= float(idxs.size())
-	var stamped := PBSplat.stamp_face(data, face, mat, layer_idx, stamp_img, center_local, 1.0, 45.0, 1.0)
-	assert_true(stamped, "stamp_face should return true")
-	var mask := PBSplat.get_layer_mask_image(mat, layer_idx)
-	var mid := mask.get_width() / 2
-	assert_almost_eq(mask.get_pixel(mid, mid).r, 1.0, 0.05, "Stamped center pixel should have alpha 1.0")
 
+	# Stamp 1m wide at center, rotated 45 degrees
+	var stamped := PBSplat.stamp_face(data, face, mat, stamp_img, center_local, 1.0, 45.0, 1.0)
+	assert_true(stamped, "stamp_face should return true")
+	assert_true(PBSplat.has_stamp_layer(mat), "Dedicated stamp layer should be enabled")
+
+	var stamp_target := PBSplat.get_stamp_layer_image(mat)
+	assert_not_null(stamp_target)
+	var mid := stamp_target.get_width() / 2
+	var px := stamp_target.get_pixel(mid, mid)
+	assert_almost_eq(px.a, 1.0, 0.05, "Stamped center pixel should have alpha 1.0")
+	assert_almost_eq(px.r, 0.2, 0.05, "Stamped center pixel should have copied 1:1 red channel")
+	assert_almost_eq(px.g, 0.6, 0.05, "Stamped center pixel should have copied 1:1 green channel")
+	assert_almost_eq(px.b, 0.9, 0.05, "Stamped center pixel should have copied 1:1 blue channel")
 # ==============================================================================
 # 6. Undo/Redo & Splat Cloning Tests
 # ==============================================================================
@@ -239,8 +245,14 @@ func test_clone_splat_material_deep_copies_masks() -> void:
 
 	# Modifying clone should not mutate original
 	mask_clone.set_pixel(10, 10, Color(0.1, 0.1, 0.1, 1.0))
-	assert_almost_eq(mask_orig.get_pixel(10, 10).r, 0.75, 0.01, "Original mask should remain intact after mutating clone")
-
+	# Also test dedicated stamp layer cloning
+	var stamp_img := PBSplat.get_stamp_layer_image(mat)
+	stamp_img.set_pixel(20, 20, Color(0.3, 0.7, 0.1, 0.9))
+	var clone2 := PBSplat.clone_splat_material(mat)
+	assert_true(PBSplat.has_stamp_layer(clone2))
+	var clone2_stamp_img := PBSplat.get_stamp_layer_image(clone2)
+	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).r, 0.3, 0.01)
+	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).a, 0.9, 0.01)
 # ==============================================================================
 # 7. Paint Controller Mode & Property Tests
 # ==============================================================================
