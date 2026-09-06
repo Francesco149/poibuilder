@@ -50,9 +50,16 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	var copy := PBMeshData.new()
 	copy.positions = source.positions.duplicate()
 	copy.textures0 = source.textures0.duplicate()
+	copy.textures1 = source.textures1.duplicate()
 	copy.colors = source.colors.duplicate()
 	copy.tangents = source.tangents.duplicate()
-	copy.materials = source.materials.duplicate()
+	var new_mats: Array[Material] = []
+	for m in source.materials:
+		if PBSplat.is_splat_material(m):
+			new_mats.append(PBSplat.clone_splat_material(m as ShaderMaterial))
+		else:
+			new_mats.append(m)
+	copy.materials = new_mats
 
 	var new_faces: Array[PBFace] = []
 	for face in source.faces:
@@ -96,9 +103,16 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 
 	target.positions = snapshot.positions.duplicate()
 	target.textures0 = snapshot.textures0.duplicate()
+	target.textures1 = snapshot.textures1.duplicate()
 	target.colors = snapshot.colors.duplicate()
 	target.tangents = snapshot.tangents.duplicate()
-	target.materials = snapshot.materials.duplicate()
+	var new_mats: Array[Material] = []
+	for m in snapshot.materials:
+		if PBSplat.is_splat_material(m):
+			new_mats.append(PBSplat.clone_splat_material(m as ShaderMaterial))
+		else:
+			new_mats.append(m)
+	target.materials = new_mats
 
 	var new_faces: Array[PBFace] = []
 	for face in snapshot.faces:

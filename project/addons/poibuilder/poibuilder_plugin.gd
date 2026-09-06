@@ -36,6 +36,7 @@ var tool_overlay: PBToolOverlay
 var toolbar: PBToolbar
 var material_dock: PBMaterialDock = null
 var material_drop_overlay: PBMaterialDropOverlay = null
+var paint_controller: PBPaintController = PBPaintController.new()
 
 
 ## Hover id already reflected in the last gizmo redraw (avoids redundant
@@ -63,7 +64,7 @@ func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
 ## Bump when behavior changes so stale-build testing is detectable.
-const VERSION := "0.9.43"
+const VERSION := "0.9.44"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -85,6 +86,7 @@ func _enter_tree():
 	shape_creator.grid = grid
 	gizmo_plugin.ngon_drawer = ngon_drawer
 	ngon_drawer.grid = grid
+	paint_controller.plugin = self
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
 
@@ -163,6 +165,7 @@ func _enter_tree():
 	material_dock.plugin = self
 	material_dock.editor = editor
 	material_dock.visible = true
+	material_dock.set_paint_controller(paint_controller)
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
 	# Half-size manipulator gizmos by default (the engine default of 80px is
@@ -252,6 +255,8 @@ func _exit_tree():
 		if is_instance_valid(material_drop_overlay):
 			material_drop_overlay.queue_free()
 		material_drop_overlay = null
+	if paint_controller != null:
+		paint_controller.cleanup_previews()
 
 	# Remove custom type
 	remove_custom_type("PBMesh")
@@ -365,6 +370,9 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# when nothing is selected — creation needs no editing context).
 	if shape_creator.is_active():
 		return _creation_input(camera, event)
+	# Texture splatting / Stamp tool owns the mouse while active
+	if paint_controller != null and paint_controller.is_active():
+		return _paint_controller_input(camera, event)
 
 	# Everything key-driven funnels through the rebindable action table BEFORE
 	# the editing gate: grid keys work with nothing selected (the grid must be
@@ -1966,6 +1974,123 @@ func _ngon_drawer_abort(reason: String) -> void:
 	if logger:
 		logger.info("plugin", "N-gon drawing aborted (%s)" % reason)
 
+
+# ==============================================================================
+# Texture Splatting & Stamp Viewport Input
+# ==============================================================================
+
+func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
+	if paint_controller == null or not paint_controller.is_active():
+		return AFTER_GUI_INPUT_PASS
+
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if paint_controller.preview_root == null and scene_root != null:
+		paint_controller.setup_previews(scene_root)
+
+	if event is InputEventMouseMotion:
+		_last_mouse_pos = event.position
+		_last_mouse_camera = camera
+		var hit := _pick_paint_surface(camera, event.position)
+		if not hit.is_empty():
+			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
+			if paint_controller.is_stroke_active:
+				paint_controller.apply_paint_stroke()
+		else:
+			paint_controller.clear_cursor()
+
+		if paint_controller.is_stroke_active:
+			return AFTER_GUI_INPUT_STOP
+		return AFTER_GUI_INPUT_PASS
+
+	if event is InputEventMouseButton:
+		# Stamp Mode: Mouse Wheel rotates, Ctrl + Mouse Wheel scales
+		if paint_controller.mode == PBPaintController.Mode.STAMP and event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				if event.ctrl_pressed:
+					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
+				else:
+					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
+				return AFTER_GUI_INPUT_STOP
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				if event.ctrl_pressed:
+					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
+				else:
+					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
+				return AFTER_GUI_INPUT_STOP
+
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				# Make sure hit is up-to-date at click time
+				var hit := _pick_paint_surface(camera, event.position)
+				if not hit.is_empty():
+					paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
+				if paint_controller.mode == PBPaintController.Mode.PAINT:
+					paint_controller.begin_stroke()
+					return AFTER_GUI_INPUT_STOP
+				elif paint_controller.mode == PBPaintController.Mode.STAMP:
+					paint_controller.apply_stamp()
+					return AFTER_GUI_INPUT_STOP
+			else:
+				if paint_controller.mode == PBPaintController.Mode.PAINT and paint_controller.is_stroke_active:
+					paint_controller.end_stroke()
+					return AFTER_GUI_INPUT_STOP
+
+	if event is InputEventKey and event.pressed:
+		var k := event as InputEventKey
+		if k.keycode == KEY_ESCAPE:
+			paint_controller.reset()
+			if material_dock != null:
+				material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+			return AFTER_GUI_INPUT_STOP
+
+	return AFTER_GUI_INPUT_PASS
+
+func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	var best_dist := INF
+	var best_res := {}
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		return best_res
+
+	# 1. First test editor.active_mesh if available
+	if editor != null and editor.active_mesh != null and editor.active_mesh.pb_mesh_data != null and editor.active_mesh.is_visible_in_tree():
+		var node: PBMesh = editor.active_mesh
+		var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+		if res.face_index >= 0:
+			var normal := PBMath.normal_from_positions(
+				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
+			var world_normal: Vector3 = (node.global_transform.basis * normal).normalized()
+			return {
+				"mesh": node,
+				"face_index": res.face_index,
+				"point": res.hit_point,
+				"normal": world_normal,
+				"distance": res.distance
+			}
+
+	# 2. Test all other PBMesh instances in the scene
+	for node in _collect_pbmeshes(scene_root):
+		if node.pb_mesh_data == null or not node.is_visible_in_tree():
+			continue
+		if editor != null and node == editor.active_mesh:
+			continue
+		var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+		if res.face_index >= 0 and res.distance < best_dist:
+			best_dist = res.distance
+			var normal := PBMath.normal_from_positions(
+				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
+			var world_normal: Vector3 = (node.global_transform.basis * normal).normalized()
+			best_res = {
+				"mesh": node,
+				"face_index": res.face_index,
+				"point": res.hit_point,
+				"normal": world_normal,
+				"distance": res.distance
+			}
+
+	return best_res
 # ==============================================================================
 # Shape Params modal (create + edit sessions)
 # ==============================================================================

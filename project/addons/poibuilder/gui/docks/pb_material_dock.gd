@@ -1,24 +1,25 @@
-## PBMaterialDock — Material picker and UV mapping dock for PoiBuilder.
+## PBMaterialDock — Material picker, UV mapping, texture splatting & stamping dock for PoiBuilder.
 ##
 ## Docks to the right of the 3D viewport (DOCK_SLOT_RIGHT_UL), to the left of the Inspector.
 ## Toggleable from the PoiBuilder toolbar.
 ##
-## Features:
-## - Material Picker:
-##   - Click a material card -> applies to selected face(s) (or whole mesh in Object mode).
-##   - Right-click a material card -> context menu with "Set as Default for New Shapes", "Copy Path", etc.
-##   - Default material is badged with an indicator icon.
-##   - Drag material card -> drag-and-drop onto any face in the 3D viewport.
-## - UV Tiling & Mapping:
-##   - Tiling x2 / /2 buttons.
-##   - Reset (1x1m) button.
-##   - 45° Diagonal button: tiles to match grid diagonals (sqrt(2)m) cleanly aligned for quads.
-##   - Manual Tiling U & V, Offset U & V, Rotation Angle (°), and Flip U & V.
-## - Face Tint:
-##   - ColorPickerButton setting vertex color tint for selected face(s).
+## Modes:
+## - Material & UV:
+##   - Material Picker: Click a material card -> applies to selected face(s) (or whole mesh in Object mode).
+##   - UV Tiling & Mapping: x2, /2, Reset (1m), 45° Diagonal, manual tiling, offset, angle, flips.
+##   - Face Tint: ColorPickerButton setting vertex color tint.
+## - Texture Paint (Splatting):
+##   - Select any texture/material from the palette to paint with.
+##   - Adjustable Brush Radius, Softness, Opacity, Erase mode.
+##   - Layer management (up to 8 blend layers over face's base texture).
+## - Stamp:
+##   - Select any texture/image to stamp on mesh.
+##   - Live preview on geometry, click to paste, mouse wheel to rotate, Ctrl+wheel to scale.
 @tool
 class_name PBMaterialDock
 extends PanelContainer
+
+enum DockMode { MATERIAL, PAINT, STAMP }
 
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
@@ -28,16 +29,30 @@ var plugin: EditorPlugin = null
 var editor: PBEditor = null:
 	set = set_editor
 
+var paint_controller: PBPaintController = null:
+	set = set_paint_controller
+
+var dock_mode: DockMode = DockMode.MATERIAL
+
 var _selected_material: Material = null
 var _default_material_path: String = DEFAULT_MATERIAL_PATH
 var _project_materials: Array[Material] = []
 
-# UI Nodes
+# UI Nodes - Mode Row
+var _btn_mode_mat: Button
+var _btn_mode_paint: Button
+var _btn_mode_stamp: Button
+
+# UI Nodes - Materials Section
 var _scroll: ScrollContainer
 var _material_grid: HFlowContainer
 var _status_label: Label
-var _active_mesh_label: Label
 var _file_dialog: EditorFileDialog
+
+# UI Nodes - Sections Container
+var _uv_and_tint_section: VBoxContainer
+var _paint_tool_section: VBoxContainer
+var _stamp_tool_section: VBoxContainer
 
 # UV Controls
 var _btn_x2: Button
@@ -56,6 +71,21 @@ var _chk_flip_v: CheckBox
 var _color_picker: ColorPickerButton
 var _btn_reset_tint: Button
 
+# Paint Tool Controls
+var _active_paint_label: Label
+var _spin_brush_radius: SpinBox
+var _spin_brush_softness: SpinBox
+var _spin_brush_opacity: SpinBox
+var _chk_erase: CheckBox
+var _spin_paint_layer: SpinBox
+var _btn_clear_layer: Button
+
+# Stamp Tool Controls
+var _active_stamp_label: Label
+var _spin_stamp_scale: SpinBox
+var _spin_stamp_rotation: SpinBox
+var _spin_stamp_opacity: SpinBox
+
 # Context Menu
 var _context_menu: PopupMenu
 var _context_material: Material = null
@@ -69,7 +99,7 @@ var _syncing: bool = false
 
 func _init() -> void:
 	name = "Material & UV"
-	custom_minimum_size = Vector2(240, 300)
+	custom_minimum_size = Vector2(250, 320)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_load_default_material_setting()
@@ -90,6 +120,45 @@ func set_editor(val: PBEditor) -> void:
 		if not editor.selection.selection_changed.is_connected(sync_selection):
 			editor.selection.selection_changed.connect(sync_selection)
 	sync_selection()
+
+func set_paint_controller(val: PBPaintController) -> void:
+	if paint_controller == val:
+		return
+	if paint_controller != null:
+		if paint_controller.brush_changed.is_connected(_on_paint_controller_changed):
+			paint_controller.brush_changed.disconnect(_on_paint_controller_changed)
+		if paint_controller.stamp_changed.is_connected(_on_paint_controller_changed):
+			paint_controller.stamp_changed.disconnect(_on_paint_controller_changed)
+	paint_controller = val
+	if paint_controller != null:
+		if not paint_controller.brush_changed.is_connected(_on_paint_controller_changed):
+			paint_controller.brush_changed.connect(_on_paint_controller_changed)
+		if not paint_controller.stamp_changed.is_connected(_on_paint_controller_changed):
+			paint_controller.stamp_changed.connect(_on_paint_controller_changed)
+	sync_selection()
+
+func _on_paint_controller_changed() -> void:
+	if _syncing or paint_controller == null:
+		return
+	_syncing = true
+	if _spin_brush_radius != null:
+		_spin_brush_radius.value = paint_controller.brush_radius
+	if _spin_brush_softness != null:
+		_spin_brush_softness.value = paint_controller.brush_softness
+	if _spin_brush_opacity != null:
+		_spin_brush_opacity.value = paint_controller.brush_opacity
+	if _chk_erase != null:
+		_chk_erase.button_pressed = paint_controller.erase_mode
+	if _spin_paint_layer != null:
+		_spin_paint_layer.value = paint_controller.active_layer_idx
+	if _spin_stamp_scale != null:
+		_spin_stamp_scale.value = paint_controller.stamp_scale
+	if _spin_stamp_rotation != null:
+		_spin_stamp_rotation.value = paint_controller.stamp_rotation
+	if _spin_stamp_opacity != null:
+		_spin_stamp_opacity.value = paint_controller.stamp_opacity
+	_update_tool_labels()
+	_syncing = false
 
 # ==============================================================================
 # Settings
@@ -128,36 +197,63 @@ func _build_ui() -> void:
 	root_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(root_vbox)
 
-	# 1. Header
-	var title_lbl := Label.new()
-	title_lbl.text = "Material & UV"
-	title_lbl.add_theme_font_size_override("font_size", 13)
-	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	root_vbox.add_child(title_lbl)
+	# 1. Mode Selector Segmented Row
+	var mode_row := HBoxContainer.new()
+	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# 2. Materials Section Header + Actions
+	_btn_mode_mat = Button.new()
+	_btn_mode_mat.text = "Material & UV"
+	_btn_mode_mat.tooltip_text = "Standard material assignment and UV mapping"
+	_btn_mode_mat.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_mat.toggle_mode = true
+	_btn_mode_mat.button_pressed = (dock_mode == DockMode.MATERIAL)
+	_btn_mode_mat.pressed.connect(func(): _set_dock_mode(DockMode.MATERIAL))
+	mode_row.add_child(_btn_mode_mat)
+
+	_btn_mode_paint = Button.new()
+	_btn_mode_paint.text = "Texture Paint"
+	_btn_mode_paint.tooltip_text = "Paint with brush and alpha masks over splat layers"
+	_btn_mode_paint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_paint.toggle_mode = true
+	_btn_mode_paint.button_pressed = (dock_mode == DockMode.PAINT)
+	_btn_mode_paint.pressed.connect(func(): _set_dock_mode(DockMode.PAINT))
+	mode_row.add_child(_btn_mode_paint)
+
+	_btn_mode_stamp = Button.new()
+	_btn_mode_stamp.text = "Stamp"
+	_btn_mode_stamp.tooltip_text = "Paste textures/images anywhere on geometry with live preview, wheel rotate, and ctrl+wheel scale"
+	_btn_mode_stamp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_stamp.toggle_mode = true
+	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
+	_btn_mode_stamp.pressed.connect(func(): _set_dock_mode(DockMode.STAMP))
+	mode_row.add_child(_btn_mode_stamp)
+
+	root_vbox.add_child(mode_row)
+	root_vbox.add_child(HSeparator.new())
+
+	# 2. Materials & Textures Palette Section Header + Actions
 	var mat_header := HBoxContainer.new()
 	var mat_title := Label.new()
-	mat_title.text = "Materials"
+	mat_title.text = "Palette"
 	mat_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mat_header.add_child(mat_title)
 
 	var btn_add := Button.new()
 	btn_add.text = "+ Add"
-	btn_add.tooltip_text = "Add material from project..."
+	btn_add.tooltip_text = "Add material or texture from project..."
 	btn_add.pressed.connect(_on_add_material_pressed)
 	mat_header.add_child(btn_add)
 
 	var btn_refresh := Button.new()
 	btn_refresh.text = "↺"
-	btn_refresh.tooltip_text = "Scan project for materials"
+	btn_refresh.tooltip_text = "Scan project for materials and textures"
 	btn_refresh.pressed.connect(refresh_materials)
 	mat_header.add_child(btn_refresh)
 	root_vbox.add_child(mat_header)
 
 	# Material Cards Container
 	var mat_scroll := ScrollContainer.new()
-	mat_scroll.custom_minimum_size = Vector2(0, 140)
+	mat_scroll.custom_minimum_size = Vector2(0, 130)
 	mat_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	root_vbox.add_child(mat_scroll)
@@ -168,10 +264,16 @@ func _build_ui() -> void:
 
 	root_vbox.add_child(HSeparator.new())
 
-	# 3. Face UV Tiling Section
+	# =========================================================================
+	# Section A: Material & UV Controls (Visible in MATERIAL mode)
+	# =========================================================================
+	_uv_and_tint_section = VBoxContainer.new()
+	_uv_and_tint_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root_vbox.add_child(_uv_and_tint_section)
+
 	var uv_title := Label.new()
 	uv_title.text = "Face UV Tiling"
-	root_vbox.add_child(uv_title)
+	_uv_and_tint_section.add_child(uv_title)
 
 	# Quick Scale Row
 	var quick_row := HBoxContainer.new()
@@ -195,14 +297,14 @@ func _build_ui() -> void:
 	_btn_reset_uv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_btn_reset_uv.pressed.connect(_on_reset_uv_pressed)
 	quick_row.add_child(_btn_reset_uv)
-	root_vbox.add_child(quick_row)
+	_uv_and_tint_section.add_child(quick_row)
 
 	# 45° Diagonal Button
 	_btn_diagonal = Button.new()
 	_btn_diagonal.text = "45° Diagonal Tiling (√2m)"
 	_btn_diagonal.tooltip_text = "Scale texture to grid diagonal (1.414m) at 45° angle, cleanly aligned for triangulated quads"
 	_btn_diagonal.pressed.connect(_on_diagonal_pressed)
-	root_vbox.add_child(_btn_diagonal)
+	_uv_and_tint_section.add_child(_btn_diagonal)
 
 	# Grid of Manual UV Controls
 	var uv_grid := GridContainer.new()
@@ -235,7 +337,7 @@ func _build_ui() -> void:
 	_spin_angle.value_changed.connect(func(_v): _on_uv_property_changed())
 	uv_grid.add_child(_spin_angle)
 
-	root_vbox.add_child(uv_grid)
+	_uv_and_tint_section.add_child(uv_grid)
 
 	# Flips Row
 	var flip_row := HBoxContainer.new()
@@ -248,14 +350,14 @@ func _build_ui() -> void:
 	_chk_flip_v.text = "Flip V"
 	_chk_flip_v.toggled.connect(func(_b): _on_uv_property_changed())
 	flip_row.add_child(_chk_flip_v)
-	root_vbox.add_child(flip_row)
+	_uv_and_tint_section.add_child(flip_row)
 
-	root_vbox.add_child(HSeparator.new())
+	_uv_and_tint_section.add_child(HSeparator.new())
 
-	# 4. Face Tint Section
+	# Face Tint Section
 	var tint_title := Label.new()
 	tint_title.text = "Face Tint"
-	root_vbox.add_child(tint_title)
+	_uv_and_tint_section.add_child(tint_title)
 
 	var tint_row := HBoxContainer.new()
 	_color_picker = ColorPickerButton.new()
@@ -273,9 +375,145 @@ func _build_ui() -> void:
 		_on_tint_changed(Color.WHITE)
 	)
 	tint_row.add_child(_btn_reset_tint)
-	root_vbox.add_child(tint_row)
+	_uv_and_tint_section.add_child(tint_row)
 
-	# 5. Status / Selection feedback
+	# =========================================================================
+	# Section B: Texture Paint Tool Controls (Visible in PAINT mode)
+	# =========================================================================
+	_paint_tool_section = VBoxContainer.new()
+	_paint_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_paint_tool_section.visible = false
+	root_vbox.add_child(_paint_tool_section)
+
+	var paint_header := Label.new()
+	paint_header.text = "Paint Brush Settings"
+	_paint_tool_section.add_child(paint_header)
+
+	_active_paint_label = Label.new()
+	_active_paint_label.text = "Paint: (Select a palette card)"
+	_active_paint_label.add_theme_color_override("font_color", Color(0.2, 0.85, 1.0))
+	_paint_tool_section.add_child(_active_paint_label)
+
+	var paint_grid := GridContainer.new()
+	paint_grid.columns = 2
+	paint_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	paint_grid.add_child(_make_label("Radius:"))
+	_spin_brush_radius = _make_spinbox(0.02, 10.0, 0.05, 0.5)
+	_spin_brush_radius.suffix = "m"
+	_spin_brush_radius.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.brush_radius = v
+	)
+	paint_grid.add_child(_spin_brush_radius)
+
+	paint_grid.add_child(_make_label("Softness:"))
+	_spin_brush_softness = _make_spinbox(0.0, 1.0, 0.05, 0.5)
+	_spin_brush_softness.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.brush_softness = v
+	)
+	paint_grid.add_child(_spin_brush_softness)
+
+	paint_grid.add_child(_make_label("Opacity:"))
+	_spin_brush_opacity = _make_spinbox(0.01, 1.0, 0.05, 1.0)
+	_spin_brush_opacity.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.brush_opacity = v
+	)
+	paint_grid.add_child(_spin_brush_opacity)
+
+	paint_grid.add_child(_make_label("Layer (1-8):"))
+	_spin_paint_layer = _make_spinbox(1, 8, 1, 1)
+	_spin_paint_layer.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.active_layer_idx = int(v)
+	)
+	paint_grid.add_child(_spin_paint_layer)
+
+	_paint_tool_section.add_child(paint_grid)
+
+	var paint_action_row := HBoxContainer.new()
+	_chk_erase = CheckBox.new()
+	_chk_erase.text = "Erase (Subtract)"
+	_chk_erase.tooltip_text = "When enabled, brush subtracts alpha from the active layer mask"
+	_chk_erase.toggled.connect(func(b):
+		if paint_controller != null and not _syncing:
+			paint_controller.erase_mode = b
+	)
+	paint_action_row.add_child(_chk_erase)
+
+	_btn_clear_layer = Button.new()
+	_btn_clear_layer.text = "Clear Layer"
+	_btn_clear_layer.tooltip_text = "Clears alpha mask for current layer on selected face"
+	_btn_clear_layer.pressed.connect(_on_clear_layer_pressed)
+	paint_action_row.add_child(_btn_clear_layer)
+	_paint_tool_section.add_child(paint_action_row)
+
+	var paint_hint := Label.new()
+	paint_hint.text = "LMB drag in viewport to paint splat layer. Zero lag."
+	paint_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	paint_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_paint_tool_section.add_child(paint_hint)
+
+	# =========================================================================
+	# Section C: Stamp Tool Controls (Visible in STAMP mode)
+	# =========================================================================
+	_stamp_tool_section = VBoxContainer.new()
+	_stamp_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_stamp_tool_section.visible = false
+	root_vbox.add_child(_stamp_tool_section)
+
+	var stamp_header := Label.new()
+	stamp_header.text = "Stamp Tool Settings"
+	_stamp_tool_section.add_child(stamp_header)
+
+	_active_stamp_label = Label.new()
+	_active_stamp_label.text = "Stamp: (Select a palette card)"
+	_active_stamp_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
+	_stamp_tool_section.add_child(_active_stamp_label)
+
+	var stamp_grid := GridContainer.new()
+	stamp_grid.columns = 2
+	stamp_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	stamp_grid.add_child(_make_label("Scale:"))
+	_spin_stamp_scale = _make_spinbox(0.05, 50.0, 0.1, 1.0)
+	_spin_stamp_scale.suffix = "m"
+	_spin_stamp_scale.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.stamp_scale = v
+	)
+	stamp_grid.add_child(_spin_stamp_scale)
+
+	stamp_grid.add_child(_make_label("Rotation:"))
+	_spin_stamp_rotation = _make_spinbox(0.0, 360.0, 15.0, 0.0)
+	_spin_stamp_rotation.suffix = "°"
+	_spin_stamp_rotation.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.stamp_rotation = v
+	)
+	stamp_grid.add_child(_spin_stamp_rotation)
+
+	stamp_grid.add_child(_make_label("Opacity:"))
+	_spin_stamp_opacity = _make_spinbox(0.01, 1.0, 0.05, 1.0)
+	_spin_stamp_opacity.value_changed.connect(func(v):
+		if paint_controller != null and not _syncing:
+			paint_controller.stamp_opacity = v
+	)
+	stamp_grid.add_child(_spin_stamp_opacity)
+
+	_stamp_tool_section.add_child(stamp_grid)
+
+	var stamp_hint := Label.new()
+	stamp_hint.text = "Hover mesh for live preview. LMB click to paste.\nWheel: Rotate | Ctrl+Wheel: Scale"
+	stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_stamp_tool_section.add_child(stamp_hint)
+
+	root_vbox.add_child(HSeparator.new())
+
+	# Status / Selection feedback
 	_status_label = Label.new()
 	_status_label.text = "Select a face to edit UVs / Material"
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -286,6 +524,112 @@ func _build_ui() -> void:
 	_context_menu = PopupMenu.new()
 	_context_menu.id_pressed.connect(_on_context_menu_id_pressed)
 	add_child(_context_menu)
+
+# ==============================================================================
+# Mode Management
+# ==============================================================================
+
+func _set_dock_mode(new_mode: DockMode) -> void:
+	dock_mode = new_mode
+	_btn_mode_mat.button_pressed = (dock_mode == DockMode.MATERIAL)
+	_btn_mode_paint.button_pressed = (dock_mode == DockMode.PAINT)
+	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
+
+	_uv_and_tint_section.visible = (dock_mode == DockMode.MATERIAL)
+	_paint_tool_section.visible = (dock_mode == DockMode.PAINT)
+	_stamp_tool_section.visible = (dock_mode == DockMode.STAMP)
+
+	if paint_controller != null:
+		match dock_mode:
+			DockMode.MATERIAL:
+				paint_controller.set_mode(PBPaintController.Mode.NONE)
+			DockMode.PAINT:
+				paint_controller.set_mode(PBPaintController.Mode.PAINT)
+				if paint_controller.paint_texture == null and not _project_materials.is_empty():
+					_select_paint_material(_project_materials[0])
+			DockMode.STAMP:
+				paint_controller.set_mode(PBPaintController.Mode.STAMP)
+				if paint_controller.stamp_texture == null and not _project_materials.is_empty():
+					_select_stamp_material(_project_materials[0])
+
+	_rebuild_material_grid()
+	_update_tool_labels()
+	sync_selection()
+
+func _update_tool_labels() -> void:
+	if _active_paint_label != null:
+		if paint_controller != null and paint_controller.paint_texture != null:
+			var tex_name := paint_controller.paint_texture.resource_path.get_file()
+			if tex_name.is_empty():
+				tex_name = "Texture"
+			_active_paint_label.text = "Paint: %s (Layer %d)" % [tex_name, paint_controller.active_layer_idx]
+		else:
+			_active_paint_label.text = "Paint: (Select a palette card)"
+
+	if _active_stamp_label != null:
+		if paint_controller != null and paint_controller.stamp_texture != null:
+			var tex_name := paint_controller.stamp_texture.resource_path.get_file()
+			if tex_name.is_empty():
+				tex_name = "Texture"
+			_active_stamp_label.text = "Stamp: %s (%.1fm, %d°)" % [tex_name, paint_controller.stamp_scale, int(paint_controller.stamp_rotation)]
+		else:
+			_active_stamp_label.text = "Stamp: (Select a palette card)"
+
+func _select_paint_material(mat: Material) -> void:
+	if mat == null or paint_controller == null:
+		return
+	var tex := _extract_texture(mat)
+	if tex != null:
+		paint_controller.paint_texture = tex
+		_update_tool_labels()
+		_rebuild_material_grid()
+		if plugin != null and plugin.logger != null:
+			plugin.logger.info("paint", "Selected paint texture: %s" % tex.resource_path.get_file())
+
+func _select_stamp_material(mat: Material) -> void:
+	if mat == null or paint_controller == null:
+		return
+	var tex := _extract_texture(mat)
+	if tex != null:
+		paint_controller.stamp_texture = tex
+		_update_tool_labels()
+		_rebuild_material_grid()
+		if plugin != null and plugin.logger != null:
+			plugin.logger.info("stamp", "Selected stamp texture: %s" % tex.resource_path.get_file())
+
+func _extract_texture(mat: Material) -> Texture2D:
+	if mat is StandardMaterial3D and mat.albedo_texture != null:
+		return mat.albedo_texture
+	elif mat is ShaderMaterial:
+		var tex = (mat as ShaderMaterial).get_shader_parameter("base_texture")
+		if tex is Texture2D:
+			return tex
+	var def := get_default_material()
+	if def is StandardMaterial3D and def.albedo_texture != null:
+		return def.albedo_texture
+	return null
+
+func _on_clear_layer_pressed() -> void:
+	var mesh: PBMesh = editor.active_mesh if editor != null else null
+	if mesh == null or mesh.pb_mesh_data == null or paint_controller == null:
+		return
+
+	var sel_faces := _get_target_faces(mesh)
+	if sel_faces.is_empty():
+		return
+
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	var cleared := false
+
+	for face in sel_faces:
+		var mat = mesh.pb_mesh_data.get_face_material(face)
+		if PBSplat.is_splat_material(mat):
+			PBSplat.clear_layer(mat as ShaderMaterial, paint_controller.active_layer_idx)
+			cleared = true
+
+	if cleared:
+		var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+		_commit_mesh_action(mesh, "Clear Splat Layer", before, after)
 
 # ==============================================================================
 # Material Management & Grid Population
@@ -305,13 +649,13 @@ func refresh_materials() -> void:
 			if m != null and not _project_materials.has(m):
 				_project_materials.append(m)
 
-	# 3. Scan project for other materials (shallow/fast scan)
+	# 3. Scan project for materials and texture images
 	_scan_dir_for_materials("res://")
 
 	_rebuild_material_grid()
 
 func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
-	if depth > 3 or _project_materials.size() > 50:
+	if depth > 3 or _project_materials.size() > 60:
 		return
 	var d := DirAccess.open(dir_path)
 	if d == null:
@@ -330,6 +674,15 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 						var res = ResourceLoader.load(full_path)
 						if res is Material and not _project_materials.has(res):
 							_project_materials.append(res)
+				elif ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp":
+					if ResourceLoader.exists(full_path):
+						var tex = ResourceLoader.load(full_path)
+						if tex is Texture2D:
+							var mat := StandardMaterial3D.new()
+							mat.resource_name = name_str.get_basename().capitalize()
+							mat.albedo_texture = tex
+							mat.roughness = 0.8
+							_project_materials.append(mat)
 		name_str = d.get_next()
 	d.list_dir_end()
 
@@ -357,11 +710,20 @@ func _create_material_card(mat: Material) -> Control:
 		mat_name = mat.resource_path.get_file().get_basename()
 	if mat_name.is_empty():
 		mat_name = "Material"
-	btn.tooltip_text = "%s\nLeft-click: Apply to selected face(s)\nRight-click: Set as default" % mat_name
 
-	# Display swatch or texture
-	if mat is StandardMaterial3D and mat.albedo_texture != null:
-		btn.icon = mat.albedo_texture
+	var tooltip := mat_name
+	match dock_mode:
+		DockMode.MATERIAL:
+			tooltip += "\nLeft-click: Apply to selected face(s)\nRight-click: Set as default"
+		DockMode.PAINT:
+			tooltip += "\nLeft-click: Select as active paint brush texture"
+		DockMode.STAMP:
+			tooltip += "\nLeft-click: Select as active stamp texture"
+	btn.tooltip_text = tooltip
+
+	var tex := _extract_texture(mat)
+	if tex != null:
+		btn.icon = tex
 		btn.expand_icon = true
 	elif mat is StandardMaterial3D:
 		btn.text = mat_name
@@ -369,8 +731,16 @@ func _create_material_card(mat: Material) -> Control:
 	else:
 		btn.text = mat_name
 
-	# Left-click -> Apply
-	btn.pressed.connect(func(): _apply_material_to_selection(mat))
+	# Left-click routing based on active dock mode
+	btn.pressed.connect(func():
+		match dock_mode:
+			DockMode.MATERIAL:
+				_apply_material_to_selection(mat)
+			DockMode.PAINT:
+				_select_paint_material(mat)
+			DockMode.STAMP:
+				_select_stamp_material(mat)
+	)
 
 	# Right-click -> Context Menu
 	btn.gui_input.connect(func(event: InputEvent):
@@ -392,6 +762,21 @@ func _create_material_card(mat: Material) -> Control:
 		badge.position = Vector2(4, 2)
 		btn.add_child(badge)
 
+	# Active selection badge for Paint / Stamp
+	var is_active_paint := (dock_mode == DockMode.PAINT and paint_controller != null and tex != null and paint_controller.paint_texture == tex)
+	var is_active_stamp := (dock_mode == DockMode.STAMP and paint_controller != null and tex != null and paint_controller.stamp_texture == tex)
+
+	if is_active_paint:
+		var pbadge := Label.new()
+		pbadge.text = "🖌"
+		pbadge.position = Vector2(48, 2)
+		btn.add_child(pbadge)
+	elif is_active_stamp:
+		var sbadge := Label.new()
+		sbadge.text = "⎘"
+		sbadge.position = Vector2(48, 2)
+		btn.add_child(sbadge)
+
 	return btn
 
 func _show_context_menu(mat: Material, pos: Vector2) -> void:
@@ -402,9 +787,11 @@ func _show_context_menu(mat: Material, pos: Vector2) -> void:
 	if is_def:
 		_context_menu.set_item_disabled(0, true)
 	_context_menu.add_item("Apply to Selection", 2)
+	_context_menu.add_item("Set as Paint Texture", 4)
+	_context_menu.add_item("Set as Stamp Texture", 5)
 	_context_menu.add_separator()
 	_context_menu.add_item("Copy Path", 3)
-	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(180, 80)))
+	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(190, 110)))
 
 func _on_context_menu_id_pressed(id: int) -> void:
 	if _context_material == null:
@@ -420,20 +807,34 @@ func _on_context_menu_id_pressed(id: int) -> void:
 			_apply_material_to_selection(_context_material)
 		3: # Copy path
 			DisplayServer.clipboard_set(_context_material.resource_path)
+		4: # Paint
+			_select_paint_material(_context_material)
+			_set_dock_mode(DockMode.PAINT)
+		5: # Stamp
+			_select_stamp_material(_context_material)
+			_set_dock_mode(DockMode.STAMP)
 
 func _on_add_material_pressed() -> void:
 	if _file_dialog == null:
 		_file_dialog = EditorFileDialog.new()
 		_file_dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_FILE
-		_file_dialog.add_filter("*.tres, *.material", "Materials")
+		_file_dialog.add_filter("*.tres, *.material, *.png, *.jpg, *.webp", "Materials & Textures")
 		_file_dialog.file_selected.connect(_on_file_dialog_selected)
 		add_child(_file_dialog)
 	_file_dialog.popup_file_dialog()
 
 func _on_file_dialog_selected(path: String) -> void:
 	if ResourceLoader.exists(path):
-		var mat = ResourceLoader.load(path)
-		if mat is Material and not _project_materials.has(mat):
+		var res = ResourceLoader.load(path)
+		if res is Material:
+			if not _project_materials.has(res):
+				_project_materials.append(res)
+				_rebuild_material_grid()
+		elif res is Texture2D:
+			var mat := StandardMaterial3D.new()
+			mat.resource_name = path.get_file().get_basename().capitalize()
+			mat.albedo_texture = res
+			mat.roughness = 0.8
 			_project_materials.append(mat)
 			_rebuild_material_grid()
 
@@ -448,7 +849,6 @@ func sync_selection() -> void:
 	if _status_label == null:
 		_syncing = false
 		return
-
 
 	var mesh: PBMesh = editor.active_mesh if editor != null else null
 	var has_selection: bool = false
@@ -470,7 +870,7 @@ func sync_selection() -> void:
 	else:
 		_status_label.text = "No PBMesh selected"
 
-	# Enable / disable controls
+	# Enable / disable UV controls
 	_btn_x2.disabled = not has_selection
 	_btn_half.disabled = not has_selection
 	_btn_reset_uv.disabled = not has_selection

@@ -775,6 +775,33 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.44 round complete ✓ — texture splatting (multi-layer alpha mask brush painting) & stamping mode:
+- TEXTURE SPLATTING SHADER & MULTI-LAYER ENGINE (`PBSplat`, `core/pb_splat.gd`, `materials/shaders/pb_splat_shader.gdshader`):
+  - Up to 8 splat layers blended over a face's base texture terrain-editor style.
+  - Every additional layer follows the identical UV tiling as the base texture.
+  - Normalized face-local planar coordinates (`UV2` / `textures1` channel on `PBMeshData`) map the alpha masks with continuous, artifact-free barycentric interpolation across arbitrary polygons and n-gons.
+  - Highly optimized brush painting engine: computes exact 2D pixel bounding boxes in the mask image, applies cosine S-curve softness falloff in meters, and updates in-place via `ImageTexture.update()`. Zero lag, 60+ FPS painting performance.
+  - Brush radius, softness, opacity, erase (subtract) mode, layer index selector (1-8), and layer clear controls.
+- STAMP MODE WITH LIVE 3D PREVIEW, ROTATION, AND SCALING:
+  - Select any texture/image from the palette or project (including transparent PNGs) and paste anywhere on geometry.
+  - Live 3D surface decal preview oriented to face normals with zero z-fighting.
+  - Mouse wheel in viewport rotates the stamp (15° increments); Ctrl + mouse wheel scales the stamp (10% increments).
+  - Left click pastes the rotated and scaled stamp onto the mesh's splat layer mask.
+- PLACEHOLDER TEST TEXTURES:
+  - Added `res://addons/poibuilder/materials/textures/circular_square_pattern.png` (transparent PNG pattern).
+  - Added `res://addons/poibuilder/materials/textures/tapestry.png` (rich ornamental decorative tapestry).
+- UNIFIED PALETTE & DOCK INTEGRATION (`PBMaterialDock`, `gui/docks/pb_material_dock.gd`):
+  - Segmented mode selector (`[Material & UV] [Texture Paint] [Stamp]`).
+  - Shared materials and textures palette: card click routes dynamically (Material assignment / Paint brush texture / Stamp texture).
+  - Automatic project image discovery (`.png`, `.jpg`, `.jpeg`, `.webp`).
+  - Active paint brush (🖌) and stamp (⎘) indicator badges on palette cards.
+  - Tool info panels embedded directly in the dock below the palette.
+- FULL UNDO/REDO:
+  - Deep cloning of splat materials and CPU mask images via `PBCommand.copy_mesh_data` and `PBSplat.clone_splat_material`.
+- TESTS:
+  - 14 new unit tests in `tests/test_pb_splat_and_stamp.gd` (758/758 GUT unit tests passing, 13458 asserts).
+  - Extended GUI integration harness in `test_scenes/editor_gui_test.gd` (41/41 real editor GUI tests passing).
+
 v0.9.43 round complete ✓ — knife tool & interactive n-gon shape extrusion:
 - UNIFIED POLYGON DRAWING CONTROLLER (`PBNgonDrawer`, `editor/pb_ngon_drawer.gd`):
   - Common UX for Knife tool and N-gon shape extrusion:

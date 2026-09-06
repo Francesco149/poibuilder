@@ -15,6 +15,8 @@ extends Resource
 
 ## Per-vertex UV channel 0.
 @export var textures0: PackedVector2Array = PackedVector2Array()
+## Per-vertex UV channel 1 (UV2 / splat mask mapping).
+@export var textures1: PackedVector2Array = PackedVector2Array()
 
 ## Per-vertex colors.
 @export var colors: PackedColorArray = PackedColorArray()
@@ -464,6 +466,9 @@ func validate() -> String:
 	# Check textures0 size if present
 	if not textures0.is_empty() and textures0.size() != vc:
 		return "textures0 size %d != vertex count %d" % [textures0.size(), vc]
+	# Check textures1 size if present
+	if not textures1.is_empty() and textures1.size() != vc:
+		return "textures1 size %d != vertex count %d" % [textures1.size(), vc]
 	# Check colors size if present
 	if not colors.is_empty() and colors.size() != vc:
 		return "colors size %d != vertex count %d" % [colors.size(), vc]
@@ -592,6 +597,8 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 
 		if not textures0.is_empty() and textures0.size() == vc:
 			arrays[Mesh.ARRAY_TEX_UV] = textures0
+		if not textures1.is_empty() and textures1.size() == vc:
+			arrays[Mesh.ARRAY_TEX_UV2] = textures1
 
 		if not colors.is_empty() and colors.size() == vc:
 			arrays[Mesh.ARRAY_COLOR] = colors
@@ -692,6 +699,7 @@ func set_faces_material(target_faces: Array, mat: Material) -> void:
 func clear() -> void:
 	positions.clear()
 	textures0.clear()
+	textures1.clear()
 	colors.clear()
 	tangents.clear()
 	faces.clear()

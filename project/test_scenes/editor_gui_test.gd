@@ -1031,6 +1031,46 @@ func _run() -> void:
 				_pass("NGON-EXTRUDE: hover and first vert points cleared after confirm")
 			else:
 				_fail("NGON-EXTRUDE: stale hover point remained after confirm")
+		# ── 12. TEXTURE SPLATTING & STAMPING GUI TEST ─────────────────────────────
+		if plugin.paint_controller != null and plugin.material_dock != null:
+			_pass("SPLAT-STAMP: paint_controller and material_dock exist")
+
+			# Test switching to PAINT mode
+			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+			await _frames(2)
+			if plugin.paint_controller.mode == PBPaintController.Mode.PAINT:
+				_pass("SPLAT-STAMP: dock mode switch set paint_controller to PAINT")
+			else:
+				_fail("SPLAT-STAMP: paint_controller failed to enter PAINT mode")
+
+			# Select a paint texture
+			var pattern_tex = load("res://addons/poibuilder/materials/textures/circular_square_pattern.png")
+			plugin.paint_controller.paint_texture = pattern_tex
+			plugin.paint_controller.brush_radius = 0.6
+			plugin.paint_controller.brush_softness = 0.5
+			_pass("SPLAT-STAMP: configured brush radius=%.1fm, softness=%.1f" % [plugin.paint_controller.brush_radius, plugin.paint_controller.brush_softness])
+
+			# Test switching to STAMP mode
+			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.STAMP)
+			await _frames(2)
+			if plugin.paint_controller.mode == PBPaintController.Mode.STAMP:
+				_pass("SPLAT-STAMP: dock mode switch set paint_controller to STAMP")
+			else:
+				_fail("SPLAT-STAMP: paint_controller failed to enter STAMP mode")
+
+			var tapestry_tex = load("res://addons/poibuilder/materials/textures/tapestry.png")
+			plugin.paint_controller.stamp_texture = tapestry_tex
+			plugin.paint_controller.stamp_scale = 1.5
+			plugin.paint_controller.stamp_rotation = 45.0
+			_pass("SPLAT-STAMP: configured stamp scale=%.1fm, rotation=%.1f°" % [plugin.paint_controller.stamp_scale, plugin.paint_controller.stamp_rotation])
+
+			# Reset back to MATERIAL mode
+			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+			await _frames(2)
+			if plugin.paint_controller.mode == PBPaintController.Mode.NONE:
+				_pass("SPLAT-STAMP: reset to MATERIAL mode set paint_controller to NONE")
+			else:
+				_fail("SPLAT-STAMP: failed to reset paint_controller")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
