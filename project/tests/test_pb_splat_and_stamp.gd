@@ -374,8 +374,12 @@ func test_billboard_decal_stamping() -> void:
 	var decal := stamps.get_child(0) as MeshInstance3D
 	assert_not_null(decal)
 	assert_true(decal.mesh is QuadMesh, "Decal mesh should be QuadMesh")
-	assert_true(decal.material_override is StandardMaterial3D, "Decal material should be StandardMaterial3D")
-	assert_eq((decal.material_override as StandardMaterial3D).albedo_texture, stamp_tex)
+	assert_true(decal.material_override != null, "Decal should have a valid material")
+	if decal.material_override is ShaderMaterial:
+		var smat := decal.material_override as ShaderMaterial
+		assert_eq(smat.get_shader_parameter("albedo_texture"), stamp_tex)
+	elif decal.material_override is StandardMaterial3D:
+		assert_eq((decal.material_override as StandardMaterial3D).albedo_texture, stamp_tex)
 
 	# Clear all stamps
 	ctrl.clear_all_stamps(cube)

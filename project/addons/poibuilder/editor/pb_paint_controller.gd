@@ -13,6 +13,15 @@ enum Mode { NONE, PAINT, STAMP }
 const RAY_MISS := Vector3(INF, INF, INF)
 const PREVIEW_NODE_NAME := "PBSplatPreviewNode"
 
+const DECAL_SHADER_PATH := "res://addons/poibuilder/materials/shaders/pb_decal_shader.gdshader"
+static var _cached_decal_shader: Shader = null
+
+static func get_decal_shader() -> Shader:
+	if _cached_decal_shader == null:
+		if ResourceLoader.exists(DECAL_SHADER_PATH):
+			_cached_decal_shader = ResourceLoader.load(DECAL_SHADER_PATH) as Shader
+	return _cached_decal_shader
+
 # Active mode
 var mode: Mode = Mode.NONE
 
@@ -202,14 +211,24 @@ func setup_previews(parent_node: Node) -> void:
 	stamp_mesh_instance.name = "StampQuad"
 	preview_root.add_child(stamp_mesh_instance)
 
-	var stamp_mat := StandardMaterial3D.new()
-	stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	stamp_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	stamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	stamp_mat.no_depth_test = true
-	stamp_mat.render_priority = 100
-	stamp_mat.albedo_texture = stamp_texture
-	stamp_mesh_instance.material_override = stamp_mat
+	var dshader := get_decal_shader()
+	if dshader != null:
+		var stamp_mat := ShaderMaterial.new()
+		stamp_mat.shader = dshader
+		stamp_mat.set_shader_parameter("albedo_texture", stamp_texture)
+		stamp_mat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
+		stamp_mat.set_shader_parameter("clip_to_face", false)
+		stamp_mat.render_priority = 100
+		stamp_mesh_instance.material_override = stamp_mat
+	else:
+		var stamp_mat := StandardMaterial3D.new()
+		stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		stamp_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		stamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		stamp_mat.no_depth_test = true
+		stamp_mat.render_priority = 100
+		stamp_mat.albedo_texture = stamp_texture
+		stamp_mesh_instance.material_override = stamp_mat
 	_update_stamp_preview_texture()
 	_update_preview_mesh()
 	_update_preview_visibility()
@@ -254,8 +273,15 @@ func _update_preview_material() -> void:
 
 func _update_stamp_preview_texture() -> void:
 	if stamp_mesh_instance != null and stamp_mesh_instance.material_override != null:
-		var mat := stamp_mesh_instance.material_override as StandardMaterial3D
-		mat.albedo_texture = stamp_texture
+		if stamp_mesh_instance.material_override is ShaderMaterial:
+			var smat := stamp_mesh_instance.material_override as ShaderMaterial
+			smat.set_shader_parameter("albedo_texture", stamp_texture)
+			smat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
+		elif stamp_mesh_instance.material_override is StandardMaterial3D:
+			var mat := stamp_mesh_instance.material_override as StandardMaterial3D
+			mat.albedo_texture = stamp_texture
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
 
 func _build_brush_mesh() -> void:
 	if brush_mesh_instance == null:
@@ -330,6 +356,20 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 		stamp_mesh_instance.visible = true
 		if brush_mesh_instance != null:
 			brush_mesh_instance.visible = false
+
+		# Update face bounds clipping on preview decal
+		if stamp_mesh_instance.material_override is ShaderMaterial and mesh_node != null and mesh_node.pb_mesh_data != null:
+			var smat := stamp_mesh_instance.material_override as ShaderMaterial
+			var data := mesh_node.pb_mesh_data
+			if face_idx >= 0 and face_idx < data.faces.size():
+				var face := data.faces[face_idx]
+				var bounds := PBSplat.get_face_planar_bounds(data, face)
+				smat.set_shader_parameter("face_u", bounds["u"])
+				smat.set_shader_parameter("face_v", bounds["v"])
+				smat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
+				smat.set_shader_parameter("mesh_to_world", mesh_node.global_transform)
+				smat.set_shader_parameter("clip_to_face", true)
+
 func clear_cursor() -> void:
 	has_hit = false
 	target_mesh = null
@@ -436,14 +476,34 @@ func apply_stamp() -> void:
 	qm.size = Vector2(stamp_scale, stamp_scale)
 	stamp_node.mesh = qm
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = stamp_texture
-	mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	mat.render_priority = 2
-	stamp_node.material_override = mat
+	var dshader := get_decal_shader()
+	if dshader != null:
+		var mat := ShaderMaterial.new()
+		mat.shader = dshader
+		mat.set_shader_parameter("albedo_texture", stamp_texture)
+		mat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
+		mat.set_shader_parameter("mesh_to_world", target_mesh.global_transform)
+		mat.set_shader_parameter("clip_to_face", true)
+
+		var data := target_mesh.pb_mesh_data
+		if data != null and target_face_idx >= 0 and target_face_idx < data.faces.size():
+			var face := data.faces[target_face_idx]
+			var bounds := PBSplat.get_face_planar_bounds(data, face)
+			mat.set_shader_parameter("face_u", bounds["u"])
+			mat.set_shader_parameter("face_v", bounds["v"])
+			mat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
+
+		mat.render_priority = 2
+		stamp_node.material_override = mat
+	else:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_texture = stamp_texture
+		mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		mat.render_priority = 2
+		stamp_node.material_override = mat
 
 	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
 

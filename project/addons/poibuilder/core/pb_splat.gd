@@ -529,15 +529,17 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 					weight = clampf(0.5 * (1.0 + cos(PI * falloff_t)), 0.0, 1.0)
 
 			var cur_a := mask_img.get_pixel(x, y).r
-			var delta := weight * opacity
-			var new_a: float
-
 			if erase:
-				new_a = maxf(0.0, cur_a - delta)
-			else:
-				new_a = minf(1.0, cur_a + delta)
-			if absf(new_a - cur_a) > 0.001:
+				if cur_a <= 0.001:
+					continue
+				var new_a := maxf(0.0, cur_a - weight * opacity)
 				mask_img.set_pixel(x, y, Color(new_a, new_a, new_a, 1.0))
+				dirty = true
+			else:
+				var target_a := weight * opacity
+				if cur_a >= target_a:
+					continue
+				mask_img.set_pixel(x, y, Color(target_a, target_a, target_a, 1.0))
 				dirty = true
 
 	if dirty:

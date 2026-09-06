@@ -1066,8 +1066,13 @@ func _run() -> void:
 
 			# Verify stamp preview material has texture assigned (not white square)
 			if plugin.paint_controller.stamp_mesh_instance != null and plugin.paint_controller.stamp_mesh_instance.material_override != null:
-				var smat = plugin.paint_controller.stamp_mesh_instance.material_override as StandardMaterial3D
-				if smat.albedo_texture != null:
+				var mat = plugin.paint_controller.stamp_mesh_instance.material_override
+				var tex = null
+				if mat is ShaderMaterial:
+					tex = (mat as ShaderMaterial).get_shader_parameter("albedo_texture")
+				elif mat is StandardMaterial3D:
+					tex = (mat as StandardMaterial3D).albedo_texture
+				if tex != null:
 					_pass("SPLAT-STAMP: stamp preview material has valid albedo texture")
 				else:
 					_fail("SPLAT-STAMP: stamp preview material albedo texture is null")

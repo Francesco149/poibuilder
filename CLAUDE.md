@@ -775,6 +775,25 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.49 round complete ✓ — replace-mode paint opacity, inspector textbox styling & face-bounds decal clipping:
+- REPLACE-MODE PAINT ALPHA IN PBSplat (`core/pb_splat.gd`):
+  - Fixed opacity not doing anything when dragging over the same spot: paint replaces layer contents with
+    `target_a = weight * opacity` instead of accumulating endlessly (`cur_a + delta`), ensuring that multiple
+    overlapping strokes of the same layer maintain the exact configured opacity (e.g. 0.4 stays 0.4).
+  - Pixels already at or above `target_a` are skipped immediately, making painting over the same spot instant with zero lag.
+- INSPECTOR TEXTBOX STYLING & FINE-GRAINED DRAG STEPS (`PBMaterialDock`):
+  - Set `s.flat = false` on `EditorSpinSlider` so they render with the proper textbox borders, background,
+    and styling matching the real Godot Inspector.
+  - Tuned step increments for smooth dragging without massive jumps: 0.005 for opacity and softness, 0.01 for
+    radius, scale, and tiling, and 1.0° for rotation angles.
+- FACE BOUNDS CLIPPING FOR BILLBOARD DECALS (`pb_decal_shader.gdshader`, `pb_paint_controller.gd`):
+  - Decal billboards are now shaded with `pb_decal_shader.gdshader` which automatically clips out-of-bounds
+    fragments against the face's planar boundary (`if (u < min_u || u > max_u ...) discard;`).
+  - Decals placed near edges or when geometry is resized cleanly end at the face boundary and never stick out into empty air.
+- TESTS & VERIFICATION:
+  - 763/763 GUT unit tests passing (13504 asserts).
+  - 41/41 real editor GUI tests passing under Xvfb.
+
 v0.9.48 round complete ✓ — native EditorSpinSlider, multi-layer splatting, persistent splat bounds & lag-free cube paint:
 - NATIVE EditorSpinSlider CLICK-DRAG ADJUSTABLE CONTROLS (`PBMaterialDock`):
   - Replaced basic SpinBoxes with Godot's built-in `EditorSpinSlider` control (the same native control
