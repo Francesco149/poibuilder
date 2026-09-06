@@ -1898,12 +1898,23 @@ func _on_ngon_drawer_complete() -> void:
 		if not cmd.is_noop():
 			cmd.add_to_undo_manager(get_undo_redo())
 
-		_finish_mesh_op(target_m, "knife_tool", int(res.get("new_face_ids", []).size()))
+		# Destroy the preview node immediately so no drawing gizmo can linger
+		var preview := ngon_drawer.preview_node
+		if preview != null and is_instance_valid(preview):
+			if preview.get_parent() != null:
+				preview.get_parent().remove_child(preview)
+			preview.queue_free()
+		ngon_drawer.preview_node = null
+
+		# Reset drawer state BEFORE updating target mesh gizmos
+		ngon_drawer.reset()
 		_clear_creation_hover()
 		_set_creation_hint("")
+
+		# Finish mesh op and rebuild target_m gizmos cleanly (drawer is now inactive)
+		_finish_mesh_op(target_m, "knife_tool", int(res.get("new_face_ids", []).size()))
 		if logger:
 			logger.info("plugin", "Knife cut completed on '%s' face %d" % [target_m.name, target_f])
-		ngon_drawer.reset()
 		_update_editing_context()
 func _on_ngon_drawer_confirm_height() -> void:
 	var node := ngon_drawer.preview_node

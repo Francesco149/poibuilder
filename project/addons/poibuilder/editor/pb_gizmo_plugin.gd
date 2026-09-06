@@ -315,8 +315,6 @@ func _redraw(gizmo) -> void:
 			else:
 				_draw_ngon_drawer_overlay(gizmo, node.pb_mesh_data, ngon_drawer)
 			return
-		elif ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE and ngon_drawer.target_mesh == node:
-			_draw_ngon_drawer_overlay(gizmo, node.pb_mesh_data, ngon_drawer)
 
 	var mesh_data: PBMeshData = node.pb_mesh_data
 	if mesh_data == null or mesh_data.positions.is_empty():

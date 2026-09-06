@@ -988,6 +988,10 @@ func _run() -> void:
 			_pass("KNIFE: face cut split face into two n-gons (faces: %d -> %d)" % [orig_face_count, new_face_count])
 		else:
 			_fail("KNIFE: face count mismatch after cut (expected %d, got %d)" % [orig_face_count + 1, new_face_count])
+		if plugin.ngon_drawer.preview_node == null and plugin.ngon_drawer.points.is_empty():
+			_pass("KNIFE: preview node destroyed and drawer reset (no lingering cut lines)")
+		else:
+			_fail("KNIFE: preview node or points lingered after cut completion")
 
 	# ── Test 17: N-Gon shape extrusion creates custom 3D prism ──
 	plugin._on_shape_requested(&"ngon")
