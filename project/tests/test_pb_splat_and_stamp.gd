@@ -223,6 +223,52 @@ func test_stamp_face_pasting_with_rotation_and_scale() -> void:
 	assert_almost_eq(px.r, 0.2, 0.05, "Stamped center pixel should have copied 1:1 red channel")
 	assert_almost_eq(px.g, 0.6, 0.05, "Stamped center pixel should have copied 1:1 green channel")
 	assert_almost_eq(px.b, 0.9, 0.05, "Stamped center pixel should have copied 1:1 blue channel")
+func test_stamp_basis_upright_on_all_surfaces() -> void:
+	for norm in [Vector3.RIGHT, Vector3.LEFT, Vector3.FORWARD, Vector3.BACK]:
+		var basis := PBSplat.get_stamp_basis(norm)
+		var v_up: Vector3 = basis["up"]
+		var u_right: Vector3 = basis["right"]
+		var n: Vector3 = basis["normal"]
+		assert_almost_eq(v_up.x, 0.0, 0.001, "Wall up vector X should be 0")
+		assert_almost_eq(v_up.y, 1.0, 0.001, "Wall up vector Y should point straight UP")
+		assert_almost_eq(v_up.z, 0.0, 0.001, "Wall up vector Z should be 0")
+		var det := u_right.cross(v_up).dot(n)
+		assert_almost_eq(det, 1.0, 0.001, "Stamp basis determinant should be +1.0 (right-handed)")
+
+	# Floor test
+	var floor_basis := PBSplat.get_stamp_basis(Vector3.UP)
+	assert_almost_eq(floor_basis["right"].x, 1.0, 0.001)
+	assert_almost_eq(floor_basis["up"].z, -1.0, 0.001)
+
+func test_stamp_decompresses_compressed_vram_texture() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+	var mat := PBSplat.create_splat_material()
+
+	var pattern_tex := load("res://addons/poibuilder/materials/textures/circular_square_pattern.png") as Texture2D
+	assert_not_null(pattern_tex)
+	var raw_img := pattern_tex.get_image()
+	assert_not_null(raw_img)
+
+	var center_local := Vector3.ZERO
+	var idxs := face.get_distinct_indexes()
+	for idx in idxs:
+		center_local += data.positions[idx]
+	center_local /= float(idxs.size())
+
+	# Stamping should automatically decompress raw_img without throwing "Can't get_pixel() on compressed image"
+	var stamped := PBSplat.stamp_face(data, face, mat, raw_img, center_local, 1.0, 0.0, 1.0)
+	assert_true(stamped)
+	assert_false(raw_img.is_compressed(), "Image should be decompressed after stamp_face")
+
+	var target_img := PBSplat.get_stamp_layer_image(mat)
+	assert_not_null(target_img)
+	var mid := target_img.get_width() / 2
+	var px := target_img.get_pixel(mid, mid)
+	# Circular square pattern has center white/light-blue shape with alpha > 0.8
+	assert_true(px.a > 0.5, "Center pixel should have positive alpha (not 0)")
+	assert_true(px.r > 0.2, "Center pixel should have color (not black square)")
 # ==============================================================================
 # 6. Undo/Redo & Splat Cloning Tests
 # ==============================================================================

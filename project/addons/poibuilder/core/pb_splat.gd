@@ -19,6 +19,40 @@ const DEFAULT_STAMP_LAYER_RES := 512
 static var _cached_shader: Shader = null
 
 # ==============================================================================
+## Returns an orthonormal right-handed stamp basis (right, up, normal) for any surface normal.
+## Guarantees that:
+## - On any vertical wall or slope, 'up' points straight UP along the surface (+Y).
+## - 'right' points to the viewer's right when facing the surface.
+## - On a floor, 'up' points away (-Z, North) and 'right' points right (+X, East).
+## - Determinant is always exactly +1.0 (right-handed, never flipped).
+static func get_stamp_basis(surface_normal: Vector3) -> Dictionary:
+	var n := surface_normal.normalized()
+	if n.length_squared() < 0.0001:
+		n = Vector3.UP
+
+	var u_right := Vector3.RIGHT
+	var v_up := Vector3.BACK
+
+	if absf(n.y) < 0.9999:
+		# Vertical wall or slope: project world UP onto the face plane
+		var up_proj := Vector3.UP - n * (Vector3.UP.dot(n))
+		if up_proj.length_squared() > 0.0001:
+			v_up = up_proj.normalized()
+		else:
+			v_up = Vector3.UP
+		u_right = v_up.cross(n).normalized()
+	else:
+		if n.y > 0.0:
+			# Floor (normal UP): Up is away (-Z), Right is (+X)
+			u_right = Vector3.RIGHT
+			v_up = Vector3.FORWARD
+		else:
+			# Ceiling (normal DOWN): Up is (+Z), Right is (+X)
+			u_right = Vector3.RIGHT
+			v_up = Vector3.BACK
+
+	return {"right": u_right, "up": v_up, "normal": n}
+
 # Shader & Material Management
 # ==============================================================================
 
@@ -479,6 +513,12 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 	if mesh_data == null or face == null or splat_mat == null or stamp_img == null or stamp_scale <= 0.0:
 		return false
 
+	# Ensure stamp image is uncompressed for get_pixel() access
+	if stamp_img.is_compressed():
+		stamp_img.decompress()
+	if stamp_img.get_format() != Image.FORMAT_RGBA8:
+		stamp_img.convert(Image.FORMAT_RGBA8)
+
 	var stamp_target_img := get_stamp_layer_image(splat_mat)
 	if stamp_target_img == null:
 		return false
@@ -487,22 +527,26 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 	if bounds.is_empty():
 		return false
 
-	var u_axis: Vector3 = bounds["u"]
-	var v_axis: Vector3 = bounds["v"]
+	var u_face: Vector3 = bounds["u"]
+	var v_face: Vector3 = bounds["v"]
+	var normal: Vector3 = bounds["normal"]
 	var min_u: float = bounds["min_u"]
 	var range_u: float = bounds["range_u"]
 	var min_v: float = bounds["min_v"]
 	var range_v: float = bounds["range_v"]
 
-	# Compute rotated stamp axes in face plane
-	var rad := deg_to_rad(stamp_rotation_deg)
-	var cos_r := cos(rad)
-	var sin_r := sin(rad)
-	var u_stamp := cos_r * u_axis - sin_r * v_axis
-	var v_stamp := sin_r * u_axis + cos_r * v_axis
+	# Canonical stamp basis matching preview quad
+	var sbasis := get_stamp_basis(normal)
+	var u_right: Vector3 = sbasis["right"]
+	var v_up: Vector3 = sbasis["up"]
 
-	var hit_u := u_axis.dot(hit_point_local)
-	var hit_v := v_axis.dot(hit_point_local)
+	# Apply stamp rotation in surface plane
+	var rad := deg_to_rad(stamp_rotation_deg)
+	var rot_right := cos(rad) * u_right + sin(rad) * v_up
+	var rot_up := -sin(rad) * u_right + cos(rad) * v_up
+
+	var hit_u := u_face.dot(hit_point_local)
+	var hit_v := v_face.dot(hit_point_local)
 
 	var w := stamp_target_img.get_width()
 	var h := stamp_target_img.get_height()
@@ -532,12 +576,15 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 		for x in range(x0, x1 + 1):
 			var u_coord := min_u + (float(x) / float(w - 1)) * range_u
 
-			# World/local displacement from stamp center in the face plane
-			var dp := (u_coord - hit_u) * u_axis + (v_coord - hit_v) * v_axis
+			# 3D displacement from stamp center in the face plane
+			var dp := (u_coord - hit_u) * u_face + (v_coord - hit_v) * v_face
 
-			# Project onto stamp local axes -> [0, 1] coordinates
-			var sx := (dp.dot(u_stamp) / stamp_scale) + 0.5
-			var sy := (dp.dot(v_stamp) / stamp_scale) + 0.5
+			# Project onto canonical rotated stamp axes
+			var x_stamp := dp.dot(rot_right)
+			var y_stamp := dp.dot(rot_up)
+
+			var sx := (x_stamp / stamp_scale) + 0.5
+			var sy := 0.5 - (y_stamp / stamp_scale)
 
 			if sx >= 0.0 and sx <= 1.0 and sy >= 0.0 and sy <= 1.0:
 				var sp_x := clampi(int(sx * (sw - 1)), 0, sw - 1)

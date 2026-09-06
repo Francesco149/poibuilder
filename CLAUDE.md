@@ -783,21 +783,26 @@ v0.9.45 round complete ✓ — dedicated 1:1 stamp layer, preview texture fix & 
     original colors and sharp alpha edges without blurring, tiling distortion, or being constrained
     by the face's tiled base texture.
   - Deep cloning support in `clone_splat_material` ensures full undo/redo coverage for stamped layers.
-- STAMP PREVIEW TEXTURE & ORIENTATION FIX:
-  - Fixed white square bug: `setup_previews()` and `_update_stamp_preview_texture()` now immediately
+- STAMP PREVIEW TEXTURE & CANONICAL WALL ROTATION FIX:
+  - Fixed white square preview: `setup_previews()` and `_update_stamp_preview_texture()` now immediately
     bind `stamp_texture` to `stamp_mesh_instance.material_override.albedo_texture`.
-  - Fixed preview misalignment: `PBPaintController.update_cursor` now adopts the face's exact planar
-    basis (`PBUv.get_planar_basis(normal)`), guaranteeing 1:1 coordinate, rotation, and scale alignment
-    between the in-viewport preview decal and the pasted stamp.
+  - Fixed vertical wall 90° rotation: implemented `PBSplat.get_stamp_basis()` which computes an orthonormal
+    right-handed basis (+1.0 determinant) where `up` points straight UP (+Y) on any vertical wall/slope and
+    away (-Z) on floors, and `right` points to viewer's right. Both `PBPaintController.update_cursor` and
+    `PBSplat.stamp_face` share this exact basis, guaranteeing upright stamps at 0° and 1:1 preview alignment.
+  - Fixed compressed image error (`Can't get_pixel() on compressed image, sorry` which painted black squares):
+    `get_stamp_image()` and `stamp_face()` now check `img.is_compressed()` and call `img.decompress()`,
+    ensuring clean RGBA8 access for all VRAM-compressed project textures.
 - SHIFT+WHEEL ROTATION & CTRL+WHEEL SCALE:
   - Changed stamp rotation binding from plain mouse wheel to `Shift + Mouse Wheel` (15° steps).
   - `Ctrl + Mouse Wheel` scales stamp (10% increments).
   - Plain Mouse Wheel without modifiers passes through (`AFTER_GUI_INPUT_PASS`) directly to the 3D
     editor viewport camera zoom, completely resolving mouse wheel conflict.
 - TESTS & VERIFICATION:
-  - 758/758 GUT unit tests passing (13465 asserts).
-  - Live editor GUI test harness extended with stamp texture presence check, Shift+Wheel rotation,
-    Ctrl+Wheel scaling, and plain Wheel zoom passthrough assertions (41/41 passing).
+  - 760/760 GUT unit tests passing (13490 asserts), including tests for `get_stamp_basis()` upright vectors
+    on all 4 wall orientations and VRAM texture auto-decompression.
+  - Live editor GUI test harness passing with preview texture, Shift+Wheel rotation, Ctrl+Wheel scaling,
+    and plain Wheel zoom passthrough assertions (41/41 passing).
 
 v0.9.44 round complete ✓ — texture splatting (multi-layer alpha mask brush painting) & stamping mode:
 - TEXTURE SPLATTING SHADER & MULTI-LAYER ENGINE (`PBSplat`, `core/pb_splat.gd`, `materials/shaders/pb_splat_shader.gdshader`):

@@ -240,39 +240,40 @@ func _build_stamp_mesh() -> void:
 	var im := ImmediateMesh.new()
 	var half_s := stamp_scale * 0.5
 
-	# 2D Quad in XZ plane with UVs
-	var p0 := Vector3(-half_s, 0.0, -half_s)
-	var p1 := Vector3(half_s, 0.0, -half_s)
-	var p2 := Vector3(half_s, 0.0, half_s)
-	var p3 := Vector3(-half_s, 0.0, half_s)
+	# 2D Quad in XY plane facing +Z (normal)
+	var p_tl := Vector3(-half_s,  half_s, 0.0) # Top-Left: UV (0, 0)
+	var p_tr := Vector3( half_s,  half_s, 0.0) # Top-Right: UV (1, 0)
+	var p_br := Vector3( half_s, -half_s, 0.0) # Bottom-Right: UV (1, 1)
+	var p_bl := Vector3(-half_s, -half_s, 0.0) # Bottom-Left: UV (0, 1)
 
 	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Tri 1: p0, p1, p2
+	# Tri 1: p_tl, p_tr, p_br
 	im.surface_set_uv(Vector2(0, 0))
-	im.surface_add_vertex(p0)
+	im.surface_add_vertex(p_tl)
 	im.surface_set_uv(Vector2(1, 0))
-	im.surface_add_vertex(p1)
+	im.surface_add_vertex(p_tr)
 	im.surface_set_uv(Vector2(1, 1))
-	im.surface_add_vertex(p2)
-	# Tri 2: p0, p2, p3
+	im.surface_add_vertex(p_br)
+
+	# Tri 2: p_tl, p_br, p_bl
 	im.surface_set_uv(Vector2(0, 0))
-	im.surface_add_vertex(p0)
+	im.surface_add_vertex(p_tl)
 	im.surface_set_uv(Vector2(1, 1))
-	im.surface_add_vertex(p2)
+	im.surface_add_vertex(p_br)
 	im.surface_set_uv(Vector2(0, 1))
-	im.surface_add_vertex(p3)
+	im.surface_add_vertex(p_bl)
 	im.surface_end()
 
 	# Border outline
 	im.surface_begin(Mesh.PRIMITIVE_LINES)
-	im.surface_add_vertex(p0)
-	im.surface_add_vertex(p1)
-	im.surface_add_vertex(p1)
-	im.surface_add_vertex(p2)
-	im.surface_add_vertex(p2)
-	im.surface_add_vertex(p3)
-	im.surface_add_vertex(p3)
-	im.surface_add_vertex(p0)
+	im.surface_add_vertex(p_tl)
+	im.surface_add_vertex(p_tr)
+	im.surface_add_vertex(p_tr)
+	im.surface_add_vertex(p_br)
+	im.surface_add_vertex(p_br)
+	im.surface_add_vertex(p_bl)
+	im.surface_add_vertex(p_bl)
+	im.surface_add_vertex(p_tl)
 	im.surface_end()
 
 	stamp_mesh_instance.mesh = im
@@ -292,33 +293,28 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 		return
 
 	preview_root.visible = true
-	# Align orientation basis to face's exact planar basis matching PBUv
-	var basis := PBUv.get_planar_basis(normal)
-	var u_axis: Vector3 = basis["u"]
-	var v_axis: Vector3 = basis["v"]
-	var n_axis: Vector3 = basis["normal"]
-	if mesh_node != null:
-		var xf_b := mesh_node.global_transform.basis
-		u_axis = (xf_b * u_axis).normalized()
-		v_axis = (xf_b * v_axis).normalized()
-		n_axis = (xf_b * n_axis).normalized()
+	# Canonical stamp basis matching PBSplat.get_stamp_basis
+	var sbasis := PBSplat.get_stamp_basis(cursor_normal)
+	var u_right: Vector3 = sbasis["right"]
+	var v_up: Vector3 = sbasis["up"]
+	var n_axis: Vector3 = sbasis["normal"]
 
 	# Normal offset to eliminate z-fighting
 	var offset_point := cursor_point + n_axis * 0.005
 
 	if mode == Mode.PAINT and brush_mesh_instance != null:
-		var xf := Transform3D(Basis(u_axis, n_axis, v_axis), offset_point)
+		var xf := Transform3D(Basis(u_right, n_axis, v_up), offset_point)
 		brush_mesh_instance.global_transform = xf
 		brush_mesh_instance.visible = true
 		if stamp_mesh_instance != null:
 			stamp_mesh_instance.visible = false
 
 	elif mode == Mode.STAMP and stamp_mesh_instance != null:
-		# Apply stamp rotation around normal
+		# Apply stamp rotation in the surface plane around normal
 		var rot_rad := deg_to_rad(stamp_rotation)
-		var rot_u := cos(rot_rad) * u_axis - sin(rot_rad) * v_axis
-		var rot_v := sin(rot_rad) * u_axis + cos(rot_rad) * v_axis
-		var xf := Transform3D(Basis(rot_u, n_axis, rot_v), offset_point)
+		var rot_right := cos(rot_rad) * u_right + sin(rot_rad) * v_up
+		var rot_up := -sin(rot_rad) * u_right + cos(rot_rad) * v_up
+		var xf := Transform3D(Basis(rot_right, rot_up, n_axis), offset_point)
 		stamp_mesh_instance.global_transform = xf
 		stamp_mesh_instance.visible = true
 		if brush_mesh_instance != null:
@@ -449,6 +445,14 @@ func get_stamp_image() -> Image:
 		return null
 	var img := stamp_texture.get_image()
 	if img != null:
+		if img.is_compressed():
+			var err := img.decompress()
+			if err != OK:
+				var uncompressed := Image.create(img.get_width(), img.get_height(), false, Image.FORMAT_RGBA8)
+				uncompressed.blit_rect(img, Rect2i(0, 0, img.get_width(), img.get_height()), Vector2i.ZERO)
+				img = uncompressed
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
 		_cached_stamp_image = img
 	return _cached_stamp_image
 
