@@ -623,7 +623,7 @@ func _select_paint_material(mat: Material) -> void:
 		return
 	var tex := _extract_texture(mat)
 	if tex != null:
-		paint_controller.paint_texture = tex
+		paint_controller.set_paint_texture_and_update_layer(tex)
 		_update_tool_labels()
 		_rebuild_material_grid()
 		if plugin != null and plugin.logger != null:

@@ -58,6 +58,9 @@ extends Resource
 ## UV anchor position: 0-8 = 3x3 grid positions (UpperLeft..LowerRight), 9 = None.
 @export var uv_anchor: int = 9
 
+## Persistent face planar bounds [min_u, max_u, min_v, max_v] for texture splatting.
+## Preserved when moving vertices / resizing so splatted textures never stretch.
+@export var splat_bounds: PackedFloat32Array = PackedFloat32Array()
 # ==============================================================================
 # Backing & Lazy-Cached Fields
 # ==============================================================================
@@ -102,6 +105,7 @@ func copy_from(other: PBFace) -> void:
 	uv_swap_uv = other.uv_swap_uv
 	uv_fill = other.uv_fill
 	uv_anchor = other.uv_anchor
+	splat_bounds = other.splat_bounds.duplicate()
 
 	invalidate_cache()
 

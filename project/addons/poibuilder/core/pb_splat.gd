@@ -373,6 +373,14 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace) -> Dicti
 			min_v = minf(min_v, v_val)
 			max_v = maxf(max_v, v_val)
 
+	if face.splat_bounds.size() == 4:
+		min_u = face.splat_bounds[0]
+		max_u = face.splat_bounds[1]
+		min_v = face.splat_bounds[2]
+		max_v = face.splat_bounds[3]
+	else:
+		face.splat_bounds = PackedFloat32Array([min_u, max_u, min_v, max_v])
+
 	var range_u := max_u - min_u
 	if range_u < 0.0001:
 		range_u = 1.0

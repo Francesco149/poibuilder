@@ -44,6 +44,54 @@ var paint_texture: Texture2D = null:
 		paint_texture = v
 		brush_changed.emit()
 
+var _texture_layer_map: Dictionary = {}
+
+func set_paint_texture_and_update_layer(tex: Texture2D) -> void:
+	paint_texture = tex
+	if tex == null:
+		return
+
+	var mesh: PBMesh = target_mesh
+	if mesh == null and plugin != null and plugin.editor != null:
+		mesh = plugin.editor.active_mesh
+
+	if mesh != null and mesh.pb_mesh_data != null:
+		var data := mesh.pb_mesh_data
+		var face: PBFace = null
+		if target_face_idx >= 0 and target_face_idx < data.faces.size():
+			face = data.faces[target_face_idx]
+		elif plugin != null and plugin.editor != null and plugin.editor.selection != null:
+			var sel_faces = plugin.editor.selection.selected_faces
+			if not sel_faces.is_empty() and sel_faces[0] >= 0 and sel_faces[0] < data.faces.size():
+				face = data.faces[sel_faces[0]]
+
+		if face != null:
+			var splat_mat = data.get_face_material(face)
+			if PBSplat.is_splat_material(splat_mat):
+				var sm := splat_mat as ShaderMaterial
+				var existing := -1
+				for i in range(1, PBSplat.MAX_LAYERS + 1):
+					if sm.get_shader_parameter("layer_%d_enabled" % i) == true:
+						if sm.get_shader_parameter("layer_%d_texture" % i) == tex:
+							existing = i
+							break
+				if existing > 0:
+					active_layer_idx = existing
+					return
+				else:
+					var target_res := PBSplat.calculate_uniform_face_resolution(data, face)
+					var new_slot := PBSplat.add_layer(sm, tex, Color.WHITE, 0.8, target_res.x)
+					if new_slot > 0:
+						active_layer_idx = new_slot
+						return
+
+	# If not yet assigned on this material, map to next layer index
+	if _texture_layer_map.has(tex):
+		active_layer_idx = _texture_layer_map[tex]
+	else:
+		var next_idx := clampi(_texture_layer_map.size() + 1, 1, PBSplat.MAX_LAYERS)
+		_texture_layer_map[tex] = next_idx
+		active_layer_idx = next_idx
 # Stamp properties
 var stamp_texture: Texture2D = null:
 	set(v):
@@ -317,10 +365,16 @@ func apply_paint_stroke() -> void:
 	if splat_mat == null:
 		return
 
+	# Ensure a layer exists for paint_texture on splat_mat
+	if paint_texture != null:
+		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
+		if layer > 0:
+			active_layer_idx = layer
+
 	# Convert world hit point to node local coordinates
 	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
 
-	# Paint on target face
+	# Paint on target face under cursor
 	var modified := PBSplat.paint_face_splat(
 		data, face, splat_mat, active_layer_idx,
 		local_hit, brush_radius, brush_softness, brush_opacity, erase_mode
@@ -328,30 +382,6 @@ func apply_paint_stroke() -> void:
 
 	if modified:
 		stroke_dirty = true
-
-	# Also paint any adjacent faces within brush radius (with distance pre-filtering)
-	var r_reach_sq := (brush_radius + 1.0) * (brush_radius + 1.0)
-	for i in range(data.faces.size()):
-		if i == target_face_idx:
-			continue
-		var other_face := data.faces[i]
-		if other_face == null:
-			continue
-		var other_mat = data.get_face_material(other_face)
-		if other_mat == splat_mat:
-			var idxs := other_face.get_distinct_indexes()
-			if idxs.is_empty():
-				continue
-			var p0: Vector3 = data.positions[idxs[0]]
-			if p0.distance_squared_to(local_hit) > r_reach_sq:
-				continue
-			var other_mod := PBSplat.paint_face_splat(
-				data, other_face, splat_mat, active_layer_idx,
-				local_hit, brush_radius, brush_softness, brush_opacity, erase_mode
-			)
-			if other_mod:
-				stroke_dirty = true
-
 func end_stroke() -> void:
 	if not is_stroke_active:
 		return
@@ -366,6 +396,9 @@ func end_stroke() -> void:
 	stroke_dirty = false
 
 # ==============================================================================
+# Stamp Execution
+# ==============================================================================
+
 func apply_stamp() -> void:
 	if mode != Mode.STAMP or target_mesh == null or not is_instance_valid(target_mesh) or not has_hit:
 		return
@@ -399,7 +432,6 @@ func apply_stamp() -> void:
 	# Create high-fidelity billboard decal quad
 	var stamp_node := MeshInstance3D.new()
 	stamp_node.name = "Stamp_%d" % (stamps_container.get_child_count() + 1)
-
 	var qm := QuadMesh.new()
 	qm.size = Vector2(stamp_scale, stamp_scale)
 	stamp_node.mesh = qm
