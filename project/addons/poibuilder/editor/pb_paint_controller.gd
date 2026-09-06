@@ -480,10 +480,10 @@ func _ensure_face_splat_material(mesh: PBMesh, face: PBFace) -> ShaderMaterial:
 
 	# Convert to splat material
 	var splat_mat := PBSplat.create_splat_material(current_mat)
-
-	# If a paint_texture is selected, configure layer 1 with it
+	# If a paint_texture is selected, configure layer 1 with uniform resolution for this face
 	if paint_texture != null:
-		PBSplat.add_layer(splat_mat, paint_texture)
+		var target_res := PBSplat.calculate_uniform_face_resolution(mesh.pb_mesh_data, face)
+		PBSplat.add_layer(splat_mat, paint_texture, Color.WHITE, 0.8, target_res.x)
 
 	mesh.pb_mesh_data.set_face_material(face, splat_mat)
 	mesh.rebuild()

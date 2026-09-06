@@ -782,11 +782,13 @@ v0.9.48 round complete ✓ — native EditorSpinSlider controls, SDF splat conto
     wrapping, acceleration, and direct value typing.
   - Implemented `_make_spinbox()` which instantiates `EditorSpinSlider` in the live editor and falls back
     to `SpinBox` in headless test runs where `Engine.is_editor_hint()` is false, maintaining 100% test compatibility.
-- SDF SCREEN-SPACE ANTIALIASED SPLAT CONTOUR (`pb_splat_shader.gdshader`):
-  - Replaced raw linear mask blending with screen-space antialiased smoothstep contour reconstruction
-    using `fwidth(m)`: `smoothstep(0.01, max(fwidth(m) * 2.5, 0.35), m)`.
+- SDF SCREEN-SPACE ANTIALIASED SPLAT CONTOUR & UNIFORM 2048 RES (`pb_splat_shader.gdshader`, `core/pb_splat.gd`):
+  - Raised MAX_RESOLUTION to 2048 and TEXELS_PER_METER to 256 for uniform resolution across all faces up to 16 meters.
+  - Dynamically initializes layer 1 mask resolution from calculate_uniform_face_resolution() at material setup.
+  - Replaced raw linear mask blending with screen-space antialiased smoothstep contour reconstruction centered at 0.5:
+    `smoothstep(0.5 - edge_w, 0.5 + edge_w, m)` where `edge_w = mix(max(fw * 2.0, 0.02), 0.48, roughness)`.
   - Completely eliminates bilinear stairstep blocky pixels on large terrain floors and walls, rendering
-    smooth, organic, antialiased stroke contours on any face of any size.
+    smooth, organic, antialiased stroke contours on faces of any size.
 - OPTIMIZED STROKE PAINTING PERFORMANCE (`PBPaintController.apply_paint_stroke`):
   - Moved `PBSplat.ensure_mesh_uv2` to `begin_stroke()` so it executes once at drag start rather than
     redundantly on every mouse motion event.

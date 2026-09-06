@@ -14,9 +14,9 @@ const MAX_LAYERS := 8
 const DEFAULT_MASK_RES := 256
 
 const DEFAULT_STAMP_LAYER_RES := 512
-const TEXELS_PER_METER := 128
+const TEXELS_PER_METER := 256
 const MIN_RESOLUTION := 256
-const MAX_RESOLUTION := 512
+const MAX_RESOLUTION := 2048
 ## Computes uniform texture resolution (w, h) in pixels for `face` based on its physical size in meters.
 ## Guarantees a consistent texel density across both small and large faces.
 static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFace,

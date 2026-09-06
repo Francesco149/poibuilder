@@ -335,15 +335,15 @@ func test_paint_controller_modes_and_properties() -> void:
 func test_uniform_resolution_calculation() -> void:
 	var cube_2m := PBMeshData.create_cube(2.0)
 	var res_2m := PBSplat.calculate_uniform_face_resolution(cube_2m, cube_2m.faces[0])
-	# 2m * 128 texels/m = 256 texels
-	assert_eq(res_2m.x, 256, "2m face width should be 256 pixels")
-	assert_eq(res_2m.y, 256, "2m face height should be 256 pixels")
+	# 2m * 256 texels/m = 512 texels
+	assert_eq(res_2m.x, 512, "2m face width should be 512 pixels")
+	assert_eq(res_2m.y, 512, "2m face height should be 512 pixels")
 
 	var cube_8m := PBMeshData.create_cube(8.0)
 	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
-	# 8m * 128 texels/m = 1024, clamped to MAX_RESOLUTION 512 for fast painting
-	assert_eq(res_8m.x, 512, "8m face width should be 512 pixels")
-	assert_eq(res_8m.y, 512, "8m face height should be 512 pixels")
+	# 8m * 256 texels/m = 2048 texels
+	assert_eq(res_8m.x, 2048, "8m face width should be 2048 pixels")
+	assert_eq(res_8m.y, 2048, "8m face height should be 2048 pixels")
 
 func test_dynamic_image_resizing_on_large_faces() -> void:
 	var mat := PBSplat.create_splat_material()
