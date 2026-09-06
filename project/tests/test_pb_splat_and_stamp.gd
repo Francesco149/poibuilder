@@ -335,15 +335,15 @@ func test_paint_controller_modes_and_properties() -> void:
 func test_uniform_resolution_calculation() -> void:
 	var cube_2m := PBMeshData.create_cube(2.0)
 	var res_2m := PBSplat.calculate_uniform_face_resolution(cube_2m, cube_2m.faces[0])
-	# 2m * 256 texels/m = 512 texels
-	assert_eq(res_2m.x, 512, "2m face width should be 512 pixels")
-	assert_eq(res_2m.y, 512, "2m face height should be 512 pixels")
+	# 2m * 128 texels/m = 256 texels
+	assert_eq(res_2m.x, 256, "2m face width should be 256 pixels")
+	assert_eq(res_2m.y, 256, "2m face height should be 256 pixels")
 
 	var cube_8m := PBMeshData.create_cube(8.0)
 	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
-	# 8m * 256 texels/m = 2048 texels
-	assert_eq(res_8m.x, 2048, "8m face width should be 2048 pixels")
-	assert_eq(res_8m.y, 2048, "8m face height should be 2048 pixels")
+	# 8m * 128 texels/m = 1024, clamped to MAX_RESOLUTION 512 for fast painting
+	assert_eq(res_8m.x, 512, "8m face width should be 512 pixels")
+	assert_eq(res_8m.y, 512, "8m face height should be 512 pixels")
 
 func test_dynamic_image_resizing_on_large_faces() -> void:
 	var mat := PBSplat.create_splat_material()
@@ -356,28 +356,30 @@ func test_dynamic_image_resizing_on_large_faces() -> void:
 	assert_eq(img_1024.get_width(), 1024, "Stamp layer image should dynamically upscale to 1024")
 	assert_eq(img_1024.get_height(), 1024, "Stamp layer image should dynamically upscale to 1024")
 
-func test_stamp_keyboard_shortcuts() -> void:
+func test_billboard_decal_stamping() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+
 	var ctrl := PBPaintController.new()
 	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	ctrl.stamp_rotation = 0.0
-	ctrl.stamp_scale = 1.0
+	var stamp_tex := ImageTexture.create_from_image(Image.create(32, 32, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_texture = stamp_tex
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
 
-	# R key: rotates CW +15°
-	ctrl.stamp_rotation = wrapf(ctrl.stamp_rotation + 15.0, 0.0, 360.0)
-	assert_almost_eq(ctrl.stamp_rotation, 15.0, 0.01)
+	ctrl.apply_stamp()
+	var stamps := cube.get_node_or_null("PBStamps")
+	assert_not_null(stamps, "PBStamps container should be created on target mesh")
+	assert_eq(stamps.get_child_count(), 1, "Should contain 1 stamp decal")
 
-	# Shift+R: rotates CCW -15°
-	ctrl.stamp_rotation = wrapf(ctrl.stamp_rotation - 15.0, 0.0, 360.0)
-	assert_almost_eq(ctrl.stamp_rotation, 0.0, 0.01)
+	var decal := stamps.get_child(0) as MeshInstance3D
+	assert_not_null(decal)
+	assert_true(decal.mesh is QuadMesh, "Decal mesh should be QuadMesh")
+	assert_true(decal.material_override is StandardMaterial3D, "Decal material should be StandardMaterial3D")
+	assert_eq((decal.material_override as StandardMaterial3D).albedo_texture, stamp_tex)
 
-	# [ key: scales down
-	ctrl.stamp_scale = clampf(ctrl.stamp_scale / 1.1, 0.05, 50.0)
-	assert_almost_eq(ctrl.stamp_scale, 1.0 / 1.1, 0.01)
-
-	# ] key: scales up
-	ctrl.stamp_scale = clampf(ctrl.stamp_scale * 1.1, 0.05, 50.0)
-	assert_almost_eq(ctrl.stamp_scale, 1.0, 0.01)
-
+	# Clear all stamps
+	ctrl.clear_all_stamps(cube)
+	assert_eq(stamps.get_child_count(), 0, "Stamps should be cleared")
 # ==============================================================================
 # 8. PBMaterialDock Integration Tests
 # ==============================================================================

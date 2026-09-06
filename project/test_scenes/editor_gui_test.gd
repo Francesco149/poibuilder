@@ -1072,40 +1072,39 @@ func _run() -> void:
 				else:
 					_fail("SPLAT-STAMP: stamp preview material albedo texture is null")
 
-			# Test wheel event with Shift -> rotates
-			var ev_shift_wheel := InputEventMouseButton.new()
-			ev_shift_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
-			ev_shift_wheel.pressed = true
-			ev_shift_wheel.shift_pressed = true
-			var prev_rot = plugin.paint_controller.stamp_rotation
-			var res_rot = plugin._paint_controller_input(vp.get_camera_3d(), ev_shift_wheel)
-			if res_rot == EditorPlugin.AFTER_GUI_INPUT_STOP and plugin.paint_controller.stamp_rotation != prev_rot:
-				_pass("SPLAT-STAMP: Shift+Wheel rotates stamp")
+			# Test wheel event passes through to viewport zoom without conflict
+			var ev_wheel := InputEventMouseButton.new()
+			ev_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+			ev_wheel.pressed = true
+			var res_wheel = plugin._paint_controller_input(vp.get_camera_3d(), ev_wheel)
+			if res_wheel == EditorPlugin.AFTER_GUI_INPUT_PASS:
+				_pass("SPLAT-STAMP: mouse wheel passes through to viewport zoom without conflict")
 			else:
-				_fail("SPLAT-STAMP: Shift+Wheel failed to rotate stamp")
+				_fail("SPLAT-STAMP: mouse wheel was consumed instead of passing through")
 
-			# Test wheel event with Ctrl -> scales
-			var ev_ctrl_wheel := InputEventMouseButton.new()
-			ev_ctrl_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
-			ev_ctrl_wheel.pressed = true
-			ev_ctrl_wheel.ctrl_pressed = true
-			var prev_scale = plugin.paint_controller.stamp_scale
-			var res_scale = plugin._paint_controller_input(vp.get_camera_3d(), ev_ctrl_wheel)
-			if res_scale == EditorPlugin.AFTER_GUI_INPUT_STOP and plugin.paint_controller.stamp_scale != prev_scale:
-				_pass("SPLAT-STAMP: Ctrl+Wheel scales stamp")
+			# Test applying billboard decal stamp
+			var target_b := root.get_node_or_null("GuiTestB") as PBMesh
+			var stamps: Node3D = null
+			if target_b != null:
+				plugin.editor.active_mesh = target_b
+				plugin.paint_controller.update_cursor(Vector3(3, 1, 0), Vector3.UP, target_b, 0)
+				plugin.paint_controller.apply_stamp()
+				await _frames(2)
+				stamps = target_b.get_node_or_null("PBStamps") as Node3D
+				if stamps != null and stamps.get_child_count() > 0:
+					_pass("SPLAT-STAMP: applied high-fidelity billboard decal stamp under PBStamps container")
+				else:
+					_fail("SPLAT-STAMP: failed to create decal stamp node under PBStamps")
 			else:
-				_fail("SPLAT-STAMP: Ctrl+Wheel failed to scale stamp")
+				_fail("SPLAT-STAMP: target GuiTestB not found")
 
-			# Test plain wheel event -> passes through to viewport zoom
-			var ev_plain_wheel := InputEventMouseButton.new()
-			ev_plain_wheel.button_index = MOUSE_BUTTON_WHEEL_UP
-			ev_plain_wheel.pressed = true
-			var res_plain = plugin._paint_controller_input(vp.get_camera_3d(), ev_plain_wheel)
-			if res_plain == EditorPlugin.AFTER_GUI_INPUT_PASS:
-				_pass("SPLAT-STAMP: plain wheel without modifiers passes through to zoom")
+			# Test Clear All Stamps
+			plugin.material_dock._on_clear_all_stamps_pressed()
+			await _frames(2)
+			if stamps == null or stamps.get_child_count() == 0:
+				_pass("SPLAT-STAMP: cleared all decal stamps successfully")
 			else:
-				_fail("SPLAT-STAMP: plain wheel was consumed instead of passing through")
-			# Reset back to MATERIAL mode
+				_fail("SPLAT-STAMP: Clear All Stamps failed to clear stamps")
 			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			await _frames(2)
 			if plugin.paint_controller.mode == PBPaintController.Mode.NONE:

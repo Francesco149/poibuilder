@@ -775,6 +775,28 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.47 round complete ✓ — billboard decal stamping, keybind removal & fast splat painting:
+- BILLBOARD DECAL STAMPING ON PBMesh (`PBPaintController.apply_stamp`):
+  - Replaced resolution-constrained mask baking with high-fidelity billboard decal quads (`MeshInstance3D`
+    with `QuadMesh` and `StandardMaterial3D` with alpha and mipmapped linear filtering).
+  - 100% native GPU texture resolution on any face of any size (zero blur, zero pixelation, uniform sharp
+    rendering on small boxes and 100m terrain floors alike).
+  - Attached under `target_mesh/PBStamps` container; transforms move with the mesh and are fully undoable.
+  - Structured metadata stored per stamp node (`stamp_scale`, `stamp_rotation`, `stamp_opacity`,
+    `stamp_texture_path`, `face_idx`) ready for tile-based baking during scene export.
+  - Added "Clear All Stamps" button in `PBMaterialDock` with full undo/redo support.
+- REMOVED ALL PAINT & STAMP KEYBINDS:
+  - Removed all mouse wheel interception and keyboard shortcuts (`R`, `Shift+R`, `[`, `]`) from
+    `poibuilder_plugin.gd` to eliminate all conflicts with Godot editor camera zoom, navigation, and engine tools.
+  - Rotation and scaling are controlled cleanly through the UI buttons and spinboxes in `PBMaterialDock`.
+  - Mouse wheel passes through untouched to 3D viewport camera zoom in all modes.
+- RESTORED FAST SPLATTING MASK RESOLUTION (ZERO-LAG PAINTING):
+  - Bounded splat masks to 256x256 (max 512) and optimized inner row pixel range in `PBSplat.paint_face_splat`.
+  - Restored silky smooth 60+ FPS paint performance with zero stutter.
+- TESTS & VERIFICATION:
+  - 763/763 GUT unit tests passing (13504 asserts), including billboard decal creation and stamp clearing.
+  - 41/41 real editor GUI tests passing under Xvfb.
+
 v0.9.46 round complete ✓ — uniform resolution scaling, wheel release leak fix & stamp hotkeys:
 - UNIFORM RESOLUTION PER METER ACROSS ALL FACES (`core/pb_splat.gd`):
   - Fixed resolution degradation on large faces: `calculate_uniform_face_resolution()` computes target

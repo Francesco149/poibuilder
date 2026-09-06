@@ -543,12 +543,17 @@ func _build_ui() -> void:
 
 	_stamp_tool_section.add_child(stamp_grid)
 
+	var btn_clear_stamps := Button.new()
+	btn_clear_stamps.text = "Clear All Stamps"
+	btn_clear_stamps.tooltip_text = "Removes all placed stamp decals on the active mesh"
+	btn_clear_stamps.pressed.connect(_on_clear_all_stamps_pressed)
+	_stamp_tool_section.add_child(btn_clear_stamps)
+
 	var stamp_hint := Label.new()
-	stamp_hint.text = "Hover mesh for live preview. Click to paste.\nRotate: R, Shift+R, Shift+Wheel | Scale: [, ], Ctrl+Wheel"
+	stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
 	stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(stamp_hint)
-
 	root_vbox.add_child(HSeparator.new())
 
 	# Status / Selection feedback
@@ -668,6 +673,28 @@ func _on_clear_layer_pressed() -> void:
 	if cleared:
 		var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 		_commit_mesh_action(mesh, "Clear Splat Layer", before, after)
+func _on_clear_all_stamps_pressed() -> void:
+	var mesh: PBMesh = editor.active_mesh if editor != null else null
+	if mesh == null and paint_controller != null:
+		mesh = paint_controller.target_mesh
+	if mesh == null:
+		return
+	var stamps := mesh.get_node_or_null("PBStamps") as Node3D
+	if stamps == null or stamps.get_child_count() == 0:
+		return
+	if plugin != null and plugin.has_method("get_undo_redo"):
+		var undo = plugin.get_undo_redo()
+		if undo != null:
+			undo.create_action("Clear All Stamps", UndoRedo.MERGE_DISABLE, mesh)
+			for c in stamps.get_children():
+				undo.add_do_method(plugin, "_detach_node", c)
+				undo.add_undo_method(plugin, "_attach_detached", c, stamps)
+				undo.add_undo_method(plugin, "_own_node", c)
+			undo.commit_action()
+			return
+	for c in stamps.get_children():
+		c.queue_free()
+
 
 # ==============================================================================
 # Material Management & Grid Population

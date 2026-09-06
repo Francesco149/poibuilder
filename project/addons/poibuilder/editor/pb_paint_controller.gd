@@ -237,46 +237,9 @@ func _build_brush_mesh() -> void:
 func _build_stamp_mesh() -> void:
 	if stamp_mesh_instance == null:
 		return
-	var im := ImmediateMesh.new()
-	var half_s := stamp_scale * 0.5
-
-	# 2D Quad in XY plane facing +Z (normal)
-	var p_tl := Vector3(-half_s,  half_s, 0.0) # Top-Left: UV (0, 0)
-	var p_tr := Vector3( half_s,  half_s, 0.0) # Top-Right: UV (1, 0)
-	var p_br := Vector3( half_s, -half_s, 0.0) # Bottom-Right: UV (1, 1)
-	var p_bl := Vector3(-half_s, -half_s, 0.0) # Bottom-Left: UV (0, 1)
-
-	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Tri 1: p_tl, p_tr, p_br
-	im.surface_set_uv(Vector2(0, 0))
-	im.surface_add_vertex(p_tl)
-	im.surface_set_uv(Vector2(1, 0))
-	im.surface_add_vertex(p_tr)
-	im.surface_set_uv(Vector2(1, 1))
-	im.surface_add_vertex(p_br)
-
-	# Tri 2: p_tl, p_br, p_bl
-	im.surface_set_uv(Vector2(0, 0))
-	im.surface_add_vertex(p_tl)
-	im.surface_set_uv(Vector2(1, 1))
-	im.surface_add_vertex(p_br)
-	im.surface_set_uv(Vector2(0, 1))
-	im.surface_add_vertex(p_bl)
-	im.surface_end()
-
-	# Border outline
-	im.surface_begin(Mesh.PRIMITIVE_LINES)
-	im.surface_add_vertex(p_tl)
-	im.surface_add_vertex(p_tr)
-	im.surface_add_vertex(p_tr)
-	im.surface_add_vertex(p_br)
-	im.surface_add_vertex(p_br)
-	im.surface_add_vertex(p_bl)
-	im.surface_add_vertex(p_bl)
-	im.surface_add_vertex(p_tl)
-	im.surface_end()
-
-	stamp_mesh_instance.mesh = im
+	var qm := QuadMesh.new()
+	qm.size = Vector2(stamp_scale, stamp_scale)
+	stamp_mesh_instance.mesh = qm
 
 # ==============================================================================
 # Cursor Updates & Transform
@@ -399,45 +362,91 @@ func end_stroke() -> void:
 	stroke_dirty = false
 
 # ==============================================================================
-# Stamp Execution
-# ==============================================================================
-
 func apply_stamp() -> void:
-	if mode != Mode.STAMP or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
+	if mode != Mode.STAMP or target_mesh == null or not is_instance_valid(target_mesh) or not has_hit:
+		return
+	if stamp_texture == null:
 		return
 
-	var stamp_img := get_stamp_image()
-	if stamp_img == null:
+	# Compute canonical stamp basis on surface
+	var sbasis := PBSplat.get_stamp_basis(cursor_normal)
+	var u_right: Vector3 = sbasis["right"]
+	var v_up: Vector3 = sbasis["up"]
+	var n_axis: Vector3 = sbasis["normal"]
+
+	var rot_rad := deg_to_rad(stamp_rotation)
+	var rot_right := cos(rot_rad) * u_right + sin(rot_rad) * v_up
+	var rot_up := -sin(rot_rad) * u_right + cos(rot_rad) * v_up
+
+	var world_pos := cursor_point + n_axis * 0.002
+	var world_basis := Basis(rot_right, rot_up, n_axis)
+	var world_xf := Transform3D(world_basis, world_pos)
+
+	# Get or create PBStamps container child under target_mesh
+	var stamps_container := target_mesh.get_node_or_null("PBStamps") as Node3D
+	if stamps_container == null:
+		stamps_container = Node3D.new()
+		stamps_container.name = "PBStamps"
+		target_mesh.add_child(stamps_container)
+		var scene_root := target_mesh.get_tree().get_edited_scene_root() if target_mesh.is_inside_tree() else null
+		if scene_root != null:
+			stamps_container.owner = scene_root
+
+	# Create high-fidelity billboard decal quad
+	var stamp_node := MeshInstance3D.new()
+	stamp_node.name = "Stamp_%d" % (stamps_container.get_child_count() + 1)
+
+	var qm := QuadMesh.new()
+	qm.size = Vector2(stamp_scale, stamp_scale)
+	stamp_node.mesh = qm
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = stamp_texture
+	mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	mat.render_priority = 2
+	stamp_node.material_override = mat
+
+	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
+
+	# Store metadata for export baking
+	stamp_node.set_meta("stamp_scale", stamp_scale)
+	stamp_node.set_meta("stamp_rotation", stamp_rotation)
+	stamp_node.set_meta("stamp_opacity", stamp_opacity)
+	stamp_node.set_meta("stamp_texture_path", stamp_texture.resource_path)
+	stamp_node.set_meta("face_idx", target_face_idx)
+
+	if plugin != null and plugin.has_method("get_undo_redo"):
+		var undo = plugin.get_undo_redo()
+		if undo != null:
+			var scene_root := plugin.get_editor_interface().get_edited_scene_root()
+			undo.create_action("Add Stamp Decal", UndoRedo.MERGE_DISABLE, target_mesh)
+			undo.add_do_method(plugin, "_attach_detached", stamp_node, stamps_container)
+			undo.add_do_method(plugin, "_own_node", stamp_node)
+			undo.add_do_reference(stamp_node)
+			undo.add_undo_method(plugin, "_detach_node", stamp_node)
+			undo.commit_action()
+			stroke_committed.emit()
+			return
+
+	stamps_container.add_child(stamp_node)
+	var sr := target_mesh.get_tree().get_edited_scene_root() if target_mesh.is_inside_tree() else null
+	if sr != null:
+		stamp_node.owner = sr
+	stroke_committed.emit()
+
+## Removes all stamps under target_mesh's PBStamps container.
+func clear_all_stamps(mesh: PBMesh) -> void:
+	if mesh == null:
 		return
-
-	var data := target_mesh.pb_mesh_data
-	if target_face_idx < 0 or target_face_idx >= data.faces.size():
+	var container := mesh.get_node_or_null("PBStamps") as Node3D
+	if container == null:
 		return
-
-	var face := data.faces[target_face_idx]
-	if face == null:
-		return
-
-	var before := PBCommand.copy_mesh_data(data)
-
-	var splat_mat := _ensure_face_splat_material(target_mesh, face)
-	if splat_mat == null:
-		return
-
-	PBSplat.ensure_mesh_uv2(data)
-
-	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
-
-	# Stamp 1:1 directly onto the dedicated stamp layer on top of all splatting
-	var stamped := PBSplat.stamp_face(
-		data, face, splat_mat,
-		stamp_img, local_hit, stamp_scale, stamp_rotation, stamp_opacity
-	)
-	if stamped:
-		var after := PBCommand.copy_mesh_data(data)
-		_commit_mesh_action(target_mesh, "Stamp Texture", before, after)
-		stroke_committed.emit()
-
+	for c in container.get_children():
+		container.remove_child(c)
+		c.queue_free()
 func get_stamp_image() -> Image:
 	if _cached_stamp_image != null:
 		return _cached_stamp_image
