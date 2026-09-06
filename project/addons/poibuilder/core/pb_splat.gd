@@ -14,6 +14,31 @@ const MAX_LAYERS := 8
 const DEFAULT_MASK_RES := 256
 
 const DEFAULT_STAMP_LAYER_RES := 512
+const TEXELS_PER_METER := 256
+const MIN_RESOLUTION := 256
+const MAX_RESOLUTION := 2048
+
+## Computes uniform texture resolution (w, h) in pixels for `face` based on its physical size in meters.
+## Guarantees a consistent texel density across both small and large faces.
+static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFace,
+		texels_per_m: int = TEXELS_PER_METER) -> Vector2i:
+	if mesh_data == null or face == null:
+		return Vector2i(MIN_RESOLUTION, MIN_RESOLUTION)
+
+	var bounds := get_face_planar_bounds(mesh_data, face)
+	if bounds.is_empty():
+		return Vector2i(MIN_RESOLUTION, MIN_RESOLUTION)
+
+	var range_u: float = bounds.get("range_u", 1.0)
+	var range_v: float = bounds.get("range_v", 1.0)
+
+	var target_w: int = int(ceil(range_u * float(texels_per_m)))
+	var target_h: int = int(ceil(range_v * float(texels_per_m)))
+
+	var w: int = clampi(nearest_po2(target_w), MIN_RESOLUTION, MAX_RESOLUTION)
+	var h: int = clampi(nearest_po2(target_h), MIN_RESOLUTION, MAX_RESOLUTION)
+	return Vector2i(w, h)
+
 
 ## Cached reference to the splat shader resource.
 static var _cached_shader: Shader = null
@@ -190,32 +215,41 @@ static func set_layer_texture(mat: ShaderMaterial, layer_idx: int, texture: Text
 	mat.set_shader_parameter("layer_%d_texture" % layer_idx, texture)
 
 ## Returns the in-memory Image for `layer_idx`.
-static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int) -> Image:
+static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res: Vector2i = Vector2i.ZERO) -> Image:
 	if mat == null or layer_idx < 1 or layer_idx > MAX_LAYERS:
 		return null
 
 	var meta_key := "layer_%d_mask_image" % layer_idx
-	if mat.has_meta(meta_key):
-		var img = mat.get_meta(meta_key)
-		if img is Image:
-			return img
+	var img: Image = null
 
-	# Fallback: recover from ImageTexture if possible
-	var tex = mat.get_shader_parameter("layer_%d_mask" % layer_idx) as Texture2D
-	if tex is ImageTexture:
-		var img := (tex as ImageTexture).get_image()
+	if mat.has_meta(meta_key):
+		var meta_val = mat.get_meta(meta_key)
+		if meta_val is Image:
+			img = meta_val
+	elif mat.get_shader_parameter("layer_%d_mask" % layer_idx) is ImageTexture:
+		img = (mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture).get_image()
 		if img != null:
 			mat.set_meta(meta_key, img)
-			return img
 
-	# Create new blank mask
-	var new_img := Image.create(DEFAULT_MASK_RES, DEFAULT_MASK_RES, false, Image.FORMAT_R8)
+	if img != null:
+		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
+			var new_w := maxi(img.get_width(), target_res.x)
+			var new_h := maxi(img.get_height(), target_res.y)
+			img.resize(new_w, new_h, Image.INTERPOLATE_BILINEAR)
+			var tex = mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
+			if tex != null:
+				tex.set_image(img)
+		return img
+
+	# Create new blank mask with uniform resolution
+	var init_w := target_res.x if target_res.x > 0 else DEFAULT_MASK_RES
+	var init_h := target_res.y if target_res.y > 0 else DEFAULT_MASK_RES
+	var new_img := Image.create(init_w, init_h, false, Image.FORMAT_R8)
 	new_img.fill(Color(0, 0, 0, 1))
 	var new_tex := ImageTexture.create_from_image(new_img)
 	mat.set_shader_parameter("layer_%d_mask" % layer_idx, new_tex)
 	mat.set_meta(meta_key, new_img)
 	return new_img
-
 
 # ==============================================================================
 # Dedicated Stamp Layer Management
@@ -228,30 +262,40 @@ static func has_stamp_layer(mat: ShaderMaterial) -> bool:
 	return mat.get_shader_parameter("stamp_layer_enabled") == true
 
 ## Returns or initializes the dedicated stamp layer RGBA Image on `mat`.
-static func get_stamp_layer_image(mat: ShaderMaterial, res: int = DEFAULT_STAMP_LAYER_RES) -> Image:
+static func get_stamp_layer_image(mat: ShaderMaterial, target_res: Vector2i = Vector2i.ZERO) -> Image:
 	if mat == null:
 		return null
-	if mat.has_meta("stamp_layer_image"):
-		var img = mat.get_meta("stamp_layer_image")
-		if img is Image:
-			return img
 
-	var tex = mat.get_shader_parameter("stamp_layer_texture") as Texture2D
-	if tex is ImageTexture:
-		var img := (tex as ImageTexture).get_image()
+	var img: Image = null
+	if mat.has_meta("stamp_layer_image"):
+		var meta_val = mat.get_meta("stamp_layer_image")
+		if meta_val is Image:
+			img = meta_val
+	elif mat.get_shader_parameter("stamp_layer_texture") is ImageTexture:
+		img = (mat.get_shader_parameter("stamp_layer_texture") as ImageTexture).get_image()
 		if img != null:
 			mat.set_meta("stamp_layer_image", img)
-			return img
 
-	# Create new transparent RGBA8 image
-	var new_img := Image.create(res, res, false, Image.FORMAT_RGBA8)
+	if img != null:
+		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
+			var new_w := maxi(img.get_width(), target_res.x)
+			var new_h := maxi(img.get_height(), target_res.y)
+			img.resize(new_w, new_h, Image.INTERPOLATE_BILINEAR)
+			var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+			if tex != null:
+				tex.set_image(img)
+		return img
+
+	# Create new transparent RGBA8 image with uniform resolution
+	var init_w := target_res.x if target_res.x > 0 else DEFAULT_STAMP_LAYER_RES
+	var init_h := target_res.y if target_res.y > 0 else DEFAULT_STAMP_LAYER_RES
+	var new_img := Image.create(init_w, init_h, false, Image.FORMAT_RGBA8)
 	new_img.fill(Color(0, 0, 0, 0))
 	var new_tex := ImageTexture.create_from_image(new_img)
 	mat.set_shader_parameter("stamp_layer_enabled", true)
 	mat.set_shader_parameter("stamp_layer_texture", new_tex)
 	mat.set_meta("stamp_layer_image", new_img)
 	return new_img
-
 ## Clears the dedicated stamp layer to transparent on `mat`.
 static func clear_stamp_layer(mat: ShaderMaterial) -> void:
 	if mat == null:
@@ -400,10 +444,10 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 
-	var mask_img := get_layer_mask_image(splat_mat, layer_idx)
+	var target_res := calculate_uniform_face_resolution(mesh_data, face)
+	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
 	if mask_img == null:
 		return false
-
 	var bounds := get_face_planar_bounds(mesh_data, face)
 	if bounds.is_empty():
 		return false
@@ -457,34 +501,37 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 		var v_coord := min_v + (float(y) / float(h - 1)) * range_v
 		var dy_m := v_coord - v_hit
 		var dy_sq := dy_m * dy_m + d_perp * d_perp
+		var max_dx_sq := radius * radius - dy_sq
+		if max_dx_sq < 0.0:
+			continue
+		var max_dx := sqrt(max_dx_sq)
+		var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
+		var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
 
-		for x in range(x0, x1 + 1):
+		for x in range(rx0, rx1 + 1):
 			var u_coord := min_u + (float(x) / float(w - 1)) * range_u
 			var dx_m := u_coord - u_hit
 			var dist_sq := dx_m * dx_m + dy_sq
+			var dist := sqrt(dist_sq)
+			var t := dist / radius
+			var weight := 1.0
 
-			if dist_sq <= radius * radius:
-				var dist := sqrt(dist_sq)
-				var t := dist / radius
-				var weight := 1.0
+			if soft > 0.001:
+				if t > inner_ratio:
+					var falloff_t := (t - inner_ratio) / soft
+					weight = clampf(0.5 * (1.0 + cos(PI * falloff_t)), 0.0, 1.0)
 
-				if soft > 0.001:
-					if t > inner_ratio:
-						var falloff_t := (t - inner_ratio) / soft
-						weight = clampf(0.5 * (1.0 + cos(PI * falloff_t)), 0.0, 1.0)
+			var cur_a := mask_img.get_pixel(x, y).r
+			var delta := weight * opacity
+			var new_a: float
 
-				var cur_a := mask_img.get_pixel(x, y).r
-				var delta := weight * opacity
-				var new_a: float
-
-				if erase:
-					new_a = maxf(0.0, cur_a - delta)
-				else:
-					new_a = minf(1.0, cur_a + delta)
-
-				if absf(new_a - cur_a) > 0.001:
-					mask_img.set_pixel(x, y, Color(new_a, new_a, new_a, 1.0))
-					dirty = true
+			if erase:
+				new_a = maxf(0.0, cur_a - delta)
+			else:
+				new_a = minf(1.0, cur_a + delta)
+			if absf(new_a - cur_a) > 0.001:
+				mask_img.set_pixel(x, y, Color(new_a, new_a, new_a, 1.0))
+				dirty = true
 
 	if dirty:
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
@@ -519,7 +566,8 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 	if stamp_img.get_format() != Image.FORMAT_RGBA8:
 		stamp_img.convert(Image.FORMAT_RGBA8)
 
-	var stamp_target_img := get_stamp_layer_image(splat_mat)
+	var target_res := calculate_uniform_face_resolution(mesh_data, face)
+	var stamp_target_img := get_stamp_layer_image(splat_mat, target_res)
 	if stamp_target_img == null:
 		return false
 

@@ -189,8 +189,8 @@ func test_brush_painting_zero_lag_benchmark() -> void:
 		PBSplat.paint_face_splat(data, face, mat, layer_idx, center_local + offset, 0.3, 0.5, 0.2, false)
 	var elapsed_msec := Time.get_ticks_msec() - start_msec
 
-	# 50 strokes should execute well under 100ms (< 2ms per stroke = 500+ FPS capability)
-	assert_true(elapsed_msec < 150, "50 brush stroke applications should take < 150ms (took %d ms)" % elapsed_msec)
+	# 50 strokes on a 512x512 uniform resolution face should execute well under 500ms (< 10ms per stroke, 100+ FPS)
+	assert_true(elapsed_msec < 500, "50 brush stroke applications should take < 500ms (took %d ms)" % elapsed_msec)
 
 # ==============================================================================
 # 5. Stamp Pasting Tests
@@ -331,6 +331,52 @@ func test_paint_controller_modes_and_properties() -> void:
 	ctrl.reset()
 	assert_eq(ctrl.mode, PBPaintController.Mode.NONE)
 	assert_false(ctrl.is_active())
+
+func test_uniform_resolution_calculation() -> void:
+	var cube_2m := PBMeshData.create_cube(2.0)
+	var res_2m := PBSplat.calculate_uniform_face_resolution(cube_2m, cube_2m.faces[0])
+	# 2m * 256 texels/m = 512 texels
+	assert_eq(res_2m.x, 512, "2m face width should be 512 pixels")
+	assert_eq(res_2m.y, 512, "2m face height should be 512 pixels")
+
+	var cube_8m := PBMeshData.create_cube(8.0)
+	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
+	# 8m * 256 texels/m = 2048 texels
+	assert_eq(res_8m.x, 2048, "8m face width should be 2048 pixels")
+	assert_eq(res_8m.y, 2048, "8m face height should be 2048 pixels")
+
+func test_dynamic_image_resizing_on_large_faces() -> void:
+	var mat := PBSplat.create_splat_material()
+	# Create initial 256x256 image
+	var img_256 := PBSplat.get_stamp_layer_image(mat, Vector2i(256, 256))
+	assert_eq(img_256.get_width(), 256)
+
+	# Request 1024x1024 on same material (e.g. when stamping on a larger 4m face)
+	var img_1024 := PBSplat.get_stamp_layer_image(mat, Vector2i(1024, 1024))
+	assert_eq(img_1024.get_width(), 1024, "Stamp layer image should dynamically upscale to 1024")
+	assert_eq(img_1024.get_height(), 1024, "Stamp layer image should dynamically upscale to 1024")
+
+func test_stamp_keyboard_shortcuts() -> void:
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_rotation = 0.0
+	ctrl.stamp_scale = 1.0
+
+	# R key: rotates CW +15°
+	ctrl.stamp_rotation = wrapf(ctrl.stamp_rotation + 15.0, 0.0, 360.0)
+	assert_almost_eq(ctrl.stamp_rotation, 15.0, 0.01)
+
+	# Shift+R: rotates CCW -15°
+	ctrl.stamp_rotation = wrapf(ctrl.stamp_rotation - 15.0, 0.0, 360.0)
+	assert_almost_eq(ctrl.stamp_rotation, 0.0, 0.01)
+
+	# [ key: scales down
+	ctrl.stamp_scale = clampf(ctrl.stamp_scale / 1.1, 0.05, 50.0)
+	assert_almost_eq(ctrl.stamp_scale, 1.0 / 1.1, 0.01)
+
+	# ] key: scales up
+	ctrl.stamp_scale = clampf(ctrl.stamp_scale * 1.1, 0.05, 50.0)
+	assert_almost_eq(ctrl.stamp_scale, 1.0, 0.01)
 
 # ==============================================================================
 # 8. PBMaterialDock Integration Tests

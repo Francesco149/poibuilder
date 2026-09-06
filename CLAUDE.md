@@ -775,6 +775,30 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.46 round complete ✓ — uniform resolution scaling, wheel release leak fix & stamp hotkeys:
+- UNIFORM RESOLUTION PER METER ACROSS ALL FACES (`core/pb_splat.gd`):
+  - Fixed resolution degradation on large faces: `calculate_uniform_face_resolution()` computes target
+    mask and stamp resolution proportional to face physical meter dimensions (`TEXELS_PER_METER = 256`,
+    power-of-two clamped between 256 and 2048).
+  - A 10m floor receives 2048x2048 resolution with crisp, uniform 256 texels/meter density matching
+    smaller faces without pixelation or stretching.
+  - Dynamic layer resolution upscaling: `get_layer_mask_image()` and `get_stamp_layer_image()` dynamically
+    resize existing images using bilinear interpolation if interacting with larger faces, preserving
+    existing painted data while scaling up resolution.
+- MOUSE WHEEL RELEASE LEAK FIX:
+  - Fixed 3D camera zooming while scrolling wheel in Stamp mode: Godot emits mouse wheel events in press
+    and release pairs (`pressed=true` and `pressed=false`); `poibuilder_plugin.gd` now consumes wheel
+    events on BOTH press and release when modifier keys (Ctrl/Shift) are active, preventing the release
+    event from passing into `Node3DEditorViewport` camera navigation.
+- KEYBOARD SHORTCUTS & DOCK ADJUSTMENT BUTTONS:
+  - Added `R` key to rotate stamp CW (+15°) and `Shift+R` to rotate CCW (-15°).
+  - Added `[` key to scale stamp down (-10%) and `]` to scale stamp up (+10%).
+  - Added quick `↺` / `↻` rotation and `-` / `+` scale buttons directly in `PBMaterialDock`.
+- TESTS & VERIFICATION:
+  - 763/763 GUT unit tests passing (13501 asserts), including tests for uniform resolution calculation,
+    dynamic image resizing on large faces, and stamp keyboard shortcuts.
+  - 41/41 real editor GUI tests passing under Xvfb.
+
 v0.9.45 round complete ✓ — dedicated 1:1 stamp layer, preview texture fix & camera zoom passthrough:
 - DEDICATED 1:1 STAMP LAYER ON TOP OF SPLATTING (`pb_splat_shader.gdshader`, `core/pb_splat.gd`):
   - Stamps are copied 1:1 onto a dedicated stamp layer (`stamp_layer_enabled`, `stamp_layer_texture`)

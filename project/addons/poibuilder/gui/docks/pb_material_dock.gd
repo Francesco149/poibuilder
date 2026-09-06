@@ -478,22 +478,60 @@ func _build_ui() -> void:
 	stamp_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	stamp_grid.add_child(_make_label("Scale:"))
+	var scale_box := HBoxContainer.new()
+	scale_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var btn_scale_dn := Button.new()
+	btn_scale_dn.text = "-"
+	btn_scale_dn.tooltip_text = "Scale Down ([ key or Ctrl+Wheel)"
+	btn_scale_dn.pressed.connect(func():
+		if paint_controller != null:
+			paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
+	)
+	scale_box.add_child(btn_scale_dn)
 	_spin_stamp_scale = _make_spinbox(0.05, 50.0, 0.1, 1.0)
 	_spin_stamp_scale.suffix = "m"
 	_spin_stamp_scale.value_changed.connect(func(v):
 		if paint_controller != null and not _syncing:
 			paint_controller.stamp_scale = v
 	)
-	stamp_grid.add_child(_spin_stamp_scale)
+	scale_box.add_child(_spin_stamp_scale)
+	var btn_scale_up := Button.new()
+	btn_scale_up.text = "+"
+	btn_scale_up.tooltip_text = "Scale Up (] key or Ctrl+Wheel)"
+	btn_scale_up.pressed.connect(func():
+		if paint_controller != null:
+			paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
+	)
+	scale_box.add_child(btn_scale_up)
+	stamp_grid.add_child(scale_box)
 
 	stamp_grid.add_child(_make_label("Rotation:"))
+	var rot_box := HBoxContainer.new()
+	rot_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var btn_rot_ccw := Button.new()
+	btn_rot_ccw.text = "↺"
+	btn_rot_ccw.tooltip_text = "Rotate CCW -15° (Shift+R)"
+	btn_rot_ccw.pressed.connect(func():
+		if paint_controller != null:
+			paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
+	)
+	rot_box.add_child(btn_rot_ccw)
 	_spin_stamp_rotation = _make_spinbox(0.0, 360.0, 15.0, 0.0)
 	_spin_stamp_rotation.suffix = "°"
 	_spin_stamp_rotation.value_changed.connect(func(v):
 		if paint_controller != null and not _syncing:
 			paint_controller.stamp_rotation = v
 	)
-	stamp_grid.add_child(_spin_stamp_rotation)
+	rot_box.add_child(_spin_stamp_rotation)
+	var btn_rot_cw := Button.new()
+	btn_rot_cw.text = "↻"
+	btn_rot_cw.tooltip_text = "Rotate CW +15° (R key)"
+	btn_rot_cw.pressed.connect(func():
+		if paint_controller != null:
+			paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
+	)
+	rot_box.add_child(btn_rot_cw)
+	stamp_grid.add_child(rot_box)
 
 	stamp_grid.add_child(_make_label("Opacity:"))
 	_spin_stamp_opacity = _make_spinbox(0.01, 1.0, 0.05, 1.0)
@@ -506,7 +544,7 @@ func _build_ui() -> void:
 	_stamp_tool_section.add_child(stamp_grid)
 
 	var stamp_hint := Label.new()
-	stamp_hint.text = "Hover mesh for live preview. LMB click to paste.\nShift+Wheel: Rotate (15°) | Ctrl+Wheel: Scale (10%)"
+	stamp_hint.text = "Hover mesh for live preview. Click to paste.\nRotate: R, Shift+R, Shift+Wheel | Scale: [, ], Ctrl+Wheel"
 	stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(stamp_hint)

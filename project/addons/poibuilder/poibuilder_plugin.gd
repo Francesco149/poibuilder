@@ -63,7 +63,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.45"
+const VERSION := "0.9.46"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -2002,23 +2002,29 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		return AFTER_GUI_INPUT_PASS
 
 	if event is InputEventMouseButton:
-		# Stamp Mode: Shift + Mouse Wheel rotates, Ctrl + Mouse Wheel scales
+		# Stamp Mode: Shift + Mouse Wheel rotates, Ctrl + Mouse Wheel scales.
+		# Consumes BOTH pressed=true and release (pressed=false) so the release event
+		# NEVER leaks to Godot's 3D camera controller.
 		# Plain Mouse Wheel without modifiers passes through to zoom the 3D scene!
-		if paint_controller.mode == PBPaintController.Mode.STAMP and event.pressed:
-			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		if paint_controller.mode == PBPaintController.Mode.STAMP:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				if event.ctrl_pressed:
-					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
+					if event.pressed:
+						if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+							paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
+						else:
+							paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
 					return AFTER_GUI_INPUT_STOP
 				elif event.shift_pressed:
-					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
+					if event.pressed:
+						if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+							paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
+						else:
+							paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
 					return AFTER_GUI_INPUT_STOP
-			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				if event.ctrl_pressed:
-					paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
-					return AFTER_GUI_INPUT_STOP
-				elif event.shift_pressed:
-					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
-					return AFTER_GUI_INPUT_STOP
+				else:
+					return AFTER_GUI_INPUT_PASS
+
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				# Make sure hit is up-to-date at click time
@@ -2043,7 +2049,19 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 			if material_dock != null:
 				material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			return AFTER_GUI_INPUT_STOP
-
+		elif paint_controller.mode == PBPaintController.Mode.STAMP:
+			if k.keycode == KEY_R:
+				if k.shift_pressed:
+					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation - 15.0, 0.0, 360.0)
+				else:
+					paint_controller.stamp_rotation = wrapf(paint_controller.stamp_rotation + 15.0, 0.0, 360.0)
+				return AFTER_GUI_INPUT_STOP
+			elif k.keycode == KEY_BRACKETLEFT:
+				paint_controller.stamp_scale = clampf(paint_controller.stamp_scale / 1.1, 0.05, 50.0)
+				return AFTER_GUI_INPUT_STOP
+			elif k.keycode == KEY_BRACKETRIGHT:
+				paint_controller.stamp_scale = clampf(paint_controller.stamp_scale * 1.1, 0.05, 50.0)
+				return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
 func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
