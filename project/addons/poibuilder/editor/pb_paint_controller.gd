@@ -138,6 +138,16 @@ var target_face_idx: int = -1
 var is_stroke_active: bool = false
 var stroke_dirty: bool = false
 var stroke_snapshot_before: PBMeshData = null
+# Per-stroke touch bookkeeping handed to PBSplat.paint_face_splat (replace
+# semantics for paint, once-per-pixel for erase). Fresh per stroke.
+var _stroke_ctx: Dictionary = {}
+# Dab spacing: the stroke only re-paints after the cursor traveled at least
+# this fraction of the brush radius from the last dab. Painting per raw mouse
+# motion event re-walks thousands of mask pixels per event at 256 texels/m —
+# spacing dabs keeps strokes continuous while capping the CPU cost per second.
+const DAB_SPACING_FRACTION := 0.2
+var _stroke_last_dab_local: Vector3 = Vector3.INF
+var _stroke_last_dab_mesh: PBMesh = null
 
 # Visual preview nodes
 var preview_root: Node3D = null
@@ -386,6 +396,9 @@ func begin_stroke() -> void:
 	is_stroke_active = true
 	stroke_dirty = false
 	stroke_snapshot_before = PBCommand.copy_mesh_data(target_mesh.pb_mesh_data)
+	_stroke_ctx = {}
+	_stroke_last_dab_local = Vector3.INF
+	_stroke_last_dab_mesh = null
 	# Ensure UV2 channel is present once at stroke begin (not per motion event)
 	PBSplat.ensure_mesh_uv2(target_mesh.pb_mesh_data)
 	apply_paint_stroke()
@@ -400,6 +413,15 @@ func apply_paint_stroke() -> void:
 	var face := data.faces[target_face_idx]
 	if face == null:
 		return
+
+	# Dab spacing: skip motion events that did not travel far enough from the
+	# last dab (a dab covering the brush footprint re-walks its pixels; at high
+	# motion-event rates that is pure redundant CPU on every event).
+	if _stroke_last_dab_mesh == target_mesh:
+		var spacing := maxf(brush_radius * DAB_SPACING_FRACTION, 0.01)
+		var local_now: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
+		if _stroke_last_dab_local.distance_squared_to(local_now) < spacing * spacing:
+			return
 
 	var splat_mat := _ensure_face_splat_material(target_mesh, face)
 	if splat_mat == null:
@@ -417,8 +439,12 @@ func apply_paint_stroke() -> void:
 	# Paint on target face under cursor
 	var modified := PBSplat.paint_face_splat(
 		data, face, splat_mat, active_layer_idx,
-		local_hit, brush_radius, brush_softness, brush_opacity, erase_mode
+		local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
+		_stroke_ctx
 	)
+
+	_stroke_last_dab_local = local_hit
+	_stroke_last_dab_mesh = target_mesh
 
 	if modified:
 		stroke_dirty = true
@@ -456,7 +482,10 @@ func apply_stamp() -> void:
 	var rot_up := -sin(rot_rad) * u_right + cos(rot_rad) * v_up
 
 	var world_pos := cursor_point + n_axis * 0.002
-	var world_basis := Basis(rot_right, rot_up, n_axis)
+	# Basis columns X/Y carry the FULL quad extent; the quad mesh itself is unit
+	# size. This makes the re-anchoring math (PBSplat.compute_stamp_anchor)
+	# shear-capable: a non-uniform face resize can stretch the decal.
+	var world_basis := Basis(rot_right * stamp_scale, rot_up * stamp_scale, n_axis)
 	var world_xf := Transform3D(world_basis, world_pos)
 
 	# Get or create PBStamps container child under target_mesh
@@ -469,11 +498,12 @@ func apply_stamp() -> void:
 		if scene_root != null:
 			stamps_container.owner = scene_root
 
-	# Create high-fidelity billboard decal quad
+	# Create high-fidelity billboard decal quad (unit size; extents live in the
+	# transform basis so anchors stay meaningful across face resizes)
 	var stamp_node := MeshInstance3D.new()
 	stamp_node.name = "Stamp_%d" % (stamps_container.get_child_count() + 1)
 	var qm := QuadMesh.new()
-	qm.size = Vector2(stamp_scale, stamp_scale)
+	qm.size = Vector2.ONE
 	stamp_node.mesh = qm
 
 	var dshader := get_decal_shader()
@@ -488,7 +518,9 @@ func apply_stamp() -> void:
 		var data := target_mesh.pb_mesh_data
 		if data != null and target_face_idx >= 0 and target_face_idx < data.faces.size():
 			var face := data.faces[target_face_idx]
-			var bounds := PBSplat.get_face_planar_bounds(data, face)
+			# Geometry bounds (not persisted splat_bounds): decals clip against
+			# the live face extent and follow resizes via PBMesh._refresh_stamps.
+			var bounds := PBSplat.get_face_planar_bounds(data, face, true)
 			mat.set_shader_parameter("face_u", bounds["u"])
 			mat.set_shader_parameter("face_v", bounds["v"])
 			mat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
@@ -507,12 +539,23 @@ func apply_stamp() -> void:
 
 	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
 
-	# Store metadata for export baking
+	# Store metadata for export baking (resolution-independent so the future
+	# bake step can re-rasterize at any tile size)
 	stamp_node.set_meta("stamp_scale", stamp_scale)
 	stamp_node.set_meta("stamp_rotation", stamp_rotation)
 	stamp_node.set_meta("stamp_opacity", stamp_opacity)
 	stamp_node.set_meta("stamp_texture_path", stamp_texture.resource_path)
 	stamp_node.set_meta("face_idx", target_face_idx)
+
+	# Face-anchored normalized placement: stamps grow/move with face resizes
+	# (PBMesh._refresh_stamps re-evaluates these anchors on every rebuild).
+	var anchor_data := target_mesh.pb_mesh_data
+	if anchor_data != null and target_face_idx >= 0 and target_face_idx < anchor_data.faces.size():
+		var anchor := PBSplat.compute_stamp_anchor(anchor_data, anchor_data.faces[target_face_idx], stamp_node.transform)
+		if not anchor.is_empty():
+			stamp_node.set_meta("anchor_center", anchor["center"])
+			stamp_node.set_meta("anchor_du", anchor["du"])
+			stamp_node.set_meta("anchor_dv", anchor["dv"])
 
 	if plugin != null and plugin.has_method("get_undo_redo"):
 		var undo = plugin.get_undo_redo()

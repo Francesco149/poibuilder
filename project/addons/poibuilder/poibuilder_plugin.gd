@@ -63,7 +63,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.49"
+const VERSION := "0.9.50"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)

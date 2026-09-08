@@ -432,7 +432,7 @@ func _build_ui() -> void:
 	var paint_action_row := HBoxContainer.new()
 	_chk_erase = CheckBox.new()
 	_chk_erase.text = "Erase (Subtract)"
-	_chk_erase.tooltip_text = "When enabled, brush subtracts alpha from the active layer mask"
+	_chk_erase.tooltip_text = "When enabled, the brush erases up to the Opacity amount per stroke on the active layer mask"
 	_chk_erase.toggled.connect(func(b):
 		if paint_controller != null and not _syncing:
 			paint_controller.erase_mode = b

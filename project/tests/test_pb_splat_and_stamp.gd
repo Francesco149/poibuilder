@@ -184,13 +184,15 @@ func test_brush_painting_zero_lag_benchmark() -> void:
 		center_local += data.positions[idx]
 	center_local /= float(idxs.size())
 	var start_msec: int = Time.get_ticks_msec()
-	for i in range(50):
+	for i in range(100):
 		var offset := Vector3(sin(i * 0.1) * 0.1, 0, cos(i * 0.1) * 0.1)
 		PBSplat.paint_face_splat(data, face, mat, layer_idx, center_local + offset, 0.3, 0.5, 0.2, false)
 	var elapsed_msec := Time.get_ticks_msec() - start_msec
 
-	# 50 strokes on a 512x512 uniform resolution face should execute well under 500ms (< 10ms per stroke, 100+ FPS)
-	assert_true(elapsed_msec < 500, "50 brush stroke applications should take < 500ms (took %d ms)" % elapsed_msec)
+	# 100 strokes on a 512x512 uniform resolution face: the byte-buffer + LUT
+	# inner loop runs ~6-8ms/dab worst-case (~600ms here); the pre-v0.9.50
+	# Color get/set loop was ~12ms/dab (~1200ms — decisively fails this).
+	assert_true(elapsed_msec < 800, "100 brush stroke applications should take < 800ms (took %d ms)" % elapsed_msec)
 
 # ==============================================================================
 # 5. Stamp Pasting Tests
@@ -430,3 +432,230 @@ func test_placeholder_textures_discovered_in_materials() -> void:
 
 	assert_true(has_pattern, "Palette should include circular_square_pattern texture")
 	assert_true(has_tapestry, "Palette should include tapestry texture")
+
+# ==============================================================================
+# 9. Replace-Mode Paint Semantics, Erase-Once, Face-Anchored Stamps (v0.9.50)
+# ==============================================================================
+
+func _face_center_local(data: PBMeshData, face: PBFace) -> Vector3:
+	var c := Vector3.ZERO
+	var idxs := face.get_distinct_indexes()
+	for idx in idxs:
+		c += data.positions[idx]
+	return c / float(idxs.size())
+
+## A later stroke with LOWER opacity REPLACES a stronger earlier stroke
+## (single-layer replace semantics), and repeated dabs of the same stroke do
+## not accumulate beyond the stroke's own target.
+func test_paint_lower_opacity_stroke_overwrites_stronger_one() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+	var mat := PBSplat.create_splat_material()
+	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, tex)
+	var center := _face_center_local(data, face)
+
+	# Stroke A: full opacity.
+	var stroke_a := {}
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 1.0, false, stroke_a)
+	var mask := PBSplat.get_layer_mask_image(mat, layer_idx)
+	var mid := mask.get_width() / 2
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 1.0, 0.05, "Full-opacity stroke paints to ~1.0")
+	# Re-dabbing the same stroke must not change anything (idempotent, no buildup).
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 1.0, false, stroke_a)
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 1.0, 0.05, "Same-stroke re-dab is idempotent")
+
+	# Stroke B: NEW stroke at 0.3 opacity overwrites down to ~0.3.
+	var stroke_b := {}
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.3, false, stroke_b)
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 0.3, 0.05, "Lower-opacity stroke overwrites the stronger one")
+
+## Within one stroke, the pixel keeps the stroke's MAX target (fringe-then-
+## center dabbing paints the bright center, not the dim fringe).
+func test_paint_within_stroke_keeps_max() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+	var mat := PBSplat.create_splat_material()
+	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, tex)
+	var center := _face_center_local(data, face)
+
+	# One stroke, dabs at increasing weight order (fringe weight 0.3 first via
+	# low opacity? no — same opacity, different weight: simulate by softness=0
+	# where weight is 1 everywhere; instead assert same-stroke monotonicity via
+	# two dabs of the SAME stroke with the stronger dab second).
+	var stroke := {}
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.5, 0.5, false, stroke)
+	var mask := PBSplat.get_layer_mask_image(mat, layer_idx)
+	var mid := mask.get_width() / 2
+	var after_first: float = mask.get_pixel(mid, mid).r
+	# Stronger second dab of the SAME stroke raises the pixel.
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.9, false, stroke)
+	var after_second: float = mask.get_pixel(mid, mid).r
+	assert_true(after_second > after_first, "Within-stroke dab may raise the pixel (max semantics)")
+	# A weaker dab of the SAME stroke must NOT dim it back down.
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.1, false, stroke)
+	assert_almost_eq(mask.get_pixel(mid, mid).r, after_second, 0.02, "Within-stroke weak dab does not dim the stroke's max")
+
+## The eraser applies its opacity exactly ONCE per pixel per stroke: slow
+## re-tracing within one stroke cannot drain the pixel further, but a NEW
+## stroke erases another step.
+func test_erase_applies_opacity_once_per_stroke() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+	var mat := PBSplat.create_splat_material()
+	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, tex)
+	var center := _face_center_local(data, face)
+
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 1.0, false, {})
+	var mask := PBSplat.get_layer_mask_image(mat, layer_idx)
+	var mid := mask.get_width() / 2
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 1.0, 0.05)
+
+	var erase_stroke := {}
+	for i in range(5):
+		PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.25, true, erase_stroke)
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 0.75, 0.05,
+		"0.25-opacity erase applied 5x within ONE stroke subtracts exactly once")
+
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.25, true, {})
+	assert_almost_eq(mask.get_pixel(mid, mid).r, 0.5, 0.05,
+		"A NEW stroke erases another 0.25 step")
+
+## Stamps carry a normalized face anchor; re-evaluating the anchor against the
+## CURRENT geometry reproduces the stored transform (roundtrip).
+func test_stamp_anchor_roundtrip() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_scale = 0.8
+	ctrl.stamp_rotation = 30.0
+	ctrl.update_cursor(Vector3(0.3, 1.0, 0.2), Vector3.UP, cube, 4)
+	ctrl.apply_stamp()
+
+	var stamps := cube.get_node_or_null("PBStamps")
+	assert_not_null(stamps)
+	assert_eq(stamps.get_child_count(), 1)
+	var decal := stamps.get_child(0) as MeshInstance3D
+	assert_true(decal.has_meta("anchor_center"), "Stamp should carry a normalized anchor_center")
+	assert_true(decal.has_meta("anchor_du") and decal.has_meta("anchor_dv"))
+	assert_true(decal.mesh is QuadMesh)
+	assert_almost_eq((decal.mesh as QuadMesh).size.x, 1.0, 0.001, "Stamp quad is unit size; extents live in the basis")
+
+	var data := cube.pb_mesh_data
+	var face := data.faces[4]
+	var res := PBSplat.stamp_transform_from_anchor(data, face, {
+		"center": decal.get_meta("anchor_center"),
+		"du": decal.get_meta("anchor_du"),
+		"dv": decal.get_meta("anchor_dv"),
+	})
+	assert_false(res.is_empty(), "Anchor must produce a transform")
+	var xf: Transform3D = res["transform"]
+	assert_almost_eq(xf.origin.distance_to(decal.transform.origin), 0.0, 0.001, "Anchor reproduces the stamp center")
+	assert_almost_eq(xf.basis.x.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent")
+	assert_almost_eq(xf.basis.y.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent (y)")
+
+## Resizing the face GROWS the stamp (the v0.9.49 complaint: stamps stayed at
+## their authored world size while the face resized under them).
+func test_stamp_grows_when_face_resized() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_scale = 0.5
+	ctrl.stamp_rotation = 0.0
+	ctrl.update_cursor(Vector3(0.0, 1.0, 0.0), Vector3.UP, cube, 4)
+	ctrl.apply_stamp()
+
+	var decals := cube.get_node_or_null("PBStamps")
+	var decal := decals.get_child(0) as MeshInstance3D
+	var before_extent: float = decal.transform.basis.x.length()
+	var before_pos: Vector3 = decal.transform.origin
+
+	# Uniformly double the top face (face 4) about its in-plane center.
+	var data := cube.pb_mesh_data
+	var face := data.faces[4]
+	var center := _face_center_local(data, face)
+	for idx in face.get_distinct_indexes():
+		data.positions[idx] = center + (data.positions[idx] - center) * 2.0
+	cube.rebuild()
+
+	var after_extent: float = decal.transform.basis.x.length()
+	assert_almost_eq(after_extent, before_extent * 2.0, 0.02,
+		"Doubling the face doubles the stamp extent")
+	assert_almost_eq(decal.transform.origin.distance_to(before_pos), 0.0, 0.001,
+		"Centered face growth keeps the stamp centered")
+
+	# Non-uniform growth: stretch the face 2x along +X only -> stamp shears/stretches
+	# along that axis only.
+	var x_extent_before: float = decal.transform.basis.x.length()
+	var y_extent_before: float = decal.transform.basis.y.length()
+	for idx in face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		data.positions[idx] = center + Vector3((p - center).x * 4.0, (p - center).y, (p - center).z)
+	cube.rebuild()
+	assert_true(decal.transform.basis.x.length() > x_extent_before * 1.5,
+		"Non-uniform face stretch grows the stamp along the stretched axis")
+	assert_true(decal.transform.basis.y.length() < y_extent_before * 1.3,
+		"The unstretched axis does not grow")
+
+## The export-facing collector returns plain, node-free stamp records.
+func test_collect_stamp_data_exports_anchors() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	var stamp_tex := ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_texture = stamp_tex
+	ctrl.stamp_opacity = 0.8
+	ctrl.update_cursor(Vector3(0.0, 1.0, 0.0), Vector3.UP, cube, 4)
+	ctrl.apply_stamp()
+
+	var collected := PBSplat.collect_stamp_data(cube)
+	assert_eq(collected.size(), 1, "collect_stamp_data returns one record per anchored stamp")
+	var rec: Dictionary = collected[0]
+	assert_eq(rec["face_idx"], 4)
+	assert_true(rec["anchor_center"] is Vector2)
+	assert_true(rec["anchor_du"] is Vector2 and rec["anchor_dv"] is Vector2)
+	assert_almost_eq(rec["opacity"], 0.8, 0.001)
+	# Records are export-friendly: u,v of a unit-square anchor of a centered
+	# stamp on a 2m top face sits at the face center.
+	assert_almost_eq((rec["anchor_center"] as Vector2).x, 0.5, 0.05)
+	assert_almost_eq((rec["anchor_center"] as Vector2).y, 0.5, 0.05)
+
+## The export-facing face paint state collector returns base material + layers
+## + normalized planar bounds for a painted face, and {} for an unpainted one.
+func test_collect_face_paint_state_exports_layers_and_bounds() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+
+	# Unpainted face: stock material -> no paint state.
+	assert_true(PBSplat.collect_face_paint_state(data, face).is_empty(),
+		"Unpainted face exports no paint state")
+
+	# Paint one layer.
+	var mat := PBSplat.create_splat_material()
+	var layer_tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, layer_tex)
+	data.set_face_material(face, mat)
+	var center := _face_center_local(data, face)
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.5, 0.6, false, {})
+
+	var state := PBSplat.collect_face_paint_state(data, face)
+	assert_false(state.is_empty(), "Painted face exports paint state")
+	assert_eq((state["layers"] as Array).size(), 1, "One enabled layer exported")
+	var layer0: Dictionary = (state["layers"] as Array)[0]
+	assert_eq(layer0["slot"], layer_idx)
+	assert_not_null(layer0["mask_image"], "Layer mask image must be exported for baking")
+	var bounds: Dictionary = state["planar_bounds"]
+	assert_true(bounds.has("u") and bounds.has("v") and bounds.has("range_u"),
+		"Planar bounds must be exported (normalized mapping for baking)")
+	assert_true(bounds["range_u"] > 0.0 and bounds["range_v"] > 0.0)

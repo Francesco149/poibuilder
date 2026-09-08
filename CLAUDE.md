@@ -775,6 +775,60 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.50 round complete ✓ — paint perf/semantics rework, face-anchored stamps, export-bake seam:
+- PAINT HOT LOOP REWRITE (`PBSplat.paint_face_splat` byte-buffer + LUT + dab spacing):
+  - Root cause of cube-face lag (measured: ~12ms/dab on a 2m face vs ~3ms on a 20m floor): a dab
+    covers a much larger FRACTION of a small face's mask (256 texels/m uniform → 0.4m dab =
+    ~200px footprint on a 512² mask), and the inner loop paid per-pixel `Image.get_pixel`/
+    `set_pixel` Color boxing. The loop now walks the raw R8 `PackedByteArray` with a cached
+    brush-falloff LUT indexed by SQUARED distance (no sqrt/cos/division per pixel;
+    `_get_brush_lut(softness)` caches per quantized softness) plus incremental coordinate
+    accumulation: ~40% faster per dab, and `PBPaintController` spaces dabs at 20% of the brush
+    radius (`DAB_SPACING_FRACTION`) so high-rate mouse-motion events no longer re-walk the same
+    footprint dozens of times per stroke.
+  - Byte writes use `Image.get_data()`/`set_data()` around the loop; `ImageTexture.update()`
+    still uploads in place, skipped entirely when a dab changed nothing.
+- REPLACE-MODE PAINT SEMANTICS (per-stroke via `stroke_ctx` Dictionary the controller hands
+  down, fresh per `begin_stroke`, keyed by mask image id + resolution):
+  - Paint: within-stroke the pixel keeps the stroke's MAX target (fringe-then-center dabs still
+    brighten); across strokes the stroke OVERWRITES absolutely — a 0.3-opacity stroke painted
+    over a 1.0 area now REPLACES it to 0.3 (single-layer mental model).
+  - Erase: subtracts `weight*opacity` EXACTLY ONCE per pixel per stroke — opacity is the real
+    erase strength; slow re-tracing within one stroke no longer drains pixels to 0 regardless
+    of opacity. Regression tests: test_paint_lower_opacity_stroke_overwrites_stronger_one,
+    test_paint_within_stroke_keeps_max, test_erase_applies_opacity_once_per_stroke.
+  - Minor intentional shift: the boundary pixel at exactly dist==radius with softness=0 no
+    longer paints full-strength (hard brushes had a full-alpha rim ring).
+- FACE-ANCHORED STAMPS (`PBSplat.compute_stamp_anchor` + `stamp_transform_from_anchor`,
+  `PBMesh._refresh_stamps` called from rebuild()/rebuild_positions() — live during drags):
+  - New stamps store a NORMALIZED face-planar anchor (`anchor_center` Vector2 + two normalized
+    half-edge vectors `anchor_du`/`anchor_dv`, computed against CURRENT GEOMETRY bounds, NOT the
+    persistent splat_bounds) plus the existing texture/opacity/scale/rotation metas. Put
+    differently: stamps now GROW AND MOVE when the face is resized (uniform and non-uniform —
+    the basis may shear; the unit quad + decal shader sample by UV so texture fill stays 1:1),
+    and stay clipped to the live face bounds (`face_*` shader uniforms refreshed with the bounds).
+  - Stamps are now UNIT QuadMesh (size 1x1) with the extent carried in the transform basis
+    columns — required for shear-capable re-anchoring. Pre-0.9.50 stamps (QuadMesh(s,s), no
+    anchor metas) are left untouched and simply don't track resizes.
+  - GOTCHA pinned by the GUI harness: compute_stamp_anchor PROJECTION is only meaningful when
+    the cursor hit is coherent (point+normal+face_idx from one face — true for real picks; the
+    harness originally stamped a side face with an UP-cursor and the anchor correctly degenerated).
+- DECAL CLIP BOUNDS now use geometry bounds (`get_face_planar_bounds(..., force_geometry=true)`)
+  instead of persistent splat_bounds. SPLAT MASK policy unchanged: masks NEVER stretch — their
+  normalized space is anchored to `face.splat_bounds`, persisted at first paint.
+- EXPORT-BAKE SEAM (consumed by the future retro exporter, not yet built):
+  - `PBSplat.collect_face_paint_state(mesh_data, face) -> Dictionary`: base texture path/color,
+    per-layer {slot, texture path, color, roughness, mask Image}, baked stamp layer image, and the
+    normalized planar bounds — the tile-baker needs nothing else. {} for unpainted faces.
+  - `PBSplat.collect_stamp_data(mesh) -> Array`: one node-free record per anchored stamp:
+    texture path, face_idx, normalized anchor (resolution-independent — re-rasterizable at any
+    export tile size), opacity, scale, rotation.
+  - Remaining future bake inputs already exist: UV2 masks are per-face R8 images at uniform
+    texel density with persistent bounds, materials are per-face via PBMeshData slots, and
+    stamps double their metadata for both visual decals and deterministic bakes.
+- Tests: 770/770 GUT (+7), 42/42 real-editor GUI tests under Xvfb (+1 stamp-anchor tracking
+  test that resizes a stamped face and asserts the decal extent doubles).
+
 v0.9.49 round complete ✓ — replace-mode paint opacity, inspector textbox styling & face-bounds decal clipping:
 - REPLACE-MODE PAINT ALPHA IN PBSplat (`core/pb_splat.gd`):
   - Fixed opacity not doing anything when dragging over the same spot: paint replaces layer contents with

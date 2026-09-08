@@ -114,6 +114,7 @@ func rebuild() -> void:
 	mesh = pb_mesh_data.to_array_mesh()
 	_needs_rebuild = false
 	_update_collider()
+	_refresh_stamps()
 ## Fast-path rebuild for position-only edits (active element dragging).
 ## Reuses precompiled submesh index buffers since topology and material
 ## assignments do not change during vertex movement.
@@ -124,6 +125,48 @@ func rebuild_positions() -> void:
 		return
 	mesh = pb_mesh_data.to_array_mesh(null, true)
 	_needs_rebuild = false
+	_refresh_stamps()
+
+const STAMP_CONTAINER_NAME := "PBStamps"
+
+## Re-evaluates every face-anchored stamp decal under PBStamps against the
+## CURRENT geometry (stamps grow/shrink/move with face resizes and edits).
+## Cheap no-op when no anchored stamps exist. Runs on rebuild() and
+## rebuild_positions() so decals track live drags too.
+func _refresh_stamps() -> void:
+	if pb_mesh_data == null:
+		return
+	var container := get_node_or_null(STAMP_CONTAINER_NAME)
+	if container == null:
+		return
+	for stamp in container.get_children():
+		var mi := stamp as MeshInstance3D
+		if mi == null or not stamp.has_meta("anchor_center"):
+			continue
+		var fidx: int = int(stamp.get_meta("face_idx", -1))
+		if fidx < 0 or fidx >= pb_mesh_data.faces.size():
+			continue
+		var face := pb_mesh_data.faces[fidx]
+		if face == null:
+			continue
+		var res := PBSplat.stamp_transform_from_anchor(pb_mesh_data, face, {
+			"center": stamp.get_meta("anchor_center"),
+			"du": stamp.get_meta("anchor_du"),
+			"dv": stamp.get_meta("anchor_dv"),
+		})
+		if res.is_empty():
+			continue
+		mi.transform = res["transform"]
+		# Keep the decal shader's face-edge clipping aligned with the live
+		# geometry bounds (the stamp may partially overhang a resized face).
+		if mi.material_override is ShaderMaterial:
+			var sm := mi.material_override as ShaderMaterial
+			var b: Dictionary = res["bounds"]
+			sm.set_shader_parameter("face_u", b["u"])
+			sm.set_shader_parameter("face_v", b["v"])
+			sm.set_shader_parameter("face_bounds", Vector4(b["min_u"], b["max_u"], b["min_v"], b["max_v"]))
+			if is_inside_tree():
+				sm.set_shader_parameter("mesh_to_world", global_transform)
 
 # ==============================================================================
 # Convenience Factory Methods

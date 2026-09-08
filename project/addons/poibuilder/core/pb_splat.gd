@@ -42,6 +42,33 @@ static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFac
 ## Cached reference to the splat shader resource.
 static var _cached_shader: Shader = null
 
+## Brush falloff lookup table cache, keyed by quantized softness.
+## The LUT maps SQUARED normalized distance t^2 (in [0,1)) to the brush weight,
+## so the inner paint loop needs no sqrt/cos per pixel — the dominant cost at
+## the uniform 256 texels/m mask density (a 0.4m dab on a 2m face walks ~40k
+## pixels at every mouse motion event).
+static var _brush_lut_cache: Dictionary = {}
+const BRUSH_LUT_SIZE := 1024
+
+static func _get_brush_lut(softness: float) -> PackedFloat32Array:
+	var key := int(round(softness * 1000.0))
+	var lut: PackedFloat32Array = _brush_lut_cache.get(key, PackedFloat32Array())
+	if lut.size() == BRUSH_LUT_SIZE:
+		return lut
+	var soft := clampf(softness, 0.0, 1.0)
+	var inner_ratio := 1.0 - soft
+	lut = PackedFloat32Array()
+	lut.resize(BRUSH_LUT_SIZE)
+	for i in range(BRUSH_LUT_SIZE):
+		# Table index encodes t^2; evaluate the falloff at t = sqrt(i / size).
+		var t := sqrt(float(i) / float(BRUSH_LUT_SIZE))
+		var weight := 1.0
+		if soft > 0.001 and t > inner_ratio:
+			weight = clampf(0.5 * (1.0 + cos(PI * (t - inner_ratio) / soft)), 0.0, 1.0)
+		lut[i] = weight
+	_brush_lut_cache[key] = lut
+	return lut
+
 # ==============================================================================
 ## Returns an orthonormal right-handed stamp basis (right, up, normal) for any surface normal.
 ## Guarantees that:
@@ -338,7 +365,13 @@ static func remove_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 ## - "normal": Vector3 face normal
 ## - "min_u", "max_u", "range_u": float
 ## - "min_v", "max_v", "range_v": float
-static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace) -> Dictionary:
+##
+## SPLAT RESIZE POLICY: by default a face's splat_bounds PERSIST from the first
+## paint (see PBFace.splat_bounds), so splat masks do not stretch when geometry
+## is resized later. Callers that must track the CURRENT geometry (stamp
+## anchors, decal clipping bounds) pass force_geometry = true, which also skips
+## writing face.splat_bounds so it never poisons the persistent mask record.
+static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_geometry: bool = false) -> Dictionary:
 	var result: Dictionary = {}
 	if mesh_data == null or face == null:
 		return result
@@ -373,12 +406,12 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace) -> Dicti
 			min_v = minf(min_v, v_val)
 			max_v = maxf(max_v, v_val)
 
-	if face.splat_bounds.size() == 4:
+	if face.splat_bounds.size() == 4 and not force_geometry:
 		min_u = face.splat_bounds[0]
 		max_u = face.splat_bounds[1]
 		min_v = face.splat_bounds[2]
 		max_v = face.splat_bounds[3]
-	else:
+	elif not force_geometry:
 		face.splat_bounds = PackedFloat32Array([min_u, max_u, min_v, max_v])
 
 	var range_u := max_u - min_u
@@ -434,8 +467,23 @@ static func ensure_mesh_uv2(mesh_data: PBMeshData) -> void:
 # ==============================================================================
 
 ## Paints on a face's splat layer with an adjustable brush radius and softness.
-## Highly optimized: computes only the affected 2D bounding box in the mask image
-## and uploads in-place via ImageTexture.update(). Zero lag, 60+ FPS.
+## Highly optimized: the pixel walk runs on the raw R8 byte buffer (no per-pixel
+## Color boxing), only the affected 2D bounding box is touched, and the mask is
+## uploaded in-place via ImageTexture.update().
+##
+## STROKE SEMANTICS (single-layer replace mode):
+## - Paint is an OVERWRITE ("replace"): within a stroke the pixel value is the
+##   stroke's max target (max of weight*opacity over touches); a NEW stroke with
+##   lower opacity therefore REPLACES a previously painted stronger area instead
+##   of being absorbed by it. Correct mental model for painting one layer.
+## - Erase applies its ONCE per pixel per stroke (subtractive): opacity is the
+##   real erase strength — slow motion in one stroke can no longer drain a pixel
+##   to zero regardless of opacity.
+##
+## Per-pixel once-per-stroke bookkeeping lives in `stroke_ctx`: pass the SAME
+## Dictionary for every dab of one stroke (the controller makes a fresh one in
+## begin_stroke) and a fresh/empty one for an independent stroke. Keyed by mask
+## image instance id, auto-rebuilt if the mask resolution changed.
 ##
 ## Parameters:
 ## - `hit_point_local`: Raycast hit point in node-local 3D coordinates.
@@ -447,7 +495,7 @@ static func ensure_mesh_uv2(mesh_data: PBMeshData) -> void:
 ## Returns true if the mask was modified.
 static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, hit_point_local: Vector3, radius: float, softness: float,
-		opacity: float, erase: bool = false) -> bool:
+		opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 
@@ -502,11 +550,36 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 
 	var dirty := false
 	var soft := clampf(softness, 0.0, 1.0)
-	var inner_ratio := 1.0 - soft
+	var inv_r_sq := 1.0 / (radius * radius)
+	var lut := _get_brush_lut(soft)
+	var step_u := range_u / float(w - 1)
+	var step_v := range_v / float(h - 1)
+
+	# Work on the raw byte buffer: per-pixel Image.get_pixel/set_pixel boxes a
+	# Color per call and dominates the stroke cost (256 texels/m means the brush
+	# covers a large fraction of a small face's mask — that is the small-face
+	# painting lag).
+	if mask_img.get_format() != Image.FORMAT_R8:
+		mask_img.convert(Image.FORMAT_R8)
+	var bytes := mask_img.get_data()
+
+	# Per-stroke touch bookkeeping (see docstring). Keyed by mask identity and
+	# rebuilt if the mask resolution changed mid-session (face grew, res bumped).
+	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
+	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
+		var seen := PackedByteArray()
+		seen.resize(w * h)
+		var smax := PackedByteArray()
+		smax.resize(w * h)
+		stroke = {"w": w, "h": h, "seen": seen, "smax": smax}
+		stroke_ctx[mask_img.get_instance_id()] = stroke
+	var seen: PackedByteArray = stroke["seen"]
+	var smax: PackedByteArray = stroke["smax"]
+
+	var opacity_b := int(round(opacity * 255.0))
 
 	for y in range(y0, y1 + 1):
-		var v_coord := min_v + (float(y) / float(h - 1)) * range_v
-		var dy_m := v_coord - v_hit
+		var dy_m: float = (min_v + float(y) * step_v) - v_hit
 		var dy_sq := dy_m * dy_m + d_perp * d_perp
 		var max_dx_sq := radius * radius - dy_sq
 		if max_dx_sq < 0.0:
@@ -514,35 +587,44 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 		var max_dx := sqrt(max_dx_sq)
 		var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
 		var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
+		var row := y * w
 
+		var dx_m: float = (min_u + float(rx0) * step_u) - u_hit
 		for x in range(rx0, rx1 + 1):
-			var u_coord := min_u + (float(x) / float(w - 1)) * range_u
-			var dx_m := u_coord - u_hit
 			var dist_sq := dx_m * dx_m + dy_sq
-			var dist := sqrt(dist_sq)
-			var t := dist / radius
-			var weight := 1.0
-
-			if soft > 0.001:
-				if t > inner_ratio:
-					var falloff_t := (t - inner_ratio) / soft
-					weight = clampf(0.5 * (1.0 + cos(PI * falloff_t)), 0.0, 1.0)
-
-			var cur_a := mask_img.get_pixel(x, y).r
+			dx_m += step_u
+			var li := int(dist_sq * inv_r_sq * float(BRUSH_LUT_SIZE - 1))
+			if li >= BRUSH_LUT_SIZE - 1:
+				continue
+			var i := row + x
+			var target_b := int(lut[li] * float(opacity_b) + 0.5)
 			if erase:
-				if cur_a <= 0.001:
+				# Once per pixel per stroke: opacity IS the erase strength.
+				if seen[i] == 1:
 					continue
-				var new_a := maxf(0.0, cur_a - weight * opacity)
-				mask_img.set_pixel(x, y, Color(new_a, new_a, new_a, 1.0))
+				seen[i] = 1
+				if target_b <= 0:
+					continue
+				var cur_b := int(bytes[i])
+				if cur_b <= 0:
+					continue
+				bytes[i] = maxi(0, cur_b - target_b)
 				dirty = true
 			else:
-				var target_a := weight * opacity
-				if cur_a >= target_a:
+				# Within-stroke max (a later dab at higher weight still raises
+				# the pixel); cross-stroke absolute replace (a weaker stroke
+				# overwrites a stronger one — single-layer painting semantics).
+				if seen[i] == 1 and target_b <= int(smax[i]):
 					continue
-				mask_img.set_pixel(x, y, Color(target_a, target_a, target_a, 1.0))
+				smax[i] = target_b
+				seen[i] = 1
+				if int(bytes[i]) == target_b:
+					continue
+				bytes[i] = target_b
 				dirty = true
 
 	if dirty:
+		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
 		if mask_tex != null:
 			mask_tex.update(mask_img)
@@ -670,6 +752,145 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 			tex.update(stamp_target_img)
 
 	return dirty
+
+# ==============================================================================
+# Face-Anchored Stamp Geometry (decal stamps track face edits)
+# ==============================================================================
+
+## Computes the normalized face-planar anchor for a stamp decal.
+## `stamp_xf_local` is the stamp node's transform in MESH-LOCAL coordinates.
+## Convention: the stamp mesh is the UNIT quad (QuadMesh size 1x1 spanning
+## [-0.5, 0.5]); basis column X/Y * 0.5 is the center→edge displacement.
+## The anchor is resolution- and size-independent (normalized [0,1] in the
+## face's CURRENT geometry bounds), which is exactly what the export baker
+## needs later. Returns {} when the face/bounds are unusable.
+static func compute_stamp_anchor(mesh_data: PBMeshData, face: PBFace, stamp_xf_local: Transform3D) -> Dictionary:
+	var bounds := get_face_planar_bounds(mesh_data, face, true)
+	if bounds.is_empty():
+		return {}
+	var u_face: Vector3 = bounds["u"]
+	var v_face: Vector3 = bounds["v"]
+	var range_u: float = bounds["range_u"]
+	var range_v: float = bounds["range_v"]
+	var center: Vector3 = stamp_xf_local.origin
+	var ex: Vector3 = stamp_xf_local.basis.x * 0.5
+	var ey: Vector3 = stamp_xf_local.basis.y * 0.5
+	return {
+		"center": Vector2(
+			(u_face.dot(center) - bounds["min_u"]) / range_u,
+			(v_face.dot(center) - bounds["min_v"]) / range_v),
+		"du": Vector2(u_face.dot(ex) / range_u, v_face.dot(ex) / range_v),
+		"dv": Vector2(u_face.dot(ey) / range_u, v_face.dot(ey) / range_v),
+	}
+
+## Rebuilds a stamp transform from a normalized anchor against the face's
+## CURRENT geometry bounds — stamps GROW AND MOVE with face resizes/edits.
+## Returns {"transform": Transform3D, "bounds": Dictionary} in mesh-local space,
+## or {} when the face/anchor is invalid. The returned basis may be sheared
+## after a non-uniform face resize; a MeshInstance3D tolerates that, and the
+## decal shader samples the unit quad by UV, so the texture still fills it 1:1.
+static func stamp_transform_from_anchor(mesh_data: PBMeshData, face: PBFace,
+		anchor: Dictionary, normal_offset: float = 0.002) -> Dictionary:
+	if mesh_data == null or face == null or not anchor.has("center"):
+		return {}
+	var bounds := get_face_planar_bounds(mesh_data, face, true)
+	if bounds.is_empty():
+		return {}
+	var idxs := face.get_distinct_indexes()
+	if idxs.is_empty() or idxs[0] < 0 or idxs[0] >= mesh_data.positions.size():
+		return {}
+	var u_face: Vector3 = bounds["u"]
+	var v_face: Vector3 = bounds["v"]
+	var n: Vector3 = bounds["normal"]
+	var c: Vector2 = anchor["center"]
+	var du: Vector2 = anchor.get("du", Vector2.ZERO)
+	var dv: Vector2 = anchor.get("dv", Vector2.ZERO)
+	var ref: Vector3 = mesh_data.positions[idxs[0]]
+
+	var tgt_u: float = bounds["min_u"] + c.x * bounds["range_u"]
+	var tgt_v: float = bounds["min_v"] + c.y * bounds["range_v"]
+	# Reconstruct the anchor point on the face plane: move from ref (on-plane)
+	# along the in-plane axes to the stored normalized coordinates, then lift
+	# by the decal offset. Correct even when u_face/v_face are not parallel to
+	# the plane basis of ref because (p - ref) lies in the face plane.
+	var center: Vector3 = ref \
+		+ u_face * (tgt_u - u_face.dot(ref)) \
+		+ v_face * (tgt_v - v_face.dot(ref)) \
+		+ n * normal_offset
+	# du/dv are per-axis normalized (x over range_u, y over range_v).
+	var range_u: float = bounds["range_u"]
+	var range_v: float = bounds["range_v"]
+	var ex: Vector3 = u_face * (du.x * range_u) + v_face * (du.y * range_v)
+	var ey: Vector3 = u_face * (dv.x * range_u) + v_face * (dv.y * range_v)
+	# Basis columns: X/Y carry the FULL quad extent (unit quad spans 0.5).
+	return {"transform": Transform3D(Basis(ex * 2.0, ey * 2.0, n), center), "bounds": bounds}
+
+## Export-facing accessor: the full paint state of one face as plain data:
+## base material params, every enabled splat layer (texture path + mask Image),
+## the baked stamp layer, and the normalized mapping (splat bounds persist
+## from first paint so painted content never stretches). This is exactly the
+## seam a bake/exporter consumes to produce per-face tiles.
+## Returns {} when the face has no splat material.
+static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dictionary:
+	if mesh_data == null or face == null:
+		return {}
+	var mat := mesh_data.get_face_material(face)
+	if not is_splat_material(mat):
+		return {}
+	var sm := mat as ShaderMaterial
+	var out: Dictionary = {
+		"base_texture_path": "",
+		"base_color": sm.get_shader_parameter("base_color"),
+		"roughness": sm.get_shader_parameter("roughness"),
+		"layers": [],
+		"stamp_layer_image": null,
+		"planar_bounds": get_face_planar_bounds(mesh_data, face),
+	}
+	var base_tex := sm.get_shader_parameter("base_texture") as Texture2D
+	if base_tex != null:
+		out["base_texture_path"] = base_tex.resource_path
+	for i in range(1, MAX_LAYERS + 1):
+		if sm.get_shader_parameter("layer_%d_enabled" % i) == true:
+			var layer_tex := sm.get_shader_parameter("layer_%d_texture" % i) as Texture2D
+			out["layers"].append({
+				"slot": i,
+				"texture_path": layer_tex.resource_path if layer_tex != null else "",
+				"color": sm.get_shader_parameter("layer_%d_color" % i),
+				"roughness": sm.get_shader_parameter("layer_%d_roughness" % i),
+				"mask_image": get_layer_mask_image(sm, i),
+			})
+	if has_stamp_layer(sm):
+		out["stamp_layer_image"] = get_stamp_layer_image(sm)
+	return out
+
+## Export-facing accessor: reads every anchored stamp decal under a mesh's
+## PBStamps container into plain exportable dictionaries (no node objects).
+## The future retro-export baker consumes exactly this: texture path, target
+## face, normalized anchor (resolution-independent), opacity.
+static func collect_stamp_data(mesh: Node) -> Array:
+	var out: Array = []
+	if mesh == null:
+		return out
+	var container := mesh.get_node_or_null("PBStamps")
+	if container == null:
+		return out
+	for stamp in container.get_children():
+		if not stamp is MeshInstance3D:
+			continue
+		if not stamp.has_meta("anchor_center"):
+			continue
+		out.append({
+			"name": stamp.name,
+			"face_idx": int(stamp.get_meta("face_idx", -1)),
+			"texture_path": String(stamp.get_meta("stamp_texture_path", "")),
+			"opacity": float(stamp.get_meta("stamp_opacity", 1.0)),
+			"scale": float(stamp.get_meta("stamp_scale", 1.0)),
+			"rotation": float(stamp.get_meta("stamp_rotation", 0.0)),
+			"anchor_center": stamp.get_meta("anchor_center"),
+			"anchor_du": stamp.get_meta("anchor_du"),
+			"anchor_dv": stamp.get_meta("anchor_dv"),
+		})
+	return out
 
 # ==============================================================================
 # Material & Mask Snapshot Cloning (Undo/Redo)

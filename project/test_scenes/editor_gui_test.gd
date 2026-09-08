@@ -1092,12 +1092,52 @@ func _run() -> void:
 			var stamps: Node3D = null
 			if target_b != null:
 				plugin.editor.active_mesh = target_b
-				plugin.paint_controller.update_cursor(Vector3(3, 1, 0), Vector3.UP, target_b, 0)
+				# Find GuiTestB's TOP face: the stamp cursor must be coherent
+				# (point + normal + face_idx all from the same face — exactly
+				# what _pick_paint_surface produces in real use).
+				var top_face := -1
+				for fi in range(target_b.pb_mesh_data.faces.size()):
+					var fn := PBMath.normal_from_positions(target_b.pb_mesh_data.positions,
+						target_b.pb_mesh_data.faces[fi].get_indexes())
+					if fn.y > 0.99:
+						top_face = fi
+						break
+				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
 				plugin.paint_controller.apply_stamp()
 				await _frames(2)
 				stamps = target_b.get_node_or_null("PBStamps") as Node3D
 				if stamps != null and stamps.get_child_count() > 0:
 					_pass("SPLAT-STAMP: applied high-fidelity billboard decal stamp under PBStamps container")
+
+					# Face-anchor tracking: growing the face must grow the stamp.
+					var decal := stamps.get_child(0) as MeshInstance3D
+					var data_b := target_b.pb_mesh_data
+					if decal != null and data_b != null and decal.has_meta("anchor_center"):
+						var face0: PBFace = data_b.faces[top_face]
+						var c0 := Vector3.ZERO
+						for idx0 in face0.get_distinct_indexes():
+							c0 += data_b.positions[idx0]
+						c0 /= float(face0.get_distinct_indexes().size())
+						var saved: Dictionary = {}
+						for idx1 in face0.get_distinct_indexes():
+							saved[idx1] = data_b.positions[idx1]
+						var ext0: float = decal.transform.basis.x.length()
+						for idx2 in face0.get_distinct_indexes():
+							data_b.positions[idx2] = c0 + (data_b.positions[idx2] - c0) * 2.0
+						target_b.rebuild()
+						await _frames(2)
+						var ext1: float = decal.transform.basis.x.length()
+						if absf(ext1 - ext0 * 2.0) < 0.02:
+							_pass("SPLAT-STAMP: stamp decal grew with face resize (face-anchored)")
+						else:
+							_fail("SPLAT-STAMP: stamp did not grow with face (extent %.3f -> %.3f)" % [ext0, ext1])
+						# Restore geometry for subsequent tests
+						for idx3 in saved:
+							data_b.positions[idx3] = saved[idx3]
+						target_b.rebuild()
+						await _frames(1)
+					else:
+						_fail("SPLAT-STAMP: stamp decal missing face anchor metadata")
 				else:
 					_fail("SPLAT-STAMP: failed to create decal stamp node under PBStamps")
 			else:
