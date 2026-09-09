@@ -140,8 +140,18 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 	else:
 		face_poly_2d = _extract_perimeter_polygon_2d(mesh_data, face, u_axis, v_axis, anchor)
 		has_polygon = not face_poly_2d.is_empty()
-	var tri_count := face_indices.size() / 3
 
+	# Enforce CCW winding in 2D planar space so Sutherland-Hodgman keeps the interior
+	if has_polygon and not face_poly_2d.is_empty():
+		var area := 0.0
+		for i in range(face_poly_2d.size()):
+			var p1: Vector2 = face_poly_2d[i]
+			var p2: Vector2 = face_poly_2d[(i + 1) % face_poly_2d.size()]
+			area += (p1.x * p2.y - p2.x * p1.y)
+		if area < 0.0:
+			face_poly_2d.reverse()
+
+	var tri_count := face_indices.size() / 3
 	for m in range(m_min, m_max):
 		for k in range(k_min, k_max):
 			var u0 := k * step_u + off_u
@@ -187,7 +197,7 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 					if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v0, true)
 					if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v1, false)
 					if poly.size() >= 3:
-						_triangulate_cell_polygon(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+						_append_polygon_triangles(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
 			if not cell_indices.is_empty():
 				var frag := TileFragment.new()
 				frag.cell_coord = Vector2i(k, m)
@@ -200,7 +210,6 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 				frag.source_face = face
 				frag.face_index = face_idx
 				result.append(frag)
-
 	return result
 static func _triangulate_cell_polygon(poly: Array, u0: float, u1: float, v0: float, v1: float,
 		anchor: Vector3, u_axis: Vector3, v_axis: Vector3, plane_dist: float, normal: Vector3,
@@ -364,13 +373,20 @@ static func _extract_perimeter_polygon_2d(mesh_data: PBMeshData, face: PBFace,
 		var p: Vector3 = mesh_data.positions[vi]
 		var rel := p - anchor
 		poly_2d.append(Vector2(u_axis.dot(rel), v_axis.dot(rel)))
-
-	# Check if any two distinct vertices share the same 2D coordinate (self-touching slit, hole bridge, or pinch).
-	# Polygons with slits cannot be clipped as a single boundary and must fall back to triangle subdivision.
 	for i in range(poly_2d.size()):
 		for j in range(i + 1, poly_2d.size()):
 			if poly_2d[i].distance_squared_to(poly_2d[j]) < 0.00001:
 				return []
+
+	# Slicing along U and V axes produces clean rectangular grids only for orthogonal stepped polygons (like stairs).
+	# Polygons with diagonal edges or slanted cuts must fall back to triangle subdivision to prevent stepped slivers and cavities.
+	for i in range(poly_2d.size()):
+		var p1: Vector2 = poly_2d[i]
+		var p2: Vector2 = poly_2d[(i + 1) % poly_2d.size()]
+		var du := absf(p2.x - p1.x)
+		var dv := absf(p2.y - p1.y)
+		if du > 0.001 and dv > 0.001:
+			return []
 
 	return poly_2d
 
