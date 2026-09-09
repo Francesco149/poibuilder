@@ -775,20 +775,17 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
-v0.9.56 round complete ✓ — two-row split toolbar toggle for smaller screens:
-- TWO-ROW TOOLBAR LAYOUT (`PBToolbar`, `poibuilder_plugin.gd`):
+v0.9.56 round complete ✓ — two-row split toolbar with auto-detection & left-aligned toggle:
+- TWO-ROW TOOLBAR LAYOUT & AUTO-DETECTION (`PBToolbar`, `poibuilder_plugin.gd`):
   - Changed `PBToolbar` from `HBoxContainer` to `VBoxContainer` managing two horizontal rows (`Row1` and `Row2`).
-  - Added a dedicated Split Rows toggle button (`SplitRowsToggle`, `icon_split_rows.svg` / "☷") at the right of Row 1.
-  - When toggled ON (2 rows):
-    - Row 1 (Modeling & Operations): Logo, Move/Rotate/Scale tools, Object/Vertex/Edge/Face select modes, Orientation Space cycler, Grid settings & readout, 9 Mesh Operation buttons, and Split Rows toggle button.
-    - Row 2 (Creation, Overlays, Docks, Export): New Shape menu, N-Gon tool, Edit Params, Overlay Panel toggle & recovery, Material & UV dock button, Display Settings button, and Map Export button.
-    - Both rows stay under ~550px, fitting comfortably on small screens (laptops, dual-dock editor layouts) without horizontal squishing or pushed-off buttons.
-  - When toggled OFF (1 row, default):
-    - All items are arranged in a single continuous horizontal row; Row 2 collapses (`_row2.visible = false`).
-    - Parent `Node3DEditor` layout container automatically sizes the toolbar to 1 or 2 rows natively and pushes the 3D viewports down.
-  - Setting persists across editor restarts via `EditorSettings` (`poibuilder/toolbar/two_rows`).
-  - Added `test_toolbar_split_rows_toggle` in `test_pb_editor.gd` (807/807 GUT tests passing) and GUI integration test in `editor_gui_test.gd` (49/49 passing).
-
+  - Left-aligned Split Rows toggle button (`SplitRowsToggle`, `icon_split_rows.svg` / "☷") positioned right next to the PoiBuilder logo on the far left so it is always accessible and never cut off on narrow screens.
+  - Rebalanced 50/50 rows:
+    - Row 1 (~420px): Logo, Split Rows button, Move/Rotate/Scale tools, and all 9 Mesh Operation buttons.
+    - Row 2 (~550px): Object/Vertex/Edge/Face select modes, Orientation Space cycler, Grid settings & readout, New Shape menu, N-Gon tool, Edit Params, Overlay Panel toggle & recovery, Material & UV dock button, Display Settings button, and Map Export button.
+    - In single-row mode, all groups are laid out in the classic sequential order (`Tools -> Modes -> Space -> Grid -> Ops -> Shapes -> Overlay -> Docks -> Export`).
+  - Auto-detection: `NOTIFICATION_RESIZED` automatically enables 2-row layout when window/viewport width drops below `AUTO_SPLIT_THRESHOLD` (1050px) and restores single-row when wide.
+  - User interaction: Left-click toggles 1 vs 2 rows (manual override), right-click resets to Auto. Setting persists across restarts via `EditorSettings` (`poibuilder/toolbar/rows_mode` and `poibuilder/toolbar/two_rows`).
+  - Tests: `test_toolbar_split_rows_toggle` and `test_toolbar_auto_split_on_width` in `test_pb_editor.gd` (808/808 GUT tests passing); GUI integration test in `editor_gui_test.gd` (49/49 passing).
 v0.9.55 round complete ✓ — normalized collinearity check in grid subdivision:
 - GRID SUBDIVISION CORNER RESTORATION (`PBFaceSubdivider.simplify_collinear_2d`):
   - Root cause of dropped triangles: `simplify_collinear_2d` evaluated raw unnormalized cross product (`absf(cross) > 0.0001`). When grid clipping produced small boundary edge segments, the cross product $|v_1 \times v_2| = d_1 \cdot d_2 \cdot \sin(\theta)$ at a true 90-degree corner evaluated to $< 0.0001$, incorrectly filtering out true geometric corners as "collinear" and dropping complementary triangles.

@@ -143,8 +143,11 @@ func _enter_tree():
 	toolbar.split_rows_toggled.connect(_on_toolbar_split_rows_toggled)
 	if Engine.is_editor_hint():
 		var ed_settings := EditorInterface.get_editor_settings()
-		if ed_settings != null and ed_settings.has_setting("poibuilder/toolbar/two_rows"):
-			toolbar.set_two_rows(bool(ed_settings.get_setting("poibuilder/toolbar/two_rows")))
+		if ed_settings != null:
+			if ed_settings.has_setting("poibuilder/toolbar/rows_mode"):
+				toolbar.set_rows_mode(int(ed_settings.get_setting("poibuilder/toolbar/rows_mode")))
+			elif ed_settings.has_setting("poibuilder/toolbar/two_rows"):
+				toolbar.set_two_rows(bool(ed_settings.get_setting("poibuilder/toolbar/two_rows")))
 	_add_toolbar_row_below_3d_toolbar()
 	_export_dialog = PBExportDialog.new()
 	if Engine.is_editor_hint():
@@ -949,6 +952,7 @@ func _on_toolbar_split_rows_toggled(two_rows: bool) -> void:
 	if Engine.is_editor_hint():
 		var ed_settings := EditorInterface.get_editor_settings()
 		if ed_settings != null:
+			ed_settings.set_setting("poibuilder/toolbar/rows_mode", toolbar.rows_mode)
 			ed_settings.set_setting("poibuilder/toolbar/two_rows", two_rows)
 func _load_display_settings() -> void:
 	var grid_op := 0.7

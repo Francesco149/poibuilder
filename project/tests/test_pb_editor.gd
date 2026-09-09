@@ -211,23 +211,26 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Items across rows: Logo, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
+	# Items across rows: Logo, Split button, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
 	# sep, Grid, GridState, sep, 9 op buttons, sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
-	# sep, Material button, Settings button, sep, Export button, sep, Split button.
-	assert_eq(tb.get_item_count(), 39, "Toolbar should have 39 items across its rows")
+	# sep, Material button, Settings button, sep, Export button.
+	assert_true(tb.get_item_count() in [37, 38], "Toolbar should have 37 or 38 items depending on viewport layout")
 	assert_not_null(tb._btn_export, "Export button should exist")
 	assert_not_null(tb._btn_split_rows, "Split rows button should exist")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
+	assert_eq(tb._row1.get_child(0), tb._logo, "First item in Row 1 must be logo")
+	assert_eq(tb._row1.get_child(1), tb._btn_split_rows, "Split button must be on the left right next to logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 
 func test_toolbar_split_rows_toggle():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Initially 1 row: row 2 is hidden, row 1 contains all 39 items
+	# Force single row manual mode
+	tb.set_rows_mode(PBToolbar.RowsMode.SINGLE)
 	assert_false(tb.two_rows, "Initial state should be single row")
 	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
-	assert_eq(tb._row1.get_child_count(), 39, "Row 1 should have all items in single-row mode")
+	assert_eq(tb._row1.get_child_count(), 38, "Row 1 should have all items in single-row mode")
 
 	# Toggle to 2 rows
 	var received_splits: Array = []
@@ -236,15 +239,47 @@ func test_toolbar_split_rows_toggle():
 
 	assert_true(tb.two_rows, "two_rows property should be true")
 	assert_true(tb._row2.visible, "Row 2 should be visible in 2-row mode")
-	assert_eq(tb._row1.get_child_count(), 27, "Row 1 should contain tools, modes, grid, ops, and split button")
+	assert_eq(tb._row1.get_child_count(), 16, "Row 1 should contain logo, split button, tools (3+sep), and ops (9+sep)")
+	assert_eq(tb._row2.get_child_count(), 21, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
 
 	# Toggle back to 1 row via button
 	tb._btn_split_rows.button_pressed = false
 	assert_false(tb.two_rows, "two_rows property should be false after untoggling button")
 	assert_false(tb._row2.visible, "Row 2 should be hidden again")
-	assert_eq(tb._row1.get_child_count(), 39, "Row 1 should contain all items again")
+	assert_eq(tb._row1.get_child_count(), 38, "Row 1 should contain all items again")
 	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
 	assert_false(received_splits[0], "Emitted value should match button state")
+
+func test_toolbar_auto_split_on_width():
+	var tb := PBToolbar.new()
+	add_child_autofree(tb)
+
+	# Default layout mode is AUTO
+	assert_eq(tb.rows_mode, PBToolbar.RowsMode.AUTO)
+
+	# When width is below threshold (< 1050px), auto-splits to 2 rows
+	tb.size = Vector2(800, 30)
+	tb.notification(Control.NOTIFICATION_RESIZED)
+	assert_true(tb.two_rows, "Auto-detection should enable 2 rows when width < 1050px")
+	assert_true(tb._row2.visible, "Row 2 should be visible when auto-split")
+
+	# When width is wide (>= 1050px), auto-returns to single row
+	tb.size = Vector2(1200, 30)
+	tb.notification(Control.NOTIFICATION_RESIZED)
+	assert_false(tb.two_rows, "Auto-detection should return to 1 row when width >= 1050px")
+	assert_false(tb._row2.visible, "Row 2 should be hidden when width is wide")
+
+	# Manual override locks preference
+	tb.set_rows_mode(PBToolbar.RowsMode.TWO_ROWS)
+	tb.size = Vector2(1400, 30)
+	tb.notification(Control.NOTIFICATION_RESIZED)
+	assert_true(tb.two_rows, "Manual TWO_ROWS mode must not be overridden by wide width")
+
+	tb.set_rows_mode(PBToolbar.RowsMode.SINGLE)
+	tb.size = Vector2(600, 30)
+	tb.notification(Control.NOTIFICATION_RESIZED)
+	assert_false(tb.two_rows, "Manual SINGLE mode must not be overridden by narrow width")
+
 func test_toolbar_icons_present():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
