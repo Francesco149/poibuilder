@@ -960,7 +960,7 @@ static func collect_stamp_data(mesh: Node) -> Array:
 			continue
 		if not stamp.has_meta("anchor_center"):
 			continue
-		out.append({
+		var entry: Dictionary = {
 			"name": stamp.name,
 			"face_idx": int(stamp.get_meta("face_idx", -1)),
 			"texture_path": String(stamp.get_meta("stamp_texture_path", "")),
@@ -968,9 +968,17 @@ static func collect_stamp_data(mesh: Node) -> Array:
 			"scale": float(stamp.get_meta("stamp_scale", 1.0)),
 			"rotation": float(stamp.get_meta("stamp_rotation", 0.0)),
 			"anchor_center": stamp.get_meta("anchor_center"),
-			"anchor_du": stamp.get_meta("anchor_du"),
-			"anchor_dv": stamp.get_meta("anchor_dv"),
-		})
+			"anchor_du": stamp.get_meta("anchor_du", Vector2.RIGHT),
+			"anchor_dv": stamp.get_meta("anchor_dv", Vector2.UP),
+		}
+		if stamp.has_meta("anchor_u") and stamp.has_meta("anchor_v"):
+			entry["anchor_u"] = stamp.get_meta("anchor_u")
+			entry["anchor_v"] = stamp.get_meta("anchor_v")
+			entry["anchor_scale_x"] = stamp.get_meta("anchor_scale_x")
+			entry["anchor_scale_y"] = stamp.get_meta("anchor_scale_y")
+			entry["anchor_rot_right"] = stamp.get_meta("anchor_rot_right", Vector3.RIGHT)
+			entry["anchor_rot_up"] = stamp.get_meta("anchor_rot_up", Vector3.UP)
+		out.append(entry)
 	return out
 
 # ==============================================================================

@@ -560,7 +560,6 @@ func apply_stamp() -> void:
 			mat.set_shader_parameter("face_v", bounds["v"])
 			mat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
 
-		mat.render_priority = 2
 		stamp_node.material_override = mat
 	else:
 		var mat := StandardMaterial3D.new()
@@ -569,7 +568,6 @@ func apply_stamp() -> void:
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		mat.render_priority = 2
 		stamp_node.material_override = mat
 
 	# Store metadata for export baking (resolution-independent so the future

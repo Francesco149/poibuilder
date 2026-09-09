@@ -1,0 +1,128 @@
+## Unit tests for PBMapExporter
+extends GutTest
+
+func test_export_tree_retro_mode() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	# Light
+	var light := DirectionalLight3D.new()
+	light.name = "Sun"
+	light.transform = Transform3D(Basis.looking_at(Vector3.DOWN, Vector3.FORWARD), Vector3(0, 10, 0))
+	root.add_child(light)
+
+	# PBMesh cube
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "Floor"
+	cube.collider_type = PBMesh.ColliderType.ACCURATE
+	root.add_child(cube)
+
+	# Billboard sprite
+	var sprite := MeshInstance3D.new()
+	sprite.name = "SpriteTree"
+	sprite.set_meta("is_billboard", true)
+	sprite.set_meta("is_lit", true)
+	var quad_mesh := QuadMesh.new()
+	sprite.mesh = quad_mesh
+	root.add_child(sprite)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.subdivide_quads = true
+	settings.bake_lighting = true
+	settings.bake_textures = true
+	settings.export_colliders = true
+	settings.export_billboards = true
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	# Check children of export_tree
+	var floor_node := export_tree.get_node_or_null("Floor") as MeshInstance3D
+	assert_not_null(floor_node, "Exported tree must have 'Floor' MeshInstance3D")
+	assert_not_null(floor_node.mesh, "Floor must have an ArrayMesh")
+	assert_gt(floor_node.mesh.get_surface_count(), 0, "Floor must have surfaces")
+
+	# Verify vertex colors exist on the floor mesh
+	var arrays := floor_node.mesh.surface_get_arrays(0)
+	var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	assert_gt(colors.size(), 0, "Floor mesh surface must contain baked vertex colors")
+
+	# Check collider node
+	var col_node := export_tree.get_node_or_null("Collider_Floor") as MeshInstance3D
+	assert_not_null(col_node, "Exported tree must contain 'Collider_Floor'")
+
+	# Check billboard node
+	var bb_node := export_tree.get_node_or_null("SpriteTree") as MeshInstance3D
+	assert_not_null(bb_node, "Exported tree must contain 'SpriteTree'")
+	var bb_arrays := bb_node.mesh.surface_get_arrays(0)
+	var bb_colors: PackedColorArray = bb_arrays[Mesh.ARRAY_COLOR]
+	assert_gt(bb_colors.size(), 0, "Lit billboard must have vertex colors")
+
+func test_export_tree_modern_mode() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "ModernCube"
+	cube.collider_type = PBMesh.ColliderType.ACCURATE
+	root.add_child(cube)
+
+	# Add stamp child
+	var stamps := Node3D.new()
+	stamps.name = "PBStamps"
+	cube.add_child(stamps)
+	var stamp := MeshInstance3D.new()
+	stamp.name = "Stamp_0"
+	stamp.set_meta("face_idx", 0)
+	stamp.set_meta("stamp_texture_path", "res://addons/poibuilder/materials/textures/flower_patch.png")
+	stamp.set_meta("anchor_center", Vector2(0, 0))
+	stamp.set_meta("anchor_du", Vector2(0.1, 0.0))
+	stamp.set_meta("anchor_dv", Vector2(0.0, 0.1))
+	stamps.add_child(stamp)
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.bake_lighting = false
+	settings.export_colliders = true
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	var cube_node := export_tree.get_node_or_null("ModernCube") as MeshInstance3D
+	assert_not_null(cube_node)
+	assert_true(cube_node.has_meta("poi_stamps"), "Modern export should attach poi_stamps metadata")
+
+	var stamps_node := cube_node.get_node_or_null("PBStamps")
+	assert_not_null(stamps_node, "Modern export should preserve PBStamps container")
+	assert_not_null(stamps_node.get_node_or_null("Stamp_0"), "Modern export should preserve decal quads")
+
+func test_export_map_to_glb_file() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "TestCube"
+	root.add_child(cube)
+
+	var out_path := "user://test_map_export.glb"
+	if FileAccess.file_exists(out_path):
+		DirAccess.remove_absolute(out_path)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.subdivide_quads = true
+	settings.bake_lighting = false
+
+	var err := PBMapExporter.export_map(root, out_path, settings)
+	assert_eq(err, OK, "export_map should return OK")
+	assert_true(FileAccess.file_exists(out_path), "Exported GLB file must exist on disk")
+
+	var fa := FileAccess.open(out_path, FileAccess.READ)
+	assert_not_null(fa)
+	assert_gt(fa.get_length(), 100, "GLB file must contain valid non-empty data")
+	fa.close()
+
+	# Clean up test file
+	DirAccess.remove_absolute(out_path)

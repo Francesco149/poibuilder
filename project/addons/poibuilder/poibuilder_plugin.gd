@@ -38,7 +38,7 @@ var toolbar: PBToolbar
 var material_dock: PBMaterialDock = null
 var material_drop_overlay: PBMaterialDropOverlay = null
 var paint_controller: PBPaintController = PBPaintController.new()
-
+var _export_dialog: PBExportDialog = null
 
 ## Hover id already reflected in the last gizmo redraw (avoids redundant
 ## update_gizmos calls on every motion event).
@@ -64,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.52"
+const VERSION := "0.9.54"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -139,7 +139,13 @@ func _enter_tree():
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
 	toolbar.materials_dock_requested.connect(focus_material_dock)
 	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
+	toolbar.export_requested.connect(_on_export_requested)
 	_add_toolbar_row_below_3d_toolbar()
+	_export_dialog = PBExportDialog.new()
+	if Engine.is_editor_hint():
+		var base := EditorInterface.get_base_control()
+		if base != null:
+			base.add_child(_export_dialog)
 	toolbar.sync_grid(grid)
 
 	# Tool overlay panel floating in the 3D viewport (readouts + params
@@ -236,15 +242,15 @@ func _exit_tree():
 
 	# Remove toolbar
 	if toolbar:
-		if is_instance_valid(toolbar):
+		if is_instance_valid(toolbar) and toolbar.get_parent() != null:
 			toolbar.get_parent().remove_child(toolbar)
 			toolbar.queue_free()
 		toolbar = null
 	if _toolbar_anchor:
-		remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
-		_toolbar_anchor.queue_free()
+		if is_instance_valid(_toolbar_anchor) and _toolbar_anchor.get_parent() != null:
+			remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
+			_toolbar_anchor.queue_free()
 		_toolbar_anchor = null
-
 	# Remove overlay panel
 	if tool_overlay:
 		if is_instance_valid(tool_overlay):
@@ -257,7 +263,13 @@ func _exit_tree():
 		remove_control_from_docks(material_dock)
 		if is_instance_valid(material_dock):
 			material_dock.queue_free()
-		material_dock = null
+	# Remove export dialog
+	if _export_dialog != null:
+		if is_instance_valid(_export_dialog) and _export_dialog.get_parent() != null:
+			_export_dialog.get_parent().remove_child(_export_dialog)
+			_export_dialog.queue_free()
+		_export_dialog = null
+
 
 	if material_drop_overlay != null:
 		if is_instance_valid(material_drop_overlay):
@@ -306,6 +318,10 @@ func _add_toolbar_row_below_3d_toolbar() -> void:
 			layout = margin.get_parent()
 	if layout == null or _n3d_editor == null:
 		logger.warn("plugin", "Could not locate the 3D editor toolbar layout — toolbar placed inside the scene toolbar")
+		add_control_to_container(CONTAINER_SPATIAL_EDITOR_MENU, toolbar)
+		remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
+		_toolbar_anchor.queue_free()
+		_toolbar_anchor = null
 		return
 
 	layout.add_child(toolbar)
@@ -913,6 +929,17 @@ func _on_settings_panel_toggled(open: bool) -> void:
 	else:
 		tool_overlay.close_settings()
 
+func _on_export_requested() -> void:
+	if _export_dialog == null:
+		return
+	var scene: Node = null
+	if Engine.is_editor_hint():
+		scene = EditorInterface.get_edited_scene_root()
+	if scene == null and get_tree() != null:
+		scene = get_tree().current_scene
+	if scene == null and is_inside_tree():
+		scene = get_tree().root
+	_export_dialog.open_dialog(scene)
 func _load_display_settings() -> void:
 	var grid_op := 0.7
 	var wire_op := 0.7

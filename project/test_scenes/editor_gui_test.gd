@@ -1266,6 +1266,19 @@ func _run() -> void:
 						_fail("SPRITE-DOCK: failed to set last_texture from palette")
 				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 				await _frames(1)
+				# ── Export Dialog Test ──────────────────────────────────────────
+				if plugin.toolbar != null and plugin.toolbar._btn_export != null:
+					_pass("EXPORT: toolbar export button exists")
+					plugin.toolbar._btn_export.pressed.emit()
+					await _frames(2)
+					if plugin._export_dialog != null and plugin._export_dialog.visible:
+						_pass("EXPORT: export dialog opened upon toolbar button click")
+						plugin._export_dialog.hide()
+						await _frames(1)
+					else:
+						_fail("EXPORT: export dialog failed to open")
+				else:
+					_fail("EXPORT: toolbar export button not found")
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────

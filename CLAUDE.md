@@ -775,6 +775,63 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.54 round complete ✓ — pre-bake showcase launcher, retro viewer wireframe, POT texture clamp, & toolbar restore:
+- POIBUILDER TOOLBAR RESTORE (`poibuilder_plugin.gd`):
+  - Root cause of missing toolbar: during v0.9.53 export dialog integration, the call to `_add_toolbar_row_below_3d_toolbar()` in `_enter_tree()` was accidentally dropped, leaving the toolbar instantiated but unparented (and tool bridge inactive). Restored the call and added a resilient fallback to `CONTAINER_SPATIAL_EDITOR_MENU` if container layout walking fails.
+  - Restored full toolbar visibility and tool bridge across all projects (scratch project, test map, main project). 49/49 editor GUI tests passing with 0 failures.
+- RETRO MAP VIEWER WIREFRAME FIX (`test_scenes/retro_map_viewer.gd`):
+  - Resolved wireframe invisibility and fading out on floors and walls in `gl_compatibility` mode: replaced ineffective native `debug_draw` with dedicated normal-extruded wireframe line meshes (`ArrayMesh` with `PRIMITIVE_LINES`).
+  - Root cause of disappearing lines: `VERTEX` in spatial shaders is object-local, so normalizing and subtracting in `vertex()` shifted vertices towards the local object origin (into the wall on $+X$ and horizontally across the floor) rather than towards the camera.
+  - Wireframe generation now extracts surface geometric normals (`ARRAY_NORMAL`); the unshaded spatial shader offsets vertices 6mm along `NORMAL` (`VERTEX += normalize(NORMAL) * normal_offset;`), guaranteeing lines cleanly sit above faces without z-fighting, grazing-angle fading, or view-axis distortion.
+  - 3 cycleable wireframe styles (Key 4 toggles/cycles with live HUD readout):
+    - Style 0: Dark Slate (Topology) — high-contrast blueprint slate base (`Color(0.12, 0.14, 0.18)`), optimal for checking raw quad/triangle subdivision.
+    - Style 1: Vertex Lighting (AO/Shadows) — dimmed baked vertex lighting base (`Color(0.35, 0.38, 0.42)`), inspecting topology alongside lighting/shadows.
+    - Style 2: Textures (Tile Alignment) — dimmed baked tile textures (`Color(0.35, 0.35, 0.35)`), inspecting quad subdivision alignment with textures.
+  - Preserves alpha transparency for foliage billboards; enabled 4x MSAA for crisp unbroken lines at all distances.
+  - Added CLI flags `--wire_style=0|1|2` and `--wire_color=<color>`.
+- RETRO EXPORT POWER-OF-TWO TEXTURE ENFORCEMENT (`PBTileBaker`, `PBMapExporter`, `PBExportDialog`):
+  - Enforces power-of-two (POT) texture dimensions across all exported assets in Retro mode (composite tile bakes, base textures, billboards) to guarantee compatibility with retro engines.
+  - Added `max_texture_size: int = 512` (default 512, adjustable: 64, 128, 256, 512, 1024) and `enforce_power_of_two: bool = true` in `ExportSettings`.
+  - Added "Max Tex Size" OptionButton dropdown and expanded "Tile Res" options in `PBExportDialog`.
+  - `enforce_pot_image` resizes non-POT and oversized textures to the nearest POT clamped to the configured maximum size using bilinear interpolation.
+- CLEAN QUAD SUBDIVISION & SEAMLESS TILE BAKING (`PBFaceSubdivider`, `PBTileBaker`, `retro_map_viewer.gd`):
+  - Tiled base texture restoration: resolved flat gray smears across the floor, stairs, and doorway. `texture_repeat = false` is now strictly restricted to `BakedTile_` materials, while shared base materials retain `texture_repeat = true` for continuous tiling beyond UV 1.0.
+  - Clean grid-sliced n-gon subdivision (stairs & doorway topology): resolved radiating corner fans across stepped and notched faces. Instead of slicing pre-triangulated geometry, `PBFaceSubdivider` extracts the 2D perimeter polygon (`_extract_perimeter_polygon_2d`), clips it against each grid cell, and performs intermediate U and V coordinate slicing on any cell polygon with step/notch corners (`_triangulate_cell_polygon`). Slices decompose into clean rectangular and trapezoidal sub-boxes with single diagonals. The stairs side wall decomposes into 8 clean rectangular step columns with zero fans, zero slivers, and sharp right-angled step corners. The doorway front wall decomposes into clean leg columns and lintel squares with zero diagonal artifacts.
+  - Seamless baked tile filtering: eliminated 1-pixel boundary seams between baked tiles. `PBTileBaker` disables texture repeat on baked tile materials (`tile_mat.texture_repeat = false`) to prevent linear sampling wrap bleed at $U=1.0$ / $U=0.0$, and samples texels edge-to-edge ($x / (\text{resolution}-1)$) with symmetric pixel indexing.
+  - Decal depth testing fix: removed `render_priority = 2` on decal materials (`pb_paint_controller.gd` and `test_map_showcase_builder.gd`). Transparent decals now share priority 0 with foliage and billboards, properly sorting by camera distance so foreground trees and bushes correctly occlude decals behind them.
+- TEST MAP SPLATTING & ROBUST STAMP BAKING (`TestMapShowcaseBuilder`, `PBTileBaker`):
+  - Export consistency fix: resolved 100-meter oversized stamp distortion in Godot. `PBTileBaker` now consumes true physical object-space metrics (`anchor_u`, `anchor_v`, `anchor_scale_x`, `anchor_scale_y`) and `TestMapShowcaseBuilder` sets both physical meters and normalized anchors correctly derived from node transforms. Stamps now appear with identical 1:1 scale in both the Godot project and the retro export.
+  - Directional light orientation fix: updated Sun direction to `Vector3(0.4, -1.0, -0.6).normalized()` (shining North-East from South-West) and increased shadow ray bias to 0.05. The sloped ramp face now receives direct warm sunlight while the stairs' west wall sits in shadow.
+  - Generated seamless 256x256 stylized terracotta stone brick texture `brick_path_4x4.png`.
+  - Applied smooth-edged splat path running straight down the center line ($X=0$) from south across the courtyard through the arched doorway, with an expanded entrance apron, central courtyard plaza, and smoothstep organic edge blending.
+  - Isolated splatting strictly to `top_face` (+Y) and assigned clean stone tiles to all other 5 slab faces (rims and bottom), eliminating bottom-face splatting and front-rim corner bleed.
+  - "HELLO WORLD" text stamp ($4.32\text{ m} \times 2.16\text{ m}$) straddles the brick splat and base stone tile boundary, oriented right-side up towards the camera.
+  - 3x sized circular stamp ($3.6\text{ m} \times 3.6\text{ m}$) on the sloped face of `EastRamp`, partially cut off along the top ridge of the prism with clean face-edge clipping via `pb_decal_shader.gdshader`.
+  - Removed unwanted untextured floating plane (`Stamp_Tapestry`) and flower patch behind the bush.
+  - Unified anchor-space and object-space sampling in `PBTileBaker` via `anchor_offset`.
+- Tests: 806/806 GUT unit tests passing, 49/49 GUI harness tests passing (0 failures).
+v0.9.53 round complete ✓ — map export pipeline (retro baked tilemap + modern GLB), vertex lighting, tile baking, standalone viewer app:
+- RETRO ENGINE MAP EXPORT (`PBMapExporter`, `export/pb_map_exporter.gd`):
+  - Fully baked map pipeline tailored for old and simple engines.
+  - Grid-aligned quad subdivision (`PBFaceSubdivider`): divides faces into triangulated quads aligned to the texture tiling grid for high-fidelity vertex lighting and tile-based texturing.
+  - Tile-map style texturing (`PBTileBaker`): painted areas (splats + stamps) generate unique composite tile textures; unpainted tiles reuse the shared base texture for optimal memory and draw calls.
+  - Vertex color lighting bake (`PBLightBaker`): bakes direct lighting (DirectionalLight3D, OmniLight3D, SpotLight3D), sharp ray-traced shadows, and multi-sample Fibonacci hemisphere ambient occlusion (AO) into vertex colors.
+  - Billboards: lit billboards receive vertex lighting and shadows; unlit billboards stay pure white unshaded.
+  - Collision mesh export: automatically names collider meshes with `Collider_*` prefix for clean engine detection.
+- MODERN ENGINE MAP EXPORT:
+  - Exports native geometry without forced subdivision.
+  - Encodes stamp placements and splat state into node metadata (`poi_stamps`, `poi_paint`) and exports decal child quads for universal engine compatibility.
+- EXPORT DIALOG & TOOLBAR INTEGRATION (`PBExportDialog`, `export/pb_export_dialog.gd`, `PBToolbar`):
+  - Dedicated "Export" button on the PoiBuilder toolbar.
+  - Comprehensive dialog with individual toggles for Retro vs Modern mode, quad subdivision, tile grid size, lighting bake, shadows, AO samples & distance, texture baking, resolution, billboards, and colliders.
+- STANDALONE RETRO MAP VIEWER APP (`test_scenes/retro_map_viewer.tscn`, `retro_map_viewer.gd`, `run_viewer.sh`):
+  - Real-time renderer with Godot-style free camera (WASD, mouse look, turbo boost, elevation controls).
+  - Multiple inspection display modes (Keys 1-4): Full Baked, Vertex Colors Only (Lighting/AO), Textures Only, and Wireframe.
+  - In-viewport HUD showing live FPS, mesh count, surface count, vertex count, and triangle count.
+- COMPREHENSIVE TEST MAP SHOWCASE (`test_scenes/test_map_showcase_builder.gd`, `showcase_retro_baked.glb`, `showcase_modern.glb`):
+  - Feature map exercising courtyard floor, perimeter walls, arched doorway, grand stairs, balcony, n-gon pillars, sloped ramp, multi-layer splatting, wall/floor stamps, lit/unlit billboards, and multi-light setup.
+- Tests: 799/799 GUT unit tests (+15), GUI test harness passing with toolbar export button and modal dialog verification.
+
 v0.9.52 round complete ✓ — stamp billboard delete tool, billboard sprite placement UX, 5-texture carousel, camera orient & scaling:
 - STAMP BILLBOARD DELETE TOOL (`PBPaintController.Mode.STAMP_DELETE`, `pb_material_dock.gd`, `poibuilder_plugin.gd`):
   - Added dedicated "Delete Tool" toggle button in the Stamp section of `PBMaterialDock` (`[ Place Stamp ] [ Delete Tool ]`).

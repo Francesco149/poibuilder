@@ -1,0 +1,86 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://test_scenes/retro_map_viewer.gd" id="1_viewer"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.35, 0.45, 0.6, 1)
+sky_horizon_color = Color(0.65, 0.7, 0.75, 1)
+ground_bottom_color = Color(0.15, 0.15, 0.18, 1)
+ground_horizon_color = Color(0.65, 0.7, 0.75, 1)
+
+[sub_resource type="Sky" id="Sky_sky"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_env"]
+background_mode = 2
+sky = SubResource("Sky_sky")
+ambient_light_source = 2
+ambient_light_color = Color(0.3, 0.3, 0.35, 1)
+
+[node name="RetroMapViewer" type="Node3D"]
+script = ExtResource("1_viewer")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_env")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 5, 8)
+current = true
+fov = 75.0
+
+[node name="MapContainer" type="Node3D" parent="."]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HUD" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD"]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 650.0
+offset_bottom = 180.0
+theme_override_constants/separation = 4
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 18
+text = "PoiBuilder Retro Map Viewer"
+
+[node name="ModeLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.3, 1)
+theme_override_font_sizes/font_size = 14
+text = "Mode: 1: Full Baked (Texture + Vertex Light)"
+
+[node name="StatsLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "FPS: -- | Meshes: -- | Surfaces: -- | Vertices: -- | Triangles: --"
+
+[node name="HelpLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+theme_override_font_sizes/font_size = 12
+text = "Controls: WASD Move | Mouse Look | Shift Turbo | Space/E Up | Q/C Down | 1-4 View Modes | ESC Mouse | H/Tab HUD"
+
+[node name="LoadBar" type="HBoxContainer" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PathEdit" type="LineEdit" parent="CanvasLayer/HUD/VBox/LoadBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "res://test_scenes/showcase_retro_baked.glb"
+
+[node name="LoadButton" type="Button" parent="CanvasLayer/HUD/VBox/LoadBar"]
+layout_mode = 2
+text = "Load Map"

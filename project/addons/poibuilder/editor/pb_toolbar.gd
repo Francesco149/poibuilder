@@ -58,6 +58,9 @@ signal grid_panel_toggled(open: bool)
 ## Emitted when the user toggles the Display Settings section in the overlay.
 signal settings_panel_toggled(open: bool)
 signal materials_dock_requested
+
+## Emitted when the user clicks the Export button to open the map export dialog.
+signal export_requested
 # ==============================================================================
 # Icons
 # ==============================================================================
@@ -85,7 +88,7 @@ var _btn_recover_overlay: Button
 var _btn_materials: Button
 var _op_buttons: Dictionary = {}
 var _btn_settings: Button
-
+var _btn_export: Button
 var _btn_grid_panel: Button
 var _lbl_grid_state: Label
 
@@ -268,6 +271,18 @@ func _build_ui() -> void:
 	_btn_settings.tooltip_text = "Display settings (grid, wireframe, selection, hover opacity)"
 	_btn_settings.toggled.connect(func(on: bool): settings_panel_toggled.emit(on))
 	add_child(_btn_settings)
+
+	_label_space()
+
+	# Export Map button
+	_btn_export = Button.new()
+	_btn_export.name = "ExportButton"
+	_btn_export.text = "Export"
+	_btn_export.flat = true
+	_btn_export.focus_mode = Control.FOCUS_NONE
+	_btn_export.tooltip_text = "Export Map: Export scene to retro baked map or modern GLB"
+	_btn_export.pressed.connect(func(): export_requested.emit())
+	add_child(_btn_export)
 func _label_space() -> void:
 	add_child(VSeparator.new())
 
