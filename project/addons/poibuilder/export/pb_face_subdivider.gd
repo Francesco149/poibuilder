@@ -378,15 +378,14 @@ static func _extract_perimeter_polygon_2d(mesh_data: PBMeshData, face: PBFace,
 			if poly_2d[i].distance_squared_to(poly_2d[j]) < 0.00001:
 				return []
 
-	# Slicing along U and V axes produces clean rectangular grids only for orthogonal stepped polygons (like stairs).
-	# Polygons with diagonal edges or slanted cuts must fall back to triangle subdivision to prevent stepped slivers and cavities.
+	# Ensure CCW winding in 2D planar space so Sutherland-Hodgman clipping keeps the interior
+	var area := 0.0
 	for i in range(poly_2d.size()):
 		var p1: Vector2 = poly_2d[i]
 		var p2: Vector2 = poly_2d[(i + 1) % poly_2d.size()]
-		var du := absf(p2.x - p1.x)
-		var dv := absf(p2.y - p1.y)
-		if du > 0.001 and dv > 0.001:
-			return []
+		area += (p1.x * p2.y - p2.x * p1.y)
+	if area < 0.0:
+		poly_2d.reverse()
 
 	return poly_2d
 
