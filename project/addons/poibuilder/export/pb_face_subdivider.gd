@@ -178,6 +178,7 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 				if poly.size() >= 3:
 					_triangulate_cell_polygon(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
 			else:
+				var cell_polys: Array[Array] = []
 				for t in range(tri_count):
 					var i0 := t * 3
 					var i1 := t * 3 + 1
@@ -197,7 +198,14 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 					if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v0, true)
 					if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v1, false)
 					if poly.size() >= 3:
-						_append_polygon_triangles(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+						cell_polys.append(poly)
+
+				if cell_polys.size() == 1:
+					_append_polygon_triangles(cell_polys[0], u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+				elif cell_polys.size() > 1:
+					var merged_loops := _merge_cell_polygons(cell_polys)
+					for loop in merged_loops:
+						_append_polygon_triangles(loop, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
 			if not cell_indices.is_empty():
 				var frag := TileFragment.new()
 				frag.cell_coord = Vector2i(k, m)
@@ -310,6 +318,107 @@ static func _append_polygon_triangles(poly: Array, u0: float, u1: float, v0: flo
 			cell_indices.append(idx0)
 			cell_indices.append(idx1)
 			cell_indices.append(idx2)
+## Merges multiple coplanar polygon fragments inside the same grid cell by cancelling internal shared edges
+## and simplifying collinear vertices along cell boundaries. Eliminates chaotic sliver diagonals.
+static func _merge_cell_polygons(fragments: Array[Array]) -> Array[Array]:
+	if fragments.is_empty():
+		return []
+	if fragments.size() == 1:
+		return [simplify_collinear_2d(fragments[0])]
+
+	# Cancel internal shared directed edges between adjacent fragments in this cell
+	var edge_map: Dictionary = {}
+	for fr in fragments:
+		var n := fr.size()
+		for i in range(n):
+			var pA := Vector2(snappedf(fr[i].x, 0.0001), snappedf(fr[i].y, 0.0001))
+			var pB := Vector2(snappedf(fr[(i + 1) % n].x, 0.0001), snappedf(fr[(i + 1) % n].y, 0.0001))
+			if pA.distance_squared_to(pB) < 0.0000001:
+				continue
+			var opp_key := Vector4(pB.x, pB.y, pA.x, pA.y)
+			if edge_map.has(opp_key):
+				edge_map.erase(opp_key)
+			else:
+				var fwd_key := Vector4(pA.x, pA.y, pB.x, pB.y)
+				edge_map[fwd_key] = [pA, pB]
+
+	if edge_map.is_empty():
+		return []
+
+	# Build directed adjacency graph
+	var adj: Dictionary = {}
+	for fwd_key in edge_map:
+		var edge: Array = edge_map[fwd_key]
+		var pA: Vector2 = edge[0]
+		var pB: Vector2 = edge[1]
+		if not adj.has(pA):
+			adj[pA] = [] as Array[Vector2]
+		adj[pA].append(pB)
+
+	# Check if all vertices have degree 1 (simple directed cycles)
+	var is_simple := true
+	for p: Vector2 in adj:
+		if adj[p].size() != 1:
+			is_simple = false
+			break
+
+	if is_simple:
+		var visited: Dictionary = {}
+		var loops: Array[Array] = []
+		for start_p: Vector2 in adj:
+			if visited.has(start_p):
+				continue
+			var loop: Array[Vector2] = [start_p]
+			visited[start_p] = true
+			var cur := start_p
+			while true:
+				var nxt: Vector2 = adj[cur][0]
+				if nxt == start_p:
+					break
+				if visited.has(nxt):
+					break
+				loop.append(nxt)
+				visited[nxt] = true
+				cur = nxt
+			if loop.size() >= 3:
+				var area := 0.0
+				for i in range(loop.size()):
+					var p1 := loop[i]
+					var p2 := loop[(i + 1) % loop.size()]
+					area += (p1.x * p2.y - p2.x * p1.y)
+				if area < 0.0:
+					loop.reverse()
+				var simplified := simplify_collinear_2d(loop)
+				if simplified.size() >= 3:
+					loops.append(simplified)
+
+		var total_loop_pts := 0
+		for l in loops: total_loop_pts += l.size()
+		if total_loop_pts >= 3:
+			return loops
+
+	# Fallback: if merge was non-manifold or failed, return simplified individual fragments
+	var fallback: Array[Array] = []
+	for fr in fragments:
+		var simplified := simplify_collinear_2d(fr)
+		if simplified.size() >= 3:
+			fallback.append(simplified)
+	return fallback
+
+## Removes collinear vertices along straight edges of a 2D polygon loop.
+static func simplify_collinear_2d(loop: Array) -> Array:
+	var n := loop.size()
+	if n < 3:
+		return loop
+	var res: Array = []
+	for i in range(n):
+		var p0: Vector2 = loop[(i - 1 + n) % n]
+		var p1: Vector2 = loop[i]
+		var p2: Vector2 = loop[(i + 1) % n]
+		var cross := (p1.x - p0.x) * (p2.y - p1.y) - (p1.y - p0.y) * (p2.x - p0.x)
+		if absf(cross) > 0.0001:
+			res.append(p1)
+	return res
 # ==============================================================================
 # Helper Methods
 # ==============================================================================
