@@ -84,7 +84,7 @@ const AUTO_SPLIT_THRESHOLD := 1050.0
 var rows_mode: RowsMode = RowsMode.AUTO
 var _row1: HBoxContainer
 var _row2: HBoxContainer
-var _two_rows: bool = false
+var _two_rows: bool = true
 var _btn_split_rows: Button
 
 var _logo: TextureRect
@@ -155,7 +155,7 @@ func _build_ui() -> void:
 	_row2.name = "Row2"
 	_row2.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
 	_row2.add_theme_constant_override("separation", 4)
-	_row2.visible = false
+	_row2.visible = true
 	add_child(_row2)
 
 	# Header: Logo + Split Rows button (placed on the left so it's never cut off)
@@ -174,7 +174,7 @@ func _build_ui() -> void:
 		_btn_split_rows.text = "☷"
 	_btn_split_rows.flat = true
 	_btn_split_rows.toggle_mode = true
-	_btn_split_rows.focus_mode = Control.FOCUS_NONE
+	_btn_split_rows.button_pressed = true
 	_update_split_button_tooltip()
 	_btn_split_rows.toggled.connect(_on_split_rows_button_toggled)
 	_btn_split_rows.gui_input.connect(_on_split_rows_button_gui_input)
@@ -372,12 +372,12 @@ func _on_split_rows_button_gui_input(event: InputEvent) -> void:
 func _update_split_button_tooltip() -> void:
 	if _btn_split_rows == null:
 		return
-	var mode_name := "Auto (%s)" % ("2 rows" if _two_rows else "1 row")
+	var mode_name := "Two Rows (Default)" if _two_rows else "Single Row"
 	if rows_mode == RowsMode.SINGLE:
-		mode_name = "Single Row (Manual)"
+		mode_name = "Single Row"
 	elif rows_mode == RowsMode.TWO_ROWS:
-		mode_name = "Two Rows (Manual)"
-	_btn_split_rows.tooltip_text = "Toolbar Layout: %s\nClick to toggle 1 vs 2 rows.\nRight-click to reset to Auto (< 1050px)." % mode_name
+		mode_name = "Two Rows"
+	_btn_split_rows.tooltip_text = "Toolbar Layout: %s\nClick to toggle 1 vs 2 rows.\nRight-click to reset to Auto." % mode_name
 
 func _update_row_layout() -> void:
 	for c in _row1.get_children():
