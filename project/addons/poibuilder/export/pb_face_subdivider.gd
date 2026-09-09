@@ -358,11 +358,19 @@ static func _extract_perimeter_polygon_2d(mesh_data: PBMeshData, face: PBFace,
 	for v in adj:
 		if adj[v].size() != 2:
 			return []
+
 	var poly_2d: Array[Vector2] = []
 	for vi in ordered_indices:
 		var p: Vector3 = mesh_data.positions[vi]
 		var rel := p - anchor
 		poly_2d.append(Vector2(u_axis.dot(rel), v_axis.dot(rel)))
+
+	# Check if any two distinct vertices share the same 2D coordinate (self-touching slit, hole bridge, or pinch).
+	# Polygons with slits cannot be clipped as a single boundary and must fall back to triangle subdivision.
+	for i in range(poly_2d.size()):
+		for j in range(i + 1, poly_2d.size()):
+			if poly_2d[i].distance_squared_to(poly_2d[j]) < 0.00001:
+				return []
 
 	return poly_2d
 
