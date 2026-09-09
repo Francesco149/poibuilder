@@ -48,6 +48,7 @@ static var _cached_shader: Shader = null
 ## the uniform 256 texels/m mask density (a 0.4m dab on a 2m face walks ~40k
 ## pixels at every mouse motion event).
 static var _brush_lut_cache: Dictionary = {}
+static var _brush_lut_bytes_cache: Dictionary = {}
 const BRUSH_LUT_SIZE := 1024
 
 static func _get_brush_lut(softness: float) -> PackedFloat32Array:
@@ -67,6 +68,19 @@ static func _get_brush_lut(softness: float) -> PackedFloat32Array:
 			weight = clampf(0.5 * (1.0 + cos(PI * (t - inner_ratio) / soft)), 0.0, 1.0)
 		lut[i] = weight
 	_brush_lut_cache[key] = lut
+	return lut
+
+static func _get_brush_lut_bytes(softness: float) -> PackedByteArray:
+	var key := int(round(softness * 1000.0))
+	var lut: PackedByteArray = _brush_lut_bytes_cache.get(key, PackedByteArray())
+	if lut.size() == BRUSH_LUT_SIZE:
+		return lut
+	var float_lut := _get_brush_lut(softness)
+	lut = PackedByteArray()
+	lut.resize(BRUSH_LUT_SIZE)
+	for i in range(BRUSH_LUT_SIZE):
+		lut[i] = int(round(float_lut[i] * 255.0))
+	_brush_lut_bytes_cache[key] = lut
 	return lut
 
 # ==============================================================================
@@ -411,8 +425,6 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_ge
 		max_u = face.splat_bounds[1]
 		min_v = face.splat_bounds[2]
 		max_v = face.splat_bounds[3]
-	elif not force_geometry:
-		face.splat_bounds = PackedFloat32Array([min_u, max_u, min_v, max_v])
 
 	var range_u := max_u - min_u
 	if range_u < 0.0001:
@@ -503,6 +515,13 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
 	if mask_img == null:
 		return false
+	if face.splat_bounds.size() != 4:
+		var geom_bounds := get_face_planar_bounds(mesh_data, face, true)
+		if not geom_bounds.is_empty():
+			face.splat_bounds = PackedFloat32Array([
+				geom_bounds["min_u"], geom_bounds["max_u"],
+				geom_bounds["min_v"], geom_bounds["max_v"]
+			])
 	var bounds := get_face_planar_bounds(mesh_data, face)
 	if bounds.is_empty():
 		return false
@@ -551,78 +570,117 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 	var dirty := false
 	var soft := clampf(softness, 0.0, 1.0)
 	var inv_r_sq := 1.0 / (radius * radius)
-	var lut := _get_brush_lut(soft)
 	var step_u := range_u / float(w - 1)
 	var step_v := range_v / float(h - 1)
 
-	# Work on the raw byte buffer: per-pixel Image.get_pixel/set_pixel boxes a
-	# Color per call and dominates the stroke cost (256 texels/m means the brush
-	# covers a large fraction of a small face's mask — that is the small-face
-	# painting lag).
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
 	var bytes := mask_img.get_data()
 
-	# Per-stroke touch bookkeeping (see docstring). Keyed by mask identity and
-	# rebuilt if the mask resolution changed mid-session (face grew, res bumped).
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
 	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
-		var seen := PackedByteArray()
-		seen.resize(w * h)
-		var smax := PackedByteArray()
-		smax.resize(w * h)
-		stroke = {"w": w, "h": h, "seen": seen, "smax": smax}
+		var base := bytes.duplicate()
+		var wmax := PackedByteArray()
+		wmax.resize(w * h)
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax}
 		stroke_ctx[mask_img.get_instance_id()] = stroke
-	var seen: PackedByteArray = stroke["seen"]
-	var smax: PackedByteArray = stroke["smax"]
+	var base: PackedByteArray = stroke["base"]
+	var wmax: PackedByteArray = stroke["wmax"]
 
 	var opacity_b := int(round(opacity * 255.0))
 
-	for y in range(y0, y1 + 1):
-		var dy_m: float = (min_v + float(y) * step_v) - v_hit
-		var dy_sq := dy_m * dy_m + d_perp * d_perp
-		var max_dx_sq := radius * radius - dy_sq
-		if max_dx_sq < 0.0:
-			continue
-		var max_dx := sqrt(max_dx_sq)
-		var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
-		var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
-		var row := y * w
-
-		var dx_m: float = (min_u + float(rx0) * step_u) - u_hit
-		for x in range(rx0, rx1 + 1):
-			var dist_sq := dx_m * dx_m + dy_sq
-			dx_m += step_u
-			var li := int(dist_sq * inv_r_sq * float(BRUSH_LUT_SIZE - 1))
-			if li >= BRUSH_LUT_SIZE - 1:
+	if soft <= 0.001:
+		# Fast path for hard brush: uniform weight across the entire circle footprint
+		for y in range(y0, y1 + 1):
+			var dy_m: float = (min_v + float(y) * step_v) - v_hit
+			var dy_sq := dy_m * dy_m + d_perp * d_perp
+			var max_dx_sq := radius * radius - dy_sq
+			if max_dx_sq < 0.0:
 				continue
-			var i := row + x
-			var target_b := int(lut[li] * float(opacity_b) + 0.5)
-			if erase:
-				# Once per pixel per stroke: opacity IS the erase strength.
-				if seen[i] == 1:
-					continue
-				seen[i] = 1
-				if target_b <= 0:
-					continue
-				var cur_b := int(bytes[i])
-				if cur_b <= 0:
-					continue
-				bytes[i] = maxi(0, cur_b - target_b)
-				dirty = true
-			else:
-				# Within-stroke max (a later dab at higher weight still raises
-				# the pixel); cross-stroke absolute replace (a weaker stroke
-				# overwrites a stronger one — single-layer painting semantics).
-				if seen[i] == 1 and target_b <= int(smax[i]):
-					continue
-				smax[i] = target_b
-				seen[i] = 1
-				if int(bytes[i]) == target_b:
-					continue
-				bytes[i] = target_b
-				dirty = true
+			var max_dx := sqrt(max_dx_sq)
+			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			var row := y * w
 
+			for x in range(rx0, rx1 + 1):
+				var i := row + x
+				if erase:
+					var sub := opacity_b
+					if sub <= 0 or sub <= int(wmax[i]):
+						continue
+					wmax[i] = sub
+					var p_base := int(base[i])
+					var p_new := maxi(0, p_base - sub)
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+				else:
+					var target_b := opacity_b
+					if target_b <= int(wmax[i]):
+						continue
+					wmax[i] = target_b
+					var p_base := int(base[i])
+					var p_new := p_base
+					if p_base <= opacity_b:
+						p_new = opacity_b
+					else:
+						p_new = opacity_b
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+	else:
+		# Soft brush with cosine falloff: acts as an eraser towards brush opacity
+		# for higher opacity pixels, and smoothly raises lower opacity pixels.
+		# Never leaves an empty halo at the brush fringe.
+		var lut_bytes := _get_brush_lut_bytes(soft)
+		var lut_sz_minus_1 := float(BRUSH_LUT_SIZE - 1)
+		for y in range(y0, y1 + 1):
+			var dy_m: float = (min_v + float(y) * step_v) - v_hit
+			var dy_sq := dy_m * dy_m + d_perp * d_perp
+			var max_dx_sq := radius * radius - dy_sq
+			if max_dx_sq < 0.0:
+				continue
+			var max_dx := sqrt(max_dx_sq)
+			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			var row := y * w
+
+			var dx_m: float = (min_u + float(rx0) * step_u) - u_hit
+			for x in range(rx0, rx1 + 1):
+				var dist_sq := dx_m * dx_m + dy_sq
+				dx_m += step_u
+				var li := int(dist_sq * inv_r_sq * lut_sz_minus_1)
+				if li >= BRUSH_LUT_SIZE - 1:
+					continue
+				var wb := int(lut_bytes[li])
+				if wb <= 0:
+					continue
+				var i := row + x
+				if erase:
+					var sub := (wb * opacity_b + 128) / 255
+					if sub <= 0 or sub <= int(wmax[i]):
+						continue
+					wmax[i] = sub
+					var p_base := int(base[i])
+					var p_new := maxi(0, p_base - sub)
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+				else:
+					var target_b := (wb * opacity_b + 128) / 255
+					if target_b <= int(wmax[i]):
+						continue
+					wmax[i] = target_b
+					var p_base := int(base[i])
+					var p_new := p_base
+					if p_base <= opacity_b:
+						p_new = maxi(p_base, target_b)
+					else:
+						var erase_excess := (wb * (p_base - opacity_b) + 128) / 255
+						p_new = p_base - erase_excess
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
 	if dirty:
 		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
@@ -773,25 +831,34 @@ static func compute_stamp_anchor(mesh_data: PBMeshData, face: PBFace, stamp_xf_l
 	var range_u: float = bounds["range_u"]
 	var range_v: float = bounds["range_v"]
 	var center: Vector3 = stamp_xf_local.origin
-	var ex: Vector3 = stamp_xf_local.basis.x * 0.5
-	var ey: Vector3 = stamp_xf_local.basis.y * 0.5
+	var sx: Vector3 = stamp_xf_local.basis.x
+	var sy: Vector3 = stamp_xf_local.basis.y
+	var scale_x: float = sx.length()
+	var scale_y: float = sy.length()
+	var rot_right := sx.normalized() if scale_x > 0.0001 else u_face
+	var rot_up := sy.normalized() if scale_y > 0.0001 else v_face
+
 	return {
+		"u_center": u_face.dot(center),
+		"v_center": v_face.dot(center),
+		"scale_x": scale_x,
+		"scale_y": scale_y,
+		"rot_right": rot_right,
+		"rot_up": rot_up,
+		# Backward-compatible normalized coordinates
 		"center": Vector2(
 			(u_face.dot(center) - bounds["min_u"]) / range_u,
 			(v_face.dot(center) - bounds["min_v"]) / range_v),
-		"du": Vector2(u_face.dot(ex) / range_u, v_face.dot(ex) / range_v),
-		"dv": Vector2(u_face.dot(ey) / range_u, v_face.dot(ey) / range_v),
+		"du": Vector2(u_face.dot(sx * 0.5) / range_u, v_face.dot(sx * 0.5) / range_v),
+		"dv": Vector2(u_face.dot(sy * 0.5) / range_u, v_face.dot(sy * 0.5) / range_v),
 	}
 
-## Rebuilds a stamp transform from a normalized anchor against the face's
-## CURRENT geometry bounds — stamps GROW AND MOVE with face resizes/edits.
-## Returns {"transform": Transform3D, "bounds": Dictionary} in mesh-local space,
-## or {} when the face/anchor is invalid. The returned basis may be sheared
-## after a non-uniform face resize; a MeshInstance3D tolerates that, and the
-## decal shader samples the unit quad by UV, so the texture still fills it 1:1.
+## Rebuilds a stamp transform from an anchor against the face's CURRENT geometry.
+## Stamps preserve their physical object-space position and scale — they NEVER
+## stretch or slide when the face is resized.
 static func stamp_transform_from_anchor(mesh_data: PBMeshData, face: PBFace,
 		anchor: Dictionary, normal_offset: float = 0.002) -> Dictionary:
-	if mesh_data == null or face == null or not anchor.has("center"):
+	if mesh_data == null or face == null or anchor.is_empty():
 		return {}
 	var bounds := get_face_planar_bounds(mesh_data, face, true)
 	if bounds.is_empty():
@@ -802,28 +869,42 @@ static func stamp_transform_from_anchor(mesh_data: PBMeshData, face: PBFace,
 	var u_face: Vector3 = bounds["u"]
 	var v_face: Vector3 = bounds["v"]
 	var n: Vector3 = bounds["normal"]
-	var c: Vector2 = anchor["center"]
-	var du: Vector2 = anchor.get("du", Vector2.ZERO)
-	var dv: Vector2 = anchor.get("dv", Vector2.ZERO)
 	var ref: Vector3 = mesh_data.positions[idxs[0]]
 
-	var tgt_u: float = bounds["min_u"] + c.x * bounds["range_u"]
-	var tgt_v: float = bounds["min_v"] + c.y * bounds["range_v"]
-	# Reconstruct the anchor point on the face plane: move from ref (on-plane)
-	# along the in-plane axes to the stored normalized coordinates, then lift
-	# by the decal offset. Correct even when u_face/v_face are not parallel to
-	# the plane basis of ref because (p - ref) lies in the face plane.
+	var tgt_u: float = 0.0
+	var tgt_v: float = 0.0
+	var rot_right: Vector3 = u_face
+	var rot_up: Vector3 = v_face
+	var scale_x: float = 1.0
+	var scale_y: float = 1.0
+
+	if anchor.has("u_center") and anchor.has("v_center"):
+		tgt_u = float(anchor["u_center"])
+		tgt_v = float(anchor["v_center"])
+		scale_x = float(anchor.get("scale_x", 1.0))
+		scale_y = float(anchor.get("scale_y", 1.0))
+		rot_right = anchor.get("rot_right", u_face)
+		rot_up = anchor.get("rot_up", v_face)
+	elif anchor.has("center"):
+		var c: Vector2 = anchor["center"]
+		tgt_u = bounds["min_u"] + c.x * bounds["range_u"]
+		tgt_v = bounds["min_v"] + c.y * bounds["range_v"]
+		var du: Vector2 = anchor.get("du", Vector2.ZERO)
+		var dv: Vector2 = anchor.get("dv", Vector2.ZERO)
+		var ex: Vector3 = u_face * (du.x * bounds["range_u"]) + v_face * (du.y * bounds["range_v"])
+		var ey: Vector3 = u_face * (dv.x * bounds["range_u"]) + v_face * (dv.y * bounds["range_v"])
+		scale_x = ex.length() * 2.0
+		scale_y = ey.length() * 2.0
+		if scale_x > 0.0001: rot_right = ex.normalized()
+		if scale_y > 0.0001: rot_up = ey.normalized()
+
+	# Reconstruct anchor point on the face plane
 	var center: Vector3 = ref \
 		+ u_face * (tgt_u - u_face.dot(ref)) \
 		+ v_face * (tgt_v - v_face.dot(ref)) \
 		+ n * normal_offset
-	# du/dv are per-axis normalized (x over range_u, y over range_v).
-	var range_u: float = bounds["range_u"]
-	var range_v: float = bounds["range_v"]
-	var ex: Vector3 = u_face * (du.x * range_u) + v_face * (du.y * range_v)
-	var ey: Vector3 = u_face * (dv.x * range_u) + v_face * (dv.y * range_v)
-	# Basis columns: X/Y carry the FULL quad extent (unit quad spans 0.5).
-	return {"transform": Transform3D(Basis(ex * 2.0, ey * 2.0, n), center), "bounds": bounds}
+
+	return {"transform": Transform3D(Basis(rot_right * scale_x, rot_up * scale_y, n), center), "bounds": bounds}
 
 ## Export-facing accessor: the full paint state of one face as plain data:
 ## base material params, every enabled splat layer (texture path + mask Image),

@@ -1127,10 +1127,10 @@ func _run() -> void:
 						target_b.rebuild()
 						await _frames(2)
 						var ext1: float = decal.transform.basis.x.length()
-						if absf(ext1 - ext0 * 2.0) < 0.02:
-							_pass("SPLAT-STAMP: stamp decal grew with face resize (face-anchored)")
+						if absf(ext1 - ext0) < 0.02:
+							_pass("SPLAT-STAMP: stamp decal does not stretch with face resize")
 						else:
-							_fail("SPLAT-STAMP: stamp did not grow with face (extent %.3f -> %.3f)" % [ext0, ext1])
+							_fail("SPLAT-STAMP: stamp stretched with face (extent %.3f -> %.3f)" % [ext0, ext1])
 						# Restore geometry for subsequent tests
 						for idx3 in saved:
 							data_b.positions[idx3] = saved[idx3]

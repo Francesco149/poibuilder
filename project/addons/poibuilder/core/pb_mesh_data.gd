@@ -552,6 +552,16 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 		if needs_uv_refresh:
 			PBUv.refresh_mesh_uvs(self)
 
+	# Ensure UV2 (splat masks) is up-to-date and non-stretching across geometry edits
+	var has_splat_data := not textures1.is_empty()
+	if not has_splat_data:
+		for face in faces:
+			if face != null and face.splat_bounds.size() == 4:
+				has_splat_data = true
+				break
+	if has_splat_data:
+		PBSplat.ensure_mesh_uv2(self)
+
 
 	if not use_cached_indices or _submesh_indices_cache.is_empty():
 		# Group faces by submesh_index and compile triangle index buffers

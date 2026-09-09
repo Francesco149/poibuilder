@@ -775,6 +775,36 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.51 round complete ✓ — non-stretching texture layers & stamps on geometry resize, halo-free overwrite falloff:
+- NON-STRETCHING / NON-SLIDING TEXTURE LAYERS (`PBMeshData.to_array_mesh`, `pb_splat_shader.gdshader`):
+  - Root cause of painted layers stretching on geometry resize: `textures1` (the UV2 channel carrying
+    splat mask coordinates) was only populated on `begin_stroke()` and was never recomputed when vertices
+    moved during geometry editing/dragging. Moved vertices kept their stale normalized coordinates,
+    causing the GPU to interpolate the mask across newly resized geometry.
+  - `to_array_mesh()` now re-evaluates `PBSplat.ensure_mesh_uv2(self)` whenever splat data is present,
+    computing vertex UV2 coordinates relative to the face's persistent `splat_bounds`.
+  - Clamped out-of-bounds UV2 in `pb_splat_shader.gdshader`: fragments where `UV2 < 0.0 || UV2 > 1.0` evaluate
+    to mask `0.0` rather than clamping to edge texels. Result: painted texture layers stay firmly at their
+    exact object-space physical position and scale without stretching or sliding.
+  - Unpainted faces do not prematurely set `face.splat_bounds`; `splat_bounds` locks on first paint.
+- NON-STRETCHING / NON-SLIDING STAMPS (`PBSplat.compute_stamp_anchor`, `stamp_transform_from_anchor`, `PBMesh._refresh_stamps`):
+  - Replaced the v0.9.50 stretch-on-resize behavior with physical object-space anchoring: stamps carry
+    `anchor_u`, `anchor_v`, `anchor_scale_x`, and `anchor_scale_y`.
+  - Resizing a face updates decal boundary clipping (`face_bounds` shader parameter) while the stamp quad
+    maintains its exact physical dimensions (`stamp_scale`) and object-space position on the face plane.
+    Stamps never stretch, shear, or slide when geometry is resized or extruded.
+- HALO-FREE REPLACE & OVERWRITE PAINT SEMANTICS (`PBSplat.paint_face_splat`):
+  - Fixed empty halo around the brush: previously, `bytes[i] = target_b` forced fringe pixels to ~0
+    over existing painted areas.
+  - The brush now acts as an eraser towards brush opacity: if existing canvas opacity $P_{base} > O_{brush}$,
+    it erases the excess down to $O_{brush}$ scaled by brush falloff $w$, leaving the fringe at $P_{base}$
+    (no empty halo). Lower-opacity strokes can overwrite higher-opacity areas without using the eraser tool.
+  - If $P_{base} \le O_{brush}$, it raises the pixel up to $\max(P_{base}, w \cdot O_{brush})$, preventing
+    opacity accumulation when overlapping strokes at the same configured opacity.
+  - Fast path for hard brushes (`softness <= 0.001`) and direct byte-LUT (`_get_brush_lut_bytes`) with integer
+    math eliminates per-pixel float/Color boxing for lag-free painting on small faces.
+- Tests: 772/772 GUT (+2), 42/42 real-editor GUI tests under Xvfb (asserting stamps and splats do not stretch on resize).
+
 v0.9.50 round complete ✓ — paint perf/semantics rework, face-anchored stamps, export-bake seam:
 - PAINT HOT LOOP REWRITE (`PBSplat.paint_face_splat` byte-buffer + LUT + dab spacing):
   - Root cause of cube-face lag (measured: ~12ms/dab on a 2m face vs ~3ms on a 20m floor): a dab

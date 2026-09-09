@@ -471,6 +471,42 @@ func test_paint_lower_opacity_stroke_overwrites_stronger_one() -> void:
 	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.4, 0.0, 0.3, false, stroke_b)
 	assert_almost_eq(mask.get_pixel(mid, mid).r, 0.3, 0.05, "Lower-opacity stroke overwrites the stronger one")
 
+
+## Soft brush over higher-opacity filled area erases towards brush opacity without empty halo.
+func test_paint_soft_brush_over_filled_area_has_no_halo_and_erases_towards_opacity() -> void:
+	var data := _test_cube.pb_mesh_data
+	var face := data.faces[0]
+	PBSplat.ensure_mesh_uv2(data)
+	var mat := PBSplat.create_splat_material()
+	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, tex)
+	var center := _face_center_local(data, face)
+
+	# 1. Fill area with 1.0 opacity
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.8, 0.0, 1.0, false, {})
+	var mask := PBSplat.get_layer_mask_image(mat, layer_idx)
+	var mid_x := mask.get_width() / 2
+	var mid_y := mask.get_height() / 2
+	assert_almost_eq(mask.get_pixel(mid_x, mid_y).r, 1.0, 0.05, "Canvas is initially filled with 1.0")
+
+	# 2. Paint over center with smaller soft brush (radius 0.3m, softness 0.6) at lower opacity 0.4
+	var stroke := {}
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.3, 0.6, 0.4, false, stroke)
+
+	# Center of brush is overwritten to lower opacity (~0.4)
+	var center_val: float = mask.get_pixel(mid_x, mid_y).r
+	assert_almost_eq(center_val, 0.4, 0.05, "Center is overwritten to lower opacity 0.4")
+
+	# Outside the brush radius (e.g. at 0.5m, pixel offset ~120px): still filled at 1.0 (NO HALO!)
+	var edge_offset := int(float(mask.get_width()) * (0.5 / 2.0))
+	var outside_val: float = mask.get_pixel(mid_x + edge_offset, mid_y).r
+	assert_almost_eq(outside_val, 1.0, 0.05, "Outside brush radius remains 1.0 with no empty halo")
+
+	# At the brush fringe: pixel is between 0.4 and 1.0, never 0.0
+	var fringe_offset := int(float(mask.get_width()) * (0.25 / 2.0))
+	var fringe_val: float = mask.get_pixel(mid_x + fringe_offset, mid_y).r
+	assert_true(fringe_val >= 0.4 and fringe_val <= 1.0, "Fringe smoothly transitions between 0.4 and 1.0")
+	assert_true(fringe_val > 0.4, "Fringe is greater than center opacity")
 ## Within one stroke, the pixel keeps the stroke's MAX target (fringe-then-
 ## center dabbing paints the bright center, not the dim fringe).
 func test_paint_within_stroke_keeps_max() -> void:
@@ -561,9 +597,8 @@ func test_stamp_anchor_roundtrip() -> void:
 	assert_almost_eq(xf.basis.x.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent")
 	assert_almost_eq(xf.basis.y.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent (y)")
 
-## Resizing the face GROWS the stamp (the v0.9.49 complaint: stamps stayed at
-## their authored world size while the face resized under them).
-func test_stamp_grows_when_face_resized() -> void:
+## Resizing the face must NOT stretch or slide the stamp (nothing should stretch or slide).
+func test_stamp_does_not_stretch_or_slide_when_face_resized() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
 	var ctrl := PBPaintController.new()
@@ -588,24 +623,67 @@ func test_stamp_grows_when_face_resized() -> void:
 	cube.rebuild()
 
 	var after_extent: float = decal.transform.basis.x.length()
-	assert_almost_eq(after_extent, before_extent * 2.0, 0.02,
-		"Doubling the face doubles the stamp extent")
+	assert_almost_eq(after_extent, before_extent, 0.01,
+		"Resizing the face must NOT stretch the stamp")
 	assert_almost_eq(decal.transform.origin.distance_to(before_pos), 0.0, 0.001,
-		"Centered face growth keeps the stamp centered")
+		"Resizing the face must NOT slide the stamp")
 
-	# Non-uniform growth: stretch the face 2x along +X only -> stamp shears/stretches
-	# along that axis only.
-	var x_extent_before: float = decal.transform.basis.x.length()
-	var y_extent_before: float = decal.transform.basis.y.length()
+	# Non-uniform growth: stretch the face along +X only -> stamp still does not stretch or shear
 	for idx in face.get_distinct_indexes():
 		var p: Vector3 = data.positions[idx]
 		data.positions[idx] = center + Vector3((p - center).x * 4.0, (p - center).y, (p - center).z)
 	cube.rebuild()
-	assert_true(decal.transform.basis.x.length() > x_extent_before * 1.5,
-		"Non-uniform face stretch grows the stamp along the stretched axis")
-	assert_true(decal.transform.basis.y.length() < y_extent_before * 1.3,
-		"The unstretched axis does not grow")
+	assert_almost_eq(decal.transform.basis.x.length(), before_extent, 0.01,
+		"Non-uniform face stretch must NOT stretch the stamp x axis")
+	assert_almost_eq(decal.transform.basis.y.length(), before_extent, 0.01,
+		"Non-uniform face stretch must NOT stretch the stamp y axis")
 
+## Resizing geometry does NOT stretch or slide painted texture layers (UV2 tracks object space).
+func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var data := cube.pb_mesh_data
+	var face := data.faces[0] # front face, z = 1.0 or -1.0
+	var mat := PBSplat.create_splat_material()
+	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	var layer_idx := PBSplat.add_layer(mat, tex)
+	data.set_face_material(face, mat)
+
+	# Paint face to establish splat_bounds
+	var center := _face_center_local(data, face)
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.5, 0.0, 1.0, false)
+	assert_eq(face.splat_bounds.size(), 4, "Splat bounds established on first paint")
+	var orig_bounds := [face.splat_bounds[0], face.splat_bounds[1], face.splat_bounds[2], face.splat_bounds[3]]
+
+	# Rebuild mesh and check initial UV2 coordinates
+	cube.rebuild()
+	var orig_uv2 := data.textures1.duplicate()
+	assert_eq(orig_uv2.size(), data.positions.size())
+
+	# Resize face: move right vertices +2m outward along u
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var u_axis: Vector3 = bounds["u"]
+	for idx in face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if u_axis.dot(p) > 0.0:
+			data.positions[idx] = p + u_axis * 2.0
+	cube.rebuild()
+
+	# splat_bounds must NOT have stretched:
+	assert_eq(face.splat_bounds[0], orig_bounds[0])
+	assert_eq(face.splat_bounds[1], orig_bounds[1])
+	assert_eq(face.splat_bounds[2], orig_bounds[2])
+	assert_eq(face.splat_bounds[3], orig_bounds[3])
+
+	# UV2 at the unmoved vertices must be identical (no sliding):
+	for idx in face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if u_axis.dot(p) < 0.0:
+			assert_almost_eq(data.textures1[idx].x, orig_uv2[idx].x, 0.001)
+			assert_almost_eq(data.textures1[idx].y, orig_uv2[idx].y, 0.001)
+		else:
+			# Moved vertices have UV2 > 1.0 (new geometry outside the original mask):
+			assert_true(data.textures1[idx].x > 1.5, "Moved vertices have UV2 proportionally expanded, not stretched to 1.0")
 ## The export-facing collector returns plain, node-free stamp records.
 func test_collect_stamp_data_exports_anchors() -> void:
 	var cube := PBMesh.create_cube(2.0)

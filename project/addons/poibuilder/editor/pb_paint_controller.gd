@@ -547,7 +547,7 @@ func apply_stamp() -> void:
 	stamp_node.set_meta("stamp_texture_path", stamp_texture.resource_path)
 	stamp_node.set_meta("face_idx", target_face_idx)
 
-	# Face-anchored normalized placement: stamps grow/move with face resizes
+	# Face-anchored placement: stamps maintain fixed object-space position and size
 	# (PBMesh._refresh_stamps re-evaluates these anchors on every rebuild).
 	var anchor_data := target_mesh.pb_mesh_data
 	if anchor_data != null and target_face_idx >= 0 and target_face_idx < anchor_data.faces.size():
@@ -556,7 +556,12 @@ func apply_stamp() -> void:
 			stamp_node.set_meta("anchor_center", anchor["center"])
 			stamp_node.set_meta("anchor_du", anchor["du"])
 			stamp_node.set_meta("anchor_dv", anchor["dv"])
-
+			stamp_node.set_meta("anchor_u", anchor["u_center"])
+			stamp_node.set_meta("anchor_v", anchor["v_center"])
+			stamp_node.set_meta("anchor_scale_x", anchor["scale_x"])
+			stamp_node.set_meta("anchor_scale_y", anchor["scale_y"])
+			stamp_node.set_meta("anchor_rot_right", anchor["rot_right"])
+			stamp_node.set_meta("anchor_rot_up", anchor["rot_up"])
 	if plugin != null and plugin.has_method("get_undo_redo"):
 		var undo = plugin.get_undo_redo()
 		if undo != null:

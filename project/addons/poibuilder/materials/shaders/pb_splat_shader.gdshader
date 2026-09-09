@@ -77,7 +77,7 @@ void fragment() {
 
 	if (layer_1_enabled) {
 		vec4 l_col = texture(layer_1_texture, UV) * layer_1_color;
-		float m = texture(layer_1_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_1_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_1_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -86,7 +86,7 @@ void fragment() {
 	}
 	if (layer_2_enabled) {
 		vec4 l_col = texture(layer_2_texture, UV) * layer_2_color;
-		float m = texture(layer_2_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_2_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_2_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -95,7 +95,7 @@ void fragment() {
 	}
 	if (layer_3_enabled) {
 		vec4 l_col = texture(layer_3_texture, UV) * layer_3_color;
-		float m = texture(layer_3_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_3_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_3_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -104,7 +104,7 @@ void fragment() {
 	}
 	if (layer_4_enabled) {
 		vec4 l_col = texture(layer_4_texture, UV) * layer_4_color;
-		float m = texture(layer_4_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_4_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_4_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -113,7 +113,7 @@ void fragment() {
 	}
 	if (layer_5_enabled) {
 		vec4 l_col = texture(layer_5_texture, UV) * layer_5_color;
-		float m = texture(layer_5_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_5_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_5_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -122,7 +122,7 @@ void fragment() {
 	}
 	if (layer_6_enabled) {
 		vec4 l_col = texture(layer_6_texture, UV) * layer_6_color;
-		float m = texture(layer_6_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_6_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_6_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -131,7 +131,7 @@ void fragment() {
 	}
 	if (layer_7_enabled) {
 		vec4 l_col = texture(layer_7_texture, UV) * layer_7_color;
-		float m = texture(layer_7_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_7_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_7_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -140,7 +140,7 @@ void fragment() {
 	}
 	if (layer_8_enabled) {
 		vec4 l_col = texture(layer_8_texture, UV) * layer_8_color;
-		float m = texture(layer_8_mask, UV2).r;
+		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_8_mask, UV2).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_8_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -148,7 +148,7 @@ void fragment() {
 		cur_roughness = mix(cur_roughness, layer_8_roughness, blend * l_col.a);
 	}
 	if (stamp_layer_enabled) {
-		vec4 stamp_col = texture(stamp_layer_texture, UV2);
+		vec4 stamp_col = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(stamp_layer_texture, UV2) : vec4(0.0);
 		albedo = mix(albedo, stamp_col.rgb, stamp_col.a);
 	}
 

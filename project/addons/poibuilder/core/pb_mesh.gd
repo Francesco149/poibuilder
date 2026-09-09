@@ -141,7 +141,7 @@ func _refresh_stamps() -> void:
 		return
 	for stamp in container.get_children():
 		var mi := stamp as MeshInstance3D
-		if mi == null or not stamp.has_meta("anchor_center"):
+		if mi == null or not (stamp.has_meta("anchor_center") or stamp.has_meta("anchor_u")):
 			continue
 		var fidx: int = int(stamp.get_meta("face_idx", -1))
 		if fidx < 0 or fidx >= pb_mesh_data.faces.size():
@@ -149,11 +149,23 @@ func _refresh_stamps() -> void:
 		var face := pb_mesh_data.faces[fidx]
 		if face == null:
 			continue
-		var res := PBSplat.stamp_transform_from_anchor(pb_mesh_data, face, {
-			"center": stamp.get_meta("anchor_center"),
-			"du": stamp.get_meta("anchor_du"),
-			"dv": stamp.get_meta("anchor_dv"),
-		})
+		var anchor_dict: Dictionary = {}
+		if stamp.has_meta("anchor_u") and stamp.has_meta("anchor_v"):
+			anchor_dict = {
+				"u_center": stamp.get_meta("anchor_u"),
+				"v_center": stamp.get_meta("anchor_v"),
+				"scale_x": stamp.get_meta("anchor_scale_x", 1.0),
+				"scale_y": stamp.get_meta("anchor_scale_y", 1.0),
+				"rot_right": stamp.get_meta("anchor_rot_right", Vector3.RIGHT),
+				"rot_up": stamp.get_meta("anchor_rot_up", Vector3.UP),
+			}
+		else:
+			anchor_dict = {
+				"center": stamp.get_meta("anchor_center"),
+				"du": stamp.get_meta("anchor_du"),
+				"dv": stamp.get_meta("anchor_dv"),
+			}
+		var res := PBSplat.stamp_transform_from_anchor(pb_mesh_data, face, anchor_dict)
 		if res.is_empty():
 			continue
 		mi.transform = res["transform"]
