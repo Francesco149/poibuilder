@@ -211,14 +211,40 @@ func test_toolbar_initial_state():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Logo, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
-	# sep, 8 op buttons, sep, New Shape, Edit Params, sep, Panel toggle, Recover Panel,
-	# sep, Material button, Settings button, sep, Export button.
-	assert_eq(tb.get_child_count(), 37, "Toolbar should have 37 children")
+	# Items across rows: Logo, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
+	# sep, Grid, GridState, sep, 9 op buttons, sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
+	# sep, Material button, Settings button, sep, Export button, sep, Split button.
+	assert_eq(tb.get_item_count(), 39, "Toolbar should have 39 items across its rows")
 	assert_not_null(tb._btn_export, "Export button should exist")
+	assert_not_null(tb._btn_split_rows, "Split rows button should exist")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 
+func test_toolbar_split_rows_toggle():
+	var tb := PBToolbar.new()
+	add_child_autofree(tb)
+
+	# Initially 1 row: row 2 is hidden, row 1 contains all 39 items
+	assert_false(tb.two_rows, "Initial state should be single row")
+	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
+	assert_eq(tb._row1.get_child_count(), 39, "Row 1 should have all items in single-row mode")
+
+	# Toggle to 2 rows
+	var received_splits: Array = []
+	tb.split_rows_toggled.connect(func(val): received_splits.append(val))
+	tb.two_rows = true
+
+	assert_true(tb.two_rows, "two_rows property should be true")
+	assert_true(tb._row2.visible, "Row 2 should be visible in 2-row mode")
+	assert_eq(tb._row1.get_child_count(), 27, "Row 1 should contain tools, modes, grid, ops, and split button")
+
+	# Toggle back to 1 row via button
+	tb._btn_split_rows.button_pressed = false
+	assert_false(tb.two_rows, "two_rows property should be false after untoggling button")
+	assert_false(tb._row2.visible, "Row 2 should be hidden again")
+	assert_eq(tb._row1.get_child_count(), 39, "Row 1 should contain all items again")
+	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
+	assert_false(received_splits[0], "Emitted value should match button state")
 func test_toolbar_icons_present():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)

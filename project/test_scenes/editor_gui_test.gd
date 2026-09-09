@@ -1279,6 +1279,23 @@ func _run() -> void:
 						_fail("EXPORT: export dialog failed to open")
 				else:
 					_fail("EXPORT: toolbar export button not found")
+				# ── Toolbar Split Rows Test ────────────────────────────────────
+				if plugin.toolbar != null and plugin.toolbar._btn_split_rows != null:
+					_pass("TOOLBAR-SPLIT: split rows button exists")
+					plugin.toolbar._btn_split_rows.button_pressed = true
+					await _frames(2)
+					if plugin.toolbar.two_rows and plugin.toolbar._row2.visible:
+						_pass("TOOLBAR-SPLIT: enabled two-row layout (row2 visible, height=%.0f)" % plugin.toolbar.size.y)
+					else:
+						_fail("TOOLBAR-SPLIT: two-row layout failed to show row2")
+					plugin.toolbar._btn_split_rows.button_pressed = false
+					await _frames(2)
+					if not plugin.toolbar.two_rows and not plugin.toolbar._row2.visible:
+						_pass("TOOLBAR-SPLIT: restored single-row layout (row2 hidden)")
+					else:
+						_fail("TOOLBAR-SPLIT: failed to restore single-row layout")
+				else:
+					_fail("TOOLBAR-SPLIT: split rows button not found")
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────

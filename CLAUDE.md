@@ -775,6 +775,26 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.56 round complete ✓ — two-row split toolbar toggle for smaller screens:
+- TWO-ROW TOOLBAR LAYOUT (`PBToolbar`, `poibuilder_plugin.gd`):
+  - Changed `PBToolbar` from `HBoxContainer` to `VBoxContainer` managing two horizontal rows (`Row1` and `Row2`).
+  - Added a dedicated Split Rows toggle button (`SplitRowsToggle`, `icon_split_rows.svg` / "☷") at the right of Row 1.
+  - When toggled ON (2 rows):
+    - Row 1 (Modeling & Operations): Logo, Move/Rotate/Scale tools, Object/Vertex/Edge/Face select modes, Orientation Space cycler, Grid settings & readout, 9 Mesh Operation buttons, and Split Rows toggle button.
+    - Row 2 (Creation, Overlays, Docks, Export): New Shape menu, N-Gon tool, Edit Params, Overlay Panel toggle & recovery, Material & UV dock button, Display Settings button, and Map Export button.
+    - Both rows stay under ~550px, fitting comfortably on small screens (laptops, dual-dock editor layouts) without horizontal squishing or pushed-off buttons.
+  - When toggled OFF (1 row, default):
+    - All items are arranged in a single continuous horizontal row; Row 2 collapses (`_row2.visible = false`).
+    - Parent `Node3DEditor` layout container automatically sizes the toolbar to 1 or 2 rows natively and pushes the 3D viewports down.
+  - Setting persists across editor restarts via `EditorSettings` (`poibuilder/toolbar/two_rows`).
+  - Added `test_toolbar_split_rows_toggle` in `test_pb_editor.gd` (807/807 GUT tests passing) and GUI integration test in `editor_gui_test.gd` (49/49 passing).
+
+v0.9.55 round complete ✓ — normalized collinearity check in grid subdivision:
+- GRID SUBDIVISION CORNER RESTORATION (`PBFaceSubdivider.simplify_collinear_2d`):
+  - Root cause of dropped triangles: `simplify_collinear_2d` evaluated raw unnormalized cross product (`absf(cross) > 0.0001`). When grid clipping produced small boundary edge segments, the cross product $|v_1 \times v_2| = d_1 \cdot d_2 \cdot \sin(\theta)$ at a true 90-degree corner evaluated to $< 0.0001$, incorrectly filtering out true geometric corners as "collinear" and dropping complementary triangles.
+  - Updated to evaluate normalized angular collinearity $\sin(\theta) = |v_1 \times v_2| / (|v_1| \cdot |v_2|)$ with dot product direction check ($v_1 \cdot v_2 > 0$).
+  - 100% of face area preserved across all cells, producing completely watertight exported meshes.
+
 v0.9.54 round complete ✓ — pre-bake showcase launcher, retro viewer wireframe, POT texture clamp, & toolbar restore:
 - POIBUILDER TOOLBAR RESTORE (`poibuilder_plugin.gd`):
   - Root cause of missing toolbar: during v0.9.53 export dialog integration, the call to `_add_toolbar_row_below_3d_toolbar()` in `_enter_tree()` was accidentally dropped, leaving the toolbar instantiated but unparented (and tool bridge inactive). Restored the call and added a resilient fallback to `CONTAINER_SPATIAL_EDITOR_MENU` if container layout walking fails.

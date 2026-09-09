@@ -64,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.55"
+const VERSION := "0.9.56"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -140,6 +140,11 @@ func _enter_tree():
 	toolbar.materials_dock_requested.connect(focus_material_dock)
 	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
 	toolbar.export_requested.connect(_on_export_requested)
+	toolbar.split_rows_toggled.connect(_on_toolbar_split_rows_toggled)
+	if Engine.is_editor_hint():
+		var ed_settings := EditorInterface.get_editor_settings()
+		if ed_settings != null and ed_settings.has_setting("poibuilder/toolbar/two_rows"):
+			toolbar.set_two_rows(bool(ed_settings.get_setting("poibuilder/toolbar/two_rows")))
 	_add_toolbar_row_below_3d_toolbar()
 	_export_dialog = PBExportDialog.new()
 	if Engine.is_editor_hint():
@@ -147,7 +152,6 @@ func _enter_tree():
 		if base != null:
 			base.add_child(_export_dialog)
 	toolbar.sync_grid(grid)
-
 	# Tool overlay panel floating in the 3D viewport (readouts + params
 	# modal; logging goes to the Godot console via PBLogger).
 	tool_overlay = PBToolOverlay.new()
@@ -940,6 +944,12 @@ func _on_export_requested() -> void:
 	if scene == null and is_inside_tree():
 		scene = get_tree().root
 	_export_dialog.open_dialog(scene)
+
+func _on_toolbar_split_rows_toggled(two_rows: bool) -> void:
+	if Engine.is_editor_hint():
+		var ed_settings := EditorInterface.get_editor_settings()
+		if ed_settings != null:
+			ed_settings.set_setting("poibuilder/toolbar/two_rows", two_rows)
 func _load_display_settings() -> void:
 	var grid_op := 0.7
 	var wire_op := 0.7
