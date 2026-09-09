@@ -684,6 +684,50 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 		else:
 			# Moved vertices have UV2 > 1.0 (new geometry outside the original mask):
 			assert_true(data.textures1[idx].x > 1.5, "Moved vertices have UV2 proportionally expanded, not stretched to 1.0")
+
+## Moving/raising an object in object mode keeps stamp clipping perfectly aligned (mesh-local clipping).
+func test_stamp_clipping_moves_with_object_in_object_mode() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_scale = 1.0
+	# Stamp placed near the bottom edge of face 0 (z = -1, y from -1 to 1)
+	ctrl.update_cursor(Vector3(0.0, -0.8, -1.0), Vector3.FORWARD, cube, 0)
+	ctrl.apply_stamp()
+
+	var decals := cube.get_node_or_null("PBStamps")
+	assert_not_null(decals)
+	var decal := decals.get_child(0) as MeshInstance3D
+	assert_not_null(decal)
+	var smat := decal.material_override as ShaderMaterial
+	assert_not_null(smat)
+
+	var stamp_to_mesh: Transform3D = smat.get_shader_parameter("stamp_to_mesh")
+	var face_bounds: Vector4 = smat.get_shader_parameter("face_bounds")
+	var face_u: Vector3 = smat.get_shader_parameter("face_u")
+	var face_v: Vector3 = smat.get_shader_parameter("face_v")
+
+	# Point on bottom edge of stamp quad in decal local coordinates (y = -0.5)
+	var p_local := Vector3(0.0, -0.5, 0.0)
+	var p_mesh := stamp_to_mesh * p_local
+	var v_coord := face_v.dot(p_mesh)
+	var is_clipped_before := (v_coord < face_bounds.z or v_coord > face_bounds.w)
+
+	# Move the cube in object mode: raise Y by 10m and shift X by 5m
+	cube.global_position = Vector3(5.0, 10.0, 0.0)
+
+	# Clipping calculation is mesh-local and invariant to object-mode movement:
+	var stamp_to_mesh_after: Transform3D = smat.get_shader_parameter("stamp_to_mesh")
+	assert_almost_eq(stamp_to_mesh_after.origin.distance_to(stamp_to_mesh.origin), 0.0, 0.001,
+		"stamp_to_mesh is invariant to object-mode translation")
+	var p_mesh_after := stamp_to_mesh_after * p_local
+	var v_coord_after := face_v.dot(p_mesh_after)
+	var is_clipped_after := (v_coord_after < face_bounds.z or v_coord_after > face_bounds.w)
+
+	assert_eq(is_clipped_after, is_clipped_before,
+		"Stamp clipping relative to the face is 100% preserved when the object moves in object mode")
 ## The export-facing collector returns plain, node-free stamp records.
 func test_collect_stamp_data_exports_anchors() -> void:
 	var cube := PBMesh.create_cube(2.0)

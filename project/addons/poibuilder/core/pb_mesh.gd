@@ -177,8 +177,7 @@ func _refresh_stamps() -> void:
 			sm.set_shader_parameter("face_u", b["u"])
 			sm.set_shader_parameter("face_v", b["v"])
 			sm.set_shader_parameter("face_bounds", Vector4(b["min_u"], b["max_u"], b["min_v"], b["max_v"]))
-			if is_inside_tree():
-				sm.set_shader_parameter("mesh_to_world", global_transform)
+			sm.set_shader_parameter("stamp_to_mesh", mi.transform)
 
 # ==============================================================================
 # Convenience Factory Methods

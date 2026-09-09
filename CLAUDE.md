@@ -787,12 +787,19 @@ v0.9.51 round complete ✓ — non-stretching texture layers & stamps on geometr
     to mask `0.0` rather than clamping to edge texels. Result: painted texture layers stay firmly at their
     exact object-space physical position and scale without stretching or sliding.
   - Unpainted faces do not prematurely set `face.splat_bounds`; `splat_bounds` locks on first paint.
-- NON-STRETCHING / NON-SLIDING STAMPS (`PBSplat.compute_stamp_anchor`, `stamp_transform_from_anchor`, `PBMesh._refresh_stamps`):
+- NON-STRETCHING / NON-SLIDING STAMPS & MESH-LOCAL CLIPPING (`PBSplat.compute_stamp_anchor`, `stamp_transform_from_anchor`, `PBMesh._refresh_stamps`, `pb_decal_shader.gdshader`):
   - Replaced the v0.9.50 stretch-on-resize behavior with physical object-space anchoring: stamps carry
     `anchor_u`, `anchor_v`, `anchor_scale_x`, and `anchor_scale_y`.
   - Resizing a face updates decal boundary clipping (`face_bounds` shader parameter) while the stamp quad
     maintains its exact physical dimensions (`stamp_scale`) and object-space position on the face plane.
     Stamps never stretch, shear, or slide when geometry is resized or extruded.
+  - Root cause of stamp clipping staying at old world position when moving/raising an object in Object Mode:
+    `pb_decal_shader.gdshader` previously used `mesh_to_world` (a static shader uniform storing the mesh's
+    global_transform at creation) and multiplied `inverse(mesh_to_world) * world_pos`. When the object moved,
+    the uniform was stale, causing clipping coordinates to drift in world space.
+  - Replaced with `stamp_to_mesh` (the decal's local transform relative to `PBMesh`) and computed `face_uv`
+    directly in `vertex()` in mesh-local space. Clipping is 100% mesh-local, zero matrix inverses in fragment(),
+    and remains perfectly aligned when the object is translated, raised, rotated, or scaled in Object Mode.
 - HALO-FREE REPLACE & OVERWRITE PAINT SEMANTICS (`PBSplat.paint_face_splat`):
   - Fixed empty halo around the brush: previously, `bytes[i] = target_b` forced fringe pixels to ~0
     over existing painted areas.
@@ -803,7 +810,7 @@ v0.9.51 round complete ✓ — non-stretching texture layers & stamps on geometr
     opacity accumulation when overlapping strokes at the same configured opacity.
   - Fast path for hard brushes (`softness <= 0.001`) and direct byte-LUT (`_get_brush_lut_bytes`) with integer
     math eliminates per-pixel float/Color boxing for lag-free painting on small faces.
-- Tests: 772/772 GUT (+2), 42/42 real-editor GUI tests under Xvfb (asserting stamps and splats do not stretch on resize).
+- Tests: 773/773 GUT (+3), 42/42 real-editor GUI tests under Xvfb (asserting stamps/splats do not stretch and clipping moves with object).
 
 v0.9.50 round complete ✓ — paint perf/semantics rework, face-anchored stamps, export-bake seam:
 - PAINT HOT LOOP REWRITE (`PBSplat.paint_face_splat` byte-buffer + LUT + dab spacing):

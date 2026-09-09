@@ -377,7 +377,8 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 				smat.set_shader_parameter("face_u", bounds["u"])
 				smat.set_shader_parameter("face_v", bounds["v"])
 				smat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
-				smat.set_shader_parameter("mesh_to_world", mesh_node.global_transform)
+				var preview_to_mesh := mesh_node.global_transform.affine_inverse() * stamp_mesh_instance.global_transform
+				smat.set_shader_parameter("stamp_to_mesh", preview_to_mesh)
 				smat.set_shader_parameter("clip_to_face", true)
 
 func clear_cursor() -> void:
@@ -506,13 +507,15 @@ func apply_stamp() -> void:
 	qm.size = Vector2.ONE
 	stamp_node.mesh = qm
 
+	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
+
 	var dshader := get_decal_shader()
 	if dshader != null:
 		var mat := ShaderMaterial.new()
 		mat.shader = dshader
 		mat.set_shader_parameter("albedo_texture", stamp_texture)
 		mat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
-		mat.set_shader_parameter("mesh_to_world", target_mesh.global_transform)
+		mat.set_shader_parameter("stamp_to_mesh", stamp_node.transform)
 		mat.set_shader_parameter("clip_to_face", true)
 
 		var data := target_mesh.pb_mesh_data
@@ -536,8 +539,6 @@ func apply_stamp() -> void:
 		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		mat.render_priority = 2
 		stamp_node.material_override = mat
-
-	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
 
 	# Store metadata for export baking (resolution-independent so the future
 	# bake step can re-rasterize at any tile size)

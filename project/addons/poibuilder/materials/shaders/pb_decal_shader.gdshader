@@ -9,22 +9,20 @@ uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform vec3 face_u = vec3(1.0, 0.0, 0.0);
 uniform vec3 face_v = vec3(0.0, 1.0, 0.0);
 uniform vec4 face_bounds = vec4(-1000.0, 1000.0, -1000.0, 1000.0); // min_u, max_u, min_v, max_v in node local coordinates
-uniform mat4 mesh_to_world = mat4(1.0);
+uniform mat4 stamp_to_mesh = mat4(1.0);
 uniform bool clip_to_face = true;
 
-varying vec3 world_pos;
+varying vec2 face_uv;
 
 void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// Compute face planar coordinates in mesh-local space (invariant to object-mode movement)
+	vec3 mesh_pos = (stamp_to_mesh * vec4(VERTEX, 1.0)).xyz;
+	face_uv = vec2(dot(face_u, mesh_pos), dot(face_v, mesh_pos));
 }
 
 void fragment() {
 	if (clip_to_face) {
-		// Calculate position in mesh-local coordinates
-		vec3 p = (inverse(mesh_to_world) * vec4(world_pos, 1.0)).xyz;
-		float u = dot(face_u, p);
-		float v = dot(face_v, p);
-		if (u < face_bounds.x || u > face_bounds.y || v < face_bounds.z || v > face_bounds.w) {
+		if (face_uv.x < face_bounds.x || face_uv.x > face_bounds.y || face_uv.y < face_bounds.z || face_uv.y > face_bounds.w) {
 			discard;
 		}
 	}
