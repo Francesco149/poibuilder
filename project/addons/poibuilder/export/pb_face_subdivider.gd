@@ -407,18 +407,32 @@ static func _merge_cell_polygons(fragments: Array[Array]) -> Array[Array]:
 
 ## Removes collinear vertices along straight edges of a 2D polygon loop.
 static func simplify_collinear_2d(loop: Array) -> Array:
-	var n := loop.size()
-	if n < 3:
-		return loop
-	var res: Array = []
-	for i in range(n):
-		var p0: Vector2 = loop[(i - 1 + n) % n]
-		var p1: Vector2 = loop[i]
-		var p2: Vector2 = loop[(i + 1) % n]
-		var cross := (p1.x - p0.x) * (p2.y - p1.y) - (p1.y - p0.y) * (p2.x - p0.x)
-		if absf(cross) > 0.0001:
-			res.append(p1)
-	return res
+	var cur: Array = loop.duplicate()
+	for pass_i in range(3):
+		var n: int = cur.size()
+		if n < 3:
+			return cur
+		var res: Array = []
+		for i in range(n):
+			var p0: Vector2 = cur[(i - 1 + n) % n]
+			var p1: Vector2 = cur[i]
+			var p2: Vector2 = cur[(i + 1) % n]
+			var v1: Vector2 = p1 - p0
+			var v2: Vector2 = p2 - p1
+			var l1: float = v1.length()
+			var l2: float = v2.length()
+			if l1 < 0.00001 or l2 < 0.00001:
+				continue # Coincident / degenerate duplicate
+			var cross: float = v1.x * v2.y - v1.y * v2.x
+			var dot: float = v1.dot(v2)
+			var sin_theta: float = absf(cross) / (l1 * l2)
+			var is_collinear: bool = sin_theta < 0.005 and dot > 0.0
+			if not is_collinear:
+				res.append(p1)
+		if res.size() == cur.size():
+			break
+		cur = res
+	return cur
 # ==============================================================================
 # Helper Methods
 # ==============================================================================
