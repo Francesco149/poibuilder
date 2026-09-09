@@ -92,8 +92,7 @@ class SpatialGrid:
 		var t_max_x := absf((next_bx - origin.x) / dir_norm.x) if absf(dir_norm.x) > 0.000001 else INF
 		var t_max_y := absf((next_by - origin.y) / dir_norm.y) if absf(dir_norm.y) > 0.000001 else INF
 		var t_max_z := absf((next_bz - origin.z) / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
-
-		var min_t := ray_len
+		var closest_d := max_dist
 		var seen := {}
 
 		while true:
@@ -107,13 +106,13 @@ class SpatialGrid:
 					var hit: Dictionary = PBMath.ray_intersects_triangle(origin, dir_norm, tri.v0, tri.v1, tri.v2)
 					if hit.get("hit", false):
 						var d: float = hit.get("distance", INF)
-						if d > 0.001 and d < min_t:
+						if d > 0.001 and d < closest_d:
 							if early_exit:
 								return d
-							min_t = d
+							closest_d = d
 
 			var t_next := minf(t_max_x, minf(t_max_y, t_max_z))
-			if min_t <= t_next or t_next > ray_len:
+			if closest_d <= t_next or t_next > ray_len:
 				break
 
 			if t_max_x < t_max_y:
@@ -131,21 +130,26 @@ class SpatialGrid:
 					cur_cell.z += step_z
 					t_max_z += t_delta_z
 
-		return min_t
+		return closest_d
 
 	func _ray_box_exit(orig: Vector3, d_norm: Vector3, aabb: AABB, fallback: float) -> float:
 		var t_exit := fallback
 		if absf(d_norm.x) > 0.000001:
 			var bound_x := aabb.position.x + aabb.size.x if d_norm.x > 0.0 else aabb.position.x
-			t_exit = minf(t_exit, maxf(0.0, (bound_x - orig.x) / d_norm.x))
+			var tx := (bound_x - orig.x) / d_norm.x
+			if tx > 0.0001:
+				t_exit = minf(t_exit, tx)
 		if absf(d_norm.y) > 0.000001:
 			var bound_y := aabb.position.y + aabb.size.y if d_norm.y > 0.0 else aabb.position.y
-			t_exit = minf(t_exit, maxf(0.0, (bound_y - orig.y) / d_norm.y))
+			var ty := (bound_y - orig.y) / d_norm.y
+			if ty > 0.0001:
+				t_exit = minf(t_exit, ty)
 		if absf(d_norm.z) > 0.000001:
 			var bound_z := aabb.position.z + aabb.size.z if d_norm.z > 0.0 else aabb.position.z
-			t_exit = minf(t_exit, maxf(0.0, (bound_z - orig.z) / d_norm.z))
+			var tz := (bound_z - orig.z) / d_norm.z
+			if tz > 0.0001:
+				t_exit = minf(t_exit, tz)
 		return t_exit
-# ==============================================================================
 # Public API
 # ==============================================================================
 

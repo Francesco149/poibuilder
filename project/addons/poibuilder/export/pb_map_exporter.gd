@@ -180,6 +180,24 @@ static func _set_owner_recursive(node: Node, new_owner: Node) -> void:
 	for child in node.get_children():
 		_set_owner_recursive(child, new_owner)
 
+static func _is_billboard(node: Node) -> bool:
+	if node == null:
+		return false
+	if node.has_meta("is_billboard") and bool(node.get_meta("is_billboard")):
+		return true
+	if node is PBMesh:
+		var pb := node as PBMesh
+		if pb.pb_mesh_data != null and pb.pb_mesh_data.faces.size() == 1:
+			if pb.pb_mesh_data.shape_id == &"sprite":
+				return true
+			if pb.pb_mesh_data.shape_params.has("billboard") and float(pb.pb_mesh_data.shape_params["billboard"]) > 0.5:
+				return true
+	elif node is MeshInstance3D:
+		var name_str := node.name.to_lower()
+		if name_str.begins_with("sprite") or name_str.begins_with("billboard") or name_str.begins_with("tree") or name_str.begins_with("bush") or name_str.begins_with("wildflower") or name_str.begins_with("flower"):
+			return true
+	return false
+
 static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node]) -> void:
 	if source_node == null:
 		return
@@ -190,12 +208,12 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 	if source_node is CollisionShape3D:
 		return
 
-	if source_node is PBMesh:
+	if _is_billboard(source_node):
+		out.append(source_node)
+	elif source_node is PBMesh:
 		var pb := source_node as PBMesh
 		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
 			out.append(source_node)
-	elif source_node is MeshInstance3D and (source_node.name.begins_with("Sprite") or source_node.has_meta("is_billboard")):
-		out.append(source_node)
 	elif source_node is Light3D:
 		out.append(source_node)
 
@@ -205,7 +223,10 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 static func _export_single_node(source_node: Node, parent_export_node: Node,
 		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
 		base_material_cache: Dictionary, settings: ExportSettings) -> void:
-	if source_node is PBMesh:
+	if _is_billboard(source_node):
+		if settings.export_billboards and source_node is MeshInstance3D:
+			_export_billboard(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
+	elif source_node is PBMesh:
 		var pb := source_node as PBMesh
 		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
 			if settings.export_mode == ExportMode.RETRO:
@@ -213,14 +234,9 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 			else:
 				_export_modern_pb_mesh(pb, parent_export_node, lights, grid, base_material_cache, settings)
 
-	elif source_node is MeshInstance3D and (source_node.name.begins_with("Sprite") or source_node.has_meta("is_billboard")):
-		if settings.export_billboards:
-			_export_billboard(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
-
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
-
 static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
 		base_material_cache: Dictionary, settings: ExportSettings) -> void:
@@ -396,7 +412,16 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 	export_mi.name = mi.name
 	export_mi.transform = mi.transform
 
-	var src_mesh := mi.mesh
+	var src_mesh: Mesh = null
+	if mi is PBMesh:
+		var pb := mi as PBMesh
+		if pb.mesh != null:
+			src_mesh = pb.mesh
+		elif pb.pb_mesh_data != null:
+			src_mesh = pb.pb_mesh_data.to_array_mesh()
+	else:
+		src_mesh = mi.mesh
+
 	if src_mesh != null:
 		var am := ArrayMesh.new()
 		for s in range(src_mesh.get_surface_count()):
@@ -404,16 +429,32 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 			if settings.bake_lighting:
 				var cols := PBLightBaker.bake_billboard_colors(mi, lights, grid, true,
 					settings.bake_shadows, settings.ambient_color)
+				var v_count := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+				if cols.size() != v_count:
+					var new_cols := PackedColorArray()
+					new_cols.resize(v_count)
+					var fallback_col: Color = cols[0] if not cols.is_empty() else Color.WHITE
+					for ci in range(v_count):
+						new_cols[ci] = cols[ci] if ci < cols.size() else fallback_col
+					cols = new_cols
 				arrays[Mesh.ARRAY_COLOR] = cols
 
 			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			var mat := mi.material_override
 			if mat == null and src_mesh is ArrayMesh:
 				mat = (src_mesh as ArrayMesh).surface_get_material(s)
+			if mat == null and mi is PBMesh:
+				var pb := mi as PBMesh
+				if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
+					mat = pb.pb_mesh_data.get_face_material(pb.pb_mesh_data.faces[0])
 			if mat is StandardMaterial3D:
 				var sm := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
 				if settings.export_mode == ExportMode.RETRO and settings.enforce_power_of_two and sm.albedo_texture != null:
 					sm.albedo_texture = PBTileBaker.enforce_pot_texture(sm.albedo_texture, settings.max_texture_size)
+				if sm.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
+					sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				sm.cull_mode = BaseMaterial3D.CULL_DISABLED
+				sm.texture_repeat = false
 				sm.vertex_color_use_as_albedo = true
 				am.surface_set_material(s, sm)
 		export_mi.mesh = am

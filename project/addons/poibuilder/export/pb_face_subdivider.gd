@@ -349,9 +349,15 @@ static func _extract_perimeter_polygon_2d(mesh_data: PBMeshData, face: PBFace,
 		else:
 			break
 
-	if ordered_indices.size() < 3:
+	# A simple closed polygon must have every vertex with degree exactly 2,
+	# and the loop size must equal the total number of unique edges.
+	# Non-simple faces (faces with holes, bridge slits, or junctions) cannot be cleanly clipped
+	# as a single boundary and must fall back to their native triangle subdivision.
+	if ordered_indices.size() < 3 or ordered_indices.size() != edges.size():
 		return []
-
+	for v in adj:
+		if adj[v].size() != 2:
+			return []
 	var poly_2d: Array[Vector2] = []
 	for vi in ordered_indices:
 		var p: Vector3 = mesh_data.positions[vi]
