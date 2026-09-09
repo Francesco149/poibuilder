@@ -65,6 +65,7 @@ var _params_grid: GridContainer
 var _params_hint: Label
 var _creation_row: HBoxContainer
 var _creation_label: Label
+var _btn_edit_shape_props: Button
 var _grid_section: VBoxContainer
 var _grid_step_label: Label
 var _grid_controls: Dictionary = {}
@@ -79,6 +80,7 @@ var _display_controls: Dictionary = {}
 
 signal display_setting_changed(setting_name: StringName, value: float)
 signal display_reset_pressed
+signal edit_params_requested()
 
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
@@ -285,6 +287,16 @@ func _ensure_ui() -> void:
 	_creation_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_creation_row.add_child(_creation_label)
 	_creation_row.visible = false
+
+	# Shape properties edit button (shown when an unedited shape is selected)
+	_btn_edit_shape_props = Button.new()
+	_btn_edit_shape_props.name = "EditShapeProperties"
+	_btn_edit_shape_props.text = "⚙ Edit Shape Properties"
+	_btn_edit_shape_props.tooltip_text = "Edit shape parameters in the overlay (dimensions, lighting, shadows, orientation)"
+	_btn_edit_shape_props.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_edit_shape_props.visible = false
+	_btn_edit_shape_props.pressed.connect(func(): edit_params_requested.emit())
+	_body.add_child(_btn_edit_shape_props)
 
 	# PARAMS section: the shape-parameter modal.
 	_params_section = VBoxContainer.new()
@@ -941,8 +953,19 @@ func refresh() -> void:
 	if dragging:
 		drag_value_label.text = element_editor.drag_readout()
 
+	var can_edit_props := false
+	if editor != null and editor.active_mesh != null and editor.active_mesh.pb_mesh_data != null:
+		var md: PBMeshData = editor.active_mesh.pb_mesh_data
+		if md.shape_id != &"" and not md.shape_edited and not params_open:
+			can_edit_props = true
+			if _btn_edit_shape_props != null:
+				_btn_edit_shape_props.text = "⚙ Edit %s Properties" % String(md.shape_id).capitalize()
+
+	if _btn_edit_shape_props != null:
+		_btn_edit_shape_props.visible = can_edit_props
+
 	# Content presence: is there anything meaningful to display in the body?
-	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or dragging or has_selection
+	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or dragging or has_selection or can_edit_props
 
 	# "empty panel is auto collapsed to just the header, not displayed empty."
 	if editor != null and not has_content:
@@ -968,7 +991,11 @@ func update_visibility() -> void:
 		visible = params_open or creation_hint
 		return
 	var mesh_selected := editor.active_mesh != null
-	visible = (mesh_selected and (pinned or params_open or _has_selection() \
+	var can_edit_props := false
+	if mesh_selected and editor.active_mesh.pb_mesh_data != null:
+		var md: PBMeshData = editor.active_mesh.pb_mesh_data
+		can_edit_props = md.shape_id != &"" and not md.shape_edited
+	visible = (mesh_selected and (pinned or params_open or can_edit_props or _has_selection() \
 		or (element_editor != null and element_editor.drag_active))) \
 		or creation_hint or grid_panel_open or settings_panel_open
 func _has_selection() -> bool:

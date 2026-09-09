@@ -60,11 +60,7 @@ var _active_sprite_drop_box: PanelContainer
 var _active_sprite_icon: TextureRect
 var _active_sprite_label: Label
 var _btn_place_sprite: Button
-var _spin_sprite_width: Range
-var _spin_sprite_height: Range
-var _chk_sprite_lit: CheckBox
-var _chk_sprite_shadow: CheckBox
-var _chk_sprite_billboard: CheckBox
+
 var _sprite_hint: Label
 # UV Controls
 var _btn_x2: Button
@@ -666,57 +662,8 @@ func _build_ui() -> void:
 	)
 	_sprite_tool_section.add_child(_btn_place_sprite)
 
-	var sprite_grid := GridContainer.new()
-	sprite_grid.columns = 2
-	sprite_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	sprite_grid.add_child(_make_label("Width:"))
-	_spin_sprite_width = _make_spinbox(0.1, 50.0, 0.05, 1.5, "m")
-	_spin_sprite_width.value_changed.connect(func(v):
-		if sprite_placer != null and not _syncing:
-			sprite_placer.base_width = v
-	)
-	sprite_grid.add_child(_spin_sprite_width)
-
-	sprite_grid.add_child(_make_label("Height:"))
-	_spin_sprite_height = _make_spinbox(0.1, 50.0, 0.05, 1.5, "m")
-	_spin_sprite_height.value_changed.connect(func(v):
-		if sprite_placer != null and not _syncing:
-			sprite_placer.base_height = v
-	)
-	sprite_grid.add_child(_spin_sprite_height)
-	_sprite_tool_section.add_child(sprite_grid)
-
-	# Property Checkboxes
-	_chk_sprite_lit = CheckBox.new()
-	_chk_sprite_lit.text = "Lit (Shaded by lights)"
-	_chk_sprite_lit.button_pressed = false
-	_chk_sprite_lit.toggled.connect(func(b):
-		if sprite_placer != null:
-			sprite_placer.lit = b
-	)
-	_sprite_tool_section.add_child(_chk_sprite_lit)
-
-	_chk_sprite_shadow = CheckBox.new()
-	_chk_sprite_shadow.text = "Cast Shadows"
-	_chk_sprite_shadow.button_pressed = true
-	_chk_sprite_shadow.toggled.connect(func(b):
-		if sprite_placer != null:
-			sprite_placer.cast_shadow = b
-	)
-	_sprite_tool_section.add_child(_chk_sprite_shadow)
-
-	_chk_sprite_billboard = CheckBox.new()
-	_chk_sprite_billboard.text = "Auto Orient To Camera (Y-Billboard)"
-	_chk_sprite_billboard.button_pressed = true
-	_chk_sprite_billboard.toggled.connect(func(b):
-		if sprite_placer != null:
-			sprite_placer.billboard = b
-	)
-	_sprite_tool_section.add_child(_chk_sprite_billboard)
-
 	_sprite_hint = Label.new()
-	_sprite_hint.text = "Click card in palette to select. Click 'Place Sprite' (or B in viewport) to place."
+	_sprite_hint.text = "Click card in palette or drop image above to set active sprite.\nClick 'Place Sprite' (or press B in viewport) to place.\nProperties (dimensions, lighting, shadows, camera-facing) are adjusted in the Overlay."
 	_sprite_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_sprite_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sprite_tool_section.add_child(_sprite_hint)
@@ -856,12 +803,7 @@ func set_active_sprite_texture(tex: Texture2D) -> void:
 	if sprite_placer != null:
 		sprite_placer.base_width = dims.x
 		sprite_placer.base_height = dims.y
-	_syncing = true
-	if _spin_sprite_width != null:
-		_spin_sprite_width.value = dims.x
-	if _spin_sprite_height != null:
-		_spin_sprite_height.value = dims.y
-	_syncing = false
+
 
 	_rebuild_material_grid()
 	if plugin != null and plugin.logger != null:

@@ -75,7 +75,6 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			return [
 				_value_def("width", "Width", 0.1, 100.0, 1.0, "m"),
 				_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
-				_value_def("depth", "Depth", 0.1, 100.0, 1.0, "m"),
 				_bool_def("lit", "Lit (Shaded)", false),
 				_bool_def("cast_shadow", "Cast Shadows", true),
 				_bool_def("billboard", "Auto Orient To Camera", true),
@@ -112,6 +111,8 @@ static func get_default_values(shape_id: StringName) -> Dictionary:
 	var out := {}
 	for def in get_param_defs(shape_id):
 		out[def["name"]] = float(def["default"])
+	if shape_id == &"sprite" and not out.has("depth"):
+		out["depth"] = out.get("height", 1.0)
 	return out
 
 ## Regenerates the shape's PBMeshData from a (possibly partial) values dict.

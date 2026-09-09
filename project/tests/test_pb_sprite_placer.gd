@@ -250,3 +250,58 @@ func test_material_dock_sprite_mode_and_texture_selection() -> void:
 	dock.set_active_sprite_texture(tex)
 	assert_eq(placer.last_texture, tex, "Setting active sprite texture must set placer.last_texture")
 	assert_eq(dock._active_sprite_icon.texture, tex)
+
+func test_edit_sprite_properties_via_overlay_params() -> void:
+	var tex := ImageTexture.create_from_image(Image.create(32, 32, false, Image.FORMAT_RGBA8))
+	var node := PBMesh.new()
+	add_child_autofree(node)
+	var md := PBShapeGenerators.create_sprite(1.0, 1.5)
+	var mat := PBSpritePlacer.create_billboard_material(tex, false, true)
+	md.materials = [mat]
+	md.shape_id = &"sprite"
+	md.shape_params = {
+		"width": 1.0,
+		"height": 1.5,
+		"depth": 1.5,
+		"lit": 0.0,
+		"cast_shadow": 1.0,
+		"billboard": 1.0,
+	}
+	node.pb_mesh_data = md
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED
+	node.rebuild()
+
+	# Simulate overlay params edit session
+	var edit_values: Dictionary = node.pb_mesh_data.shape_params.duplicate()
+	edit_values["lit"] = 1.0
+	edit_values["billboard"] = 0.0
+	edit_values["cast_shadow"] = 0.0
+	edit_values["width"] = 2.5
+	edit_values["height"] = 3.0
+
+	# Rebuild shape
+	var rebuilt := PBShapeParams.build(node.pb_mesh_data.shape_id, edit_values)
+	assert_not_null(rebuilt)
+	rebuilt.shape_id = &"sprite"
+	rebuilt.shape_params = edit_values.duplicate()
+
+	# Verify sprite-specific rebuild preserving texture & applying properties
+	var is_lit: bool = float(edit_values.get("lit", 0.0)) > 0.5
+	var is_billboard: bool = float(edit_values.get("billboard", 1.0)) > 0.5
+	var has_shadow: bool = float(edit_values.get("cast_shadow", 1.0)) > 0.5
+	var existing_tex: Texture2D = (node.pb_mesh_data.materials[0] as StandardMaterial3D).albedo_texture
+	var smat := PBSpritePlacer.create_billboard_material(existing_tex, is_lit, is_billboard)
+	rebuilt.materials = [smat]
+
+	node.pb_mesh_data = rebuilt
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED if has_shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.rebuild()
+
+	assert_eq(node.pb_mesh_data.materials.size(), 1)
+	var updated_mat := node.pb_mesh_data.materials[0] as StandardMaterial3D
+	assert_eq(updated_mat.albedo_texture, tex, "Texture must be preserved during property edits")
+	assert_eq(updated_mat.shading_mode, BaseMaterial3D.SHADING_MODE_PER_PIXEL, "Lit property must set per-pixel shading")
+	assert_eq(updated_mat.billboard_mode, BaseMaterial3D.BILLBOARD_DISABLED, "Billboard disabled must set BILLBOARD_DISABLED")
+	assert_eq(node.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, "Cast shadow disabled must turn off shadow casting")
+	assert_almost_eq(node.pb_mesh_data.positions[2].x, 1.25, 0.001, "Width scaled to 2.5 (hw = 1.25)")
+	assert_almost_eq(node.pb_mesh_data.positions[2].y, 3.0, 0.001, "Height scaled to 3.0")

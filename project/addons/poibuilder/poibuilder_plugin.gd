@@ -151,6 +151,7 @@ func _enter_tree():
 	tool_overlay.params_applied.connect(_on_params_applied)
 	tool_overlay.params_canceled.connect(_on_params_canceled)
 	tool_overlay.param_changed.connect(_on_param_changed)
+	tool_overlay.edit_params_requested.connect(_on_edit_params_requested)
 	tool_overlay.grid_setting_changed.connect(_on_grid_ui_setting)
 	tool_overlay.grid_reset_pressed.connect(_on_grid_reset)
 	tool_overlay.sync_grid(grid)
@@ -1219,6 +1220,7 @@ const OP_ACTION_NAMES := {
 var _params_session_kind: String = ""
 var _params_edit_node: PBMesh = null
 var _params_edit_snapshot: PBMeshData = null
+var _params_edit_snapshot_cast_shadow: int = 0
 var _params_edit_values: Dictionary = {}
 
 ## A New Shape menu pick ARMS creation: nothing exists yet — the next LMB
@@ -2176,12 +2178,30 @@ func _on_param_changed(param_name: String, value: float) -> void:
 			and is_instance_valid(_params_edit_node):
 		_params_edit_values[param_name] = value
 		var data := _params_edit_node.pb_mesh_data
+		var old_materials: Array[Material] = data.materials.duplicate() if data != null else []
 		var rebuilt := PBShapeParams.build(data.shape_id, _params_edit_values)
 		if rebuilt != null:
 			rebuilt.shape_id = data.shape_id
 			rebuilt.shape_params = _params_edit_values.duplicate()
 			rebuilt.shape_edited = false
+
+			# For sprites: preserve texture and apply lit / billboard / cast_shadow live
+			if data.shape_id == &"sprite":
+				var is_lit: bool = float(_params_edit_values.get("lit", 0.0)) > 0.5
+				var is_billboard: bool = float(_params_edit_values.get("billboard", 1.0)) > 0.5
+				var has_shadow: bool = float(_params_edit_values.get("cast_shadow", 1.0)) > 0.5
+
+				var existing_tex: Texture2D = null
+				if not old_materials.is_empty() and old_materials[0] is StandardMaterial3D:
+					existing_tex = (old_materials[0] as StandardMaterial3D).albedo_texture
+
+				var smat := PBSpritePlacer.create_billboard_material(existing_tex, is_lit, is_billboard)
+				rebuilt.materials = [smat]
+				_params_edit_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED if has_shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
 			_params_edit_node.pb_mesh_data = rebuilt
+			_params_edit_node.rebuild()
+			_params_edit_node.update_gizmos()
 
 func _on_params_applied() -> void:
 	if _params_session_kind == "create":
@@ -2211,9 +2231,10 @@ func _on_params_canceled() -> void:
 		if _params_edit_node != null and is_instance_valid(_params_edit_node) \
 				and _params_edit_snapshot != null:
 			PBCommand.restore_mesh_data(_params_edit_node.pb_mesh_data, _params_edit_snapshot)
+			if _params_edit_node.pb_mesh_data != null and _params_edit_node.pb_mesh_data.shape_id == &"sprite":
+				_params_edit_node.cast_shadow = _params_edit_snapshot_cast_shadow
 			_params_edit_node.rebuild()
 			_params_edit_node.update_gizmos()
-		tool_overlay.close_params()
 		_params_session_kind = ""
 		_params_edit_node = null
 		_params_edit_snapshot = null
@@ -2238,8 +2259,8 @@ func _on_edit_params_requested() -> void:
 	_params_session_kind = "edit"
 	_params_edit_node = mesh
 	_params_edit_snapshot = PBCommand.copy_mesh_data(data)
+	_params_edit_snapshot_cast_shadow = mesh.cast_shadow
 	_params_edit_values = data.shape_params.duplicate()
-	tool_overlay.panel_enabled = true
 	toolbar.set_overlay_pinned(true)
 	tool_overlay.open_params("%s Parameters" % String(data.shape_id).capitalize(),
 		PBShapeParams.get_param_defs(data.shape_id), _params_edit_values)
@@ -2250,6 +2271,10 @@ func _commit_edit_params() -> void:
 	var data := node.pb_mesh_data
 	data.shape_params = _params_edit_values.duplicate()
 	data.shape_edited = false
+	if data.shape_id == &"sprite":
+		var has_shadow: bool = float(_params_edit_values.get("cast_shadow", 1.0)) > 0.5
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED if has_shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
 	var before := _params_edit_snapshot
 	var after := PBCommand.copy_mesh_data(data)
 	var undo := get_undo_redo()
@@ -2257,6 +2282,9 @@ func _commit_edit_params() -> void:
 		UndoRedo.MERGE_DISABLE, node)
 	undo.add_do_method(self, "_restore_mesh_snapshot", node.get_instance_id(), after)
 	undo.add_undo_method(self, "_restore_mesh_snapshot", node.get_instance_id(), before)
+	if data.shape_id == &"sprite":
+		undo.add_do_property(node, "cast_shadow", node.cast_shadow)
+		undo.add_undo_property(node, "cast_shadow", _params_edit_snapshot_cast_shadow)
 	undo.commit_action()
 	tool_overlay.close_params()
 	_params_session_kind = ""

@@ -798,12 +798,12 @@ v0.9.52 round complete ✓ — stamp billboard delete tool, billboard sprite pla
   - RAISE PHASE: Moving mouse up/down raises the billboard along the surface normal (respecting grid snap); the billboard dynamically rotates around the normal to face the camera. Left-clicking confirms and locks elevation and facing angle.
   - SCALE PHASE: Moving mouse left/right scales the billboard uniformly (same UX as scale gizmo); respects grid snapping when enabled. Left-clicking confirms and finalizes placement.
   - `ESC` cancels cleanly at any phase with zero stray nodes left behind.
-- SPRITE SHAPE PROPERTIES & UPRIGHT BILLBOARD MESH (`PBShapeGenerators.create_sprite`, `PBShapeParams`):
-  - `create_sprite(width, height)` creates an upright standing quad on the XY plane with its base at Y=0 and normal facing +Z (backward compatible with `depth`).
-  - Added parameters in `PBShapeParams`: `width`, `height`, `lit` (KIND_BOOL), `cast_shadow` (KIND_BOOL), and `billboard` (KIND_BOOL: Auto Orient To Camera).
-  - Material sets unshaded vs per-pixel shaded (`lit`), `billboard_mode = BILLBOARD_FIXED_Y` vs `BILLBOARD_DISABLED` (`billboard`), and node `cast_shadow = SHADOW_CASTING_SETTING_DOUBLE_SIDED` vs `OFF`.
-  - Adjustable anytime via toolbar "Edit Params" button for pristine shapes.
-- Tests: 780/780 GUT unit tests (+7), 47/47 real-editor GUI tests under Xvfb (+5 assertions covering stamp delete mode, hover highlight, click deletion, and the entire billboard sprite placer flow).
+- SPRITE SHAPE PROPERTIES VIA OVERLAY (`PBToolOverlay`, `PBShapeParams`, `poibuilder_plugin.gd`):
+  - Rebuilt sprite properties through the standard overlay pattern: removed property widgets from the dock's sprite panel.
+  - The overlay shows an `[ ⚙ Edit Shape Properties ]` button whenever any unedited factory shape is selected (including sprites).
+  - Clicking opens `tool_overlay.open_params()` with live updating controls: Width, Height, `Lit (Shaded)`, `Cast Shadows`, `Auto Orient To Camera`.
+  - Live update in `_on_param_changed` preserves existing sprite textures, switches `shading_mode = PER_PIXEL` vs `UNSHADED` (`lit`), toggles `billboard_mode = BILLBOARD_FIXED_Y` vs `BILLBOARD_DISABLED` (`billboard`), and sets `node.cast_shadow = DOUBLE_SIDED` vs `OFF` (`cast_shadow`) with full Undo/Redo property tracking on commit.
+- Tests: 784/784 GUT unit tests (+11), 49/49 real-editor GUI tests under Xvfb (+7 assertions covering stamp delete mode, hover highlight, click deletion, billboard sprite placement flow, and material dock sprite mode).
 
 v0.9.51 round complete ✓ — non-stretching texture layers & stamps on geometry resize, halo-free overwrite falloff:
 - NON-STRETCHING / NON-SLIDING TEXTURE LAYERS (`PBMeshData.to_array_mesh`, `pb_splat_shader.gdshader`):
