@@ -346,9 +346,9 @@ static func create_sprite(width: float = 1.0, height: float = 1.0) -> PBMeshData
 		Vector2(1.0, 0.0),
 		Vector2(1.0, 1.0),
 	])
-	var faces: Array[PBFace] = [
-		PBFace.new(PackedInt32Array([0, 1, 2, 0, 2, 3]))
-	]
+	var face := PBFace.new(PackedInt32Array([0, 1, 2, 0, 2, 3]))
+	face.manual_uv = true
+	var faces: Array[PBFace] = [face]
 	var mesh_data := PBMeshData.new()
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0

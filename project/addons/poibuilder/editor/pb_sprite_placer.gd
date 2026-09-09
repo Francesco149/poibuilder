@@ -3,8 +3,8 @@
 ## UX Workflow:
 ## 1. Click surface: places a billboard with the last used texture.
 ## 2. Click & drag (or click when no last texture): opens modal horizontal carousel showing
-##    5 billboard textures at a time; drag/move left-right to smoothly scroll; releasing LMB
-##    or clicking confirms the centered texture.
+##    5 billboard textures at a time; drag/move left-right or mouse wheel to smoothly scroll;
+##    releasing LMB or clicking confirms the centered texture.
 ## 3. Raise & Orient: mouse up/down raises the billboard from the surface while dynamically
 ##    facing the camera; click locks elevation and facing angle.
 ## 4. Scale: mouse left/right scales the billboard uniformly (respecting grid snap if enabled);
@@ -66,6 +66,8 @@ var carousel_overlay: Control = null
 var _carousel_card_container: HBoxContainer = null
 var _carousel_title_label: Label = null
 var _carousel_active_name_label: Label = null
+var _carousel_cards: Array[PanelContainer] = []
+var _carousel_trects: Array[TextureRect] = []
 
 signal state_changed(new_state: State)
 signal sprite_placed(node: PBMesh)
@@ -138,6 +140,20 @@ func abort() -> void:
 		placement_aborted.emit()
 
 # ==============================================================================
+# Aspect Ratio & Dimension Calculation
+# ==============================================================================
+
+static func compute_texture_dimensions(tex: Texture2D, target_height: float = 1.5) -> Vector2:
+	if tex == null:
+		return Vector2(target_height, target_height)
+	var tw := float(tex.get_width())
+	var th := float(tex.get_height())
+	if tw <= 0.0 or th <= 0.0:
+		return Vector2(target_height, target_height)
+	var aspect := tw / th
+	return Vector2(target_height * aspect, target_height)
+
+# ==============================================================================
 # Carousel Overlay Setup & Live Updates
 # ==============================================================================
 
@@ -154,42 +170,61 @@ func setup_carousel_overlay(host_control: Control) -> void:
 
 	# Styling
 	var sbox := StyleBoxFlat.new()
-	sbox.bg_color = Color(0.1, 0.12, 0.16, 0.92)
+	sbox.bg_color = Color(0.1, 0.12, 0.16, 0.94)
 	sbox.set_corner_radius_all(10)
 	sbox.set_border_width_all(2)
-	sbox.border_color = Color(0.2, 0.85, 1.0, 0.8)
-	sbox.content_margin_left = 16
-	sbox.content_margin_right = 16
+	sbox.border_color = Color(0.2, 0.85, 1.0, 0.85)
+	sbox.content_margin_left = 18
+	sbox.content_margin_right = 18
 	sbox.content_margin_top = 10
 	sbox.content_margin_bottom = 12
 	carousel_overlay.add_theme_stylebox_override("panel", sbox)
 
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	carousel_overlay.add_child(vbox)
 
 	_carousel_title_label = Label.new()
 	_carousel_title_label.text = "SELECT BILLBOARD TEXTURE"
 	_carousel_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_carousel_title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_carousel_title_label.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0))
 	_carousel_title_label.add_theme_font_size_override("font_size", 13)
 	vbox.add_child(_carousel_title_label)
 
 	var hint_lbl := Label.new()
-	hint_lbl.text = "Drag or Move Mouse Horizontally to Scroll • Release / Click to Confirm"
+	hint_lbl.text = "Drag/Scroll Horizontally • Mouse Wheel to Step • Click/Release to Confirm"
 	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_lbl.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
 	hint_lbl.add_theme_font_size_override("font_size", 11)
 	vbox.add_child(hint_lbl)
 
 	_carousel_card_container = HBoxContainer.new()
 	_carousel_card_container.alignment = BoxContainer.ALIGNMENT_CENTER
+	_carousel_card_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_carousel_card_container.add_theme_constant_override("separation", 12)
 	vbox.add_child(_carousel_card_container)
+
+	_carousel_cards.clear()
+	_carousel_trects.clear()
+	for i in range(5):
+		var card := PanelContainer.new()
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var trect := TextureRect.new()
+		trect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		trect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		trect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		card.add_child(trect)
+		_carousel_card_container.add_child(card)
+		_carousel_cards.append(card)
+		_carousel_trects.append(trect)
 
 	_carousel_active_name_label = Label.new()
 	_carousel_active_name_label.text = ""
 	_carousel_active_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_carousel_active_name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_carousel_active_name_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.2))
 	_carousel_active_name_label.add_theme_font_size_override("font_size", 12)
 	vbox.add_child(_carousel_active_name_label)
@@ -201,8 +236,8 @@ func _position_carousel(host: Control) -> void:
 	if carousel_overlay == null:
 		return
 	var h_size := host.size
-	carousel_overlay.custom_minimum_size = Vector2(460, 140)
-	var x := (h_size.x - 460) * 0.5
+	carousel_overlay.custom_minimum_size = Vector2(480, 144)
+	var x := (h_size.x - 480) * 0.5
 	var y := h_size.y - 180
 	carousel_overlay.position = Vector2(maxf(10.0, x), maxf(10.0, y))
 
@@ -220,11 +255,8 @@ func hide_carousel() -> void:
 		carousel_overlay.visible = false
 
 func update_carousel_ui() -> void:
-	if _carousel_card_container == null:
+	if _carousel_card_container == null or _carousel_cards.size() < 5:
 		return
-
-	for c in _carousel_card_container.get_children():
-		c.queue_free()
 
 	if available_textures.is_empty():
 		return
@@ -237,21 +269,24 @@ func update_carousel_ui() -> void:
 		var fn := selected_texture.resource_path.get_file()
 		_carousel_active_name_label.text = "Selected: %s (%d / %d)" % [fn, selected_texture_idx + 1, count]
 
-	# Render 5 cards: offsets -2, -1, 0, +1, +2 relative to selected_texture_idx
+	# Update 5 cards in-place: offsets -2, -1, 0, +1, +2 relative to selected_texture_idx
 	for offset in range(-2, 3):
+		var i := offset + 2
 		var idx := posmod(selected_texture_idx + offset, count)
 		var tex := available_textures[idx]
 		var is_center := (offset == 0)
 
-		var card := PanelContainer.new()
+		var card := _carousel_cards[i]
+		var trect := _carousel_trects[i]
+
 		var card_style := StyleBoxFlat.new()
 		card_style.set_corner_radius_all(6)
 
 		if is_center:
-			card_style.bg_color = Color(0.2, 0.85, 1.0, 0.28)
+			card_style.bg_color = Color(0.2, 0.85, 1.0, 0.32)
 			card_style.set_border_width_all(2)
 			card_style.border_color = Color(0.2, 0.9, 1.0, 0.95)
-			card.custom_minimum_size = Vector2(74, 74)
+			card.custom_minimum_size = Vector2(76, 76)
 		else:
 			card_style.bg_color = Color(0.14, 0.16, 0.2, 0.65)
 			card_style.set_border_width_all(1)
@@ -259,15 +294,8 @@ func update_carousel_ui() -> void:
 			card.custom_minimum_size = Vector2(58, 58)
 
 		card.add_theme_stylebox_override("panel", card_style)
-
-		var trect := TextureRect.new()
-		trect.texture = tex
-		trect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		trect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		trect.custom_minimum_size = card.custom_minimum_size
-		card.add_child(trect)
-
-		_carousel_card_container.add_child(card)
+		trect.texture = tex
 
 # ==============================================================================
 # Viewport Input Handling
@@ -288,6 +316,20 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 		if k.keycode == KEY_ESCAPE:
 			abort()
 			return STOP
+		if state == State.TEXTURE_SELECT:
+			if k.keycode == KEY_LEFT or k.keycode == KEY_A:
+				scroll_offset -= 1.0
+				update_carousel_ui()
+				return STOP
+			elif k.keycode == KEY_RIGHT or k.keycode == KEY_D:
+				scroll_offset += 1.0
+				update_carousel_ui()
+				return STOP
+			elif k.keycode == KEY_ENTER or k.keycode == KEY_SPACE:
+				last_texture = selected_texture
+				hide_carousel()
+				_start_raise_phase(camera)
+				return STOP
 
 	match state:
 		State.ARMED:
@@ -303,6 +345,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 					if last_texture == null:
 						# No previous texture -> click triggers click-mode carousel
 						is_hold_mode = false
+						_press_pending = false
 						state = State.TEXTURE_SELECT
 						show_carousel(host_control)
 						state_changed.emit(state)
@@ -332,23 +375,32 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 		State.TEXTURE_SELECT:
 			if event is InputEventMouseMotion:
 				# Drag or move mouse left/right smoothly scrolls textures
-				scroll_offset += event.relative.x * 0.018
+				scroll_offset += event.relative.x * 0.015
 				update_carousel_ui()
 				return STOP
 
-			elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-				if is_hold_mode and not event.pressed:
-					# Release LMB confirms in hold mode
-					last_texture = selected_texture
-					hide_carousel()
-					_start_raise_phase(camera)
+			elif event is InputEventMouseButton:
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+					scroll_offset -= 1.0
+					update_carousel_ui()
 					return STOP
-				elif not is_hold_mode and event.pressed:
-					# Click confirms in click mode
-					last_texture = selected_texture
-					hide_carousel()
-					_start_raise_phase(camera)
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+					scroll_offset += 1.0
+					update_carousel_ui()
 					return STOP
+				elif event.button_index == MOUSE_BUTTON_LEFT:
+					if is_hold_mode and not event.pressed:
+						# Release LMB confirms in hold mode
+						last_texture = selected_texture
+						hide_carousel()
+						_start_raise_phase(camera)
+						return STOP
+					elif not is_hold_mode and event.pressed:
+						# Click confirms in click mode
+						last_texture = selected_texture
+						hide_carousel()
+						_start_raise_phase(camera)
+						return STOP
 
 		State.RAISE:
 			if event is InputEventMouseMotion:
@@ -374,9 +426,9 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 		State.SCALE:
 			if event is InputEventMouseMotion:
 				var delta_x: float = event.position.x - scale_start_x
-				var s := maxf(0.05, 1.0 + delta_x * 0.01)
+				var s := maxf(0.05, 1.0 + delta_x * 0.008)
 				if grid != null and grid.enabled:
-					s = maxf(0.1, grid.snap_val(s))
+					s = maxf(0.1, snappedf(s, 0.1))
 				scale_factor = s
 				_update_scale_transform()
 				return STOP
@@ -409,8 +461,14 @@ func _spawn_preview_node() -> void:
 	var scene_root: Node = scene_root_override
 	if scene_root == null and plugin != null and plugin.has_method("get_editor_interface"):
 		scene_root = plugin.get_editor_interface().get_edited_scene_root()
+
 	preview_node = PBMesh.new()
 	preview_node.name = "Billboard_Sprite"
+
+	# Calculate proportional dimensions from texture aspect ratio
+	var dims := compute_texture_dimensions(selected_texture, 1.5)
+	base_width = dims.x
+	base_height = dims.y
 
 	# Build upright standing quad
 	var md := PBShapeGenerators.create_sprite(base_width, base_height)
@@ -430,6 +488,7 @@ func _spawn_preview_node() -> void:
 		preview_node.owner = scene_root
 
 	preview_node.rebuild()
+	preview_node.update_gizmos()
 
 func _update_raise_transform(camera: Camera3D) -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
@@ -457,11 +516,21 @@ func _update_scale_transform() -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
 		return
 	var cur_pos := preview_node.global_transform.origin if preview_node.is_inside_tree() else preview_node.transform.origin
-	var scaled_basis := locked_basis.scaled(Vector3(scale_factor, scale_factor, scale_factor))
+
+	var scaled_w := base_width * scale_factor
+	var scaled_h := base_height * scale_factor
+	var md := PBShapeGenerators.create_sprite(scaled_w, scaled_h)
+	if preview_node.pb_mesh_data != null and not preview_node.pb_mesh_data.materials.is_empty():
+		md.materials = preview_node.pb_mesh_data.materials.duplicate()
+	preview_node.pb_mesh_data = md
+	preview_node.rebuild()
+
 	if preview_node.is_inside_tree():
-		preview_node.global_transform = Transform3D(scaled_basis, cur_pos)
+		preview_node.global_transform = Transform3D(locked_basis, cur_pos)
 	else:
-		preview_node.transform = Transform3D(scaled_basis, cur_pos)
+		preview_node.transform = Transform3D(locked_basis, cur_pos)
+	preview_node.update_gizmos()
+
 func finalize_placement() -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
 		abort()
@@ -480,6 +549,7 @@ func finalize_placement() -> void:
 		node.pb_mesh_data.shape_params = {
 			"width": final_w,
 			"height": final_h,
+			"depth": final_h,
 			"lit": 1.0 if lit else 0.0,
 			"cast_shadow": 1.0 if cast_shadow else 0.0,
 			"billboard": 1.0 if billboard else 0.0,
@@ -488,6 +558,12 @@ func finalize_placement() -> void:
 
 	if selected_texture != null:
 		node.set_meta("sprite_texture_path", selected_texture.resource_path)
+
+	if cast_shadow:
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_DOUBLE_SIDED
+	else:
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.collider_type = PBMesh.ColliderType.OFF
 
 	var scene_root: Node = null
 	if plugin != null and plugin.has_method("get_editor_interface"):
@@ -517,6 +593,7 @@ func finalize_placement() -> void:
 			sel.clear()
 			sel.add_node(node)
 
+	node.update_gizmos()
 	state_changed.emit(state)
 	sprite_placed.emit(node)
 

@@ -1246,6 +1246,26 @@ func _run() -> void:
 				else:
 					_fail("SPRITE-PLACER: failed to transition to RAISE phase")
 				plugin.sprite_placer.abort()
+
+				# Test Material Dock SPRITE mode
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.SPRITE)
+				await _frames(2)
+				if plugin.material_dock.dock_mode == PBMaterialDock.DockMode.SPRITE and plugin.material_dock._sprite_tool_section.visible:
+					_pass("SPRITE-DOCK: switched to SPRITE mode, sprite settings panel visible")
+				else:
+					_fail("SPRITE-DOCK: failed to show sprite settings panel")
+
+				# Pick first material in dock palette as sprite
+				if not plugin.material_dock._project_materials.is_empty():
+					var smat: Material = plugin.material_dock._project_materials[0]
+					plugin.material_dock._select_sprite_material(smat)
+					await _frames(2)
+					if plugin.sprite_placer.last_texture != null:
+						_pass("SPRITE-DOCK: selected palette material as active sprite texture (%s)" % plugin.sprite_placer.last_texture.resource_path.get_file())
+					else:
+						_fail("SPRITE-DOCK: failed to set last_texture from palette")
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+				await _frames(1)
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────

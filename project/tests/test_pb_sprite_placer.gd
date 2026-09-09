@@ -200,3 +200,53 @@ func test_material_property_configurations() -> void:
 	var mat_lit := PBSpritePlacer.create_billboard_material(tex, true, false)
 	assert_eq(mat_lit.shading_mode, BaseMaterial3D.SHADING_MODE_PER_PIXEL)
 	assert_eq(mat_lit.billboard_mode, BaseMaterial3D.BILLBOARD_DISABLED)
+
+func test_sprite_dimensions_computed_from_aspect_ratio() -> void:
+	# 256x512 texture (aspect 0.5)
+	var tex_tall := ImageTexture.create_from_image(Image.create(256, 512, false, Image.FORMAT_RGBA8))
+	var dims_tall := PBSpritePlacer.compute_texture_dimensions(tex_tall, 2.0)
+	assert_almost_eq(dims_tall.x, 1.0, 0.001, "Width should be target_height * 0.5")
+	assert_almost_eq(dims_tall.y, 2.0, 0.001, "Height should be target_height")
+
+	# 256x256 texture (aspect 1.0)
+	var tex_square := ImageTexture.create_from_image(Image.create(256, 256, false, Image.FORMAT_RGBA8))
+	var dims_square := PBSpritePlacer.compute_texture_dimensions(tex_square, 1.5)
+	assert_almost_eq(dims_square.x, 1.5, 0.001)
+	assert_almost_eq(dims_square.y, 1.5, 0.001)
+
+func test_sprite_quad_has_manual_uv_and_correct_orientation() -> void:
+	var md := PBShapeGenerators.create_sprite(1.0, 2.0)
+	assert_eq(md.faces.size(), 1)
+	assert_true(md.faces[0].manual_uv, "Sprite face must have manual_uv = true so auto-UV never flips it")
+
+	# Bottom vertices at y = 0 must have UV V = 1.0 (bottom of image)
+	# Top vertices at y = 2.0 must have UV V = 0.0 (top of image)
+	var p0 := md.positions[0]
+	var p1 := md.positions[1]
+	assert_almost_eq(p0.y, 0.0, 0.001, "p0 is at ground level")
+	assert_almost_eq(md.textures0[0].y, 1.0, 0.001, "Bottom vertex must map to V=1.0 (bottom of texture)")
+	assert_almost_eq(p1.y, 2.0, 0.001, "p1 is at top")
+	assert_almost_eq(md.textures0[1].y, 0.0, 0.001, "Top vertex must map to V=0.0 (top of texture)")
+
+	# Rebuilding to ArrayMesh must preserve these exact UVs without inverting them
+	var mesh := md.to_array_mesh()
+	assert_not_null(mesh)
+	assert_almost_eq(md.textures0[0].y, 1.0, 0.001, "to_array_mesh must not overwrite manual UVs")
+	assert_almost_eq(md.textures0[1].y, 0.0, 0.001, "to_array_mesh must not overwrite manual UVs")
+
+func test_material_dock_sprite_mode_and_texture_selection() -> void:
+	var dock := PBMaterialDock.new()
+	add_child_autofree(dock)
+	var placer := PBSpritePlacer.new()
+	dock.sprite_placer = placer
+
+	dock._set_dock_mode(PBMaterialDock.DockMode.SPRITE)
+	assert_eq(dock.dock_mode, PBMaterialDock.DockMode.SPRITE)
+	assert_true(dock._sprite_tool_section.visible)
+	assert_false(dock._paint_tool_section.visible)
+	assert_false(dock._stamp_tool_section.visible)
+
+	var tex := ImageTexture.create_from_image(Image.create(32, 64, false, Image.FORMAT_RGBA8))
+	dock.set_active_sprite_texture(tex)
+	assert_eq(placer.last_texture, tex, "Setting active sprite texture must set placer.last_texture")
+	assert_eq(dock._active_sprite_icon.texture, tex)

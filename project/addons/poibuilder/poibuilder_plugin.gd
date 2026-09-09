@@ -169,6 +169,7 @@ func _enter_tree():
 	material_dock.editor = editor
 	material_dock.visible = true
 	material_dock.set_paint_controller(paint_controller)
+	material_dock.sprite_placer = sprite_placer
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
 	# Half-size manipulator gizmos by default (the engine default of 80px is

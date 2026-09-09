@@ -19,8 +19,7 @@
 class_name PBMaterialDock
 extends PanelContainer
 
-enum DockMode { MATERIAL, PAINT, STAMP }
-
+enum DockMode { MATERIAL, PAINT, STAMP, SPRITE }
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
 
@@ -31,6 +30,7 @@ var editor: PBEditor = null:
 
 var paint_controller: PBPaintController = null:
 	set = set_paint_controller
+var sprite_placer: PBSpritePlacer = null
 
 var dock_mode: DockMode = DockMode.MATERIAL
 
@@ -42,7 +42,7 @@ var _project_materials: Array[Material] = []
 var _btn_mode_mat: Button
 var _btn_mode_paint: Button
 var _btn_mode_stamp: Button
-
+var _btn_mode_sprite: Button
 # UI Nodes - Materials Section
 var _scroll: ScrollContainer
 var _material_grid: HFlowContainer
@@ -53,7 +53,19 @@ var _file_dialog: EditorFileDialog
 var _uv_and_tint_section: VBoxContainer
 var _paint_tool_section: VBoxContainer
 var _stamp_tool_section: VBoxContainer
+var _sprite_tool_section: VBoxContainer
 
+# Sprite Tool Controls
+var _active_sprite_drop_box: PanelContainer
+var _active_sprite_icon: TextureRect
+var _active_sprite_label: Label
+var _btn_place_sprite: Button
+var _spin_sprite_width: Range
+var _spin_sprite_height: Range
+var _chk_sprite_lit: CheckBox
+var _chk_sprite_shadow: CheckBox
+var _chk_sprite_billboard: CheckBox
+var _sprite_hint: Label
 # UV Controls
 var _btn_x2: Button
 var _btn_half: Button
@@ -229,6 +241,15 @@ func _build_ui() -> void:
 	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
 	_btn_mode_stamp.pressed.connect(func(): _set_dock_mode(DockMode.STAMP))
 	mode_row.add_child(_btn_mode_stamp)
+
+	_btn_mode_sprite = Button.new()
+	_btn_mode_sprite.text = "Sprite"
+	_btn_mode_sprite.tooltip_text = "Billboard & Sprite Shapes: Select/drop sprite textures, adjust properties, and place sprites"
+	_btn_mode_sprite.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_sprite.toggle_mode = true
+	_btn_mode_sprite.button_pressed = (dock_mode == DockMode.SPRITE)
+	_btn_mode_sprite.pressed.connect(func(): _set_dock_mode(DockMode.SPRITE))
+	mode_row.add_child(_btn_mode_sprite)
 
 	root_vbox.add_child(mode_row)
 	root_vbox.add_child(HSeparator.new())
@@ -571,6 +592,134 @@ func _build_ui() -> void:
 	_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(_stamp_hint)
+
+	# =========================================================================
+	# Section D: Sprite Tool Controls (Visible in SPRITE mode)
+	# =========================================================================
+	_sprite_tool_section = VBoxContainer.new()
+	_sprite_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sprite_tool_section.visible = false
+	root_vbox.add_child(_sprite_tool_section)
+
+	var sprite_header := Label.new()
+	sprite_header.text = "Billboard Sprite Settings"
+	_sprite_tool_section.add_child(sprite_header)
+
+	# Active Sprite drop box / card
+	_active_sprite_drop_box = PBSpriteDropBox.new()
+	_active_sprite_drop_box.dock = self
+	_active_sprite_drop_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_active_sprite_drop_box.custom_minimum_size = Vector2(0, 68)
+	var db_style := StyleBoxFlat.new()
+	db_style.bg_color = Color(0.12, 0.15, 0.20, 0.95)
+	db_style.set_corner_radius_all(6)
+	db_style.set_border_width_all(1)
+	db_style.border_color = Color(0.2, 0.85, 1.0, 0.7)
+	db_style.content_margin_left = 8
+	db_style.content_margin_right = 8
+	db_style.content_margin_top = 6
+	db_style.content_margin_bottom = 6
+	_active_sprite_drop_box.add_theme_stylebox_override("panel", db_style)
+
+	var db_hbox := HBoxContainer.new()
+	db_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	db_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_active_sprite_drop_box.add_child(db_hbox)
+
+	_active_sprite_icon = TextureRect.new()
+	_active_sprite_icon.custom_minimum_size = Vector2(56, 56)
+	_active_sprite_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_active_sprite_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_active_sprite_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	db_hbox.add_child(_active_sprite_icon)
+
+	var db_vbox := VBoxContainer.new()
+	db_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	db_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	db_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	db_hbox.add_child(db_vbox)
+
+	_active_sprite_label = Label.new()
+	_active_sprite_label.text = "Active: (Click card below or drop image here)"
+	_active_sprite_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.2))
+	_active_sprite_label.add_theme_font_size_override("font_size", 12)
+	_active_sprite_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	db_vbox.add_child(_active_sprite_label)
+
+	var db_sub := Label.new()
+	db_sub.text = "Drop image from FileSystem or click palette card"
+	db_sub.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	db_sub.add_theme_font_size_override("font_size", 10)
+	db_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	db_vbox.add_child(db_sub)
+
+	_sprite_tool_section.add_child(_active_sprite_drop_box)
+
+	# Place Sprite Button
+	_btn_place_sprite = Button.new()
+	_btn_place_sprite.text = "🌲 Place Sprite (B)"
+	_btn_place_sprite.tooltip_text = "Arm billboard placement tool (B key): click surface to place, drag to pick, mouse up to raise & orient, mouse left/right to scale"
+	_btn_place_sprite.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_place_sprite.pressed.connect(func():
+		if plugin != null and plugin.has_method("_start_sprite_tool"):
+			plugin._start_sprite_tool()
+	)
+	_sprite_tool_section.add_child(_btn_place_sprite)
+
+	var sprite_grid := GridContainer.new()
+	sprite_grid.columns = 2
+	sprite_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	sprite_grid.add_child(_make_label("Width:"))
+	_spin_sprite_width = _make_spinbox(0.1, 50.0, 0.05, 1.5, "m")
+	_spin_sprite_width.value_changed.connect(func(v):
+		if sprite_placer != null and not _syncing:
+			sprite_placer.base_width = v
+	)
+	sprite_grid.add_child(_spin_sprite_width)
+
+	sprite_grid.add_child(_make_label("Height:"))
+	_spin_sprite_height = _make_spinbox(0.1, 50.0, 0.05, 1.5, "m")
+	_spin_sprite_height.value_changed.connect(func(v):
+		if sprite_placer != null and not _syncing:
+			sprite_placer.base_height = v
+	)
+	sprite_grid.add_child(_spin_sprite_height)
+	_sprite_tool_section.add_child(sprite_grid)
+
+	# Property Checkboxes
+	_chk_sprite_lit = CheckBox.new()
+	_chk_sprite_lit.text = "Lit (Shaded by lights)"
+	_chk_sprite_lit.button_pressed = false
+	_chk_sprite_lit.toggled.connect(func(b):
+		if sprite_placer != null:
+			sprite_placer.lit = b
+	)
+	_sprite_tool_section.add_child(_chk_sprite_lit)
+
+	_chk_sprite_shadow = CheckBox.new()
+	_chk_sprite_shadow.text = "Cast Shadows"
+	_chk_sprite_shadow.button_pressed = true
+	_chk_sprite_shadow.toggled.connect(func(b):
+		if sprite_placer != null:
+			sprite_placer.cast_shadow = b
+	)
+	_sprite_tool_section.add_child(_chk_sprite_shadow)
+
+	_chk_sprite_billboard = CheckBox.new()
+	_chk_sprite_billboard.text = "Auto Orient To Camera (Y-Billboard)"
+	_chk_sprite_billboard.button_pressed = true
+	_chk_sprite_billboard.toggled.connect(func(b):
+		if sprite_placer != null:
+			sprite_placer.billboard = b
+	)
+	_sprite_tool_section.add_child(_chk_sprite_billboard)
+
+	_sprite_hint = Label.new()
+	_sprite_hint.text = "Click card in palette to select. Click 'Place Sprite' (or B in viewport) to place."
+	_sprite_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	_sprite_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_sprite_tool_section.add_child(_sprite_hint)
 	root_vbox.add_child(HSeparator.new())
 
 	# Status / Selection feedback
@@ -594,10 +743,12 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 	_btn_mode_mat.button_pressed = (dock_mode == DockMode.MATERIAL)
 	_btn_mode_paint.button_pressed = (dock_mode == DockMode.PAINT)
 	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
+	_btn_mode_sprite.button_pressed = (dock_mode == DockMode.SPRITE)
 
 	_uv_and_tint_section.visible = (dock_mode == DockMode.MATERIAL)
 	_paint_tool_section.visible = (dock_mode == DockMode.PAINT)
 	_stamp_tool_section.visible = (dock_mode == DockMode.STAMP)
+	_sprite_tool_section.visible = (dock_mode == DockMode.SPRITE)
 
 	if paint_controller != null:
 		match dock_mode:
@@ -611,7 +762,10 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 				_set_stamp_submode(false)
 				if paint_controller.stamp_texture == null and not _project_materials.is_empty():
 					_select_stamp_material(_project_materials[0])
-
+			DockMode.SPRITE:
+				paint_controller.set_mode(PBPaintController.Mode.NONE)
+				if sprite_placer != null and sprite_placer.last_texture == null and not _project_materials.is_empty():
+					_select_sprite_material(_project_materials[0])
 	_rebuild_material_grid()
 	_update_tool_labels()
 	sync_selection()
@@ -634,6 +788,15 @@ func _update_tool_labels() -> void:
 			_active_stamp_label.text = "Stamp: %s (%.1fm, %d°)" % [tex_name, paint_controller.stamp_scale, int(paint_controller.stamp_rotation)]
 		else:
 			_active_stamp_label.text = "Stamp: (Select a palette card)"
+
+	if _active_sprite_label != null:
+		if sprite_placer != null and sprite_placer.last_texture != null:
+			var tex := sprite_placer.last_texture
+			_active_sprite_label.text = "%s (%dx%d)" % [tex.resource_path.get_file(), tex.get_width(), tex.get_height()]
+			if _active_sprite_icon != null:
+				_active_sprite_icon.texture = tex
+		else:
+			_active_sprite_label.text = "Active: (Click card below or drop image here)"
 
 
 func _set_stamp_submode(delete_active: bool) -> void:
@@ -675,6 +838,41 @@ func _select_stamp_material(mat: Material) -> void:
 		if plugin != null and plugin.logger != null:
 			plugin.logger.info("stamp", "Selected stamp texture: %s" % tex.resource_path.get_file())
 
+
+func set_active_sprite_texture(tex: Texture2D) -> void:
+	if tex == null:
+		return
+	if sprite_placer != null:
+		sprite_placer.last_texture = tex
+		sprite_placer.selected_texture = tex
+
+	if _active_sprite_icon != null:
+		_active_sprite_icon.texture = tex
+	if _active_sprite_label != null:
+		var fn := tex.resource_path.get_file()
+		_active_sprite_label.text = "%s (%dx%d)" % [fn, tex.get_width(), tex.get_height()]
+
+	var dims := PBSpritePlacer.compute_texture_dimensions(tex, 1.5)
+	if sprite_placer != null:
+		sprite_placer.base_width = dims.x
+		sprite_placer.base_height = dims.y
+	_syncing = true
+	if _spin_sprite_width != null:
+		_spin_sprite_width.value = dims.x
+	if _spin_sprite_height != null:
+		_spin_sprite_height.value = dims.y
+	_syncing = false
+
+	_rebuild_material_grid()
+	if plugin != null and plugin.logger != null:
+		plugin.logger.info("sprite", "Selected billboard sprite texture: %s" % tex.resource_path.get_file())
+
+func _select_sprite_material(mat: Material) -> void:
+	if mat == null:
+		return
+	var tex := _extract_texture(mat)
+	if tex != null:
+		set_active_sprite_texture(tex)
 func _extract_texture(mat: Material) -> Texture2D:
 	if mat is StandardMaterial3D and mat.albedo_texture != null:
 		return mat.albedo_texture
@@ -819,7 +1017,8 @@ func _create_material_card(mat: Material) -> Control:
 			tooltip += "\nLeft-click: Select as active paint brush texture"
 		DockMode.STAMP:
 			tooltip += "\nLeft-click: Select as active stamp texture"
-	btn.tooltip_text = tooltip
+		DockMode.SPRITE:
+			tooltip += "\nLeft-click: Select as active billboard sprite"
 
 	var tex := _extract_texture(mat)
 	if tex != null:
@@ -840,8 +1039,9 @@ func _create_material_card(mat: Material) -> Control:
 				_select_paint_material(mat)
 			DockMode.STAMP:
 				_select_stamp_material(mat)
+			DockMode.SPRITE:
+				_select_sprite_material(mat)
 	)
-
 	# Right-click -> Context Menu
 	btn.gui_input.connect(func(event: InputEvent):
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
@@ -865,7 +1065,7 @@ func _create_material_card(mat: Material) -> Control:
 	# Active selection badge for Paint / Stamp
 	var is_active_paint := (dock_mode == DockMode.PAINT and paint_controller != null and tex != null and paint_controller.paint_texture == tex)
 	var is_active_stamp := (dock_mode == DockMode.STAMP and paint_controller != null and tex != null and paint_controller.stamp_texture == tex)
-
+	var is_active_sprite := (dock_mode == DockMode.SPRITE and sprite_placer != null and tex != null and sprite_placer.last_texture == tex)
 	if is_active_paint:
 		var pbadge := Label.new()
 		pbadge.text = "🖌"
@@ -877,6 +1077,11 @@ func _create_material_card(mat: Material) -> Control:
 		sbadge.position = Vector2(48, 2)
 		btn.add_child(sbadge)
 
+	elif is_active_sprite:
+		var spbadge := Label.new()
+		spbadge.text = "🌲"
+		spbadge.position = Vector2(48, 2)
+		btn.add_child(spbadge)
 	return btn
 
 func _show_context_menu(mat: Material, pos: Vector2) -> void:
@@ -889,6 +1094,7 @@ func _show_context_menu(mat: Material, pos: Vector2) -> void:
 	_context_menu.add_item("Apply to Selection", 2)
 	_context_menu.add_item("Set as Paint Texture", 4)
 	_context_menu.add_item("Set as Stamp Texture", 5)
+	_context_menu.add_item("Set as Sprite Texture", 6)
 	_context_menu.add_separator()
 	_context_menu.add_item("Copy Path", 3)
 	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(190, 110)))
@@ -913,6 +1119,9 @@ func _on_context_menu_id_pressed(id: int) -> void:
 		5: # Stamp
 			_select_stamp_material(_context_material)
 			_set_dock_mode(DockMode.STAMP)
+		6: # Sprite
+			_select_sprite_material(_context_material)
+			_set_dock_mode(DockMode.SPRITE)
 
 func _on_add_material_pressed() -> void:
 	if _file_dialog == null:
@@ -1207,3 +1416,38 @@ func _set_slider_enabled(slider: Range, enabled: bool) -> void:
 		(slider as SpinBox).editable = enabled
 	elif slider is EditorSpinSlider:
 		(slider as EditorSpinSlider).read_only = not enabled
+
+class PBSpriteDropBox extends PanelContainer:
+	var dock: PBMaterialDock = null
+
+	func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
+		if typeof(data) == TYPE_DICTIONARY:
+			var dict: Dictionary = data
+			if dict.get("type", "") == "files":
+				var files: Array = dict.get("files", [])
+				for f in files:
+					var ext := str(f).get_extension().to_lower()
+					if ext in ["png", "jpg", "jpeg", "webp", "tres", "material"]:
+						return true
+		return false
+
+	func _drop_data(_at_position: Vector2, data: Variant) -> void:
+		if typeof(data) == TYPE_DICTIONARY and dock != null:
+			var dict: Dictionary = data
+			if dict.get("type", "") == "files":
+				var files: Array = dict.get("files", [])
+				for f in files:
+					var path_str := str(f)
+					var ext := path_str.get_extension().to_lower()
+					if ext in ["png", "jpg", "jpeg", "webp"]:
+						if ResourceLoader.exists(path_str):
+							var tex = ResourceLoader.load(path_str)
+							if tex is Texture2D:
+								dock.set_active_sprite_texture(tex)
+								return
+					elif ext in ["tres", "material"]:
+						if ResourceLoader.exists(path_str):
+							var mat = ResourceLoader.load(path_str)
+							if mat is Material:
+								dock._select_sprite_material(mat)
+								return
