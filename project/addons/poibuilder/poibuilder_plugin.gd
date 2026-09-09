@@ -2034,7 +2034,7 @@ func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
 		if sprite_placer.state == PBSpritePlacer.State.ARMED:
 			if not surface_hit.is_empty():
 				_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")
-				_update_creation_hover(surface_hit["point"], surface_hit["normal"])
+				_update_creation_hover(camera, event.position)
 			else:
 				_clear_creation_hover()
 		elif sprite_placer.state == PBSpritePlacer.State.TEXTURE_SELECT:

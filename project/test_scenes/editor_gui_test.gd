@@ -1200,6 +1200,11 @@ func _run() -> void:
 					"mesh": target_b,
 					"face_index": 0,
 				}
+				var motion_armed := InputEventMouseMotion.new()
+				motion_armed.position = Vector2(400, 300)
+				plugin._sprite_placer_input(cam, motion_armed)
+				await _frames(2)
+
 				var press_ev := InputEventMouseButton.new()
 				press_ev.button_index = MOUSE_BUTTON_LEFT
 				press_ev.pressed = true
