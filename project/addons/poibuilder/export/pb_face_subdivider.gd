@@ -387,6 +387,31 @@ static func _extract_perimeter_polygon_2d(mesh_data: PBMeshData, face: PBFace,
 	if area < 0.0:
 		poly_2d.reverse()
 
+	# Check if the polygon is strictly orthogonal (axis-aligned steps like stairs and doorways).
+	# Slicing along U and V produces clean rectangular grids only for orthogonal stepped polygons.
+	var is_orthogonal := true
+	for i in range(poly_2d.size()):
+		var p1: Vector2 = poly_2d[i]
+		var p2: Vector2 = poly_2d[(i + 1) % poly_2d.size()]
+		var du := absf(p2.x - p1.x)
+		var dv := absf(p2.y - p1.y)
+		if du > 0.001 and dv > 0.001:
+			is_orthogonal = false
+			break
+
+	# If the polygon has diagonal edges, check if it is concave (has reflex corners).
+	# Concave polygons with diagonal edges (like V-notches) cannot be clipped by Sutherland-Hodgman
+	# without bridging across the empty notch (creating phantom triangles sticking out).
+	# They must fall back to native triangle subdivision to guarantee 100% watertight geometry.
+	if not is_orthogonal:
+		for i in range(poly_2d.size()):
+			var p0: Vector2 = poly_2d[(i - 1 + poly_2d.size()) % poly_2d.size()]
+			var p1: Vector2 = poly_2d[i]
+			var p2: Vector2 = poly_2d[(i + 1) % poly_2d.size()]
+			var cross := (p1.x - p0.x) * (p2.y - p1.y) - (p1.y - p0.y) * (p2.x - p0.x)
+			if cross < -0.001:
+				return [] # Concave polygon with diagonal notch: fall back to triangle subdivision
+
 	return poly_2d
 
 ## Sutherland-Hodgman 1D half-plane clip against an axis-aligned line.
