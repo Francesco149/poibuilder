@@ -181,13 +181,19 @@ func _handle_camera_movement(delta: float) -> void:
 
 func load_map(path: String) -> bool:
 	if not FileAccess.file_exists(path):
-		lbl_stats.text = "File does not exist: %s" % path
+		if lbl_stats != null:
+			lbl_stats.text = "File does not exist: %s" % path
 		return false
 
-	# Clear previous map
-	for c in map_container.get_children():
-		c.queue_free()
+	if map_container == null:
+		map_container = get_node_or_null("MapContainer")
+	if camera == null:
+		camera = get_node_or_null("Camera3D")
 
+	# Clear previous map
+	if map_container != null:
+		for c in map_container.get_children():
+			c.queue_free()
 	loaded_mesh_instances.clear()
 	original_materials.clear()
 	wireframe_mesh_instances.clear()
@@ -199,12 +205,14 @@ func load_map(path: String) -> bool:
 	var state := GLTFState.new()
 	var err := doc.append_from_file(path, state)
 	if err != OK:
-		lbl_stats.text = "Failed to parse GLTF/GLB: error code %d" % err
+		if lbl_stats != null:
+			lbl_stats.text = "Failed to parse GLTF/GLB: error code %d" % err
 		return false
 
 	var generated_scene := doc.generate_scene(state)
 	if generated_scene == null:
-		lbl_stats.text = "Failed to generate scene from GLTF."
+		if lbl_stats != null:
+			lbl_stats.text = "Failed to generate scene from GLTF."
 		return false
 
 	map_container.add_child(generated_scene)
@@ -469,7 +477,8 @@ func _frame_camera_on_map() -> void:
 	var aabb := AABB()
 	var first := true
 	for mi in loaded_mesh_instances:
-		var b := mi.global_transform * mi.get_aabb()
+		var xf := mi.global_transform if mi.is_inside_tree() else mi.transform
+		var b := xf * mi.get_aabb()
 		if first:
 			aabb = b
 			first = false
@@ -479,7 +488,13 @@ func _frame_camera_on_map() -> void:
 	var center := aabb.get_center()
 	var max_dim := maxf(aabb.size.x, maxf(aabb.size.y, aabb.size.z))
 	var cam_dist := maxf(max_dim * 1.2, 5.0)
-	camera.global_position = center + Vector3(cam_dist * 0.7, cam_dist * 0.5, cam_dist * 0.7)
-	camera.look_at(center, Vector3.UP)
-	yaw = camera.rotation.y
-	pitch = camera.rotation.x
+	if camera != null:
+		var target_pos := center + Vector3(cam_dist * 0.7, cam_dist * 0.5, cam_dist * 0.7)
+		if camera.is_inside_tree():
+			camera.global_position = target_pos
+			camera.look_at(center, Vector3.UP)
+		else:
+			camera.position = target_pos
+			camera.look_at_from_position(target_pos, center, Vector3.UP)
+		yaw = camera.rotation.y
+		pitch = camera.rotation.x

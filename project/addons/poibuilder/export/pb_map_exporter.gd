@@ -41,11 +41,18 @@ class ExportSettings extends RefCounted:
 	var export_colliders: bool = true
 	var export_lights: bool = true
 
+## Cancellation token for aborting an in-progress async export.
+class CancellationToken extends RefCounted:
+	var cancelled: bool = false
+
+	func cancel() -> void:
+		cancelled = true
+
 # ==============================================================================
 # Public API
 # ==============================================================================
 
-## Exports the given scene root to a .glb or .gltf file on disk.
+## Exports the given scene root to a .glb or .gltf file on disk synchronously.
 static func export_map(root: Node, file_path: String, settings: ExportSettings = null) -> Error:
 	if root == null or file_path.is_empty():
 		return ERR_INVALID_PARAMETER
@@ -69,6 +76,75 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 	export_tree.free()
 	return err
 
+## Asynchronous export with frame-by-frame progress reporting and cancellation support.
+## Yields frames via `await Engine.get_main_loop().process_frame` so editor UI stays 100% interactive.
+static func export_map_async(root: Node, file_path: String, settings: ExportSettings = null,
+		progress_cb: Callable = Callable(), cancel_token: CancellationToken = null) -> Error:
+	if root == null or file_path.is_empty():
+		return ERR_INVALID_PARAMETER
+
+	if settings == null:
+		settings = ExportSettings.new()
+
+	if progress_cb.is_valid():
+		progress_cb.call(0.02, "Collecting scene geometry & lights...", "")
+	if Engine.get_main_loop() != null:
+		await Engine.get_main_loop().process_frame
+
+	var export_root := Node3D.new()
+	export_root.name = "Map"
+
+	var lights := PBLightBaker.collect_scene_lights(root)
+	var grid := PBLightBaker.build_spatial_grid(root)
+	var base_material_cache: Dictionary = {}
+
+	var nodes_to_export: Array[Node] = []
+	_collect_export_nodes_recursive(root, nodes_to_export)
+
+	var total_nodes := nodes_to_export.size()
+	for ni in range(total_nodes):
+		if cancel_token != null and cancel_token.cancelled:
+			export_root.free()
+			return ERR_SKIP
+
+		var n := nodes_to_export[ni]
+		var pct := 0.05 + (float(ni) / maxf(float(total_nodes), 1.0)) * 0.85
+		if progress_cb.is_valid():
+			progress_cb.call(pct, "Baking %s (%d/%d)" % [n.name, ni + 1, total_nodes], "")
+		if Engine.get_main_loop() != null:
+			await Engine.get_main_loop().process_frame
+
+		_export_single_node(n, export_root, lights, grid, base_material_cache, settings)
+
+	if cancel_token != null and cancel_token.cancelled:
+		export_root.free()
+		return ERR_SKIP
+
+	# In the Godot Editor (Engine.is_editor_hint()), GLTFDocument.append_from_scene
+	# skips any descendant node whose owner is null. Recursively set owner = export_root
+	# so that all exported meshes, materials, and colliders are written to glTF.
+	_set_owner_recursive(export_root, export_root)
+
+	if progress_cb.is_valid():
+		progress_cb.call(0.92, "Writing GLB file to disk...", file_path.get_file())
+	if Engine.get_main_loop() != null:
+		await Engine.get_main_loop().process_frame
+
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	var err := doc.append_from_scene(export_root, state)
+	if err != OK:
+		export_root.free()
+		return err
+
+	err = doc.write_to_filesystem(state, file_path)
+	export_root.free()
+
+	if progress_cb.is_valid():
+		progress_cb.call(1.0, "Export complete!", file_path.get_file())
+
+	return err
+
 ## Builds an in-memory Node3D scene tree representing the exported map.
 static func build_export_tree(root: Node, settings: ExportSettings = null) -> Node3D:
 	if root == null:
@@ -89,25 +165,46 @@ static func build_export_tree(root: Node, settings: ExportSettings = null) -> No
 	# Process nodes recursively
 	_export_node_recursive(root, export_root, lights, grid, base_material_cache, settings)
 
+	# Set owner recursively so GLTFDocument in editor mode exports all descendant nodes
+	_set_owner_recursive(export_root, export_root)
+
 	return export_root
 
 # ==============================================================================
 # Internal Scene Tree Construction
 # ==============================================================================
 
-static func _export_node_recursive(source_node: Node, parent_export_node: Node,
-		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
-		base_material_cache: Dictionary, settings: ExportSettings) -> void:
+static func _set_owner_recursive(node: Node, new_owner: Node) -> void:
+	if node != new_owner:
+		node.owner = new_owner
+	for child in node.get_children():
+		_set_owner_recursive(child, new_owner)
+
+static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node]) -> void:
 	if source_node == null:
 		return
 
-	# Skip helper/internal nodes
 	var node_name := source_node.name
 	if node_name == "PBStamps" or node_name.begins_with("Collider"):
 		return
 	if source_node is CollisionShape3D:
 		return
 
+	if source_node is PBMesh:
+		var pb := source_node as PBMesh
+		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
+			out.append(source_node)
+	elif source_node is MeshInstance3D and (source_node.name.begins_with("Sprite") or source_node.has_meta("is_billboard")):
+		out.append(source_node)
+	elif source_node is Light3D:
+		out.append(source_node)
+
+	for child in source_node.get_children():
+		_collect_export_nodes_recursive(child, out)
+
+static func _export_single_node(source_node: Node, parent_export_node: Node,
+		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
+		base_material_cache: Dictionary, settings: ExportSettings) -> void:
 	if source_node is PBMesh:
 		var pb := source_node as PBMesh
 		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
@@ -123,6 +220,20 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
+
+static func _export_node_recursive(source_node: Node, parent_export_node: Node,
+		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
+		base_material_cache: Dictionary, settings: ExportSettings) -> void:
+	if source_node == null:
+		return
+
+	var node_name := source_node.name
+	if node_name == "PBStamps" or node_name.begins_with("Collider"):
+		return
+	if source_node is CollisionShape3D:
+		return
+
+	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings)
 
 	for child in source_node.get_children():
 		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings)

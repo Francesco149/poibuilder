@@ -26,15 +26,24 @@ var _txt_path: LineEdit
 var _btn_browse: Button
 var _file_dialog: FileDialog
 var _lbl_status: Label
+var _progress_container: VBoxContainer
+var _progress_bar: ProgressBar
+var _lbl_progress_phase: Label
+var _lbl_progress_detail: Label
+var _btn_cancel_export: Button
+var _hb_actions: HBoxContainer
+var _btn_launch_viewer: Button
 
+var _is_exporting: bool = false
+var _cancel_token: PBMapExporter.CancellationToken = null
 var _scene_root: Node = null
 
 func _init() -> void:
 	title = "Export PoiBuilder Map"
-	min_size = Vector2(460, 480)
+	min_size = Vector2(480, 520)
 	ok_button_text = "Export"
+	dialog_hide_on_ok = false
 	_build_ui()
-
 func _build_ui() -> void:
 	var root_vb := VBoxContainer.new()
 	root_vb.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -189,6 +198,44 @@ func _build_ui() -> void:
 	_lbl_status.modulate = Color(0.2, 0.9, 1.0)
 	root_vb.add_child(_lbl_status)
 
+	# Progress reporting container
+	_progress_container = VBoxContainer.new()
+	_progress_container.visible = false
+	_progress_container.add_theme_constant_override("separation", 4)
+
+	var hb_prog_head := HBoxContainer.new()
+	_lbl_progress_phase = Label.new()
+	_lbl_progress_phase.text = "Exporting map..."
+	_lbl_progress_phase.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb_prog_head.add_child(_lbl_progress_phase)
+
+	_btn_cancel_export = Button.new()
+	_btn_cancel_export.text = "Cancel"
+	_btn_cancel_export.pressed.connect(_on_cancel_export_pressed)
+	hb_prog_head.add_child(_btn_cancel_export)
+	_progress_container.add_child(hb_prog_head)
+
+	_progress_bar = ProgressBar.new()
+	_progress_bar.min_value = 0.0
+	_progress_bar.max_value = 100.0
+	_progress_bar.value = 0.0
+	_progress_bar.custom_minimum_size = Vector2(0, 18)
+	_progress_container.add_child(_progress_bar)
+
+	_lbl_progress_detail = Label.new()
+	_lbl_progress_detail.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	_progress_container.add_child(_lbl_progress_detail)
+	root_vb.add_child(_progress_container)
+
+	# Action bar (viewer launcher button when complete)
+	_hb_actions = HBoxContainer.new()
+	_btn_launch_viewer = Button.new()
+	_btn_launch_viewer.text = "Open in Retro Map Viewer"
+	_btn_launch_viewer.visible = false
+	_btn_launch_viewer.pressed.connect(_on_launch_viewer_pressed)
+	_hb_actions.add_child(_btn_launch_viewer)
+	root_vb.add_child(_hb_actions)
+
 	# File Dialog
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
@@ -202,8 +249,11 @@ func _build_ui() -> void:
 func open_dialog(scene_root: Node) -> void:
 	_scene_root = scene_root
 	_lbl_status.text = ""
+	_progress_container.visible = false
+	_btn_launch_viewer.visible = false
+	_is_exporting = false
+	get_ok_button().disabled = false
 	popup_centered()
-
 func _on_mode_selected(idx: int) -> void:
 	var is_retro := idx == PBMapExporter.ExportMode.RETRO
 	_chk_subdivide.button_pressed = is_retro
@@ -214,15 +264,40 @@ func _on_browse_pressed() -> void:
 	_file_dialog.current_path = _txt_path.text
 	_file_dialog.popup_centered(Vector2(600, 450))
 
+func _on_cancel_export_pressed() -> void:
+	if _cancel_token != null:
+		_cancel_token.cancel()
+		_lbl_progress_phase.text = "Cancelling export..."
+
+func _on_launch_viewer_pressed() -> void:
+	var path := _txt_path.text.strip_edges()
+	var exec_path := OS.get_executable_path()
+	var args := PackedStringArray(["res://test_scenes/retro_map_viewer.tscn", "--map=%s" % path])
+	OS.create_process(exec_path, args)
+
 func _on_confirmed() -> void:
+	if _is_exporting:
+		return
+
 	if _scene_root == null:
+		_lbl_status.modulate = Color(1.0, 0.3, 0.3)
 		_lbl_status.text = "Error: No active scene to export."
 		return
 
 	var path := _txt_path.text.strip_edges()
 	if path.is_empty():
+		_lbl_status.modulate = Color(1.0, 0.3, 0.3)
 		_lbl_status.text = "Error: Output path cannot be empty."
 		return
+
+	_is_exporting = true
+	get_ok_button().disabled = true
+	_lbl_status.text = ""
+	_btn_launch_viewer.visible = false
+	_progress_container.visible = true
+	_progress_bar.value = 0.0
+	_lbl_progress_phase.text = "Starting export..."
+	_lbl_progress_detail.text = ""
 
 	var settings := PBMapExporter.ExportSettings.new()
 	settings.export_mode = _mode_option.get_selected_id() as PBMapExporter.ExportMode
@@ -238,10 +313,27 @@ func _on_confirmed() -> void:
 	settings.export_billboards = _chk_export_billboards.button_pressed
 	settings.export_colliders = _chk_export_colliders.button_pressed
 
-	var err := PBMapExporter.export_map(_scene_root, path, settings)
+	_cancel_token = PBMapExporter.CancellationToken.new()
+	var progress_cb := func(pct: float, phase: String, detail: String):
+		_progress_bar.value = pct * 100.0
+		_lbl_progress_phase.text = phase
+		_lbl_progress_detail.text = detail
+
+	var err: Error = await PBMapExporter.export_map_async(_scene_root, path, settings, progress_cb, _cancel_token)
+
+	_is_exporting = false
+	get_ok_button().disabled = false
+
 	if err == OK:
+		_lbl_status.modulate = Color(0.2, 0.9, 1.0)
 		_lbl_status.text = "Export successful: %s" % path
+		_btn_launch_viewer.visible = true
 		export_completed.emit(path, settings.export_mode)
-		hide()
+	elif _cancel_token != null and _cancel_token.cancelled or err == ERR_SKIP:
+		_lbl_status.modulate = Color(1.0, 0.7, 0.2)
+		_lbl_status.text = "Export cancelled by user."
+		_progress_container.visible = false
 	else:
+		_lbl_status.modulate = Color(1.0, 0.3, 0.3)
 		_lbl_status.text = "Export failed with error code: %d" % err
+		_progress_container.visible = false

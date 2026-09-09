@@ -31,6 +31,8 @@ class SpatialGrid:
 	var inv_cell: float = 0.5
 	var cells: Dictionary = {} # Vector3i -> Array[Tri]
 	var all_triangles: Array[Tri] = []
+	var scene_aabb := AABB()
+	var has_aabb: bool = false
 
 	func _init(p_cell_size: float = 2.0) -> void:
 		cell_size = p_cell_size
@@ -39,6 +41,12 @@ class SpatialGrid:
 	func add_triangle(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
 		var tri := Tri.new(p0, p1, p2)
 		all_triangles.append(tri)
+		if not has_aabb:
+			scene_aabb = tri.aabb
+			has_aabb = true
+		else:
+			scene_aabb = scene_aabb.merge(tri.aabb)
+
 		var min_c := Vector3i(int(floor(tri.aabb.position.x * inv_cell)), int(floor(tri.aabb.position.y * inv_cell)), int(floor(tri.aabb.position.z * inv_cell)))
 		var max_c := Vector3i(int(floor((tri.aabb.position.x + tri.aabb.size.x) * inv_cell)), int(floor((tri.aabb.position.y + tri.aabb.size.y) * inv_cell)), int(floor((tri.aabb.position.z + tri.aabb.size.z) * inv_cell)))
 
@@ -50,37 +58,93 @@ class SpatialGrid:
 						cells[key] = [] as Array[Tri]
 					cells[key].append(tri)
 
-	func cast_ray(origin: Vector3, dir: Vector3, max_dist: float) -> float:
+	func cast_ray(origin: Vector3, dir: Vector3, max_dist: float, early_exit: bool = false) -> float:
+		if all_triangles.is_empty():
+			return max_dist
+
 		var dir_norm := dir.normalized()
-		var dest := origin + dir_norm * max_dist
-		var r_min := Vector3(minf(origin.x, dest.x), minf(origin.y, dest.y), minf(origin.z, dest.z))
-		var r_max := Vector3(maxf(origin.x, dest.x), maxf(origin.y, dest.y), maxf(origin.z, dest.z))
+		var ray_len := max_dist
 
-		var min_c := Vector3i(int(floor(r_min.x * inv_cell)), int(floor(r_min.y * inv_cell)), int(floor(r_min.z * inv_cell)))
-		var max_c := Vector3i(int(floor(r_max.x * inv_cell)), int(floor(r_max.y * inv_cell)), int(floor(r_max.z * inv_cell)))
+		# Fast rejection against scene bounds
+		if has_aabb:
+			var exp_aabb := scene_aabb.grow(0.1)
+			if not exp_aabb.has_point(origin):
+				var enter_pt = exp_aabb.intersects_segment(origin, origin + dir_norm * ray_len)
+				if enter_pt == null:
+					return max_dist
+			else:
+				var exit_d := _ray_box_exit(origin, dir_norm, exp_aabb, ray_len)
+				ray_len = minf(ray_len, exit_d)
 
-		var min_t := max_dist
+		var cur_cell := Vector3i(int(floor(origin.x * inv_cell)), int(floor(origin.y * inv_cell)), int(floor(origin.z * inv_cell)))
+		var step_x := 1 if dir_norm.x >= 0.0 else -1
+		var step_y := 1 if dir_norm.y >= 0.0 else -1
+		var step_z := 1 if dir_norm.z >= 0.0 else -1
+
+		var t_delta_x := absf(cell_size / dir_norm.x) if absf(dir_norm.x) > 0.000001 else INF
+		var t_delta_y := absf(cell_size / dir_norm.y) if absf(dir_norm.y) > 0.000001 else INF
+		var t_delta_z := absf(cell_size / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
+
+		var next_bx := float(cur_cell.x + (1 if step_x > 0 else 0)) * cell_size
+		var next_by := float(cur_cell.y + (1 if step_y > 0 else 0)) * cell_size
+		var next_bz := float(cur_cell.z + (1 if step_z > 0 else 0)) * cell_size
+
+		var t_max_x := absf((next_bx - origin.x) / dir_norm.x) if absf(dir_norm.x) > 0.000001 else INF
+		var t_max_y := absf((next_by - origin.y) / dir_norm.y) if absf(dir_norm.y) > 0.000001 else INF
+		var t_max_z := absf((next_bz - origin.z) / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
+
+		var min_t := ray_len
 		var seen := {}
 
-		for cz in range(min_c.z, max_c.z + 1):
-			for cy in range(min_c.y, max_c.y + 1):
-				for cx in range(min_c.x, max_c.x + 1):
-					var key := Vector3i(cx, cy, cz)
-					if not cells.has(key):
+		while true:
+			if cells.has(cur_cell):
+				var tri_list: Array = cells[cur_cell]
+				for tri: Tri in tri_list:
+					if seen.has(tri):
 						continue
-					var tri_list: Array = cells[key]
-					for tri: Tri in tri_list:
-						if seen.has(tri):
-							continue
-						seen[tri] = true
+					seen[tri] = true
 
-						var hit: Dictionary = PBMath.ray_intersects_triangle(origin, dir_norm, tri.v0, tri.v1, tri.v2)
-						if hit.get("hit", false):
-							var d: float = hit.get("distance", INF)
-							if d > 0.001 and d < min_t:
-								min_t = d
+					var hit: Dictionary = PBMath.ray_intersects_triangle(origin, dir_norm, tri.v0, tri.v1, tri.v2)
+					if hit.get("hit", false):
+						var d: float = hit.get("distance", INF)
+						if d > 0.001 and d < min_t:
+							if early_exit:
+								return d
+							min_t = d
+
+			var t_next := minf(t_max_x, minf(t_max_y, t_max_z))
+			if min_t <= t_next or t_next > ray_len:
+				break
+
+			if t_max_x < t_max_y:
+				if t_max_x < t_max_z:
+					cur_cell.x += step_x
+					t_max_x += t_delta_x
+				else:
+					cur_cell.z += step_z
+					t_max_z += t_delta_z
+			else:
+				if t_max_y < t_max_z:
+					cur_cell.y += step_y
+					t_max_y += t_delta_y
+				else:
+					cur_cell.z += step_z
+					t_max_z += t_delta_z
 
 		return min_t
+
+	func _ray_box_exit(orig: Vector3, d_norm: Vector3, aabb: AABB, fallback: float) -> float:
+		var t_exit := fallback
+		if absf(d_norm.x) > 0.000001:
+			var bound_x := aabb.position.x + aabb.size.x if d_norm.x > 0.0 else aabb.position.x
+			t_exit = minf(t_exit, maxf(0.0, (bound_x - orig.x) / d_norm.x))
+		if absf(d_norm.y) > 0.000001:
+			var bound_y := aabb.position.y + aabb.size.y if d_norm.y > 0.0 else aabb.position.y
+			t_exit = minf(t_exit, maxf(0.0, (bound_y - orig.y) / d_norm.y))
+		if absf(d_norm.z) > 0.000001:
+			var bound_z := aabb.position.z + aabb.size.z if d_norm.z > 0.0 else aabb.position.z
+			t_exit = minf(t_exit, maxf(0.0, (bound_z - orig.z) / d_norm.z))
+		return t_exit
 # ==============================================================================
 # Public API
 # ==============================================================================
@@ -189,7 +253,7 @@ static func _evaluate_light(p: Vector3, n: Vector3, light: Light3D, grid: Spatia
 			return Color.BLACK
 
 		if bake_shadows and grid != null:
-			var hit_dist := grid.cast_ray(p + n * 0.05, to_light, 100.0)
+			var hit_dist := grid.cast_ray(p + n * 0.05, to_light, 100.0, true)
 			if hit_dist < 99.0:
 				return Color.BLACK # Occluded
 
@@ -227,7 +291,7 @@ static func _evaluate_light(p: Vector3, n: Vector3, light: Light3D, grid: Spatia
 
 		# Shadow test
 		if bake_shadows and grid != null:
-			var hit_dist := grid.cast_ray(p + n * 0.02, l_dir, dist - 0.03)
+			var hit_dist := grid.cast_ray(p + n * 0.02, l_dir, dist - 0.03, true)
 			if hit_dist < dist - 0.04:
 				return Color.BLACK # Occluded
 

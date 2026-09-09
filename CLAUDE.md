@@ -809,6 +809,17 @@ v0.9.54 round complete ✓ — pre-bake showcase launcher, retro viewer wirefram
   - 3x sized circular stamp ($3.6\text{ m} \times 3.6\text{ m}$) on the sloped face of `EastRamp`, partially cut off along the top ridge of the prism with clean face-edge clipping via `pb_decal_shader.gdshader`.
   - Removed unwanted untextured floating plane (`Stamp_Tapestry`) and flower patch behind the bush.
   - Unified anchor-space and object-space sampling in `PBTileBaker` via `anchor_offset`.
+- NON-BLOCKING ASYNC EXPORT & PROGRESS SCREEN (`PBExportDialog`, `PBMapExporter`):
+  - Non-blocking export flow: resolved engine lockup/freeze during map export. `PBMapExporter.export_map_async` executes step-by-step, yielding across process frames (`await Engine.get_main_loop().process_frame`) so the Godot editor UI stays 100% interactive and responsive.
+  - Live modal progress UI: `PBExportDialog` features a real-time `ProgressBar` (0% to 100%), phase label ("Baking Floor (2/14)..."), detailed sub-task readout, and a "Cancel" button to abort export cleanly at any time.
+  - Viewer launcher button: adds an "Open in Retro Map Viewer" action button in the dialog upon export completion to inspect the map immediately.
+- EDITOR GLTF EXPORT ROOT CAUSE (THE 276-BYTE EMPTY EXPORT BUG):
+  - In Godot C++ (`modules/gltf/gltf_document.cpp:4236`), `GLTFDocument::append_from_scene` in editor mode (`Engine.is_editor_hint() == true`) explicitly skips any descendant node whose owner is null (`p_current->get_owner() == nullptr`). Generated nodes in `build_export_tree` lacked owners, causing Godot to silently drop all meshes and produce an empty 276-byte GLB.
+  - `_set_owner_recursive(export_root, export_root)` now assigns ownership to all descendant meshes, lights, colliders, and billboards, guaranteeing 100% complete GLB exports in both headless tests and live editor sessions.
+- FAST 3D DDA RAYCASTING & SCENE AABB CLIPPING (`PBLightBaker`, `SpatialGrid`):
+  - Implemented 3D DDA (voxel line traversal) through `SpatialGrid` ($O(N)$ cells visited instead of iterating the entire 3D bounding box cuboid $O(N^3)$).
+  - Directional shadow rays clamp maximum travel distance to the scene AABB exit boundary (`_ray_box_exit`), eliminating thousands of empty-space cell iterations above the map.
+  - Shadow rays enable `early_exit = true`, immediately terminating upon the first occluder hit for $O(1)$ shadow evaluation.
 - Tests: 806/806 GUT unit tests passing, 49/49 GUI harness tests passing (0 failures).
 v0.9.53 round complete ✓ — map export pipeline (retro baked tilemap + modern GLB), vertex lighting, tile baking, standalone viewer app:
 - RETRO ENGINE MAP EXPORT (`PBMapExporter`, `export/pb_map_exporter.gd`):

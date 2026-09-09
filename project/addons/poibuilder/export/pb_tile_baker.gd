@@ -434,6 +434,9 @@ static func _mask_touches_rect(mask: Image, splat_bounds: PackedFloat32Array, re
 	var span_u: float = maxf(su_max - su_min, 0.0001)
 	var span_v: float = maxf(sv_max - sv_min, 0.0001)
 
+	var splat_rect := Rect2(su_min, sv_min, span_u, span_v)
+	if not splat_rect.intersects(rect):
+		return false
 	var mw := mask.get_width()
 	var mh := mask.get_height()
 
