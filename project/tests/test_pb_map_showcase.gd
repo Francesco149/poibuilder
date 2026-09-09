@@ -11,8 +11,10 @@ func test_build_and_export_showcase_map() -> void:
 	autofree(showcase_root)
 
 	# Save showcase scene with player for editor inspection and interactive play
-	var save_err := TestMapShowcaseBuilder.save_showcase_scene(SHOWCASE_TSCN_PATH, true)
+	var save_err := TestMapShowcaseBuilder.save_showcase_scene("user://test_map_showcase.tscn", true)
 	assert_eq(save_err, OK, "Saving showcase scene with player must succeed")
+	if not FileAccess.file_exists(SHOWCASE_TSCN_PATH):
+		TestMapShowcaseBuilder.save_showcase_scene(SHOWCASE_TSCN_PATH, true)
 
 	# 1. Export Retro Baked GLB
 	var retro_settings := PBMapExporter.ExportSettings.new()

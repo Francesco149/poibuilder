@@ -43,48 +43,76 @@ workflow.
 
 **Currently works:**
 
-- [x] 13 primitives (cube, stairs, curved stairs, prism, cylinder, plane,
-      door, pipe, cone, sprite, arch, sphere, torus)
-- [x] ProBuilder-style drag creation: drag the base coplanar to any surface
+- [x] **14 primitives** (cube, stairs, curved stairs, prism, cylinder, plane,
+      door, pipe, cone, sprite, arch, sphere, torus, ngon)
+- [x] **ProBuilder-style drag creation**: drag the base coplanar to any surface
       (floor, walls, on top of objects) or the grid, release, move to set the
       height along the surface normal, click to confirm; axis-aligned
       snapping; ESC aborts without creating anything
-- [x] Shape parameter modals with live preview (steps, sides, radius, ...)
+- [x] **Shape parameter modals** with live preview (steps, sides, radius, ...)
       plus an Edit Params button for pristine shapes
-- [x] Object / vertex / edge / face selection modes with hover + selection
+- [x] **Object / vertex / edge / face selection modes** with hover + selection
       highlights (cyan hover, yellow selection), rubber-band multi-select,
       occlusion-aware picking
-- [x] Edge loop select (Alt+click or double-click)
-- [x] Move / rotate / scale via native editor gizmos at the element pivot,
+- [x] **Edge loop select** (Alt+click or double-click)
+- [x] **Move / rotate / scale via native editor gizmos** at the element pivot,
       with Element / Object / World orientation spaces
-- [x] Smart drag gestures: uniform scale by default (Shift frees it),
-      Shift+Move extrudes, Shift+Scale insets (aspect locked)
-- [x] Mesh ops: extrude faces/edges, inset, loop cut, subdivide, merge
+- [x] **Center square scale handle** for uniform pivot-centered scaling, plus
+      Shift+Center for uniform face insetting
+- [x] **Smart drag gestures**: Shift+Move extrudes faces/edges, Shift+Scale
+      insets faces (aspect locked)
+- [x] **Mesh ops**: extrude faces/edges, inset, loop cut, subdivide, merge
       (including non-coplanar regions), weld vertices, delete, detach
       (keeps the source transform) — all undoable
-- [x] Full undo/redo through the editor's own history, incl. whole gestures
-- [x] Persistent toolbar (tools, modes, ops, shape menu) + a compact,
-      draggable, collapsible, pinnable overlay panel for readouts and
-      parameter editing
-- [x] Node transforms respected throughout (editing works on rotated/scaled
-      objects); half-size manipulator gizmo by default
+- [x] **Knife tool & N-gon shape extrusion**: interactive multi-point polygon
+      drawing on any surface with grid/vertex snapping; edge-to-edge face cuts,
+      interior hole cuts, and direct 3D n-gon prism extrusion
+- [x] **Auto-UV projection & texturing**: uniform 1x1m meter repeat heuristic
+      across walls, floors, and slopes; textures never stretch when geometry is
+      resized; persistent object-space texture anchor keeps coplanar seams aligned;
+      45° diagonal tiling with corner-anchoring; seam-continuous extrude UVs
+- [x] **Toggleable Material & UV Dock**: thumbnail palette, swatch grid,
+      per-face material assignment, and drag-and-drop materials from the dock or
+      FileSystem onto 3D faces
+- [x] **Multi-layer texture splatting & decal stamping**: up to 8 terrain-style
+      blend layers per face with non-stretching persistent bounds; high-resolution
+      billboard decal stamping with upright orientation; stamp delete tool;
+      billboard sprite placement tool with 5-texture carousel
+- [x] **PoiBuilder grid & snapping**: custom procedural infinite-horizon cyan
+      grid (`RenderingServer`), adjustable unit / subdivisions / elevation
+      (`[` and `]` keys with auto-repeat), draw-on-grid mode, and bidirectional
+      engine snap synchronization in Object mode
+- [x] **Retro Map Export Pipeline (`PBMapExporter`)**:
+      - **Retro Baked Tilemap Mode**: exports fully baked maps tailored for classic
+        engines (Quake, GoldSrc, custom software renderers).
+      - **Grid-Aligned Quad Subdivision (`PBFaceSubdivider`)**: subdivides geometry
+        along the 1m texture grid. Clean 2D perimeter slicing decomposes stepped stairs
+        into 8 clean rectangular step columns and doorways into clean quads with
+        zero radiating corner fans and zero slivers.
+      - **Tile-Based Texture Baking (`PBTileBaker`)**: unique composite textures are
+        baked only for painted/stamped areas; unpainted tiles share base textures.
+      - **Vertex Color Lighting Bake (`PBLightBaker`)**: direct lighting (Directional,
+        Omni, Spot), sharp ray-traced shadows, and multi-sample Fibonacci hemisphere
+        ambient occlusion (AO) baked into vertex colors.
+      - **Modern GLB Export**: exports native geometry with decal child quads and
+        metadata tags (`poi_stamps`, `poi_paint`).
+      - **Dedicated Export Dialog & Toolbar Button**.
+- [x] **Standalone Retro Map Viewer (`run_viewer.sh`)**: free-flight WASD camera,
+      live scene stats, and 4 display modes (`[1]` Full Baked, `[2]` Vertex Lighting/AO,
+      `[3]` Textures Only, `[4]` High-contrast wireframe).
+- [x] **Full undo/redo** through the editor's own history, incl. whole gestures
+- [x] **Persistent toolbar** (tools, modes, ops, shape menu, grid, material, export)
+      + a compact, draggable, collapsible overlay panel
+- [x] **Node transforms respected throughout**; half-size manipulator gizmo by default
 
-**Missing before it really matches the UniBuilder workflow:**
+**Remaining future roadmap:**
 
-- [ ] UV editing (unwrap, per-face UV manipulation); UVs are currently only
-      generated by the shape factories
-- [ ] Per-face material / submesh assignment UI
-- [ ] More mesh ops: bevel, connect edges, bridge, fill hole, flip normals,
+- [ ] Additional mesh ops: bevel edges, connect edges, bridge faces, fill hole,
       mirror geometry
 - [ ] Mirror / symmetry mode and array/duplicate tooling
 - [ ] Soft selection and proportional editing
-- [ ] Better snapping controls (increment snap UI, surface snapping while
-      dragging elements)
-- [ ] Pivot/orientation editing, two-axis (center) scale handles
-- [ ] Vertex colors / simple painting
-- [ ] Comfort on large meshes (op + undo paths snapshot whole meshes)
+- [ ] Comfort on large meshes (>10k faces)
 - [ ] UX hardening, documentation, and general polish
-
 ## How this project is built
 
 The unusual part: **PoiBuilder is developed almost entirely by AI coding
