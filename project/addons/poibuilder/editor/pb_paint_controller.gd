@@ -7,7 +7,7 @@
 class_name PBPaintController
 extends RefCounted
 
-enum Mode { NONE, PAINT, STAMP }
+enum Mode { NONE, PAINT, STAMP, STAMP_DELETE }
 
 # Constants
 const RAY_MISS := Vector3(INF, INF, INF)
@@ -153,6 +153,8 @@ var _stroke_last_dab_mesh: PBMesh = null
 var preview_root: Node3D = null
 var brush_mesh_instance: MeshInstance3D = null
 var stamp_mesh_instance: MeshInstance3D = null
+var delete_highlight_mesh: MeshInstance3D = null
+var hovered_stamp: MeshInstance3D = null
 
 # Callback references
 var plugin: EditorPlugin = null
@@ -239,6 +241,23 @@ func setup_previews(parent_node: Node) -> void:
 		stamp_mat.render_priority = 100
 		stamp_mat.albedo_texture = stamp_texture
 		stamp_mesh_instance.material_override = stamp_mat
+
+	# 3. Stamp Delete Highlight Quad (Translucent red highlight overlay)
+	delete_highlight_mesh = MeshInstance3D.new()
+	delete_highlight_mesh.name = "StampDeleteHighlight"
+	preview_root.add_child(delete_highlight_mesh)
+	var del_qm := QuadMesh.new()
+	del_qm.size = Vector2(1.06, 1.06)
+	delete_highlight_mesh.mesh = del_qm
+	var del_mat := StandardMaterial3D.new()
+	del_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	del_mat.albedo_color = Color(1.0, 0.22, 0.22, 0.55)
+	del_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	del_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	del_mat.no_depth_test = true
+	del_mat.render_priority = 110
+	delete_highlight_mesh.material_override = del_mat
+	delete_highlight_mesh.visible = false
 	_update_stamp_preview_texture()
 	_update_preview_mesh()
 	_update_preview_visibility()
@@ -249,6 +268,8 @@ func cleanup_previews() -> void:
 		preview_root = null
 		brush_mesh_instance = null
 		stamp_mesh_instance = null
+		delete_highlight_mesh = null
+		hovered_stamp = null
 
 # ==============================================================================
 # Preview Mesh Updates
@@ -257,11 +278,22 @@ func cleanup_previews() -> void:
 func _update_preview_visibility() -> void:
 	if preview_root == null or not is_instance_valid(preview_root):
 		return
+	if mode == Mode.STAMP_DELETE:
+		preview_root.visible = (hovered_stamp != null)
+		if brush_mesh_instance != null:
+			brush_mesh_instance.visible = false
+		if stamp_mesh_instance != null:
+			stamp_mesh_instance.visible = false
+		if delete_highlight_mesh != null:
+			delete_highlight_mesh.visible = (hovered_stamp != null)
+		return
 	preview_root.visible = (mode != Mode.NONE and has_hit)
 	if brush_mesh_instance != null:
 		brush_mesh_instance.visible = (mode == Mode.PAINT and has_hit)
 	if stamp_mesh_instance != null:
 		stamp_mesh_instance.visible = (mode == Mode.STAMP and has_hit)
+	if delete_highlight_mesh != null:
+		delete_highlight_mesh.visible = false
 
 func _update_preview_mesh() -> void:
 	if mode == Mode.PAINT and brush_mesh_instance != null:
@@ -592,6 +624,107 @@ func clear_all_stamps(mesh: PBMesh) -> void:
 	for c in container.get_children():
 		container.remove_child(c)
 		c.queue_free()
+
+## Updates delete hover highlighting for stamp billboards in the scene.
+func update_delete_hover(camera: Camera3D, screen_pos: Vector2, scene_root: Node, custom_ray_o: Vector3 = Vector3.INF, custom_ray_d: Vector3 = Vector3.ZERO) -> void:
+	if mode != Mode.STAMP_DELETE or scene_root == null:
+		if delete_highlight_mesh != null:
+			delete_highlight_mesh.visible = false
+		hovered_stamp = null
+		return
+
+	var ray_o: Vector3
+	var ray_d: Vector3
+	if custom_ray_o.is_finite():
+		ray_o = custom_ray_o
+		ray_d = custom_ray_d.normalized()
+	elif camera != null:
+		ray_o = camera.project_ray_origin(screen_pos)
+		ray_d = camera.project_ray_normal(screen_pos)
+	else:
+		return
+
+	hovered_stamp = pick_stamp_at_ray(scene_root, ray_o, ray_d)
+	if delete_highlight_mesh != null:
+		if hovered_stamp != null:
+			delete_highlight_mesh.global_transform = hovered_stamp.global_transform
+			delete_highlight_mesh.visible = true
+		else:
+			delete_highlight_mesh.visible = false
+
+static func pick_stamp_at_ray(scene_root: Node, ray_o: Vector3, ray_d: Vector3) -> MeshInstance3D:
+	if scene_root == null:
+		return null
+	var best_dist := INF
+	var best_stamp: MeshInstance3D = null
+
+	var candidates: Array[Node] = []
+	_find_stamp_nodes_recursive(scene_root, candidates)
+
+	for node in candidates:
+		var mi := node as MeshInstance3D
+		if mi == null or not mi.visible or (mi.is_inside_tree() and not mi.is_visible_in_tree()):
+			continue
+		var xf := mi.global_transform
+		var p0 := xf * Vector3(-0.5, -0.5, 0.0)
+		var p1 := xf * Vector3(0.5, -0.5, 0.0)
+		var p2 := xf * Vector3(0.5, 0.5, 0.0)
+		var p3 := xf * Vector3(-0.5, 0.5, 0.0)
+
+		# Test both front and back facing triangles
+		var hit1 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p1, p2)
+		var hit2 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p2, p3)
+		var hit3 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p2, p1)
+		var hit4 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p3, p2)
+
+		var min_t := INF
+		if hit1.get("hit", false): min_t = minf(min_t, hit1["distance"])
+		if hit2.get("hit", false): min_t = minf(min_t, hit2["distance"])
+		if hit3.get("hit", false): min_t = minf(min_t, hit3["distance"])
+		if hit4.get("hit", false): min_t = minf(min_t, hit4["distance"])
+
+		if min_t < best_dist:
+			best_dist = min_t
+			best_stamp = mi
+	return best_stamp
+
+static func _find_stamp_nodes_recursive(node: Node, out_stamps: Array[Node]) -> void:
+	if node == null:
+		return
+	if node.name == "PBStamps":
+		for c in node.get_children():
+			if c is MeshInstance3D:
+				out_stamps.append(c)
+		return
+	for c in node.get_children():
+		_find_stamp_nodes_recursive(c, out_stamps)
+## Deletes the currently hovered stamp billboard with full undo/redo.
+func delete_hovered_stamp() -> bool:
+	if mode != Mode.STAMP_DELETE or hovered_stamp == null or not is_instance_valid(hovered_stamp):
+		return false
+	var stamp_to_delete := hovered_stamp
+	var container := stamp_to_delete.get_parent()
+	var mesh := container.get_parent() if container != null else null
+	hovered_stamp = null
+	if delete_highlight_mesh != null:
+		delete_highlight_mesh.visible = false
+
+	if plugin != null and plugin.has_method("get_undo_redo"):
+		var undo = plugin.get_undo_redo()
+		if undo != null and mesh != null:
+			undo.create_action("Delete Stamp Billboard", UndoRedo.MERGE_DISABLE, mesh)
+			undo.add_do_method(plugin, "_detach_node", stamp_to_delete)
+			undo.add_undo_method(plugin, "_attach_detached", stamp_to_delete, container)
+			undo.add_undo_method(plugin, "_own_node", stamp_to_delete)
+			undo.add_undo_reference(stamp_to_delete)
+			undo.commit_action()
+			return true
+
+	if container != null:
+		container.remove_child(stamp_to_delete)
+	stamp_to_delete.queue_free()
+	stroke_committed.emit()
+	return true
 func get_stamp_image() -> Image:
 	if _cached_stamp_image != null:
 		return _cached_stamp_image

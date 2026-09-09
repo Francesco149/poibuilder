@@ -74,7 +74,11 @@ static func get_param_defs(shape_id: StringName) -> Array:
 		&"sprite":
 			return [
 				_value_def("width", "Width", 0.1, 100.0, 1.0, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
 				_value_def("depth", "Depth", 0.1, 100.0, 1.0, "m"),
+				_bool_def("lit", "Lit (Shaded)", false),
+				_bool_def("cast_shadow", "Cast Shadows", true),
+				_bool_def("billboard", "Auto Orient To Camera", true),
 			]
 		&"arch":
 			return [
@@ -141,7 +145,9 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 		&"cone":
 			data = PBShapeCylinder.create_cone(v["radius"], v["height"], int(v["sides"]))
 		&"sprite":
-			data = PBShapeGenerators.create_sprite(v["width"], v["depth"])
+			var sw: float = float(v.get("width", 1.0))
+			var sh: float = float(v.get("height", v.get("depth", 1.0)))
+			data = PBShapeGenerators.create_sprite(sw, sh)
 		&"arch":
 			data = PBShapeComplex.create_arch(v["radius"], v["depth"], v["thickness"], int(v["sides"]), v["sweep"])
 		&"sphere":
@@ -174,6 +180,8 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 ## prism, plane, sprite) skip the placement modal entirely — the shape is
 ## finalized at the confirming click; Edit Params can always be used later.
 static func needs_params_modal(shape_id: StringName) -> bool:
+	if shape_id == &"sprite":
+		return false
 	for def in get_param_defs(shape_id):
 		if not (def["name"] in ["width", "height", "depth", "radius", "outer_radius"]):
 			return true

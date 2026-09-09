@@ -330,11 +330,33 @@ static func create_plane(
 # 3. Sprite Generator
 # ==============================================================================
 
-## Creates a single quad sprite on the XZ plane (Y=0) centered at the origin.
-## Equivalent to create_plane(width, depth, 1, 1).
-static func create_sprite(width: float = 1.0, depth: float = 1.0) -> PBMeshData:
-	return create_plane(width, depth, 1, 1)
-
+## Creates a single upright quad sprite on the XY plane with its base at Y=0.
+## Normal points along +Z with CCW winding.
+static func create_sprite(width: float = 1.0, height: float = 1.0) -> PBMeshData:
+	var hw: float = width * 0.5
+	var positions := PackedVector3Array([
+		Vector3(-hw, 0.0, 0.0),
+		Vector3(-hw, height, 0.0),
+		Vector3(hw, height, 0.0),
+		Vector3(hw, 0.0, 0.0),
+	])
+	var textures0 := PackedVector2Array([
+		Vector2(0.0, 1.0),
+		Vector2(0.0, 0.0),
+		Vector2(1.0, 0.0),
+		Vector2(1.0, 1.0),
+	])
+	var faces: Array[PBFace] = [
+		PBFace.new(PackedInt32Array([0, 1, 2, 0, 2, 3]))
+	]
+	var mesh_data := PBMeshData.new()
+	mesh_data.positions = positions
+	mesh_data.textures0 = textures0
+	mesh_data.faces = faces
+	mesh_data.shared_vertices = _build_shared_vertices(positions)
+	mesh_data.shared_textures = []
+	mesh_data.invalidate_caches()
+	return mesh_data
 
 # ==============================================================================
 # 4. Prism Generator

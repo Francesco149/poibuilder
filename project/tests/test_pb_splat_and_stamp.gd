@@ -781,3 +781,56 @@ func test_collect_face_paint_state_exports_layers_and_bounds() -> void:
 	assert_true(bounds.has("u") and bounds.has("v") and bounds.has("range_u"),
 		"Planar bounds must be exported (normalized mapping for baking)")
 	assert_true(bounds["range_u"] > 0.0 and bounds["range_v"] > 0.0)
+
+func test_stamp_delete_hover_and_click_deletion() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	var mesh_node := PBMesh.new()
+	root.add_child(mesh_node)
+
+	var stamps_container := Node3D.new()
+	stamps_container.name = "PBStamps"
+	mesh_node.add_child(stamps_container)
+
+	var stamp := MeshInstance3D.new()
+	stamp.name = "Stamp_1"
+	var qm := QuadMesh.new()
+	qm.size = Vector2.ONE
+	stamp.mesh = qm
+	stamp.transform = Transform3D(Basis.IDENTITY, Vector3(0, 1, 0))
+	stamps_container.add_child(stamp)
+
+	var controller := PBPaintController.new()
+	controller.setup_previews(root)
+	controller.set_mode(PBPaintController.Mode.STAMP_DELETE)
+
+	var cam := Camera3D.new()
+	root.add_child(cam)
+	cam.position = Vector3(0, 1, 4)
+	cam.look_at(Vector3(0, 1, 0), Vector3.UP)
+
+	# Ray straight at the stamp
+	var screen_center := Vector2(200, 200)
+	# Update hover
+	# Ray straight at the stamp
+	controller.update_delete_hover(cam, screen_center, root, Vector3(0, 1, 4), Vector3(0, 0, -1))
+	assert_not_null(controller.hovered_stamp, "Stamp should be hovered by ray")
+	assert_eq(controller.hovered_stamp, stamp)
+	assert_true(controller.delete_highlight_mesh.visible, "Highlight mesh should be visible when hovering stamp")
+
+	# Test miss
+	controller.update_delete_hover(cam, screen_center, root, Vector3(5, 5, 5), Vector3(0, 0, -1))
+	assert_null(controller.hovered_stamp, "Miss ray should clear hover")
+	assert_false(controller.delete_highlight_mesh.visible, "Miss ray should hide highlight mesh")
+
+	# Re-hover
+	controller.update_delete_hover(cam, screen_center, root, Vector3(0, 1, 4), Vector3(0, 0, -1))
+	# Delete the hovered stamp
+	var deleted := controller.delete_hovered_stamp()
+	assert_true(deleted, "delete_hovered_stamp should return true")
+	assert_null(controller.hovered_stamp, "Hovered stamp should be cleared after deletion")
+	assert_false(controller.delete_highlight_mesh.visible, "Highlight should hide after deletion")
+	assert_eq(stamps_container.get_child_count(), 0, "Stamp node should be removed from container")
+
+	controller.cleanup_previews()
+	root.queue_free()

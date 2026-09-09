@@ -775,6 +775,36 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.52 round complete ✓ — stamp billboard delete tool, billboard sprite placement UX, 5-texture carousel, camera orient & scaling:
+- STAMP BILLBOARD DELETE TOOL (`PBPaintController.Mode.STAMP_DELETE`, `pb_material_dock.gd`, `poibuilder_plugin.gd`):
+  - Added dedicated "Delete Tool" toggle button in the Stamp section of `PBMaterialDock` (`[ Place Stamp ] [ Delete Tool ]`).
+  - In `STAMP_DELETE` mode, raycasts directly test against placed stamp decal billboards (`pick_stamp_at_ray`).
+  - Hovering a stamp highlights the billboard with a vibrant translucent red outline quad (`delete_highlight_mesh`).
+  - Left-clicking the hovered billboard deletes it cleanly with full Undo/Redo support (`Delete Stamp Billboard` action with `_detach_node` / `_attach_detached`).
+- PROCEDURAL FOLIAGE & TREE PNGS:
+  - Generated stylized, transparent RGBA PNG assets saved under `addons/poibuilder/materials/textures/` and `materials/textures/`:
+    - `tree_pine.png` (256x512 evergreen pine tree with layered needles and trunk)
+    - `tree_oak.png` (512x512 deciduous oak tree with lush canopy clumps and sturdy trunk)
+    - `bush_foliage.png` (256x256 round leafy bush with highlights and red berries)
+    - `grass_tuft.png` (256x256 tuft of wild grass blades with color gradients)
+    - `flower_patch.png` (256x256 colorful wildflower patch with petals and stems)
+- BILLBOARD SPRITE PLACEMENT CONTROLLER & UX (`PBSpritePlacer`, `editor/pb_sprite_placer.gd`, `poibuilder_plugin.gd`):
+  - Triggerable via New Shape > Sprite, or dedicated `B` hotkey (`PBActions` `"tool_sprite"`: `KEY_B`).
+  - Single click on a surface places a billboard using `last_texture` directly.
+  - Click-and-drag (>= 6px drag with LMB held down) opens modal horizontal carousel overlay (`PBBillboardCarousel`).
+  - Carousel renders 5 textures at a time; horizontal mouse motion smoothly scrolls through all available project billboard textures; centered texture appears highlighted with PoiBuilder cyan border, background tint, and filename readout.
+  - Releasing LMB (in hold mode) or clicking (in click mode) confirms the centered texture and sets `last_texture`.
+  - If no `last_texture` exists on first click, a simple click opens the carousel without requiring a drag.
+  - RAISE PHASE: Moving mouse up/down raises the billboard along the surface normal (respecting grid snap); the billboard dynamically rotates around the normal to face the camera. Left-clicking confirms and locks elevation and facing angle.
+  - SCALE PHASE: Moving mouse left/right scales the billboard uniformly (same UX as scale gizmo); respects grid snapping when enabled. Left-clicking confirms and finalizes placement.
+  - `ESC` cancels cleanly at any phase with zero stray nodes left behind.
+- SPRITE SHAPE PROPERTIES & UPRIGHT BILLBOARD MESH (`PBShapeGenerators.create_sprite`, `PBShapeParams`):
+  - `create_sprite(width, height)` creates an upright standing quad on the XY plane with its base at Y=0 and normal facing +Z (backward compatible with `depth`).
+  - Added parameters in `PBShapeParams`: `width`, `height`, `lit` (KIND_BOOL), `cast_shadow` (KIND_BOOL), and `billboard` (KIND_BOOL: Auto Orient To Camera).
+  - Material sets unshaded vs per-pixel shaded (`lit`), `billboard_mode = BILLBOARD_FIXED_Y` vs `BILLBOARD_DISABLED` (`billboard`), and node `cast_shadow = SHADOW_CASTING_SETTING_DOUBLE_SIDED` vs `OFF`.
+  - Adjustable anytime via toolbar "Edit Params" button for pristine shapes.
+- Tests: 780/780 GUT unit tests (+7), 47/47 real-editor GUI tests under Xvfb (+5 assertions covering stamp delete mode, hover highlight, click deletion, and the entire billboard sprite placer flow).
+
 v0.9.51 round complete ✓ — non-stretching texture layers & stamps on geometry resize, halo-free overwrite falloff:
 - NON-STRETCHING / NON-SLIDING TEXTURE LAYERS (`PBMeshData.to_array_mesh`, `pb_splat_shader.gdshader`):
   - Root cause of painted layers stretching on geometry resize: `textures1` (the UV2 channel carrying

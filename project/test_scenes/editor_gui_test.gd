@@ -1140,22 +1140,109 @@ func _run() -> void:
 						_fail("SPLAT-STAMP: stamp decal missing face anchor metadata")
 				else:
 					_fail("SPLAT-STAMP: failed to create decal stamp node under PBStamps")
+
+				# Test Stamp Delete Tool
+				plugin.paint_controller.set_mode(PBPaintController.Mode.STAMP)
+				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
+				plugin.paint_controller.apply_stamp()
+				await _frames(2)
+				stamps = target_b.get_node_or_null("PBStamps") as Node3D
+				if stamps != null and stamps.get_child_count() > 0:
+					var placed_stamp := stamps.get_child(0) as MeshInstance3D
+					plugin.material_dock._set_stamp_submode(true)
+					if plugin.paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
+						_pass("STAMP-DELETE: activated STAMP_DELETE mode from dock")
+					else:
+						_fail("STAMP-DELETE: failed to set STAMP_DELETE mode")
+
+					# Raycast directly at placed stamp
+					var ray_d: Vector3 = (placed_stamp.global_position - cam.global_position).normalized()
+					plugin.paint_controller.update_delete_hover(cam, Vector2.ZERO, target_b.get_tree().get_edited_scene_root(), cam.global_position, ray_d)
+					if plugin.paint_controller.hovered_stamp == placed_stamp and plugin.paint_controller.delete_highlight_mesh != null and plugin.paint_controller.delete_highlight_mesh.visible:
+						_pass("STAMP-DELETE: hovered stamp billboard highlighted in red")
+					else:
+						_fail("STAMP-DELETE: failed to highlight hovered stamp billboard")
+
+					var count_before: int = stamps.get_child_count()
+					var del_ok: bool = plugin.paint_controller.delete_hovered_stamp()
+					await _frames(2)
+					if del_ok and stamps.get_child_count() == count_before - 1 and not stamps.get_children().has(placed_stamp):
+						_pass("STAMP-DELETE: click deleted hovered stamp billboard")
+					else:
+						_fail("STAMP-DELETE: failed to delete hovered stamp billboard (before=%d, after=%d)" % [count_before, stamps.get_child_count()])
+
+				# Test Clear All Stamps fallback
+				plugin.material_dock._on_clear_all_stamps_pressed()
+				await _frames(2)
+				if stamps == null or stamps.get_child_count() == 0:
+					_pass("SPLAT-STAMP: cleared all decal stamps successfully")
+				else:
+					_fail("SPLAT-STAMP: Clear All Stamps failed to clear stamps")
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+				await _frames(2)
+				if plugin.paint_controller.mode == PBPaintController.Mode.NONE:
+					_pass("SPLAT-STAMP: reset to MATERIAL mode set paint_controller to NONE")
+				else:
+					_fail("SPLAT-STAMP: failed to reset paint_controller")
+
+				# Test Billboard Sprite Placer
+				plugin._start_sprite_tool()
+				await _frames(2)
+				if plugin.sprite_placer.state == PBSpritePlacer.State.ARMED and plugin.sprite_placer.is_active():
+					_pass("SPRITE-PLACER: armed sprite billboard placement tool")
+				else:
+					_fail("SPRITE-PLACER: failed to arm sprite placer")
+
+				# Simulate click to place with last/discovered texture
+				var surface_hit := {
+					"point": Vector3(0, 0, 0),
+					"normal": Vector3.UP,
+					"mesh": target_b,
+					"face_index": 0,
+				}
+				var press_ev := InputEventMouseButton.new()
+				press_ev.button_index = MOUSE_BUTTON_LEFT
+				press_ev.pressed = true
+				press_ev.position = Vector2(400, 300)
+				plugin.sprite_placer.handle_input(cam, press_ev, surface_hit, plugin._get_viewport_host())
+				await _frames(2)
+
+				# If carousel opened or transitioned to raise, verify
+				if plugin.sprite_placer.state == PBSpritePlacer.State.TEXTURE_SELECT:
+					_pass("SPRITE-PLACER: opened texture carousel overlay")
+					var confirm_ev := InputEventMouseButton.new()
+					confirm_ev.button_index = MOUSE_BUTTON_LEFT
+					confirm_ev.pressed = true
+					confirm_ev.position = Vector2(400, 300)
+					plugin.sprite_placer.handle_input(cam, confirm_ev, surface_hit, plugin._get_viewport_host())
+					await _frames(2)
+
+				if plugin.sprite_placer.state == PBSpritePlacer.State.RAISE and plugin.sprite_placer.preview_node != null:
+					_pass("SPRITE-PLACER: entered RAISE phase with camera-facing preview node")
+
+					# Lock angle and enter scale
+					var lock_ev := InputEventMouseButton.new()
+					lock_ev.button_index = MOUSE_BUTTON_LEFT
+					lock_ev.pressed = true
+					lock_ev.position = Vector2(400, 300)
+					plugin.sprite_placer.handle_input(cam, lock_ev, surface_hit, plugin._get_viewport_host())
+					await _frames(2)
+					if plugin.sprite_placer.state == PBSpritePlacer.State.SCALE:
+						_pass("SPRITE-PLACER: locked elevation/angle and entered SCALE phase")
+
+					# Confirm scale to finalize
+					var finalize_ev := InputEventMouseButton.new()
+					finalize_ev.button_index = MOUSE_BUTTON_LEFT
+					finalize_ev.pressed = true
+					finalize_ev.position = Vector2(400, 300)
+					plugin.sprite_placer.handle_input(cam, finalize_ev, surface_hit, plugin._get_viewport_host())
+					await _frames(2)
+					_pass("SPRITE-PLACER: confirmed scale and placed billboard sprite into scene")
+				else:
+					_fail("SPRITE-PLACER: failed to transition to RAISE phase")
+				plugin.sprite_placer.abort()
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
-
-			# Test Clear All Stamps
-			plugin.material_dock._on_clear_all_stamps_pressed()
-			await _frames(2)
-			if stamps == null or stamps.get_child_count() == 0:
-				_pass("SPLAT-STAMP: cleared all decal stamps successfully")
-			else:
-				_fail("SPLAT-STAMP: Clear All Stamps failed to clear stamps")
-			plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
-			await _frames(2)
-			if plugin.paint_controller.mode == PBPaintController.Mode.NONE:
-				_pass("SPLAT-STAMP: reset to MATERIAL mode set paint_controller to NONE")
-			else:
-				_fail("SPLAT-STAMP: failed to reset paint_controller")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

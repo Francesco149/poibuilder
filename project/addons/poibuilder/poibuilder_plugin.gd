@@ -27,6 +27,7 @@ var grid_view: PBGridView = PBGridView.new(grid)
 ## Shape creation and interactive polygon drawing controllers
 var shape_creator: PBShapeCreator = PBShapeCreator.new()
 var ngon_drawer: PBNgonDrawer = PBNgonDrawer.new()
+var sprite_placer: PBSpritePlacer = PBSpritePlacer.new()
 
 # ==============================================================================
 # UI Components
@@ -63,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.51"
+const VERSION := "0.9.52"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -85,6 +86,9 @@ func _enter_tree():
 	shape_creator.grid = grid
 	gizmo_plugin.ngon_drawer = ngon_drawer
 	ngon_drawer.grid = grid
+	sprite_placer.plugin = self
+	sprite_placer.grid = grid
+	sprite_placer.sprite_placed.connect(_on_sprite_placed)
 	paint_controller.plugin = self
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
@@ -214,6 +218,9 @@ func _exit_tree():
 			node.get_parent().remove_child(node)
 			node.queue_free()
 
+
+	if sprite_placer != null and sprite_placer.is_active():
+		sprite_placer.abort()
 	# Disconnect selection
 	var selection: EditorSelection = get_editor_interface().get_selection()
 	if selection.selection_changed.is_connected(_on_selection_changed):
@@ -369,6 +376,10 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# when nothing is selected — creation needs no editing context).
 	if shape_creator.is_active():
 		return _creation_input(camera, event)
+
+	# Billboard Sprite Placer owns the mouse while active
+	if sprite_placer != null and sprite_placer.is_active():
+		return _sprite_placer_input(camera, event)
 	# Texture splatting / Stamp tool owns the mouse while active
 	if paint_controller != null and paint_controller.is_active():
 		return _paint_controller_input(camera, event)
@@ -422,7 +433,8 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
 	var editing := editor.is_editing()
-	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active()
+	var sp_active := sprite_placer != null and sprite_placer.is_active()
+	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active() or sp_active
 	match action:
 		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
 		# nothing PoiBuilder-related active, scene-tree search fields would
@@ -490,6 +502,8 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 		grid.lower()
 	elif action == &"grid_reset":
 		grid.reset_origin()
+	elif action == &"tool_sprite":
+		_start_sprite_tool()
 	else:
 		return AFTER_GUI_INPUT_PASS
 	return AFTER_GUI_INPUT_STOP
@@ -741,7 +755,8 @@ func _update_editing_context() -> void:
 		# snap also tracks our grid so node-level drags match element drags.
 		var sc_active := shape_creator != null and shape_creator.is_active()
 		var ng_active := ngon_drawer != null and ngon_drawer.is_active()
-		var pb_context := mesh_selected or sc_active or ng_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
+		var sp_active := sprite_placer != null and sprite_placer.is_active()
+		var pb_context := mesh_selected or sc_active or ng_active or sp_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
 		var cam3d: Camera3D = null
 		var vp := get_editor_interface().get_editor_viewport_3d(0)
 		if vp != null:
@@ -788,7 +803,8 @@ func _process(_delta: float) -> void:
 func show_grid_should_draw() -> bool:
 	var sc_active := shape_creator != null and shape_creator.is_active()
 	var ng_active := ngon_drawer != null and ngon_drawer.is_active()
-	return editor.active_mesh != null or sc_active or ng_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
+	var sp_active := sprite_placer != null and sprite_placer.is_active()
+	return editor.active_mesh != null or sc_active or ng_active or sp_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
 func _attach_grid_view_scenario() -> void:
 	if grid_view == null:
 		return
@@ -1217,10 +1233,13 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	elif ngon_drawer.is_active():
 		_ngon_drawer_abort("a new shape was picked")
 
+	if shape_id == &"sprite":
+		_start_sprite_tool()
+		return
+
 	if shape_id == &"ngon" or shape_id == &"ngon_draw":
 		_start_ngon_shape_tool()
 		return
-
 	shape_creator.arm(shape_id)
 	# Arming is a PoiBuilder context change too: the engine grid hides and
 	# the elevated PB grid shows while drawing (engine-bridge a no-op).
@@ -1973,6 +1992,68 @@ func _ngon_drawer_abort(reason: String) -> void:
 	if logger:
 		logger.info("plugin", "N-gon drawing aborted (%s)" % reason)
 
+# ==============================================================================
+# Billboard Sprite Placement Tool
+# ==============================================================================
+
+func _start_sprite_tool() -> void:
+	if _params_session_kind != "":
+		_on_params_applied()
+	if shape_creator.is_active():
+		_creation_abort("switched to sprite tool")
+	if ngon_drawer.is_active():
+		_ngon_drawer_abort("switched to sprite tool")
+	_clear_creation_hover()
+	sprite_placer.arm()
+	_update_editing_context()
+	_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")
+	if logger:
+		logger.info("plugin", "Billboard sprite tool active — click surface to place")
+
+func _on_sprite_placed(node: PBMesh) -> void:
+	_clear_creation_hover()
+	_set_creation_hint("")
+	_update_editing_context()
+	if logger and node != null:
+		logger.info("plugin", "Placed billboard sprite '%s'" % node.name)
+
+func _get_viewport_host() -> Control:
+	var viewport: SubViewport = get_editor_interface().get_editor_viewport_3d(0)
+	if viewport != null and viewport.get_parent() != null and viewport.get_parent().get_parent() is Control:
+		return viewport.get_parent().get_parent() as Control
+	return null
+
+func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
+	if sprite_placer == null or not sprite_placer.is_active():
+		return AFTER_GUI_INPUT_PASS
+
+	var host := _get_viewport_host()
+	var surface_hit := {}
+	if event is InputEventMouse:
+		surface_hit = _pick_creation_surface(camera, event.position)
+		if sprite_placer.state == PBSpritePlacer.State.ARMED:
+			if not surface_hit.is_empty():
+				_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")
+				_update_creation_hover(surface_hit["point"], surface_hit["normal"])
+			else:
+				_clear_creation_hover()
+		elif sprite_placer.state == PBSpritePlacer.State.TEXTURE_SELECT:
+			_clear_creation_hover()
+			_set_creation_hint("Billboard Tool: Scroll to select texture • Release / Click to confirm")
+		elif sprite_placer.state == PBSpritePlacer.State.RAISE:
+			_clear_creation_hover()
+			_set_creation_hint("Billboard Tool: Mouse up/down to raise • Click to lock angle")
+		elif sprite_placer.state == PBSpritePlacer.State.SCALE:
+			_clear_creation_hover()
+			_set_creation_hint("Billboard Tool: Mouse left/right to scale • Click to confirm placement")
+
+	var res := sprite_placer.handle_input(camera, event, surface_hit, host)
+	if not sprite_placer.is_active():
+		_clear_creation_hover()
+		_set_creation_hint("")
+		_update_editing_context()
+	return res
+
 
 # ==============================================================================
 # Texture Splatting & Stamp Viewport Input
@@ -1989,6 +2070,9 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
 		_last_mouse_pos = event.position
 		_last_mouse_camera = camera
+		if paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
+			paint_controller.update_delete_hover(camera, event.position, scene_root)
+			return AFTER_GUI_INPUT_PASS
 		var hit := _pick_paint_surface(camera, event.position)
 		if not hit.is_empty():
 			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
@@ -2005,6 +2089,11 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		# Plain mouse clicks only. Mouse wheel passes through to camera zoom untouched.
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
+				if paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
+					paint_controller.update_delete_hover(camera, event.position, scene_root)
+					if paint_controller.delete_hovered_stamp():
+						return AFTER_GUI_INPUT_STOP
+					return AFTER_GUI_INPUT_PASS
 				# Make sure hit is up-to-date at click time
 				var hit := _pick_paint_surface(camera, event.position)
 				if not hit.is_empty():
@@ -2019,7 +2108,6 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 				if paint_controller.mode == PBPaintController.Mode.PAINT and paint_controller.is_stroke_active:
 					paint_controller.end_stroke()
 					return AFTER_GUI_INPUT_STOP
-
 	if event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE:

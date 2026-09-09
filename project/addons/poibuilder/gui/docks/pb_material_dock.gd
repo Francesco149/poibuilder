@@ -82,10 +82,12 @@ var _btn_clear_layer: Button
 
 # Stamp Tool Controls
 var _active_stamp_label: Label
+var _btn_stamp_place: Button
+var _btn_stamp_delete: Button
+var _stamp_hint: Label
 var _spin_stamp_scale: Range
 var _spin_stamp_rotation: Range
 var _spin_stamp_opacity: Range
-
 # Context Menu
 var _context_menu: PopupMenu
 var _context_material: Material = null
@@ -464,6 +466,28 @@ func _build_ui() -> void:
 	stamp_header.text = "Stamp Tool Settings"
 	_stamp_tool_section.add_child(stamp_header)
 
+	var stamp_submode_row := HBoxContainer.new()
+	stamp_submode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	_btn_stamp_place = Button.new()
+	_btn_stamp_place.text = "Place Stamp"
+	_btn_stamp_place.tooltip_text = "Place stamp decals on surfaces"
+	_btn_stamp_place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_stamp_place.toggle_mode = true
+	_btn_stamp_place.button_pressed = true
+	_btn_stamp_place.pressed.connect(func(): _set_stamp_submode(false))
+	stamp_submode_row.add_child(_btn_stamp_place)
+
+	_btn_stamp_delete = Button.new()
+	_btn_stamp_delete.text = "Delete Tool"
+	_btn_stamp_delete.tooltip_text = "Delete stamp billboards: Hover over any placed stamp to highlight it in red, click to delete"
+	_btn_stamp_delete.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_stamp_delete.toggle_mode = true
+	_btn_stamp_delete.button_pressed = false
+	_btn_stamp_delete.pressed.connect(func(): _set_stamp_submode(true))
+	stamp_submode_row.add_child(_btn_stamp_delete)
+
+	_stamp_tool_section.add_child(stamp_submode_row)
 	_active_stamp_label = Label.new()
 	_active_stamp_label.text = "Stamp: (Select a palette card)"
 	_active_stamp_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
@@ -542,11 +566,11 @@ func _build_ui() -> void:
 	btn_clear_stamps.pressed.connect(_on_clear_all_stamps_pressed)
 	_stamp_tool_section.add_child(btn_clear_stamps)
 
-	var stamp_hint := Label.new()
-	stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
-	stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
-	stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_stamp_tool_section.add_child(stamp_hint)
+	_stamp_hint = Label.new()
+	_stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
+	_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	_stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_stamp_tool_section.add_child(_stamp_hint)
 	root_vbox.add_child(HSeparator.new())
 
 	# Status / Selection feedback
@@ -584,7 +608,7 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 				if paint_controller.paint_texture == null and not _project_materials.is_empty():
 					_select_paint_material(_project_materials[0])
 			DockMode.STAMP:
-				paint_controller.set_mode(PBPaintController.Mode.STAMP)
+				_set_stamp_submode(false)
 				if paint_controller.stamp_texture == null and not _project_materials.is_empty():
 					_select_stamp_material(_project_materials[0])
 
@@ -611,6 +635,24 @@ func _update_tool_labels() -> void:
 		else:
 			_active_stamp_label.text = "Stamp: (Select a palette card)"
 
+
+func _set_stamp_submode(delete_active: bool) -> void:
+	if _btn_stamp_place != null:
+		_btn_stamp_place.button_pressed = not delete_active
+	if _btn_stamp_delete != null:
+		_btn_stamp_delete.button_pressed = delete_active
+	if paint_controller != null:
+		if delete_active:
+			paint_controller.set_mode(PBPaintController.Mode.STAMP_DELETE)
+		else:
+			paint_controller.set_mode(PBPaintController.Mode.STAMP)
+	if _stamp_hint != null:
+		if delete_active:
+			_stamp_hint.text = "Delete Tool active: Hover over any placed stamp billboard to highlight it in red. Click to delete."
+			_stamp_hint.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		else:
+			_stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
+			_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 func _select_paint_material(mat: Material) -> void:
 	if mat == null or paint_controller == null:
 		return

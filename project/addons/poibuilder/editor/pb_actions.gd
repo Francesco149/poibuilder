@@ -58,6 +58,8 @@ const ACTIONS: Dictionary = {
 	"op_detach":       { "label": "Mesh Op: Detach Faces",    "keys": [] },
 	"op_delete":       { "label": "Mesh Op: Delete Faces",    "keys": [] },
 	"op_knife":        { "label": "Mesh Op: Knife Tool",     "keys": [] },
+	# Dedicated Tools
+	"tool_sprite":     { "label": "Tool: Place Billboard / Sprite", "keys": [[KEY_B, 0, 0, 0]] },
 }
 
 ## Mesh-op action id → the op string the toolbar/plugin pipeline expects.
