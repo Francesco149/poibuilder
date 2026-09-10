@@ -400,11 +400,52 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 static func _export_collider_mesh(pb: PBMesh, parent: Node) -> void:
 	var col_mi := MeshInstance3D.new()
 	col_mi.name = "Collider_" + pb.name
-	col_mi.mesh = pb.pb_mesh_data.to_array_mesh()
+	col_mi.mesh = _get_collider_mesh(pb)
 	col_mi.transform = pb.transform
 	col_mi.visible = false # Colliders default to hidden
 	parent.add_child(col_mi)
 
+## Gets the mesh used for collider export, respecting RAMP collider shapes on stairs.
+static func _get_collider_mesh(pb: PBMesh) -> Mesh:
+	if pb == null:
+		return null
+
+	if pb.collider_type == PBMesh.ColliderType.RAMP and pb.is_stairs():
+		var shape := pb._build_stairs_ramp_shape()
+		if shape is ConcavePolygonShape3D:
+			var faces: PackedVector3Array = (shape as ConcavePolygonShape3D).get_faces()
+			if not faces.is_empty():
+				var am := ArrayMesh.new()
+				var arrs: Array = []
+				arrs.resize(Mesh.ARRAY_MAX)
+				arrs[Mesh.ARRAY_VERTEX] = faces
+				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+				return am
+		elif shape is ConvexPolygonShape3D:
+			var pts: PackedVector3Array = (shape as ConvexPolygonShape3D).points
+			if pts.size() == 6:
+				var prism_tris := PackedVector3Array([
+					pts[0], pts[1], pts[5],
+					pts[0], pts[5], pts[4],
+					pts[0], pts[3], pts[2],
+					pts[0], pts[2], pts[1],
+					pts[3], pts[4], pts[5],
+					pts[3], pts[5], pts[2],
+					pts[0], pts[4], pts[3],
+					pts[1], pts[2], pts[5],
+				])
+				var am := ArrayMesh.new()
+				var arrs: Array = []
+				arrs.resize(Mesh.ARRAY_MAX)
+				arrs[Mesh.ARRAY_VERTEX] = prism_tris
+				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+				return am
+
+	if pb.mesh != null:
+		return pb.mesh
+	elif pb.pb_mesh_data != null:
+		return pb.pb_mesh_data.to_array_mesh()
+	return null
 ## Exports a billboard sprite node with optional vertex lighting.
 static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Light3D],
 		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:

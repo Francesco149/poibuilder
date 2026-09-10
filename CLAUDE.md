@@ -775,6 +775,28 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.57 round complete ✓ — collider inspection mode (wireframe), first-person play mode, ramp collider export & default 2-row toolbar:
+- COLLIDER INSPECTION MODE (`DisplayMode.COLLIDERS_ONLY` / Key 5, `test_scenes/retro_map_viewer.gd`):
+  - Added Mode 5 to standalone map viewer for verifying collider correctness in exported maps.
+  - In Mode 5, visual meshes are hidden while all collider meshes (`Collider_*`) are rendered with translucent emerald-green fill (`Color(0.1, 0.85, 0.45, 0.4)`) and dedicated bright lime-green wireframe lines (`Color(0.2, 1.0, 0.5)`).
+  - Makes collider geometry, ramps, and facet orientations immediately inspectable without visual mesh interference.
+  - Non-collider modes (1-4) automatically hide collider meshes and collider wireframes.
+- FIRST-PERSON PLAY MODE (`KEY_P` / UI Button, `test_scenes/retro_map_viewer.gd`):
+  - Interactive play mode to physically test colliders, slopes, and stairs with live character collision.
+  - Generates a live `PhysicsWorld` containing `StaticBody3D` nodes with trimesh collision shapes for all `Collider_*` meshes (fallback to non-billboard visual meshes if none exist).
+  - Spawns a playable `CharacterBody3D` controller (Capsule: radius 0.4m, height 1.8m) at fly camera position with first-person `Camera3D` at eye level (1.6m).
+  - Full controls: WASD movement (walk 5.5 m/s, Shift sprint 11.0 m/s), Space jump (5.5 m/s), gravity (15.0 m/s²), mouse look with pitch clamping, and slope snapping (`floor_snap_length = 0.3`, `floor_max_angle = 50°`).
+  - Respawn with `KEY_R` (auto-respawn if falling below $y = -40$).
+  - Pressing `P` seamlessly switches between fly camera and physical player without reloading.
+  - Works simultaneously with ANY view mode (including Mode 5 so the player can test colliders while seeing them).
+  - CLI argument `--play=1` starts directly in play mode.
+- RAMP COLLIDER GEOMETRY EXPORT (`PBMapExporter._export_collider_mesh`):
+  - Straight stairs and curved stairs with `collider_type == RAMP` now export their true smooth triangular prism / helicoid ramp mesh for `Collider_*` instead of visual stepped geometry.
+- DEFAULT TWO-ROW TOOLBAR (`PBToolbar`, `poibuilder_plugin.gd`):
+  - Defaulted `two_rows = true` out of the box so the toolbar only requires ~550px minimum width instead of 1016px, allowing Godot's 3D viewport and dock splitters to resize freely without hitting a minimum width lock.
+  - Left-aligned split button allows single-row toggle on wide displays with persistence in `EditorSettings`.
+- Tests: 809/809 GUT unit tests passing (`test_ramp_collider_export`, `test_viewer_colliders_only_and_play_mode`), 49/49 GUI harness tests passing (0 failures).
+
 v0.9.56 round complete ✓ — two-row split toolbar with auto-detection & left-aligned toggle:
 - TWO-ROW TOOLBAR LAYOUT & AUTO-DETECTION (`PBToolbar`, `poibuilder_plugin.gd`):
   - Changed `PBToolbar` from `HBoxContainer` to `VBoxContainer` managing two horizontal rows (`Row1` and `Row2`).

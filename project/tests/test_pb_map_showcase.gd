@@ -163,3 +163,80 @@ func test_retro_export_enforces_power_of_two_textures() -> void:
 		assert_true((h & (h - 1)) == 0, "Image height %d must be power of 2" % h)
 		assert_lte(w, 512, "Image width %d must not exceed max size 512" % w)
 		assert_lte(h, 512, "Image height %d must not exceed max size 512" % h)
+
+func test_ramp_collider_export() -> void:
+	var stairs_data := PBShapeFactory.create_shape(&"stair", Vector3(2.0, 3.0, 4.0))
+	stairs_data.shape_params = {"steps": 6}
+	var pb := PBMesh.new()
+	pb.name = "TestStairs"
+	pb.pb_mesh_data = stairs_data
+	pb.collider_type = PBMesh.ColliderType.RAMP
+	add_child_autofree(pb)
+
+	var parent := Node3D.new()
+	add_child_autofree(parent)
+	PBMapExporter._export_collider_mesh(pb, parent)
+
+	assert_eq(parent.get_child_count(), 1, "Should export one collider mesh")
+	var col_mi := parent.get_child(0) as MeshInstance3D
+	assert_not_null(col_mi)
+	assert_eq(col_mi.name, "Collider_TestStairs")
+	assert_not_null(col_mi.mesh)
+
+	# Straight stairs ramp collider is a clean triangular prism with exactly 8 triangles (24 vertices),
+	# whereas the visual stepped stairs have dozens of step facets.
+	var arrs := col_mi.mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrs[Mesh.ARRAY_VERTEX]
+	assert_eq(verts.size(), 24, "Ramp collider mesh should export a clean 8-triangle prism (24 vertices)")
+
+	var viewer_scene := load("res://test_scenes/retro_map_viewer.tscn") as PackedScene
+	var viewer = viewer_scene.instantiate()
+	add_child_autofree(viewer)
+
+	# Load the retro showcase map
+	var loaded: bool = viewer.load_map(RETRO_GLB_PATH)
+	assert_true(loaded, "Should load showcase retro map")
+
+	# 1. Test Mode 5 (COLLIDERS_ONLY)
+	viewer.set_display_mode(5) # COLLIDERS_ONLY
+	assert_eq(viewer.current_mode, 5)
+
+	var visual_count := 0
+	var col_count := 0
+	for mi in viewer.loaded_mesh_instances:
+		if mi.name.begins_with("Collider_"):
+			col_count += 1
+			assert_true(mi.visible, "Collider mesh %s must be visible in Mode 5" % mi.name)
+		else:
+			visual_count += 1
+			assert_false(mi.visible, "Visual mesh %s must be hidden in Mode 5" % mi.name)
+
+	assert_gt(col_count, 0, "Showcase map must have collider meshes")
+	assert_gt(visual_count, 0, "Showcase map must have visual meshes")
+
+	# Verify collider wireframes are visible
+	assert_gt(viewer.collider_wireframe_instances.size(), 0, "Must have collider wireframe overlays")
+	for cw in viewer.collider_wireframe_instances:
+		assert_true(cw.visible, "Collider wireframe overlays must be visible in Mode 5")
+
+	# 2. Test Play Mode
+	assert_false(viewer.is_play_mode, "Should not start in play mode")
+	viewer.enter_play_mode()
+	assert_true(viewer.is_play_mode, "Should enter play mode")
+	assert_not_null(viewer.player, "Player character must be instantiated")
+	assert_true(viewer.player is CharacterBody3D, "Player must be a CharacterBody3D")
+	assert_true(viewer.player_cam.current, "Player camera must be active in play mode")
+	assert_false(viewer.camera.current, "Fly camera must be inactive in play mode")
+
+	# Verify physics world
+	assert_not_null(viewer.physics_world, "Physics world container must exist")
+	assert_gt(viewer.physics_world.get_child_count(), 0, "Physics world must have StaticBody3D collision nodes")
+	var first_body = viewer.physics_world.get_child(0) as StaticBody3D
+	assert_not_null(first_body, "Child must be StaticBody3D")
+	assert_not_null(first_body.get_node_or_null("CollisionShape"), "StaticBody3D must have CollisionShape")
+
+	# Exit Play Mode
+	viewer.exit_play_mode()
+	assert_false(viewer.is_play_mode, "Should exit play mode")
+	assert_true(viewer.camera.current, "Fly camera must be restored after exiting play mode")
+	assert_false(viewer.player_cam.current, "Player camera must be deactivated")
