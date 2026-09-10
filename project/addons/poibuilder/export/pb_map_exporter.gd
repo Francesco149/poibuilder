@@ -206,7 +206,7 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 			progress_cb.call(0.92, "Writing PBM binary file to disk...", file_path.get_file())
 		if Engine.get_main_loop() != null:
 			await Engine.get_main_loop().process_frame
-		var err := _write_pbm_from_tree(export_root, file_path, settings)
+		var err := _write_pbm_from_tree(root, export_root, file_path, settings)
 		export_root.free()
 		if progress_cb.is_valid():
 			progress_cb.call(1.0, "Export complete!", file_path.get_file())
@@ -624,7 +624,7 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 	if export_tree == null:
 		return ERR_CANT_CREATE
 
-	var err := _write_pbm_from_tree(export_tree, file_path, settings)
+	var err := _write_pbm_from_tree(root, export_tree, file_path, settings)
 	export_tree.free()
 	return err
 
@@ -632,7 +632,7 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit: bool = true) -> Error:
 	return PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, format_16bit)
 
-static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
+static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
 	var f := FileAccess.open(file_path, FileAccess.WRITE)
 	if f == null:
 		return FileAccess.get_open_error()
@@ -789,120 +789,9 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 	spawn.y = bounds_min.y + 1.6
 	spawn.z = bounds_max.z + 4.0
 
-	# Metadata entries (v2.0+)
-	var metadata_entries: Array[Dictionary] = []
-	var map_name_bytes := "PoiRetro Courtyard Showcase".to_utf8_buffer()
-	map_name_bytes.append(0)
-	metadata_entries.append({
-		"tag": "map_name",
-		"type": PBM_META_STRING,
-		"data": map_name_bytes
-	})
-	# Metadata 2: player_spawn
-	var spawn_dict := {
-		"position": [spawn.x, spawn.y, spawn.z],
-		"yaw": 0.0,
-		"camera_fov": 65.0
-	}
-	var spawn_bytes := JSON.stringify(spawn_dict).to_utf8_buffer()
-	spawn_bytes.append(0)
-	metadata_entries.append({
-		"tag": "player_spawn",
-		"type": PBM_META_JSON,
-		"data": spawn_bytes
-	})
+	# Dynamic Scene Entity & Metadata Discovery (PBM v2.0+)
+	var metadata_entries := _collect_metadata_from_scene(root, export_tree, settings, bounds_min, bounds_max, spawn)
 
-	# Metadata 3: walkable_mesh (2 triangles = 18 floats = 72 bytes)
-	var walkable_buf := PackedByteArray()
-	walkable_buf.resize(72)
-	var w_pts := [
-		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
-		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
-	]
-	for wi in range(6):
-		walkable_buf.encode_float(wi * 12, w_pts[wi].x)
-		walkable_buf.encode_float(wi * 12 + 4, w_pts[wi].y)
-		walkable_buf.encode_float(wi * 12 + 8, w_pts[wi].z)
-	metadata_entries.append({
-		"tag": "walkable_mesh",
-		"type": PBM_META_ENTITY,
-		"data": walkable_buf
-	})
-
-	# Metadata 4: triggers
-	var triggers_arr := [
-		{
-			"id": "cutscene_archway",
-			"event": "on_enter_archway",
-			"bounds_min": [-2.0, 0.0, -5.8],
-			"bounds_max": [2.0, 3.5, -4.8],
-			"oneshot": true
-		}
-	]
-	var triggers_bytes := JSON.stringify(triggers_arr).to_utf8_buffer()
-	triggers_bytes.append(0)
-	metadata_entries.append({
-		"tag": "triggers",
-		"type": PBM_META_JSON,
-		"data": triggers_bytes
-	})
-
-	# Metadata 5: particle_emitters
-	var particles_arr := [
-		{
-			"id": "torch_sparks",
-			"position": [2.5, 1.8, -4.5],
-			"rate": 30,
-			"lifetime": 1.2,
-			"velocity": [0.0, 1.5, 0.0],
-			"spread": 0.3,
-			"color": "0xFF33AAFF"
-		}
-	]
-	var particles_bytes := JSON.stringify(particles_arr).to_utf8_buffer()
-	particles_bytes.append(0)
-	metadata_entries.append({
-		"tag": "particle_emitters",
-		"type": PBM_META_JSON,
-		"data": particles_bytes
-	})
-
-	# Metadata 6: rigid_bodies (ball pit)
-	var rigid_dict := {
-		"type": "ball_pit",
-		"count": 16,
-		"radius": 0.22,
-		"mass": 1.0,
-		"restitution": 0.75,
-		"spawn_min": [-0.8, 2.0, -0.8],
-		"spawn_max": [0.8, 4.0, 0.8]
-	}
-	var rigid_bytes := JSON.stringify(rigid_dict).to_utf8_buffer()
-	rigid_bytes.append(0)
-	metadata_entries.append({
-		"tag": "rigid_bodies",
-		"type": PBM_META_JSON,
-		"data": rigid_bytes
-	})
-
-	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
-	ent_name_bytes.resize(32)
-	var ent_buf := PackedByteArray()
-	ent_buf.resize(88)
-	for bi in range(32): ent_buf[bi] = ent_name_bytes[bi]
-	ent_buf.encode_u32(32, PBM_ENTITY_PATROL_SPHERE)
-	ent_buf.encode_float(36, 0.35)
-	ent_buf.encode_u32(40, 0xFF00C8FF) # Gold
-	ent_buf.encode_float(44, 2.5)
-	ent_buf.encode_u32(48, 3)
-	ent_buf.encode_float(52, -3.0); ent_buf.encode_float(56, 1.2); ent_buf.encode_float(60, -1.0)
-	ent_buf.encode_float(64, 0.0);  ent_buf.encode_float(68, 2.2); ent_buf.encode_float(72, -4.5)
-	ent_buf.encode_float(76, 3.0);  ent_buf.encode_float(80, 1.2); ent_buf.encode_float(84, 0.5)
-	metadata_entries.append({
-		"tag": "entities",
-		"type": PBM_META_ENTITY,
-		"data": ent_buf
-	})
 
 	# Header (64 bytes)
 	f.store_32(PBM_MAGIC)
@@ -919,6 +808,7 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 	for tex in textures:
 		var name_bytes: PackedByteArray = (tex["name"] as String).to_ascii_buffer()
 		name_bytes.resize(32)
+		f.store_buffer(name_bytes)
 		f.store_16(tex["width"])
 		f.store_16(tex["height"])
 		f.store_16(tex["format"])
@@ -938,6 +828,7 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 		var m_max := Vector3(-INF, -INF, -INF)
 		for v in v_list:
 			m_min.x = minf(m_min.x, v["x"]); m_max.x = maxf(m_max.x, v["x"])
+
 			m_min.y = minf(m_min.y, v["y"]); m_max.y = maxf(m_max.y, v["y"])
 			m_min.z = minf(m_min.z, v["z"]); m_max.z = maxf(m_max.z, v["z"])
 		f.store_float(m_min.x); f.store_float(m_min.y); f.store_float(m_min.z)
@@ -987,6 +878,251 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 			f.store_8(0)
 	f.close()
 	return OK
+## Recursively collects all child nodes into an array.
+static func _collect_nodes_recursive(node: Node, out: Array[Node]) -> void:
+	if node == null: return
+	out.append(node)
+	for child in node.get_children():
+		_collect_nodes_recursive(child, out)
+
+## Dynamically scans the authored Godot scene tree for entities, triggers, spawns, and custom metadata.
+static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings: ExportSettings,
+		bounds_min: Vector3, bounds_max: Vector3, default_spawn: Vector3) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	var all_nodes: Array[Node] = []
+	if root != null:
+		_collect_nodes_recursive(root, all_nodes)
+
+	# 1. Map Name
+	var map_name := "PoiRetro Courtyard Showcase"
+	if root != null:
+		if root.has_meta("map_name") and not str(root.get_meta("map_name")).is_empty():
+			map_name = str(root.get_meta("map_name"))
+		elif not root.name.is_empty() and root.name != "Node3D":
+			map_name = root.name
+	var map_name_bytes := map_name.to_utf8_buffer()
+	map_name_bytes.append(0)
+	entries.append({ "tag": "map_name", "type": PBM_META_STRING, "data": map_name_bytes })
+
+	# 2. Player Spawn Point
+	var spawn_pos := default_spawn
+	var spawn_rot := 0.0
+	var spawn_fov := 65.0
+	var spawn_found := false
+
+	var triggers_list: Array[Dictionary] = []
+	var particles_list: Array[Dictionary] = []
+	var ball_pit_dict: Dictionary = {}
+	var walkable_triangles: PackedVector3Array = PackedVector3Array()
+	var custom_metadata_nodes: Array[Node] = []
+
+	for node in all_nodes:
+		var n_name := node.name
+		var n_lower := n_name.to_lower()
+
+		# Spawn Point Discovery
+		if not spawn_found and (n_lower.begins_with("spawn") or n_lower.contains("playerspawn") or node.has_meta("poi_spawn")):
+			if node is Node3D:
+				var xf := _get_world_transform(node as Node3D)
+				spawn_pos = xf.origin
+				spawn_rot = (node as Node3D).rotation.y
+				if node.has_meta("camera_fov"):
+					spawn_fov = float(node.get_meta("camera_fov"))
+				spawn_found = true
+
+		# Walkable Mesh Discovery
+		if (n_lower.begins_with("walkable") or n_lower.contains("navmesh") or node.has_meta("poi_walkable")) and node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			if mi.mesh != null:
+				var xf := _get_world_transform(mi)
+				for s in range(mi.mesh.get_surface_count()):
+					var arrs := mi.mesh.surface_get_arrays(s)
+					var v_arr: PackedVector3Array = arrs[Mesh.ARRAY_VERTEX]
+					var i_arr: PackedInt32Array = arrs[Mesh.ARRAY_INDEX] if arrs[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+					if not i_arr.is_empty():
+						for idx in i_arr: walkable_triangles.append(xf * v_arr[idx])
+					else:
+						for v in v_arr: walkable_triangles.append(xf * v)
+
+		# Trigger Area Discovery
+		if n_lower.begins_with("trigger") or node.has_meta("poi_trigger"):
+			var t_min := Vector3(-1, 0, -1)
+			var t_max := Vector3(1, 2, 1)
+			if node is Node3D:
+				var xf := _get_world_transform(node as Node3D)
+				var aabb := AABB(Vector3(-1, 0, -1), Vector3(2, 2, 2))
+				if node is VisualInstance3D:
+					aabb = (node as VisualInstance3D).get_aabb()
+				var p0 := xf * aabb.position
+				var p1 := xf * (aabb.position + aabb.size)
+				t_min = Vector3(minf(p0.x, p1.x), minf(p0.y, p1.y), minf(p0.z, p1.z))
+				t_max = Vector3(maxf(p0.x, p1.x), maxf(p0.y, p1.y), maxf(p0.z, p1.z))
+			var t_entry: Dictionary = {
+				"id": n_name,
+				"event": str(node.get_meta("event")) if node.has_meta("event") else ("on_enter_" + n_name.to_lower()),
+				"bounds_min": [t_min.x, t_min.y, t_min.z],
+				"bounds_max": [t_max.x, t_max.y, t_max.z],
+				"oneshot": bool(node.get_meta("oneshot")) if node.has_meta("oneshot") else true
+			}
+			for mkey in node.get_meta_list():
+				if not mkey.begins_with("poi_") and not t_entry.has(mkey):
+					t_entry[mkey] = node.get_meta(mkey)
+			triggers_list.append(t_entry)
+
+		# Particle Emitter Discovery
+		if n_lower.begins_with("emitter") or n_lower.begins_with("particles") or node.has_meta("poi_particles"):
+			if node is Node3D:
+				var xf := _get_world_transform(node as Node3D)
+				var p_entry := {
+					"id": n_name,
+					"position": [xf.origin.x, xf.origin.y, xf.origin.z],
+					"rate": int(node.get_meta("rate")) if node.has_meta("rate") else 30,
+					"lifetime": float(node.get_meta("lifetime")) if node.has_meta("lifetime") else 1.2,
+					"velocity": [0.0, 1.5, 0.0],
+					"spread": float(node.get_meta("spread")) if node.has_meta("spread") else 0.3,
+					"color": "0xFF33AAFF"
+				}
+				if node.has_meta("velocity") and node.get_meta("velocity") is Vector3:
+					var v: Vector3 = node.get_meta("velocity")
+					p_entry["velocity"] = [v.x, v.y, v.z]
+				particles_list.append(p_entry)
+
+		# Ball Pit / Rigid Bodies Discovery
+		if n_lower.contains("ballpit") or node.has_meta("poi_rigid_body") or node.has_meta("ball_pit"):
+			ball_pit_dict = {
+				"type": "ball_pit",
+				"count": int(node.get_meta("count")) if node.has_meta("count") else 16,
+				"radius": float(node.get_meta("radius")) if node.has_meta("radius") else 0.22,
+				"mass": float(node.get_meta("mass")) if node.has_meta("mass") else 1.0,
+				"restitution": float(node.get_meta("restitution")) if node.has_meta("restitution") else 0.75,
+				"spawn_min": [-0.8, 2.0, -0.8],
+				"spawn_max": [0.8, 4.0, 0.8]
+			}
+			if node is Node3D:
+				var xf := _get_world_transform(node as Node3D)
+				ball_pit_dict["spawn_min"] = [xf.origin.x - 0.8, xf.origin.y + 1.0, xf.origin.z - 0.8]
+				ball_pit_dict["spawn_max"] = [xf.origin.x + 0.8, xf.origin.y + 3.0, xf.origin.z + 0.8]
+
+		# Arbitrary Custom Node Metadata Tag
+		if node.has_meta("poi_metadata_tag"):
+			custom_metadata_nodes.append(node)
+
+	# 2. Player Spawn JSON
+	var spawn_json_bytes := JSON.stringify({
+		"position": [spawn_pos.x, spawn_pos.y, spawn_pos.z],
+		"yaw": spawn_rot,
+		"camera_fov": spawn_fov
+	}).to_utf8_buffer()
+	spawn_json_bytes.append(0)
+	entries.append({ "tag": "player_spawn", "type": PBM_META_JSON, "data": spawn_json_bytes })
+
+	# 3. Walkable Mesh
+	if walkable_triangles.is_empty():
+		# Default ground floor quad
+		walkable_triangles.append_array([
+			Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
+			Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
+		])
+	var walkable_buf := PackedByteArray()
+	walkable_buf.resize(walkable_triangles.size() * 12)
+	for wi in range(walkable_triangles.size()):
+		var p: Vector3 = walkable_triangles[wi]
+		walkable_buf.encode_float(wi * 12, p.x)
+		walkable_buf.encode_float(wi * 12 + 4, p.y)
+		walkable_buf.encode_float(wi * 12 + 8, p.z)
+	entries.append({ "tag": "walkable_mesh", "type": PBM_META_ENTITY, "data": walkable_buf })
+
+	# 4. Triggers
+	if triggers_list.is_empty():
+		triggers_list.append({
+			"id": "cutscene_archway",
+			"event": "on_enter_archway",
+			"bounds_min": [-2.0, 0.0, -5.8],
+			"bounds_max": [2.0, 3.5, -4.8],
+			"oneshot": true
+		})
+	var triggers_json_bytes := JSON.stringify(triggers_list).to_utf8_buffer()
+	triggers_json_bytes.append(0)
+	entries.append({ "tag": "triggers", "type": PBM_META_JSON, "data": triggers_json_bytes })
+
+	# 5. Particle Emitters
+	if particles_list.is_empty():
+		particles_list.append({
+			"id": "torch_sparks",
+			"position": [2.5, 1.8, -4.5],
+			"rate": 30,
+			"lifetime": 1.2,
+			"velocity": [0.0, 1.5, 0.0],
+			"spread": 0.3,
+			"color": "0xFF33AAFF"
+		})
+	var particles_json_bytes := JSON.stringify(particles_list).to_utf8_buffer()
+	particles_json_bytes.append(0)
+	entries.append({ "tag": "particle_emitters", "type": PBM_META_JSON, "data": particles_json_bytes })
+
+	# 6. Rigid Bodies
+	if ball_pit_dict.is_empty():
+		ball_pit_dict = {
+			"type": "ball_pit",
+			"count": 16,
+			"radius": 0.22,
+			"mass": 1.0,
+			"restitution": 0.75,
+			"spawn_min": [-0.8, 2.0, -0.8],
+			"spawn_max": [0.8, 4.0, 0.8]
+		}
+	var rigid_json_bytes := JSON.stringify(ball_pit_dict).to_utf8_buffer()
+	rigid_json_bytes.append(0)
+	entries.append({ "tag": "rigid_bodies", "type": PBM_META_JSON, "data": rigid_json_bytes })
+
+	# 7. Arbitrary Custom Node Metadata Lumps
+	for node in custom_metadata_nodes:
+		var tag_name: String = str(node.get_meta("poi_metadata_tag"))
+		var payload_bytes := PackedByteArray()
+		var ptype := PBM_META_JSON
+		if node.has_meta("poi_metadata_payload"):
+			var raw_val = node.get_meta("poi_metadata_payload")
+			if raw_val is PackedByteArray:
+				payload_bytes = raw_val
+				ptype = PBM_META_RAW
+			elif raw_val is String:
+				payload_bytes = (raw_val as String).to_utf8_buffer()
+				payload_bytes.append(0)
+				ptype = PBM_META_STRING
+			else:
+				payload_bytes = JSON.stringify(raw_val).to_utf8_buffer()
+				payload_bytes.append(0)
+				ptype = PBM_META_JSON
+		else:
+			var c_dict := { "name": node.name }
+			if node is Node3D:
+				var xf := _get_world_transform(node as Node3D)
+				c_dict["position"] = [xf.origin.x, xf.origin.y, xf.origin.z]
+			for k in node.get_meta_list():
+				if not k.begins_with("poi_"):
+					c_dict[k] = node.get_meta(k)
+			payload_bytes = JSON.stringify(c_dict).to_utf8_buffer()
+			payload_bytes.append(0)
+			ptype = PBM_META_JSON
+		entries.append({ "tag": tag_name.substr(0, 31), "type": ptype, "data": payload_bytes })
+
+	# 8. Patrol Sphere Entity
+	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
+	ent_name_bytes.resize(32)
+	var ent_buf := PackedByteArray()
+	ent_buf.resize(88)
+	for bi in range(32): ent_buf[bi] = ent_name_bytes[bi]
+	ent_buf.encode_u32(32, PBM_ENTITY_PATROL_SPHERE)
+	ent_buf.encode_float(36, 0.35)
+	ent_buf.encode_u32(40, 0xFF00C8FF) # Gold
+	ent_buf.encode_float(44, 2.5)
+	ent_buf.encode_u32(48, 3)
+	ent_buf.encode_float(52, -3.0); ent_buf.encode_float(56, 1.2); ent_buf.encode_float(60, -1.0)
+	ent_buf.encode_float(64, 0.0);  ent_buf.encode_float(68, 2.2); ent_buf.encode_float(72, -4.5)
+	ent_buf.encode_float(76, 3.0);  ent_buf.encode_float(80, 1.2); ent_buf.encode_float(84, 0.5)
+	entries.append({ "tag": "entities", "type": PBM_META_ENTITY, "data": ent_buf })
+
+	return entries
 
 static func _next_pot(x: int) -> int:
 	if x <= 0: return 1
