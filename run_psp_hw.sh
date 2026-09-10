@@ -144,7 +144,14 @@ done
 timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
 
 if [ "$MODE" = app ]; then
-    echo "=== app running on the device (Home exits) ==="
+    echo "=== app running on the device (start+select or Home exits) ==="
+    # `make hwapp` begins with `make clean`, which deletes the TRACKED shipping
+    # EBOOT.PBP; the profiling path restores it at the end, but this path used
+    # to return first and leave the tree with a deleted binary. Put the
+    # shipping artifacts back before handing over.
+    echo "=== restoring the shipping build ==="
+    psp_make all >/dev/null 2>&1 && psp_make test_build >/dev/null 2>&1 \
+        || echo "(shipping rebuild failed; EBOOT.PBP may be missing)"
     [ "$KEEP" = 0 ] && pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
     echo "Take a screenshot any time with:"
     echo "  $PSPSH -n -e \"scrshot host0:/shot.bmp\"   # lands in $HOSTDIR (480x272x24 BMP)"
