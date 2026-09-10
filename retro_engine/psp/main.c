@@ -197,6 +197,106 @@ static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
     }
     return 0;
 }
+/* ── Patrol Sphere Entity Generation & Animation ─── */
+#define SPHERE_LATS 6
+#define SPHERE_LONS 8
+#define NUM_SPHERE_VERTS (SPHERE_LATS * SPHERE_LONS * 6)
+static PbmVertex s_sphere_verts[NUM_SPHERE_VERTS];
+static int s_sphere_initialized = 0;
+
+static void init_sphere_mesh(float radius, uint32_t color) {
+    int idx = 0;
+    for (int i = 0; i < SPHERE_LATS; ++i) {
+        float lat0 = -M_PI / 2.0f + (float)i * M_PI / SPHERE_LATS;
+        float z0   = sinf(lat0);
+        float zr0  = cosf(lat0);
+
+        float lat1 = -M_PI / 2.0f + (float)(i + 1) * M_PI / SPHERE_LATS;
+        float z1   = sinf(lat1);
+        float zr1  = cosf(lat1);
+
+        for (int j = 0; j < SPHERE_LONS; ++j) {
+            float lng0 = 2.0f * M_PI * (float)j / SPHERE_LONS;
+            float x0 = cosf(lng0);
+            float y0 = sinf(lng0);
+
+            float lng1 = 2.0f * M_PI * (float)(j + 1) * SPHERE_LONS;
+            float x1 = cosf(lng1);
+            float y1 = sinf(lng1);
+
+            #define V_SPHERE(vx, vy, vz) do { \
+                s_sphere_verts[idx].u = 0.0f; \
+                s_sphere_verts[idx].v = 0.0f; \
+                float diff = 0.4f + 0.6f * fmaxf(0.0f, (vx)*0.5f + (vy)*0.8f + (vz)*0.3f); \
+                uint8_t cr = (uint8_t)(fminf(255.0f, ((color) & 0xFF) * diff)); \
+                uint8_t cg = (uint8_t)(fminf(255.0f, (((color) >> 8) & 0xFF) * diff)); \
+                uint8_t cb = (uint8_t)(fminf(255.0f, (((color) >> 16) & 0xFF) * diff)); \
+                uint8_t ca = 255; \
+                s_sphere_verts[idx].color = cr | (cg << 8) | (cb << 16) | (ca << 24); \
+                s_sphere_verts[idx].x = (vx) * radius; \
+                s_sphere_verts[idx].y = (vy) * radius; \
+                s_sphere_verts[idx].z = (vz) * radius; \
+                idx++; \
+            } while(0)
+
+            V_SPHERE(x0 * zr0, z0, y0 * zr0);
+            V_SPHERE(x1 * zr0, z0, y1 * zr0);
+            V_SPHERE(x1 * zr1, z1, y1 * zr1);
+
+            V_SPHERE(x0 * zr0, z0, y0 * zr0);
+            V_SPHERE(x1 * zr1, z1, y1 * zr1);
+            V_SPHERE(x0 * zr1, z1, y0 * zr1);
+            #undef V_SPHERE
+        }
+    }
+    s_sphere_initialized = 1;
+}
+
+static void get_patrol_sphere_pos(const PbmEntityPatrolSphere* ent, float time, float* out_x, float* out_y, float* out_z) {
+    if (ent->num_waypoints < 2) {
+        *out_x = ent->waypoints[0][0];
+        *out_y = ent->waypoints[0][1];
+        *out_z = ent->waypoints[0][2];
+        return;
+    }
+
+    uint32_t n = ent->num_waypoints;
+    if (n > 8) n = 8;
+    float seg_lens[8];
+    float total_len = 0.0f;
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t next = (i + 1) % n;
+        float dx = ent->waypoints[next][0] - ent->waypoints[i][0];
+        float dy = ent->waypoints[next][1] - ent->waypoints[i][1];
+        float dz = ent->waypoints[next][2] - ent->waypoints[i][2];
+        seg_lens[i] = sqrtf(dx * dx + dy * dy + dz * dz);
+        total_len += seg_lens[i];
+    }
+    if (total_len <= 0.0001f) {
+        *out_x = ent->waypoints[0][0];
+        *out_y = ent->waypoints[0][1];
+        *out_z = ent->waypoints[0][2];
+        return;
+    }
+
+    float speed = ent->speed > 0.01f ? ent->speed : 2.5f;
+    float dist = fmodf(time * speed, total_len);
+    if (dist < 0.0f) dist += total_len;
+
+    float acc = 0.0f;
+    for (uint32_t i = 0; i < n; ++i) {
+        if (dist <= acc + seg_lens[i] || i == n - 1) {
+            float t = (seg_lens[i] > 0.0001f) ? ((dist - acc) / seg_lens[i]) : 0.0f;
+            uint32_t next = (i + 1) % n;
+            *out_x = ent->waypoints[i][0] + (ent->waypoints[next][0] - ent->waypoints[i][0]) * t;
+            *out_y = ent->waypoints[i][1] + (ent->waypoints[next][1] - ent->waypoints[i][1]) * t;
+            *out_z = ent->waypoints[i][2] + (ent->waypoints[next][2] - ent->waypoints[i][2]) * t;
+            return;
+        }
+        acc += seg_lens[i];
+    }
+}
+
 
 int main(int argc, char* argv[]) {
     /* Set up Home button exit callback thread */
@@ -206,7 +306,7 @@ int main(int argc, char* argv[]) {
     scePowerSetClockFrequency(333, 333, 166);
 
     pspDebugScreenInit();
-    printf("[PSP] Starting PoiRetro Homebrew Engine v0.9.61...\n");
+    printf("[PSP] Starting PoiRetro Homebrew Engine v0.9.62...\n");
 
     /* 16-bit RGBA5551 Framebuffer:
      * Cuts VRAM write bandwidth in HALF compared to 32-bit 8888, doubling fillrate capacity! */
@@ -232,8 +332,8 @@ int main(int argc, char* argv[]) {
     sceGuEnable(GU_DEPTH_TEST);
     sceGuDepthMask(GU_FALSE);
 
-    /* Fast hardware 4096x4096 guardband clipping (no slow polygon re-triangulation) */
-    sceGuDisable(GU_CLIP_PLANES);
+    /* Hardware Guardband & Near-Z Clipping */
+    sceGuEnable(GU_CLIP_PLANES);
     /* Scissor */
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
     sceGuEnable(GU_SCISSOR_TEST);
@@ -312,7 +412,7 @@ int main(int argc, char* argv[]) {
     float fps = 60.0f;
     int fps_frames = 0;
     float fps_timer = 0.0f;
-
+    float patrol_time = 0.0f;
 
 
     printf("[PSP] Entering 3D rendering loop (benchmark mode: %d)...\n", is_benchmark);
@@ -324,7 +424,7 @@ int main(int argc, char* argv[]) {
         float dt = (float)(curr_tick - last_tick) / 1000000.0f;
         if (dt <= 0.0001f || dt > 0.2f) dt = 1.0f / 60.0f;
         last_tick = curr_tick;
-
+        patrol_time += dt;
         fps_timer += dt;
         fps_frames++;
         if (fps_timer >= 0.35f) {
@@ -463,7 +563,7 @@ int main(int argc, char* argv[]) {
         /* Projection Matrix */
         sceGumMatrixMode(GU_PROJECTION);
         sceGumLoadIdentity();
-        sceGumPerspective(65.0f, 16.0f / 9.0f, 0.5f, 500.0f);
+        sceGumPerspective(65.0f, 16.0f / 9.0f, 0.08f, 200.0f);
         /* View Matrix */
         sceGumMatrixMode(GU_VIEW);
         sceGumLoadIdentity();
@@ -536,6 +636,32 @@ int main(int argc, char* argv[]) {
             total_rendered_verts += mesh->num_vertices;
         }
 
+        /* Render Scripted Patrol Sphere Entity */
+        float ent_x = 0.0f, ent_y = 0.0f, ent_z = 0.0f;
+        if (map->has_patrol_sphere) {
+            if (!s_sphere_initialized) {
+                init_sphere_mesh(map->patrol_sphere.radius, map->patrol_sphere.color);
+            }
+            get_patrol_sphere_pos(&map->patrol_sphere, patrol_time, &ent_x, &ent_y, &ent_z);
+
+            sceGumMatrixMode(GU_MODEL);
+            sceGumPushMatrix();
+            ScePspFVector3 spos = { ent_x, ent_y, ent_z };
+            sceGumTranslate(&spos);
+            sceGumUpdateMatrix();
+
+            sceGuDisable(GU_TEXTURE_2D);
+            sceGuEnable(GU_CULL_FACE);
+            sceGuDrawArray(GU_TRIANGLES,
+                GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+                NUM_SPHERE_VERTS, 0, s_sphere_verts);
+
+            total_rendered_verts += NUM_SPHERE_VERTS;
+
+            sceGumPopMatrix();
+            sceGumUpdateMatrix();
+        }
+
         /* PASS 2: Alpha-tested & Alpha-blended Billboards / Foliage */
         sceGuEnable(GU_ALPHA_TEST);
         sceGuAlphaFunc(GU_GREATER, 0x10, 0xFF);
@@ -579,18 +705,25 @@ int main(int argc, char* argv[]) {
         sceGuDisable(GU_ALPHA_TEST);
 
         /* ── PASS 3: Hardware 2D On-Screen HUD Overlay ─── */
-        char buf[80];
+        char buf[128];
 
         snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Verts: %u",
             fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_rendered_verts);
         draw_text_shadow(8.0f, 8.0f, 0xFF00FF55, buf); /* Bright Green */
 
-        snprintf(buf, sizeof(buf), "Pos: (%.1f, %.1f, %.1f) | %s",
-            cam_x, cam_y, cam_z,
-            display_mode == 0 ? "Textured (Baked Lit)" : (display_mode == 1 ? "Baked Lighting" : "Wireframe"));
+        snprintf(buf, sizeof(buf), "Map: %s | %s",
+            map->map_name,
+            display_mode == 0 ? "Textured" : (display_mode == 1 ? "Lighting" : "Wireframe"));
         draw_text_shadow(8.0f, 18.0f, 0xFFFFFF00, buf); /* Cyan */
 
-        draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Stick: Fly | Tri+Stick: Tilt | Square: Fast | X/O: Up/Down");
+        if (map->has_patrol_sphere) {
+            char ent_buf[80];
+            snprintf(ent_buf, sizeof(ent_buf), "Entity: %s @ (%.1f, %.1f, %.1f)",
+                map->patrol_sphere.name, ent_x, ent_y, ent_z);
+            draw_text_shadow(8.0f, 28.0f, 0xFF00C8FF, ent_buf); /* Gold */
+        } else {
+            draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Stick: Fly | Tri+Stick: Tilt | Square: Fast | X/O: Up/Down");
+        }
 
         sceGuFinish();
         sceGuSync(0, 0);

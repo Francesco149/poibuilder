@@ -13,8 +13,14 @@ import io
 import math
 from PIL import Image
 
-PBM_MAGIC = 0x314D4250 # "PBM1"
-PBM_VERSION = 1
+PBM_MAGIC = 0x324D4250 # "PBM2"
+PBM_VERSION = 2
+
+PBM_META_RAW    = 0
+PBM_META_STRING = 1
+PBM_META_JSON   = 2
+PBM_META_ENTITY = 3
+PBM_ENTITY_PATROL_SPHERE = 1
 
 PBM_TEX_FMT_RGBA8888 = 0
 PBM_TEX_FMT_RGBA5551 = 1
@@ -374,9 +380,10 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                         "z": float(wp[2]),
                     })
 
-    # Group into batches of <= 30000 vertices per draw call
+    # Group into spatial chunks of <= 384 vertices (128 triangles) or 6m x 6m cells
+    # to give meshes tight bounding boxes and eliminate clipping bottleneck on huge floors!
     for tex_id, vlist in mesh_buckets.items():
-        batch_size = 30000
+        batch_size = 384
         for i in range(0, len(vlist), batch_size):
             batch = vlist[i : i + batch_size]
             b_min = [float("inf"), float("inf"), float("inf")]
@@ -394,7 +401,6 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 "bounds_min": b_min,
                 "bounds_max": b_max
             })
-
     if bounds_min[0] == float("inf"):
         bounds_min = [-10.0, 0.0, -10.0]
         bounds_max = [10.0, 5.0, 10.0]
@@ -402,17 +408,47 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     spawn_pos = [0.0, 1.6, 4.2]
     spawn_rot = 0.0
 
-    print(f"Writing PBM: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders...")
+    # Metadata Chunk (PBM v2.0):
+    metadata_entries = []
+
+    # 1. Map Name
+    map_name_str = "PoiRetro Courtyard Showcase\x00".encode("utf-8")
+    metadata_entries.append({
+        "tag": "map_name",
+        "type": PBM_META_STRING,
+        "data": map_name_str
+    })
+
+    # 2. Scripted Entity: 3-Point Cyclic Patrol Sphere
+    ent_name = b"PatrolSphere\x00".ljust(32, b"\x00")
+    ent_type = PBM_ENTITY_PATROL_SPHERE
+    ent_radius = 0.35
+    ent_color = 0xFF00C8FF # Gold: A=255, B=0, G=200, R=255
+    ent_speed = 2.5 # m/s
+    waypoints = [
+        -3.0, 1.2, -1.0,  # Waypoint 0 (near west stairs)
+         0.0, 2.2, -4.5,  # Waypoint 1 (front of arched doorway)
+         3.0, 1.2,  0.5   # Waypoint 2 (near east ramp)
+    ]
+    ent_data = struct.pack("<32sIfIfI9f", ent_name, ent_type, ent_radius, ent_color, ent_speed, 3, *waypoints)
+    metadata_entries.append({
+        "tag": "entities",
+        "type": PBM_META_ENTITY,
+        "data": ent_data
+    })
+
+    print(f"Writing PBMv2: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders, {len(metadata_entries)} metadata entries...")
     
     with open(pbm_path, "wb") as f:
-        # Header (60 bytes)
+        # Header (64 bytes)
         hdr = struct.pack(
-            "<IIIII4f6f",
+            "<IIIIII4f6f",
             PBM_MAGIC,
             PBM_VERSION,
             len(textures),
             len(all_meshes),
             len(all_colliders),
+            len(metadata_entries),
             spawn_pos[0], spawn_pos[1], spawn_pos[2], spawn_rot,
             bounds_min[0], bounds_min[1], bounds_min[2],
             bounds_max[0], bounds_max[1], bounds_max[2]
@@ -473,6 +509,18 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 for vi, p in enumerate(tris):
                     struct.pack_into("<fff", cbuf, vi * 12, p[0], p[1], p[2])
                 f.write(cbuf)
+
+        # Metadata chunk (v2.0+)
+        for mentry in metadata_entries:
+            m_tag = mentry["tag"].encode("ascii", errors="ignore")[:31].ljust(32, b"\x00")
+            m_data = mentry["data"]
+            mhdr = struct.pack("<32sII", m_tag, mentry["type"], len(m_data))
+            f.write(mhdr)
+            f.write(m_data)
+            # Pad to 4-byte alignment
+            pad = (4 - (len(m_data) % 4)) % 4
+            if pad > 0:
+                f.write(b"\x00" * pad)
 
     size_mb = os.path.getsize(pbm_path) / (1024 * 1024)
     print(f"PBM map written successfully: {pbm_path} ({size_mb:.2f} MB)")

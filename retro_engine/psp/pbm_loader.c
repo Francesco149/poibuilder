@@ -2,7 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
+#ifdef __PSP__
 #include <psputils.h>
+#endif
 #include <string.h>
 /* Swizzles a 16-bit texture into 16-byte wide x 8-line high blocks for Sony GE texture cache */
 static void swizzle_texture_16(uint8_t* out, const uint8_t* in, unsigned int width, unsigned int height) {
@@ -45,25 +47,113 @@ PbmMap* pbm_load(const char* filepath) {
         return NULL;
     }
 
-    if (fread(&map->header, sizeof(PbmHeader), 1, f) != 1) {
-        printf("[PBM] Error: Failed to read header\n");
+    /* First read 4-byte magic to identify format generation */
+    uint32_t magic = 0;
+    if (fread(&magic, sizeof(uint32_t), 1, f) != 1) {
+        printf("[PBM] Error: Failed to read magic header\n");
         free(map);
         fclose(f);
         return NULL;
     }
 
-    if (map->header.magic != PBM_MAGIC) {
-        printf("[PBM] Error: Invalid magic 0x%08X (expected 0x%08X)\n", (unsigned int)map->header.magic, (unsigned int)PBM_MAGIC);
+    /* Validate Magic */
+    if (magic != PBM_MAGIC && magic != PBM_MAGIC_V1) {
+        printf("[PBM] Error: Invalid magic 0x%08X (expected 'PBM2' 0x%08X or 'PBM1' 0x%08X)\n",
+            (unsigned int)magic, (unsigned int)PBM_MAGIC, (unsigned int)PBM_MAGIC_V1);
         free(map);
         fclose(f);
         return NULL;
     }
 
-    printf("[PBM] Loaded header: %u textures, %u meshes, %u colliders\n",
+    uint32_t version = 0;
+    if (fread(&version, sizeof(uint32_t), 1, f) != 1) {
+        printf("[PBM] Error: Failed to read format version\n");
+        free(map);
+        fclose(f);
+        return NULL;
+    }
+
+    /* Version breaking change detection & diagnostic */
+    if (version > PBM_MAX_SUPPORTED) {
+        printf("[PBM] Error: Incompatible map version %u! (Loader supports up to v%u).\n"
+               "[PBM] FATAL: Breaking format change detected. Please re-export or update loader.\n",
+               (unsigned int)version, (unsigned int)PBM_MAX_SUPPORTED);
+        free(map);
+        fclose(f);
+        return NULL;
+    }
+    if (version < PBM_MIN_SUPPORTED) {
+        printf("[PBM] Error: Obsolete map version %u! (Minimum supported is v%u).\n",
+               (unsigned int)version, (unsigned int)PBM_MIN_SUPPORTED);
+        free(map);
+        fclose(f);
+        return NULL;
+    }
+
+    map->header.magic = magic;
+    map->header.version = version;
+
+    if (version == 1) {
+        /* Legacy v1 Header: 60 bytes total (magic + version already read = 52 bytes remain) */
+        struct __attribute__((packed)) {
+            uint32_t num_textures;
+            uint32_t num_meshes;
+            uint32_t num_colliders;
+            float spawn_pos[3];
+            float spawn_rot;
+            float bounds_min[3];
+            float bounds_max[3];
+        } v1_hdr;
+        if (fread(&v1_hdr, sizeof(v1_hdr), 1, f) != 1) {
+            printf("[PBM] Error reading v1 header body\n");
+            free(map);
+            fclose(f);
+            return NULL;
+        }
+        map->header.num_textures = v1_hdr.num_textures;
+        map->header.num_meshes = v1_hdr.num_meshes;
+        map->header.num_colliders = v1_hdr.num_colliders;
+        map->header.num_metadata = 0;
+        memcpy(map->header.spawn_pos, v1_hdr.spawn_pos, sizeof(float) * 3);
+        map->header.spawn_rot = v1_hdr.spawn_rot;
+        memcpy(map->header.bounds_min, v1_hdr.bounds_min, sizeof(float) * 3);
+        memcpy(map->header.bounds_max, v1_hdr.bounds_max, sizeof(float) * 3);
+    } else {
+        /* Modern v2 Header: 64 bytes total (magic + version already read = 56 bytes remain) */
+        struct __attribute__((packed)) {
+            uint32_t num_textures;
+            uint32_t num_meshes;
+            uint32_t num_colliders;
+            uint32_t num_metadata;
+            float spawn_pos[3];
+            float spawn_rot;
+            float bounds_min[3];
+            float bounds_max[3];
+        } v2_hdr;
+        if (fread(&v2_hdr, sizeof(v2_hdr), 1, f) != 1) {
+            printf("[PBM] Error reading v2 header body\n");
+            free(map);
+            fclose(f);
+            return NULL;
+        }
+        map->header.num_textures = v2_hdr.num_textures;
+        map->header.num_meshes = v2_hdr.num_meshes;
+        map->header.num_colliders = v2_hdr.num_colliders;
+        map->header.num_metadata = v2_hdr.num_metadata;
+        memcpy(map->header.spawn_pos, v2_hdr.spawn_pos, sizeof(float) * 3);
+        map->header.spawn_rot = v2_hdr.spawn_rot;
+        memcpy(map->header.bounds_min, v2_hdr.bounds_min, sizeof(float) * 3);
+        memcpy(map->header.bounds_max, v2_hdr.bounds_max, sizeof(float) * 3);
+    }
+
+    printf("[PBM] Loaded header v%u: %u textures, %u meshes, %u colliders, %u metadata\n",
+        (unsigned int)map->header.version,
         (unsigned int)map->header.num_textures,
         (unsigned int)map->header.num_meshes,
-        (unsigned int)map->header.num_colliders);
-
+        (unsigned int)map->header.num_colliders,
+        (unsigned int)map->header.num_metadata);
+    strncpy(map->map_name, "PoiRetro Map", sizeof(map->map_name) - 1);
+    map->has_patrol_sphere = 0;
     /* 1. Textures */
     if (map->header.num_textures > 0) {
         map->textures = (PbmTexture*)calloc(map->header.num_textures, sizeof(PbmTexture));
@@ -159,11 +249,61 @@ PbmMap* pbm_load(const char* filepath) {
         }
     }
 
+    /* 4. Metadata Chunk (v2.0+) */
+    if (map->header.num_metadata > 0) {
+        map->metadata = (PbmMetadata*)calloc(map->header.num_metadata, sizeof(PbmMetadata));
+        for (uint32_t i = 0; i < map->header.num_metadata; ++i) {
+            PbmMetadataHeader mdhdr;
+            if (fread(&mdhdr, sizeof(PbmMetadataHeader), 1, f) != 1) {
+                printf("[PBM] Error reading metadata header %u\n", (unsigned int)i);
+                break;
+            }
+            memcpy(map->metadata[i].tag, mdhdr.tag, 32);
+            map->metadata[i].tag[31] = '\0';
+            map->metadata[i].type = mdhdr.type;
+            map->metadata[i].data_size = mdhdr.data_size;
+
+            if (mdhdr.data_size > 0) {
+                uint32_t alloc_size = mdhdr.data_size + 4;
+                void* mdata = calloc(1, alloc_size);
+                if (mdata) {
+                    fread(mdata, 1, mdhdr.data_size, f);
+                    map->metadata[i].data = mdata;
+
+                    /* Skip alignment padding to 4 bytes */
+                    uint32_t pad = (4 - (mdhdr.data_size % 4)) % 4;
+                    if (pad > 0) {
+                        uint8_t pad_buf[4];
+                        fread(pad_buf, 1, pad, f);
+                    }
+
+                    /* Parse known proof-of-concept metadata tags */
+                    if (strcmp(map->metadata[i].tag, "map_name") == 0) {
+                        strncpy(map->map_name, (const char*)mdata, sizeof(map->map_name) - 1);
+                        map->map_name[sizeof(map->map_name) - 1] = '\0';
+                        printf("[PBM] Metadata parsed: Map Name = '%s'\n", map->map_name);
+                    } else if (strcmp(map->metadata[i].tag, "entities") == 0) {
+                        if (mdhdr.data_size >= sizeof(PbmEntityPatrolSphere)) {
+                            memcpy(&map->patrol_sphere, mdata, sizeof(PbmEntityPatrolSphere));
+                            map->has_patrol_sphere = 1;
+                            printf("[PBM] Metadata parsed: Entity '%s' (type %u, radius=%.2f, speed=%.2f, %u waypoints)\n",
+                                map->patrol_sphere.name,
+                                (unsigned int)map->patrol_sphere.entity_type,
+                                map->patrol_sphere.radius,
+                                map->patrol_sphere.speed,
+                                (unsigned int)map->patrol_sphere.num_waypoints);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /* Flush all loaded textures, vertices, and colliders from D-Cache to main RAM
      * so the Sony GE hardware DMA reads valid data without bus stalls! */
+#ifdef __PSP__
     sceKernelDcacheWritebackAll();
-    fclose(f);
-    printf("[PBM] Successfully loaded '%s' (%u total vertices)\n", filepath, (unsigned int)map->total_vertices);
+#endif
     return map;
 }
 
@@ -192,6 +332,14 @@ void pbm_free(PbmMap* map) {
             }
         }
         free(map->colliders);
+    }
+    if (map->metadata) {
+        for (uint32_t i = 0; i < map->header.num_metadata; ++i) {
+            if (map->metadata[i].data) {
+                free(map->metadata[i].data);
+            }
+        }
+        free(map->metadata);
     }
     free(map);
 }
