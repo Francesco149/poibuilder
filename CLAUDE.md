@@ -799,7 +799,7 @@ v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal life
     - 24-byte interleaved vertex format `PbmVertex` (`float u, v; uint32_t color; float x, y, z;`), matching Sony GU hardware vertex specification `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D` for single-call DMA rendering via `sceGumDrawArray()`.
     - Collision table preserving bounding boxes and triangle meshes.
   - Standalone converter & Godot export:
-    - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization, tile atlasing (packing 73 discrete 128x128 baked tiles into four 512x512 atlases, reducing textures and draw calls from 81 to 12), and draw-call batching.
+    - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization, tile atlasing (packing 73 discrete 128x128 baked tiles into four 512x512 atlases, reducing textures and draw calls from 81 to 12) with half-texel clamped UV slot remapping (eliminating the `% 1.0` UV collapse that flattened splatted and decal'd areas), and draw-call batching.
     - Integrated native `.pbm` export in `PBMapExporter.export_retro_pbm()` with texture deduplication and added `.pbm` file filter in `PBExportDialog`.
   - Complete PSP homebrew application (`retro_engine/psp/`):
     - `main.c`: Sony GU double-buffered 480x272 setup, smooth Gouraud shading, texture modulation with baked vertex lighting + AO, and interactive fly camera.
