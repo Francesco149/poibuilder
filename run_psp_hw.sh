@@ -69,13 +69,35 @@ else
 fi
 pgrep -f "usbhostfs_pc" >/dev/null || { cat /tmp/usbhostfs_pc.log; die "usbhostfs_pc died"; }
 
+echo "=== [3b/5] Checking the PSPLink USB link ==="
+if ! timeout 25 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+    cat <<'MSG'
+PSPLink is not answering on USB. Check, in order:
+  1. Is PSPLink running on the PSP? (Game -> Memory Stick -> PSPLink)
+  2. Did the unit suspend? A suspended PSP drops the USB link. Relaunch
+     PSPLink, and keep the Hold switch on so it cannot sleep again.
+  3. Is a homebrew of ours already running? Its own Start+Select exits and
+     unloads it, which is the only recovery short of a hard reset.
+MSG
+    die "no PSPLink link"
+fi
+echo "link OK"
+
 echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
-# A resident module from an earlier run blocks the next load (ALREADY_LOADED)
-# and holds memory; the test binary unloads itself on exit, this clears any
-# leftover from a crashed run.
+# A resident module blocks the next load (ALREADY_LOADED). The test binary
+# unloads itself on exit, so normally there is nothing to clear.
+#
+# DELIBERATELY NOT `modstop`: force-stopping a module that is still running
+# leaves this PSP unable to start any further module (they load, report
+# success, and then never execute — a device reset is the only recovery).
 for uid in $("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
-    "$PSPSH" -n -e "modstop $uid" >/dev/null 2>&1
-    "$PSPSH" -n -e "modunld $uid" >/dev/null 2>&1
+    if "$PSPSH" -n -e "modunld $uid" >/dev/null 2>&1; then
+        echo "cleared leftover module $uid"
+    else
+        die "module $uid is still resident and will not unload harmlessly.
+  It is probably still running: press Start+Select on the PSP to exit and
+  unload it, then re-run. (Do not force it — that wedges module startup.)"
+    fi
 done
 timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
 
@@ -107,4 +129,4 @@ psp_make all >/dev/null 2>&1 && psp_make test_build >/dev/null 2>&1 || echo "(sh
 
 echo
 echo "=== REPORT ==="
-python3 "$REPO_DIR/pbm_profile_report.py" "$LOG"
+python3 "$REPO_DIR/retro_engine/pbm_profile_report.py" "$LOG"

@@ -147,6 +147,19 @@ static void save_tga(const char* filename, void* vram_buffer, int width, int hei
     printf("[PSP] Saved screenshot to '%s'\n", filename);
 }
 
+/* Loop-stage breadcrumbs, kept to the PSPLink/hardware-test builds: when a
+ * module appears to do nothing, the screen is not always visible to the host
+ * but host0: file writes are, and these pinpoint the blocking call. */
+#ifdef PSPLINK_RUN
+static void dbg(const char* msg) {
+    FILE* f = fopen("host0:/poi_app.log", "a");
+    if (!f) f = fopen("ms0:/poi_app.log", "a");
+    if (f) { fprintf(f, "%s\n", msg); fclose(f); }
+}
+#else
+static void dbg(const char* msg) { (void)msg; }
+#endif
+
 static int file_exists(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return 0;
@@ -172,6 +185,10 @@ int main(int argc, char** argv) {
 
     /* Full 333 MHz CPU / 166 MHz GPU clock. */
     scePowerSetClockFrequency(333, 333, 166);
+
+    /* NOTE: scePowerIdleTimerDisable() hangs on this firmware/CFW when called
+     * from a PSPLink-loaded module, leaving a black screen and no output.
+     * Suspend prevention is left to the user's Hold switch instead. */
 
     pspDebugScreenInit();
     printf("[PSP] PoiRetro starting (build %s %s)\n", __DATE__, __TIME__);
@@ -238,6 +255,7 @@ int main(int argc, char** argv) {
     printf("[PSP] Map '%s' loaded: %u meshes, %u verts\n",
            map->map_name, (unsigned)map->header.num_meshes, (unsigned)map->total_vertices);
 
+
     /* ── Profiling run, triggered by ms0:/poi_profile.cfg ─────────────── */
 #ifdef HWTEST
     /* Hardware-test build: always profile, then stop. Meant to be loaded and
@@ -267,8 +285,10 @@ int main(int argc, char** argv) {
         wait_any_button(20000);
     }
 
+    dbg("loop: ctrl setup begin");
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+    dbg("loop: ctrl setup done");
 
     /* Camera: standing in the courtyard, facing the archway, as the spawn
      * metadata suggests unless the map overrides it. */
@@ -299,7 +319,9 @@ int main(int argc, char** argv) {
 
     printf("[PSP] Entering render loop (benchmark=%d)\n", is_benchmark);
 
+    dbg("loop: entering main loop");
     while (running) {
+        if (frame_count < 5) dbg("loop: frame top");
         uint64_t curr_tick = psp_now_us();
         float dt = (float)(curr_tick - last_tick) / 1000000.0f;
         if (dt <= 0.0001f || dt > 0.2f) dt = 1.0f / 60.0f;
@@ -314,7 +336,9 @@ int main(int argc, char** argv) {
         }
 
         SceCtrlData pad;
+        if (frame_count < 5) dbg("loop: before ctrl read");
         sceCtrlReadBufferPositive(&pad, 1);
+        if (frame_count < 5) dbg("loop: after ctrl read");
 
         if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
             printf("[PSP] Start+Select: exiting.\n");
@@ -395,7 +419,8 @@ int main(int argc, char** argv) {
 
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
-        psp_draw_hud(map, &stats, fps, display_mode, hud_extra);
+        psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
+                     "Start+Select: quit & unload | L+R: dump trace");
 
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();
@@ -413,7 +438,9 @@ int main(int argc, char** argv) {
         tf.draws = stats.draw_calls; tf.verts = stats.vertices;
         trace_push(&tf);
 
+        if (frame_count < 5) dbg("loop: before swap");
         sceGuSwapBuffers();
+        if (frame_count < 5) dbg("loop: after swap");
         frame_count++;
 
         if (is_benchmark) {

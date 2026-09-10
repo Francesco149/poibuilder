@@ -4,8 +4,10 @@
 #include <malloc.h>
 #ifdef __PSP__
 #include <psputils.h>
+#include <pspkernel.h>
 #endif
 #include <string.h>
+#include <stdarg.h>
 /* Swizzles a 16-bit texture into 16-byte wide x 8-line high blocks for Sony GE texture cache */
 static void swizzle_texture_16(uint8_t* out, const uint8_t* in, unsigned int width, unsigned int height) {
     unsigned int width_bytes = width * 2;
@@ -87,12 +89,41 @@ static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, 
     }
 }
 
+/* Load diagnostics go both to the on-device debug screen and to a file on the
+ * host (host0: when running under PSPLink, else the memory stick). A map that
+ * fails to load must never be a silent black screen. */
+static void pbm_log(const char* fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    printf("%s", buf);
+
+    FILE* lf = fopen("host0:/pbm_load.log", "a");
+    if (!lf) lf = fopen("ms0:/pbm_load.log", "a");
+    if (lf) { fputs(buf, lf); fclose(lf); }
+}
+
+#ifdef __PSP__
+/* Heap pressure is the difference between a map that loads and one that comes
+ * up empty, so record it around every load. */
+static void pbm_log_mem(const char* tag) {
+    pbm_log("[PBM] mem %-12s total_free=%u max_free=%u\n", tag,
+            (unsigned)sceKernelTotalFreeMemSize(), (unsigned)sceKernelMaxFreeMemSize());
+}
+#else
+static void pbm_log_mem(const char* tag) { (void)tag; }
+#endif
+
 PbmMap* pbm_load(const char* filepath) {
     FILE* f = fopen(filepath, "rb");
     if (!f) {
         printf("[PBM] Error: Could not open '%s'\n", filepath);
         return NULL;
     }
+
+    pbm_log_mem("before load");
 
     PbmMap* map = (PbmMap*)calloc(1, sizeof(PbmMap));
     if (!map) {
@@ -199,7 +230,7 @@ PbmMap* pbm_load(const char* filepath) {
         memcpy(map->header.bounds_max, v2_hdr.bounds_max, sizeof(float) * 3);
     }
 
-    printf("[PBM] Loaded header v%u: %u textures, %u meshes, %u colliders, %u metadata\n",
+    pbm_log("[PBM] Loaded header v%u: %u textures, %u meshes, %u colliders, %u metadata\n",
         (unsigned int)map->header.version,
         (unsigned int)map->header.num_textures,
         (unsigned int)map->header.num_meshes,
@@ -229,11 +260,15 @@ PbmMap* pbm_load(const char* filepath) {
             tex->is_swizzled = 0;
 
             uint8_t* linear = (uint8_t*)malloc(thdr.data_size);
-            if (!linear) continue;
+            if (!linear) {
+                pbm_log("[PBM] FATAL: out of memory for texture %u (%u bytes)\n",
+                        (unsigned int)i, (unsigned)thdr.data_size);
+                goto load_failed;
+            }
             if (fread(linear, 1, thdr.data_size, f) != thdr.data_size) {
-                printf("[PBM] Error reading texture %u data\n", (unsigned int)i);
+                pbm_log("[PBM] FATAL: short read on texture %u data\n", (unsigned int)i);
                 free(linear);
-                break;
+                goto load_failed;
             }
 
             int pot16 = (thdr.format == PBM_TEX_FMT_RGBA5551) &&
@@ -301,8 +336,8 @@ PbmMap* pbm_load(const char* filepath) {
         for (uint32_t i = 0; i < map->header.num_meshes; ++i) {
             PbmMeshHeader mhdr;
             if (fread(&mhdr, sizeof(PbmMeshHeader), 1, f) != 1) {
-                printf("[PBM] Error reading mesh header %u\n", (unsigned int)i);
-                break;
+                pbm_log("[PBM] FATAL: short read on mesh header %u\n", (unsigned int)i);
+                goto load_failed;
             }
             memcpy(map->meshes[i].name, mhdr.name, 32);
             map->meshes[i].texture_id = mhdr.texture_id;
@@ -316,10 +351,17 @@ PbmMap* pbm_load(const char* filepath) {
             if (!vbuf) {
                 vbuf = malloc(vbuf_size);
             }
-            if (vbuf) {
-                fread(vbuf, 1, vbuf_size, f);
-                map->meshes[i].vertices = (PbmVertex*)vbuf;
+            if (!vbuf) {
+                pbm_log("[PBM] FATAL: out of memory for mesh %u vertices (%u bytes)\n",
+                        (unsigned int)i, (unsigned)vbuf_size);
+                goto load_failed;
             }
+            if (fread(vbuf, 1, vbuf_size, f) != vbuf_size) {
+                pbm_log("[PBM] FATAL: short read on mesh %u vertices\n", (unsigned int)i);
+                free(vbuf);
+                goto load_failed;
+            }
+            map->meshes[i].vertices = (PbmVertex*)vbuf;
         }
     }
 
@@ -329,8 +371,8 @@ PbmMap* pbm_load(const char* filepath) {
         for (uint32_t i = 0; i < map->header.num_colliders; ++i) {
             PbmColliderHeader chdr;
             if (fread(&chdr, sizeof(PbmColliderHeader), 1, f) != 1) {
-                printf("[PBM] Error reading collider header %u\n", (unsigned int)i);
-                break;
+                pbm_log("[PBM] FATAL: short read on collider header %u\n", (unsigned int)i);
+                goto load_failed;
             }
             memcpy(map->colliders[i].name, chdr.name, 32);
             map->colliders[i].type = chdr.type;
@@ -399,12 +441,30 @@ PbmMap* pbm_load(const char* filepath) {
         }
     }
 
+    /* A map that claims meshes but has no vertices renders as an empty scene
+     * while still reporting success. Treat it as a load failure. */
+    for (uint32_t i = 0; i < map->header.num_meshes; ++i) {
+        if (!map->meshes[i].vertices || map->meshes[i].num_vertices == 0) {
+            pbm_log("[PBM] FATAL: mesh %u of %u has no vertices; map is incomplete\n",
+                    (unsigned int)i, (unsigned)map->header.num_meshes);
+            goto load_failed;
+        }
+    }
+
     /* Flush all loaded textures, vertices, and colliders from D-Cache to main RAM
      * so the Sony GE hardware DMA reads valid data without bus stalls! */
 #ifdef __PSP__
     sceKernelDcacheWritebackAll();
 #endif
+    pbm_log_mem("after load");
     return map;
+
+load_failed:
+    pbm_log("[PBM] Load of '%s' failed; refusing to run with a partial map.\n", filepath);
+    pbm_log_mem("on failure");
+    pbm_free(map);
+    fclose(f);
+    return NULL;
 }
 
 void pbm_free(PbmMap* map) {
