@@ -5,6 +5,8 @@
 #include <pspgum.h>
 #include <pspctrl.h>
 #include <psprtc.h>
+#include <psppower.h>
+#include <psputils.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +36,27 @@ typedef struct {
 
 static SpriteVertex __attribute__((aligned(16))) text_verts[512];
 
+/* Exit callback thread for Home button */
+static int exit_callback(int arg1, int arg2, void *common) {
+    sceKernelExitGame();
+    return 0;
+}
+
+static int callback_thread(SceSize args, void *argp) {
+    int cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
+    sceKernelRegisterExitCallback(cbid);
+    sceKernelSleepThreadCB();
+    return 0;
+}
+
+static int setup_callbacks(void) {
+    int thid = sceKernelCreateThread("update_thread", callback_thread, 0x11, 0xFA0, 0, 0);
+    if (thid >= 0) {
+        sceKernelStartThread(thid, 0, 0);
+    }
+    return thid;
+}
+
 /* Unpack 8x8 bitmap font into 16-bit RGBA5551 texture in RAM */
 static void font_init(void) {
     memset(font_tex, 0, sizeof(font_tex));
@@ -54,6 +77,8 @@ static void font_init(void) {
             }
         }
     }
+    /* Flush font texture from D-Cache to RAM so GE hardware reads it */
+    sceKernelDcacheWritebackRange(font_tex, sizeof(font_tex));
 }
 
 /* Renders 2D text directly via Sony GU display list quads (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) */
@@ -70,6 +95,8 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
     sceGuTexFilter(GU_NEAREST, GU_NEAREST);
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_CULL_FACE);
+    sceGuEnable(GU_BLEND);
+    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 
     float cur_x = start_x;
     float cur_y = start_y;
@@ -107,6 +134,10 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
 
         cur_x += 8.0f;
     }
+
+    /* CRITICAL FOR REAL PSP HARDWARE:
+     * Flush CPU D-Cache lines to RAM so the Sony GE hardware DMA sees all text lines! */
+    sceKernelDcacheWritebackRange(text_verts, vert_count * sizeof(SpriteVertex));
 
     sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, vert_count, 0, text_verts);
 }
@@ -150,6 +181,13 @@ static inline int is_billboard_mesh(const char* name) {
 }
 
 int main(int argc, char* argv[]) {
+    /* Set up Home button exit callback thread */
+    setup_callbacks();
+
+    /* Unlock full 333 MHz CPU and 166 MHz GPU clock speed on real PSP!
+     * (Defaults to 222MHz battery-saver mode which throttles 3D fillrate) */
+    scePowerSetClockFrequency(333, 333, 166);
+
     pspDebugScreenInit();
     printf("[PSP] Starting PoiRetro Homebrew Engine v0.9.61...\n");
 
@@ -173,6 +211,7 @@ int main(int argc, char* argv[]) {
     sceGuDepthRange(0, 65535);
     sceGuDepthFunc(GU_LEQUAL);
     sceGuEnable(GU_DEPTH_TEST);
+    sceGuDepthMask(GU_FALSE); /* Allow depth writes */
 
     /* Scissor */
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
@@ -188,10 +227,6 @@ int main(int argc, char* argv[]) {
     sceGuTexWrap(GU_REPEAT, GU_REPEAT);
     sceGuTexFilter(GU_LINEAR, GU_LINEAR);
     sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
-
-    /* Alpha blending */
-    sceGuEnable(GU_BLEND);
-    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
 
     sceGuFinish();
     sceGuSync(0, 0);
@@ -289,6 +324,13 @@ int main(int argc, char* argv[]) {
         SceCtrlData pad;
         sceCtrlReadBufferPositive(&pad, 1);
 
+        /* Exit shortcut: Start + Select held together quits immediately */
+        if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
+            printf("[PSP] Start+Select pressed — exiting game.\n");
+            running = 0;
+            break;
+        }
+
         if (!is_benchmark) {
             /* Interactive Fly Camera Controls:
              * - Analog stick: Fly forward/backward along yaw, strafe left/right
@@ -370,6 +412,12 @@ int main(int argc, char* argv[]) {
         sceGuClearDepth(65535); /* Clear depth to farthest */
         sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
 
+        /* CRITICAL: Re-enable depth testing on EVERY frame for 3D meshes!
+         * (Text pass disables it, so it must be restored here) */
+        sceGuEnable(GU_DEPTH_TEST);
+        sceGuDepthFunc(GU_LEQUAL);
+        sceGuDepthMask(GU_FALSE); /* Allow depth writes */
+
         /* Projection Matrix */
         sceGumMatrixMode(GU_PROJECTION);
         sceGumLoadIdentity();
@@ -386,26 +434,28 @@ int main(int argc, char* argv[]) {
         ScePspFVector3 up     = { 0.0f, 1.0f, 0.0f };
         sceGumLookAt(&eye, &target, &up);
 
-        /* Render 3D Meshes */
+        /* ── TWO-PASS 3D RENDERING ARCHITECTURE ───
+         * PASS 1: Solid Opaque Meshes (floors, walls, pillars, stairs, cylinder, prism)
+         *   - GU_BLEND is DISABLED! (No heavy eDRAM read-modify-write; full fillrate & early-Z)
+         *   - Depth write enabled, backface culling enabled
+         * PASS 2: Alpha-blended Billboards (trees, bushes, flowers)
+         *   - GU_BLEND enabled, backface culling disabled */
+
         int last_tex_id = -999;
         uint32_t total_rendered_verts = 0;
 
+        /* PASS 1: Solid Opaque Meshes */
+        sceGuDisable(GU_BLEND);
+        sceGuEnable(GU_CULL_FACE);
+
         for (uint32_t mi = 0; mi < map->header.num_meshes; ++mi) {
             PbmMesh* mesh = &map->meshes[mi];
-            if (!mesh->vertices || mesh->num_vertices == 0) {
-                continue;
-            }
+            if (!mesh->vertices || mesh->num_vertices == 0) continue;
+            if (is_billboard_mesh(mesh->name)) continue; /* Rendered in Pass 2 */
 
-            int is_billboard = is_billboard_mesh(mesh->name);
-
-            if (display_mode == 1) {
-                /* Vertex colors / baked lighting only */
-                sceGuDisable(GU_TEXTURE_2D);
-            } else if (display_mode == 2) {
-                /* Wireframe */
+            if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
-                /* Textured */
                 sceGuEnable(GU_TEXTURE_2D);
                 if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
                     if (mesh->texture_id != last_tex_id) {
@@ -423,8 +473,7 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            /* Culling */
-            if (is_billboard || display_mode == 2) {
+            if (display_mode == 2) {
                 sceGuDisable(GU_CULL_FACE);
             } else {
                 sceGuEnable(GU_CULL_FACE);
@@ -441,7 +490,45 @@ int main(int argc, char* argv[]) {
             total_rendered_verts += mesh->num_vertices;
         }
 
-        /* ── Hardware 2D On-Screen HUD Overlay (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) ─── */
+        /* PASS 2: Alpha-blended Billboards */
+        sceGuEnable(GU_BLEND);
+        sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+        sceGuDisable(GU_CULL_FACE);
+
+        for (uint32_t mi = 0; mi < map->header.num_meshes; ++mi) {
+            PbmMesh* mesh = &map->meshes[mi];
+            if (!mesh->vertices || mesh->num_vertices == 0) continue;
+            if (!is_billboard_mesh(mesh->name)) continue; /* Already rendered in Pass 1 */
+
+            if (display_mode == 1 || display_mode == 2) {
+                sceGuDisable(GU_TEXTURE_2D);
+            } else {
+                sceGuEnable(GU_TEXTURE_2D);
+                if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
+                    if (mesh->texture_id != last_tex_id) {
+                        PbmTexture* tex = &map->textures[mesh->texture_id];
+                        if (tex->pixels) {
+                            int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
+                            sceGuTexMode(psm, 0, 0, 0);
+                            sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
+                        }
+                        last_tex_id = mesh->texture_id;
+                    }
+                }
+            }
+
+            sceGumMatrixMode(GU_MODEL);
+            sceGumLoadIdentity();
+
+            int prim_type = (display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
+            sceGumDrawArray(prim_type,
+                GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+                mesh->num_vertices, 0, mesh->vertices);
+
+            total_rendered_verts += mesh->num_vertices;
+        }
+
+        /* ── PASS 3: Hardware 2D On-Screen HUD Overlay (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) ─── */
         char buf[80];
         snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Verts: %u",
             fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_rendered_verts);

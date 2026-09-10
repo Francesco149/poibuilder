@@ -1,8 +1,9 @@
 #include "pbm_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <malloc.h>
+#include <psputils.h>
+#include <string.h>
 
 PbmMap* pbm_load(const char* filepath) {
     FILE* f = fopen(filepath, "rb");
@@ -118,6 +119,9 @@ PbmMap* pbm_load(const char* filepath) {
         }
     }
 
+    /* Flush all loaded textures, vertices, and colliders from D-Cache to main RAM
+     * so the Sony GE hardware DMA reads valid data without bus stalls! */
+    sceKernelDcacheWritebackAll();
     fclose(f);
     printf("[PBM] Successfully loaded '%s' (%u total vertices)\n", filepath, (unsigned int)map->total_vertices);
     return map;
