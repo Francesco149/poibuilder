@@ -50,6 +50,7 @@ PbmMap* pbm_load(const char* filepath) {
             map->textures[i].width = thdr.width;
             map->textures[i].height = thdr.height;
             map->textures[i].format = thdr.format;
+            map->textures[i].has_alpha = thdr.has_alpha;
             map->textures[i].data_size = thdr.data_size;
 
             /* 16-byte aligned pixel buffer for PSP DMA / GE */

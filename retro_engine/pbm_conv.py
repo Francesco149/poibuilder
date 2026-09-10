@@ -169,6 +169,9 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             
         tex_name = img_info.get("name", f"tex_{img_idx}")[:31]
         
+        # Detect transparency: any pixel with alpha < 250
+        has_alpha = 1 if any(px[3] < 250 for px in pil_img.getdata()) else 0
+        
         if format_16bit:
             # Convert RGBA8888 -> RGBA5551
             pix = pil_img.load()
@@ -189,6 +192,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             "width": w,
             "height": h,
             "format": fmt,
+            "has_alpha": has_alpha,
             "data": tex_data
         })
         image_to_tex_idx[img_idx] = len(textures) - 1
@@ -320,8 +324,9 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 b_min[1] = min(b_min[1], v["y"]); b_max[1] = max(b_max[1], v["y"])
                 b_min[2] = min(b_min[2], v["z"]); b_max[2] = max(b_max[2], v["z"])
             
+            tex_name = textures[tex_id]["name"] if (tex_id >= 0 and tex_id < len(textures)) else f"mesh_t{tex_id}"
             all_meshes.append({
-                "name": f"mesh_t{tex_id}_{i // batch_size}"[:31],
+                "name": f"{tex_name}_{i // batch_size}"[:31],
                 "texture_id": tex_id,
                 "vertices": batch,
                 "bounds_min": b_min,
@@ -366,12 +371,11 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 tex["width"],
                 tex["height"],
                 tex["format"],
-                0, # padding
+                tex["has_alpha"],
                 len(tex["data"])
             )
             f.write(thdr)
             f.write(tex["data"])
-            
         # Mesh chunk
         for m in all_meshes:
             m_name = m["name"].encode("ascii")[:31].ljust(32, b"\x00")

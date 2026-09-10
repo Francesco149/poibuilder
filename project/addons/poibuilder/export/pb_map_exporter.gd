@@ -699,11 +699,14 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 							tex_data.resize(w * h * 2)
 							img.convert(Image.FORMAT_RGBA8)
 							var raw_bytes := img.get_data()
+							var has_alpha: int = 0
 							for px_idx in range(w * h):
 								var r: int = raw_bytes[px_idx * 4]
 								var g: int = raw_bytes[px_idx * 4 + 1]
 								var b: int = raw_bytes[px_idx * 4 + 2]
 								var a: int = raw_bytes[px_idx * 4 + 3]
+								if a < 250:
+									has_alpha = 1
 								var r5: int = (r >> 3) & 0x1F
 								var g5: int = (g >> 3) & 0x1F
 								var b5: int = (b >> 3) & 0x1F
@@ -718,6 +721,7 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 								"width": w,
 								"height": h,
 								"format": PBM_TEX_FMT_RGBA5551,
+								"has_alpha": has_alpha,
 								"data": tex_data
 							})
 							tex_map[tex_key] = tex_id
@@ -779,11 +783,10 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 	for tex in textures:
 		var name_bytes: PackedByteArray = (tex["name"] as String).to_ascii_buffer()
 		name_bytes.resize(32)
-		f.store_buffer(name_bytes)
 		f.store_16(tex["width"])
 		f.store_16(tex["height"])
 		f.store_16(tex["format"])
-		f.store_16(0)
+		f.store_16(tex.get("has_alpha", 0))
 		f.store_32((tex["data"] as PackedByteArray).size())
 		f.store_buffer(tex["data"])
 

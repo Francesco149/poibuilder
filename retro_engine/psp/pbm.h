@@ -28,7 +28,7 @@ typedef struct __attribute__((packed)) {
     uint16_t width;         /* Texture width (power-of-two, e.g. 128, 256, 512) */
     uint16_t height;        /* Texture height (power-of-two) */
     uint16_t format;        /* PBM_TEX_FMT_* */
-    uint16_t padding;
+    uint16_t has_alpha;     /* 1 if texture has transparent pixels (<250), 0 if opaque */
     uint32_t data_size;     /* Size of raw pixel buffer in bytes */
 } PbmTextureHeader;
 
