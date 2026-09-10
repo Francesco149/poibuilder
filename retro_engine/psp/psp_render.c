@@ -23,9 +23,13 @@
 #define SCR_WIDTH (480)
 #define SCR_HEIGHT (272)
 
-/* 1 MB display list. GU_DIRECT: the GE DMAs this list, so every byte written
- * here is bus traffic the GE also has to read back. */
-static unsigned int __attribute__((aligned(16))) s_dlist[262144];
+/* Display list. GU_DIRECT: the GE DMAs this list, so every byte written here is
+ * bus traffic the GE also has to read back. A frame emits a few KB of commands
+ * (19 draw calls and a handful of state changes, plus the HUD's vertices), so
+ * 128 KB is ~40x headroom — and unlike the 1 MB this used to be, it leaves the
+ * module small enough for PSPLink to load into the PSP's kernel partition. */
+#define PSP_DLIST_WORDS (32768)
+static unsigned int __attribute__((aligned(16))) s_dlist[PSP_DLIST_WORDS];
 
 void* psp_dlist(void) { return s_dlist; }
 
