@@ -38,13 +38,18 @@ KEEP=0
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# All PSP compilation happens in the pinned pspdev container.
+psp_make() {
+    podman run --rm -v "$PSP_DIR:/src:Z" -w /src docker.io/pspdev/pspdev:latest \
+        bash -c "export PATH=\$PATH:/usr/local/pspdev/bin; make $*"
+}
+
 [ -x "$USBHOSTFS" ] || die "usbhostfs_pc not built at $USBHOSTFS
   git clone https://github.com/pspdev/psplinkusb.git $PSPLINK_SRC && (cd $PSPLINK_SRC/usbhostfs_pc && make) && (cd $PSPLINK_SRC/pspsh && make)"
 [ -x "$PSPSH" ] || die "pspsh not built at $PSPSH"
 
 echo "=== [1/5] Building the hardware-test PRX ==="
-podman run --rm -v "$PSP_DIR:/src:Z" -w /src docker.io/pspdev/pspdev:latest \
-    bash -c 'export PATH=$PATH:/usr/local/pspdev/bin; make hwtest' >/tmp/psp_hwtest_build.log 2>&1 \
+psp_make hwtest >/tmp/psp_hwtest_build.log 2>&1 \
     || { tail -30 /tmp/psp_hwtest_build.log; die "build failed (full log: /tmp/psp_hwtest_build.log)"; }
 [ -f "$PSP_DIR/$PRX_NAME" ] || die "$PRX_NAME was not produced"
 
@@ -65,6 +70,13 @@ fi
 pgrep -f "usbhostfs_pc" >/dev/null || { cat /tmp/usbhostfs_pc.log; die "usbhostfs_pc died"; }
 
 echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
+# A resident module from an earlier run blocks the next load (ALREADY_LOADED)
+# and holds memory; the test binary unloads itself on exit, this clears any
+# leftover from a crashed run.
+for uid in $("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
+    "$PSPSH" -n -e "modstop $uid" >/dev/null 2>&1
+    "$PSPSH" -n -e "modunld $uid" >/dev/null 2>&1
+done
 timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
 
 echo "=== [5/5] Waiting for host0:/poi_profile.txt (up to ${WAIT_SECS}s) ==="
@@ -87,6 +99,12 @@ if [ "$KEEP" = 0 ]; then
     pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
 fi
 
+# `make hwtest` starts with `make clean` (the HWTEST objects must not be
+# reused by the shipping build), which removes the tracked EBOOT.PBP. Put the
+# shipping artifacts back so the tree stays clean after a profiling run.
+echo "=== restoring the shipping build ==="
+psp_make all >/dev/null 2>&1 && psp_make test_build >/dev/null 2>&1 || echo "(shipping rebuild failed)"
+
 echo
 echo "=== REPORT ==="
-python3 "$REPO_DIR/retro_engine/pbm_profile_report.py" "$LOG"
+python3 "$REPO_DIR/pbm_profile_report.py" "$LOG"

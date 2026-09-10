@@ -31,3 +31,12 @@ hwtest:
 	$(MAKE) BUILD_PRX=1 TARGET=poiretro_psp_hwtest \
 	        PSP_EBOOT=poiretro_hwtest.PBP EXTRA_TARGETS=poiretro_hwtest.PBP \
 	        CFLAGS="$(CFLAGS) -DHWTEST=1" all
+
+# Interactive build loadable by PSPLink: the real game, run over USB with no
+# memory-stick copy. It ends its own thread instead of calling
+# sceKernelExitGame so the PSPLink USB link survives a quit.
+hwapp:
+	$(MAKE) clean
+	$(MAKE) BUILD_PRX=1 TARGET=poiretro_psp_app \
+	        PSP_EBOOT=poiretro_app.PBP EXTRA_TARGETS=poiretro_app.PBP \
+	        CFLAGS="$(CFLAGS) -DPSPLINK_RUN=1" all

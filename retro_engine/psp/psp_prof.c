@@ -26,6 +26,7 @@
 #include <psputils.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 #include <math.h>
 
@@ -145,7 +146,12 @@ static const CamPreset k_cams[] = {
 /* ── Synthetic geometry ─────────────────────────────────────────────────── */
 
 static PspVertex s_fill3d[6];
-static PspVertex s_tiny[4096 * 6];
+/* The 4096-triangle throughput probe needs ~590 KB. It lives on the heap so it
+ * is not part of the module's declared memory (the interactive build links this
+ * file but never runs the probes). */
+#define TINY_MAX_QUADS 4096
+static PspVertex* s_tiny = NULL;
+static int s_tiny_capacity = 0;
 
 static void set_color_clear(void) {
     sceGuClearColor(0x382218);
@@ -267,6 +273,12 @@ static void fill3d_emit(float scale, int textured) {
 static int s_tiny_built = -1;
 
 static void tiny_build(int count) {
+    if (count > TINY_MAX_QUADS) count = TINY_MAX_QUADS;
+    if (!s_tiny) {
+        s_tiny = (PspVertex*)memalign(64, (size_t)TINY_MAX_QUADS * 6 * sizeof(PspVertex));
+        if (!s_tiny) return;
+        s_tiny_capacity = TINY_MAX_QUADS;
+    }
     if (s_tiny_built == count) return;
     s_tiny_built = count;
     float hh = FILL3D_D * FILL3D_TANH, hw = hh * (16.0f / 9.0f);
@@ -296,9 +308,10 @@ static void tiny_build(int count) {
 
 static void tiny_emit(int count, int separate_calls) {
     const int verts_per_quad = 6;
-    int total = count * verts_per_quad;
-    if (total > (int)(sizeof(s_tiny) / sizeof(s_tiny[0]))) return;
     tiny_build(count);
+    if (!s_tiny) return;
+    if (count > s_tiny_capacity) count = s_tiny_capacity;
+    int total = count * verts_per_quad;
 
     sceGuDisable(GU_TEXTURE_2D);
     sceGuDisable(GU_CULL_FACE);

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 
 #include "pbm_loader.h"
@@ -48,19 +49,28 @@ typedef struct {
     uint32_t draws, verts;
 } TraceFrame;
 
-static TraceFrame s_trace[TRACE_FRAMES];
+/* Heap-allocated: the module's static memory is what PSPLink must find a
+ * contiguous block for when it loads us, so keep it small. */
+static TraceFrame* s_trace = NULL;
 static int s_trace_head = 0;
 static int s_trace_count = 0;
 
 static void trace_push(const TraceFrame* f) {
+    if (!s_trace) {
+        s_trace = (TraceFrame*)malloc(TRACE_FRAMES * sizeof(TraceFrame));
+        if (!s_trace) return;
+    }
     s_trace[s_trace_head] = *f;
     s_trace_head = (s_trace_head + 1) % TRACE_FRAMES;
     if (s_trace_count < TRACE_FRAMES) s_trace_count++;
 }
 
-/* Dumps the worst frames by GPU time with their camera poses. */
-static int trace_dump(const char* path) {
-    FILE* f = fopen(path, "w");
+/* Dumps the worst frames by GPU time with their camera poses. Prefers host0:
+ * (the PSPLink USB host filesystem) so a trace lands on the development
+ * machine; falls back to the memory stick. */
+static int trace_dump(void) {
+    FILE* f = fopen("host0:/poi_trace.txt", "w");
+    if (!f) f = fopen("ms0:/poi_trace.txt", "w");
     if (!f) return 0;
     fprintf(f, "PoiRetro frame trace: %d frames, worst first\n", s_trace_count);
     fprintf(f, "%-7s %-7s %-8s %-7s %-7s %-7s %-7s %-7s\n",
@@ -237,7 +247,10 @@ int main(int argc, char** argv) {
     psp_prof_suite(map);
     pbm_free(map);
     printf("[HWTEST] done; results on the host as host0:/poi_profile.txt\n");
-    sceKernelExitThread(0);
+    /* Stop and unload this module rather than just ending the thread: a
+     * resident module holds ~200 KB of the kernel partition and blocks the next
+     * load with ALREADY_LOADED. */
+    sceKernelSelfStopUnloadModule(0, 0, NULL);
     return 0;
 #endif
     if (file_exists("ms0:/poi_profile.cfg")) {
@@ -305,14 +318,14 @@ int main(int argc, char** argv) {
 
         if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
             printf("[PSP] Start+Select: exiting.\n");
-            trace_dump("ms0:/poi_trace.txt");
+            trace_dump();
             running = 0;
             break;
         }
 
         /* L + R together dumps the worst recent frames with camera poses. */
         if ((pad.Buttons & PSP_CTRL_LTRIGGER) && (pad.Buttons & PSP_CTRL_RTRIGGER)) {
-            int n = trace_dump("ms0:/poi_trace.txt");
+            int n = trace_dump();
             printf("[PSP] Trace written (%d frames).\n", n);
             sceKernelDelayThread(300000);
         }
@@ -411,7 +424,7 @@ int main(int argc, char** argv) {
             }
             if (frame_count >= 120) {
                 printf("[PSP] benchmark done: %d frames, ~%.1f fps\n", frame_count, fps);
-                trace_dump("ms0:/poi_trace.txt");
+                trace_dump();
                 running = 0;
             }
         }
@@ -419,7 +432,13 @@ int main(int argc, char** argv) {
 
     pbm_free(map);
     printf("[PSP] Exiting.\n");
+#ifdef PSPLINK_RUN
+    /* Loaded over PSPLink: sceKernelExitGame would reset the device and drop
+     * the USB link, so stop and unload just this module instead. */
+    sceKernelSelfStopUnloadModule(0, 0, NULL);
+#else
     sceKernelDelayThread(50000);
     sceKernelExitGame();
+#endif
     return 0;
 }
