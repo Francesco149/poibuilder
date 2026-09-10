@@ -147,10 +147,10 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     # 1. Process Textures
     textures = []
     image_to_tex_idx = {}
+    unique_tex_data = {}
     
     raw_images = gltf.get("images", [])
     print(f"Processing {len(raw_images)} images...")
-    
     for img_idx, img_info in enumerate(raw_images):
         bv = gltf["bufferViews"][img_info["bufferView"]]
         offset = bv.get("byteOffset", 0)
@@ -187,15 +187,21 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             tex_data = pil_img.tobytes()
             fmt = PBM_TEX_FMT_RGBA8888
             
-        textures.append({
-            "name": tex_name,
-            "width": w,
-            "height": h,
-            "format": fmt,
-            "has_alpha": has_alpha,
-            "data": tex_data
-        })
-        image_to_tex_idx[img_idx] = len(textures) - 1
+        tex_bytes = bytes(tex_data)
+        if tex_bytes in unique_tex_data:
+            image_to_tex_idx[img_idx] = unique_tex_data[tex_bytes]
+        else:
+            u_idx = len(textures)
+            textures.append({
+                "name": tex_name,
+                "width": w,
+                "height": h,
+                "format": fmt,
+                "has_alpha": has_alpha,
+                "data": tex_data
+            })
+            unique_tex_data[tex_bytes] = u_idx
+            image_to_tex_idx[img_idx] = u_idx
 
     # Map materials to texture IDs
     material_to_tex_id = {}
