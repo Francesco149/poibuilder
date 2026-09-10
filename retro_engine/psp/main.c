@@ -37,13 +37,14 @@ static SpriteVertex __attribute__((aligned(16))) text_verts[512];
 /* Unpack 8x8 bitmap font into 16-bit RGBA5551 texture in RAM */
 static void font_init(void) {
     memset(font_tex, 0, sizeof(font_tex));
-    for (int idx = 0; idx < 95; ++idx) {
+    for (int c = 32; c < 127; ++c) {
+        int idx = c - 32;
         int base_col = (idx % 16) * 8;
         int base_row = (idx / 16) * 8;
         for (int y = 0; y < 8; ++y) {
-            uint8_t row_bits = font8x8_basic[idx][y];
+            uint8_t row_bits = (uint8_t)font8x8_basic[c][y];
             for (int x = 0; x < 8; ++x) {
-                if (row_bits & (1 << (7 - x))) {
+                if (row_bits & (1 << x)) {
                     /* Solid white in RGBA5551: 0xFFFF (A=1, B=31, G=31, R=31) */
                     font_tex[(base_row + y) * 128 + (base_col + x)] = 0xFFFF;
                 } else {
@@ -236,12 +237,14 @@ int main(int argc, char* argv[]) {
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
-    /* Initial Camera at Map Spawn */
-    float cam_x = map->header.spawn_pos[0];
-    float cam_y = map->header.spawn_pos[1] + 1.2f;
-    float cam_z = map->header.spawn_pos[2];
-    float cam_yaw = map->header.spawn_rot + 3.14159f; /* Look forward into map */
-    float cam_pitch = -0.1f;
+    /* Initial Camera: standing in front of the billboard looking directly at the archway
+     * Archway is at Z=-5.5, billboard is at Z=4.0.
+     * Standing at (0, 1.6, 4.2), yaw=0.0 looks straight North (-Z) at the archway! */
+    float cam_x = 0.0f;
+    float cam_y = 1.6f;  /* Eye level standing on floor */
+    float cam_z = 4.2f;  /* In front of the trees/bush billboard, facing North */
+    float cam_yaw = 0.0f; /* Facing straight North (-Z) at the archway at Z=-5.5 */
+    float cam_pitch = 0.05f; /* Slightly upward toward the arch opening */
 
     int running = 1;
     int frame_count = 0;
@@ -296,11 +299,11 @@ int main(int argc, char* argv[]) {
              * - Start: Reset to spawn
              * - Select: Cycle render modes */
             if (pad.Buttons & PSP_CTRL_START) {
-                cam_x = map->header.spawn_pos[0];
-                cam_y = map->header.spawn_pos[1] + 1.2f;
-                cam_z = map->header.spawn_pos[2];
-                cam_yaw = map->header.spawn_rot + 3.14159f;
-                cam_pitch = -0.1f;
+                cam_x = 0.0f;
+                cam_y = 1.6f;
+                cam_z = 4.2f;
+                cam_yaw = 0.0f;
+                cam_pitch = 0.05f;
             }
             if (pad.Buttons & PSP_CTRL_SELECT) {
                 display_mode = (display_mode + 1) % 3;
