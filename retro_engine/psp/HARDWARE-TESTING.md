@@ -46,15 +46,21 @@ the defaults in `psp_prof.c`: `frames`, `warmup`, `sweep`.
 
 ## Rules that each cost a device reset to learn
 
-1. **Always `reset` before loading a module.** `run_psp_hw.sh` does this
-   automatically. A module left over from a previous run leaves the GE and the
-   display controller in whatever state it died in; the next module then
-   **loads, reports success, and never executes** — a black screen with no
-   output, which is very easy to misread as a bug in the new build.
+1. **Reset only when a module is actually left over.** `run_psp_hw.sh` checks
+   for that and resets by itself. A stale module leaves the GE and the display
+   controller in whatever state it died in, and the next module then **loads,
+   reports success and never executes** — a black screen with no output, easy
+   to misread as a bug in the new build.
+
+   Resetting a *healthy* device is not free: it reboots the PSP out of PSPLink,
+   and if PSPLink does not come back on its own you are left at the XMB with
+   nothing running. Doing that unconditionally once sent someone chasing a
+   "the demo does not start" bug that was really "the harness rebooted the
+   console for no reason".
 2. **Never `modstop` a module that is still running.** It wedges module startup
-   for the rest of the session. Exit instead with the app's own
-   **Start+Select**, which stops and unloads the module cleanly. (`run_psp_hw.sh`
-   tries a harmless `modunld` and otherwise tells you to press Start+Select.)
+   for the rest of the session. **Exit the app with the Home button** instead —
+   the PSP's own quit dialog — and re-run. (`run_psp_hw.sh` tries a harmless
+   `modunld` and otherwise tells you.)
 3. **Recovery does not need a power cycle**: `pspsh -n -e "reset"` clears the
    wedged state; the USB link re-establishes by itself within a second or two.
 4. **Suspend kills the USB link**, after which the shell is unresponsive.
@@ -116,8 +122,19 @@ alone distinguishes "our renderer is broken" from "nothing is running".
 | `poi_profile.txt` | the battery | per-test cpu/gpu ms, sweep, ranked list |
 | `pbm_load.log` | `pbm_load` | header counts, `FATAL` reasons, `total_free`/`max_free` before and after |
 | `poi_app.log` | `PSPLINK_RUN` builds only | loop-stage breadcrumbs for the first 5 frames |
-| `poi_trace.txt` | L+R / Start+Select in game | worst frames with camera poses |
+| `poi_trace.txt` | L+R in game | worst frames with camera poses |
 | `poi_render.txt` | *you* write it | runtime render overrides (see below) |
+
+### Never do `host0:` file I/O on a path the player can trigger
+
+`host0:` opens **block** while the USB link is down, and the app has no way to
+time that out. A trace dump that tried `host0:` first, from inside the quit
+path, froze the game on exit once the link had dropped — the Home button still
+worked (it does no I/O), which made it look like the quit chord was broken.
+
+Rule: anything reachable while someone is playing writes to the memory stick
+(`ms0:`) first and treats `host0:` as a fallback. Only the profiling battery,
+which by definition runs with a live link, writes `host0:` first.
 
 ### Runtime render overrides — no rebuild
 

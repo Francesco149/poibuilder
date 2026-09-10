@@ -68,9 +68,13 @@ static void trace_push(const TraceFrame* f) {
 /* Dumps the worst frames by GPU time with their camera poses. Prefers host0:
  * (the PSPLink USB host filesystem) so a trace lands on the development
  * machine; falls back to the memory stick. */
+/* Writes to the memory stick first and only falls back to host0: (PSPLink).
+ * A host0: open BLOCKS while the USB link is down, and this runs inside the
+ * quit path -- doing that first is what froze the game on exit when the link
+ * had dropped. The local filesystem always answers. */
 static int trace_dump(void) {
-    FILE* f = fopen("host0:/poi_trace.txt", "w");
-    if (!f) f = fopen("ms0:/poi_trace.txt", "w");
+    FILE* f = fopen("ms0:/poi_trace.txt", "w");
+    if (!f) f = fopen("host0:/poi_trace.txt", "w");
     if (!f) return 0;
     fprintf(f, "PoiRetro frame trace: %d frames, worst first\n", s_trace_count);
     fprintf(f, "%-7s %-7s %-8s %-7s %-7s %-7s %-7s %-7s\n",
@@ -349,13 +353,6 @@ int main(int argc, char** argv) {
                  (int)pad.Lx, (int)pad.Ly, (unsigned)pad.Buttons);
         pad_hold = (pad.Buttons & PSP_CTRL_HOLD) ? 1 : 0;
 
-        if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
-            printf("[PSP] Start+Select: exiting.\n");
-            trace_dump();
-            running = 0;
-            break;
-        }
-
         /* L + R together dumps the worst recent frames with camera poses. */
         if ((pad.Buttons & PSP_CTRL_LTRIGGER) && (pad.Buttons & PSP_CTRL_RTRIGGER)) {
             int n = trace_dump();
@@ -429,7 +426,7 @@ int main(int argc, char** argv) {
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
         psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
-                     "Start+Select: quit & unload | L+R: dump trace", hud_input, pad_hold);
+                     "Home: exit | L+R: dump trace", hud_input, pad_hold);
 
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();
