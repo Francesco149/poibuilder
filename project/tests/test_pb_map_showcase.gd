@@ -1,8 +1,8 @@
 ## Integration tests for showcase map export and retro map viewer
 extends GutTest
 
-const RETRO_GLB_PATH := "res://test_scenes/showcase_retro_baked.glb"
-const MODERN_GLB_PATH := "res://test_scenes/showcase_modern.glb"
+const RETRO_GLB_PATH := "res://exports/showcase_retro_baked.glb"
+const MODERN_GLB_PATH := "res://exports/showcase_modern.glb"
 const SHOWCASE_TSCN_PATH := "res://test_scenes/test_map_showcase.tscn"
 
 func test_build_and_export_showcase_map() -> void:

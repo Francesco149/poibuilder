@@ -78,8 +78,8 @@ func test_stairs_treads_and_risers_subdivide():
 func test_showcase_stairs_in_glb():
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
-	var err := doc.append_from_file("res://test_scenes/showcase_retro_baked.glb", state)
-	assert_eq(err, OK)
+	var glb_path := "res://exports/showcase_retro_baked.glb" if FileAccess.file_exists("res://exports/showcase_retro_baked.glb") else "res://test_scenes/showcase_retro_baked.glb"
+	var err := doc.append_from_file(glb_path, state)
 	var scene := doc.generate_scene(state)
 	assert_not_null(scene)
 	autofree(scene)

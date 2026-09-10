@@ -40,7 +40,7 @@ class ExportSettings extends RefCounted:
 	var export_billboards: bool = true
 	var export_colliders: bool = true
 	var export_lights: bool = true
-
+	var cleanup_intermediate_files: bool = true
 ## Cancellation token for aborting an in-progress async export.
 class CancellationToken extends RefCounted:
 	var cancelled: bool = false
@@ -52,6 +52,60 @@ class CancellationToken extends RefCounted:
 # Public API
 # ==============================================================================
 
+## Ensures the export directory exists on disk and creates a .gdignore file
+## if it is inside res:// to prevent Godot from auto-importing exported assets.
+static func ensure_export_dir(file_path: String) -> void:
+	var base_dir := file_path.get_base_dir()
+	if base_dir.is_empty() or base_dir == "res://" or base_dir == "res:":
+		return
+	if not DirAccess.dir_exists_absolute(base_dir):
+		DirAccess.make_dir_recursive_absolute(base_dir)
+	var gdignore_path := base_dir.path_join(".gdignore")
+	if not FileAccess.file_exists(gdignore_path):
+		var f := FileAccess.open(gdignore_path, FileAccess.WRITE)
+		if f != null:
+			f.store_string("")
+			f.close()
+
+## Removes unnecessary loose intermediate texture files (e.g. extracted .png textures
+## and .import files) produced during or following map export.
+## Can be disabled by setting settings.cleanup_intermediate_files = false
+## or environment variable POIBUILDER_KEEP_INTERMEDIATE=1 for debugging.
+static func cleanup_intermediate_files(file_path: String) -> int:
+	var base_dir := file_path.get_base_dir()
+	var base_name := file_path.get_file().get_basename()
+	var cleaned := 0
+	cleaned += _cleanup_intermediate_in_dir(base_dir, base_name)
+	if base_dir != "res://" and base_dir != "res:":
+		cleaned += _cleanup_intermediate_in_dir("res://", base_name)
+	return cleaned
+
+static func _cleanup_intermediate_in_dir(dir_path: String, base_name: String) -> int:
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return 0
+	var cleaned := 0
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	var prefix := base_name + "_"
+	while file_name != "":
+		if not dir.current_is_dir():
+			var lower := file_name.to_lower()
+			var is_intermediate := false
+			if file_name.begins_with(prefix):
+				if lower.ends_with(".png") or lower.ends_with(".png.import") or (lower.ends_with(".import") and not lower.ends_with(".glb.import") and not lower.ends_with(".gltf.import")):
+					is_intermediate = true
+			elif file_name.contains("_BakedTile_") or file_name.contains("BakedTile_"):
+				if lower.ends_with(".png") or lower.ends_with(".png.import"):
+					is_intermediate = true
+			if is_intermediate:
+				var full_path := dir_path.path_join(file_name)
+				DirAccess.remove_absolute(full_path)
+				cleaned += 1
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	return cleaned
+
 ## Exports the given scene root to a .glb or .gltf file on disk synchronously.
 static func export_map(root: Node, file_path: String, settings: ExportSettings = null) -> Error:
 	if root == null or file_path.is_empty():
@@ -59,6 +113,8 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 
 	if settings == null:
 		settings = ExportSettings.new()
+
+	ensure_export_dir(file_path)
 
 	var export_tree := build_export_tree(root, settings)
 	if export_tree == null:
@@ -74,8 +130,14 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 
 	err = doc.write_to_filesystem(state, file_path)
 	export_tree.free()
-	return err
 
+	var should_cleanup: bool = settings.cleanup_intermediate_files if settings != null else true
+	if OS.has_environment("POIBUILDER_KEEP_INTERMEDIATE") and OS.get_environment("POIBUILDER_KEEP_INTERMEDIATE") != "0":
+		should_cleanup = false
+	if should_cleanup and err == OK:
+		cleanup_intermediate_files(file_path)
+
+	return err
 ## Asynchronous export with frame-by-frame progress reporting and cancellation support.
 ## Yields frames via `await Engine.get_main_loop().process_frame` so editor UI stays 100% interactive.
 static func export_map_async(root: Node, file_path: String, settings: ExportSettings = null,
@@ -86,6 +148,7 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 	if settings == null:
 		settings = ExportSettings.new()
 
+	ensure_export_dir(file_path)
 	if progress_cb.is_valid():
 		progress_cb.call(0.02, "Collecting scene geometry & lights...", "")
 	if Engine.get_main_loop() != null:
@@ -139,6 +202,11 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 
 	err = doc.write_to_filesystem(state, file_path)
 	export_root.free()
+	var should_cleanup: bool = settings.cleanup_intermediate_files if settings != null else true
+	if OS.has_environment("POIBUILDER_KEEP_INTERMEDIATE") and OS.get_environment("POIBUILDER_KEEP_INTERMEDIATE") != "0":
+		should_cleanup = false
+	if should_cleanup and err == OK:
+		cleanup_intermediate_files(file_path)
 
 	if progress_cb.is_valid():
 		progress_cb.call(1.0, "Export complete!", file_path.get_file())

@@ -98,6 +98,10 @@ var _user_nudged: bool = false
 var _nudged_axis: Vector3 = Vector3.ZERO
 var _has_initial_base: bool = false
 
+## When true (e.g. while holding Ctrl), the facing direction is locked to its
+## current vector and will not be recomputed or flipped during mouse drag.
+var lock_direction: bool = false
+
 ## Threshold difference between u_size and v_size to consider one dimension clearly dominant.
 const ASPECT_BIAS_THRESHOLD := 0.20
 ## The live preview node (owned and managed by the plugin; the creator only
@@ -329,6 +333,7 @@ func reset() -> void:
 	_nudged_axis = Vector3.ZERO
 	_has_initial_base = false
 	facing = Vector3.ZERO
+	lock_direction = false
 	_last_point = Vector3.ZERO
 	preview_node = null
 
@@ -345,6 +350,9 @@ func reset() -> void:
 ##    - The nudge PERSISTS so the shape does not immediately snap back on the next frame.
 ##    - Sub-dead-zone mouse tremors (< 0.08m) are ignored, eliminating ping-pong.
 func _update_facing(point: Vector3, v_dir: Vector3) -> void:
+	if lock_direction:
+		_last_point = point
+		return
 	var step := _project_on_plane(point - _last_point, plane_normal)
 	_last_point = point
 	var step_len := step.length()

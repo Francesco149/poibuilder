@@ -22,7 +22,7 @@ enum WireframeStyle {
 	TEXTURES = 2,
 }
 
-@export var default_map_path: String = "res://test_scenes/showcase_retro_baked.glb"
+@export var default_map_path: String = "res://exports/showcase_retro_baked.glb"
 
 var current_mode: DisplayMode = DisplayMode.FULL_BAKED
 var wireframe_style: WireframeStyle = WireframeStyle.DARK_SLATE
@@ -89,6 +89,11 @@ func _ready() -> void:
 	# Auto-capture mouse on click in viewport
 	_capture_mouse(true)
 	get_viewport().msaa_3d = Viewport.MSAA_4X
+	if not FileAccess.file_exists(map_to_load):
+		for candidate in ["res://exports/showcase_retro_baked.glb", "res://exports/exported_map.glb", "res://test_scenes/showcase_retro_baked.glb"]:
+			if FileAccess.file_exists(candidate):
+				map_to_load = candidate
+				break
 	if FileAccess.file_exists(map_to_load):
 		load_map(map_to_load)
 	else:

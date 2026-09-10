@@ -22,6 +22,7 @@ var _spin_tile_res: OptionButton
 var _spin_max_tex_size: OptionButton
 var _chk_export_billboards: CheckBox
 var _chk_export_colliders: CheckBox
+var _chk_cleanup_intermediate: CheckBox
 var _txt_path: LineEdit
 var _btn_browse: Button
 var _file_dialog: FileDialog
@@ -184,7 +185,7 @@ func _build_ui() -> void:
 
 	var hb_path := HBoxContainer.new()
 	_txt_path = LineEdit.new()
-	_txt_path.text = "res://exported_map.glb"
+	_txt_path.text = "res://exports/exported_map.glb"
 	_txt_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb_path.add_child(_txt_path)
 
@@ -194,6 +195,13 @@ func _build_ui() -> void:
 	hb_path.add_child(_btn_browse)
 	root_vb.add_child(hb_path)
 
+	_chk_cleanup_intermediate = CheckBox.new()
+	_chk_cleanup_intermediate.text = "Clean intermediate files (extracted .png textures)"
+	_chk_cleanup_intermediate.button_pressed = true
+	_chk_cleanup_intermediate.tooltip_text = "Removes any loose extracted .png textures to prevent project clutter. Uncheck to keep for debugging."
+	root_vb.add_child(_chk_cleanup_intermediate)
+
+	PBMapExporter.ensure_export_dir(_txt_path.text)
 	_lbl_status = Label.new()
 	_lbl_status.modulate = Color(0.2, 0.9, 1.0)
 	root_vb.add_child(_lbl_status)
@@ -312,8 +320,7 @@ func _on_confirmed() -> void:
 	settings.max_texture_size = _spin_max_tex_size.get_selected_id()
 	settings.export_billboards = _chk_export_billboards.button_pressed
 	settings.export_colliders = _chk_export_colliders.button_pressed
-
-	_cancel_token = PBMapExporter.CancellationToken.new()
+	settings.cleanup_intermediate_files = _chk_cleanup_intermediate.button_pressed
 	var progress_cb := func(pct: float, phase: String, detail: String):
 		_progress_bar.value = pct * 100.0
 		_lbl_progress_phase.text = phase

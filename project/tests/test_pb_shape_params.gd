@@ -186,3 +186,17 @@ func test_parameterized_shapes_open_the_placement_modal():
 			&"door", &"arch", &"sphere", &"torus"]:
 		assert_true(PBShapeParams.needs_params_modal(parameterized),
 			"%s opens the params modal (steps/sides/thickness/...)" % parameterized)
+
+func test_apply_drag_extents_door_extends_to_base_area():
+	var values := PBShapeParams.get_default_values(&"door")
+	# Base drag of 6.0m x 0.5m with short height of 1.5m
+	PBShapeParams.apply_drag_extents(values, 6.0, 0.5, 1.5)
+	assert_almost_eq(values["width"], 6.0, 0.0001, "Door width must extend to the full 6m base extent")
+	assert_almost_eq(values["depth"], 0.5, 0.0001, "Door depth must match 0.5m extent")
+	assert_almost_eq(values["height"], 1.5, 0.0001, "Door height must match 1.5m")
+	# With short height (dh=1.5), max_opening_w is 2.0m, so leg_width should extend to (6 - 2)/2 = 2.0m
+	assert_almost_eq(values["leg_width"], 2.0, 0.0001, "Frame legs extend so door side faces reach bounds")
+	# Now drag height taller to 4.0m
+	PBShapeParams.apply_drag_extents(values, 6.0, 0.5, 4.0)
+	assert_almost_eq(values["width"], 6.0, 0.0001, "Door width remains at full 6m base extent")
+	assert_almost_eq(values["leg_width"], 0.5, 0.0001, "When tall enough, leg width returns to default 0.5m")

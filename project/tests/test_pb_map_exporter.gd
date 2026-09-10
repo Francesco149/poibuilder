@@ -126,3 +126,48 @@ func test_export_map_to_glb_file() -> void:
 
 	# Clean up test file
 	DirAccess.remove_absolute(out_path)
+
+func test_ensure_export_dir_creates_gdignore() -> void:
+	var test_dir := "res://test_export_temp"
+	var test_path := test_dir.path_join("map.glb")
+	PBMapExporter.ensure_export_dir(test_path)
+	assert_true(DirAccess.dir_exists_absolute(test_dir), "Export dir must be created")
+	assert_true(FileAccess.file_exists(test_dir.path_join(".gdignore")), ".gdignore must exist to prevent auto-import")
+	# Cleanup
+	DirAccess.remove_absolute(test_dir.path_join(".gdignore"))
+	DirAccess.remove_absolute(test_dir)
+
+func test_cleanup_intermediate_files() -> void:
+	var test_dir := "user://test_cleanup_dir"
+	DirAccess.make_dir_recursive_absolute(test_dir)
+	var glb_path := test_dir.path_join("test_map.glb")
+	var f := FileAccess.open(glb_path, FileAccess.WRITE)
+	f.store_string("glb data")
+	f.close()
+
+	var loose_tex := test_dir.path_join("test_map_BakedTile_0_0_0_albedo.png")
+	f = FileAccess.open(loose_tex, FileAccess.WRITE)
+	f.store_string("png data")
+	f.close()
+
+	var loose_import := test_dir.path_join("test_map_BakedTile_0_0_0_albedo.png.import")
+	f = FileAccess.open(loose_import, FileAccess.WRITE)
+	f.store_string("import data")
+	f.close()
+
+	var unrelated := test_dir.path_join("unrelated_texture.png")
+	f = FileAccess.open(unrelated, FileAccess.WRITE)
+	f.store_string("keep me")
+	f.close()
+
+	var cleaned := PBMapExporter.cleanup_intermediate_files(glb_path)
+	assert_eq(cleaned, 2, "Must clean 2 intermediate files")
+	assert_false(FileAccess.file_exists(loose_tex), "Loose extracted texture must be removed")
+	assert_false(FileAccess.file_exists(loose_import), "Loose texture .import must be removed")
+	assert_true(FileAccess.file_exists(glb_path), "GLB file itself must be kept")
+	assert_true(FileAccess.file_exists(unrelated), "Unrelated file must be kept")
+
+	# Cleanup
+	DirAccess.remove_absolute(glb_path)
+	DirAccess.remove_absolute(unrelated)
+	DirAccess.remove_absolute(test_dir)

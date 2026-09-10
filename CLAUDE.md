@@ -775,6 +775,24 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exports dir & cleanup, & Ctrl direction lock:
+- DOOR BASE EXTENSION & FRAME EXPANSION (`PBShapeParams.apply_drag_extents`):
+  - Root cause of doors failing to fill dragged base area: `apply_drag_extents` previously clamped door `width` via `max_door_w = maxf(3.0, dh * 1.5)`. When height was small (e.g. 1.0m to 2.0m) or during initial BASE phase, dragging a wide base area (e.g. 6m or 10m) resulted in a door clamped to 3m that floated in the middle of the selected rectangle and only expanded once height exceeded `u_size / 1.5`.
+  - Implemented base bounds extension: `values["width"] = maxf(0.5, u_size)` ensures the door's total width and its side faces (parallel to the door facing direction, ±X) always span the exact bounds of the dragged base area.
+  - If the door opening is restricted by a short height (`values["width"] > max_opening_w + 1.0`), `values["leg_width"]` extends dynamically to `(values["width"] - max_opening_w) * 0.5`. This keeps the doorway arch cleanly proportioned with vertical jambs in the center while outer frame legs stretch to the bounds. As height increases, `leg_width` smoothly returns to the default 0.5m.
+- NON-AUTO-IMPORTED EXPORT DIRECTORY & INTERMEDIATE CLEANUP (`PBMapExporter`, `PBExportDialog`):
+  - Root cause of 400+ loose `exported_*_albedo.png` texture files flooding the project: Godot's built-in GLTF scene importer defaults to `embedded_image_handling = 1` (Extract Textures). When `.glb` files were exported directly into `res://` (or `test_scenes/`), Godot detected the new GLB and extracted all embedded PNG textures into the directory, creating individual `.png` and `.png.import` files.
+  - Changed default export path to `res://exports/exported_map.glb`.
+  - Added `PBMapExporter.ensure_export_dir(file_path)`: creates the destination directory and writes a `.gdignore` file inside it if under `res://`, preventing Godot's `EditorFileSystem` from scanning or auto-importing exported maps and unpacked textures.
+  - Added `PBMapExporter.cleanup_intermediate_files(file_path)`: deletes any loose extracted textures matching `<base_name>_*.png`, `<base_name>_*.png.import`, and related loose baked tile artifacts.
+  - Added `cleanup_intermediate_files: bool = true` in `ExportSettings` and checkbox in `PBExportDialog`. Can be disabled via setting or `POIBUILDER_KEEP_INTERMEDIATE=1` environment variable for debugging from scripts.
+  - Cleaned up loose extracted textures from demo map and test scenes; moved showcase GLBs to `res://exports/`.
+- CTRL DIRECTION LOCK DURING SHAPE CREATION (`PBShapeCreator`, `poibuilder_plugin.gd`):
+  - Added `var lock_direction: bool = false` in `PBShapeCreator`. When active, `_update_facing()` skips re-evaluating the dynamic facing heuristic and preserves the current `facing` vector.
+  - Wired modifier tracking into `_creation_input`: holding `Ctrl` (`event.ctrl_pressed` / `Input.is_key_pressed(KEY_CTRL)`) locks the direction to the current orientation, allowing base rectangles to be resized freely without unexpected 90° flips or reversed climbing directions.
+  - Updated creation hint overlay to display `(Ctrl: lock direction, Esc cancels)`.
+- Tests: 815/815 GUT unit tests passing (+5), 49/49 GUI harness tests passing (0 failures).
+
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):
   - Root cause of elements landing "in between two ticks": `pb_element_editor.gd` previously used incremental delta snapping (`grid.snap_local_delta`), which only quantized the relative displacement delta. If an element began with a fractional or off-grid position (e.g. door frame offset $x = -2.15\text{m}$ or curved stair step $x = -7.05\text{m}$), delta snapping permanently preserved the off-grid offset, moving in $+0.2\text{m}$ steps that never aligned with grid lines.

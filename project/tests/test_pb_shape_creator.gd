@@ -316,6 +316,34 @@ func test_facing_hysteresis_prevents_ping_pong_near_square():
 	assert_eq(creator.facing, initial_facing,
 		"Near-square dimension crossover does not ping-pong facing")
 
+
+func test_lock_direction_preserves_facing_during_drag():
+	var creator := _armed_creator(&"stair")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 3m along X, 1m along Z: stairs naturally face along X
+	creator.update_base(Vector3(3.0, 0, 1.0))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
+		"Initially stairs face along +X (longer)")
+	var locked_facing := creator.facing
+
+	# Lock direction (simulating holding Ctrl)
+	creator.lock_direction = true
+
+	# Now drag Z to 5.0m (longer than X=3.0m, which would normally flip facing to Z)
+	creator.update_base(Vector3(3.0, 0, 5.0))
+	assert_eq(creator.facing, locked_facing,
+		"Facing must stay strictly locked while lock_direction is true")
+
+	# Lateral nudge also ignored while locked
+	creator.update_base(Vector3(3.0, 0, 5.5))
+	assert_eq(creator.facing, locked_facing,
+		"Nudges are ignored while lock_direction is true")
+
+	# Unlock direction (simulating releasing Ctrl)
+	creator.lock_direction = false
+	creator.update_base(Vector3(3.0, 0, 6.0))
+	assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
+		"Facing updates naturally once lock_direction is released")
 func test_facing_locks_at_base_release():
 	var creator := _armed_creator()
 	_begin_base(creator, Vector3.ZERO)
@@ -513,6 +541,23 @@ func test_door_drag_maps_width_to_the_dominant_extent():
 	assert_almost_eq(aabb.size.y, 2.0, 0.001, "The placed door stands 2m tall")
 	assert_almost_eq(aabb.size.x, 2.5, 0.001, "The placed door spans the dominant drag")
 
+
+func test_door_extends_to_wide_base_even_when_not_tall():
+	var creator := _armed_creator(&"door")
+	_begin_base(creator, Vector3.ZERO)
+	# Drag 6.0m along X, 0.4m along Z
+	creator.update_base(Vector3(6.0, 0, 0.4))
+	creator.end_base()
+	assert_almost_eq(creator.values["width"], 6.0, 0.0001, "Width spans full 6m base")
+	# Short height of 1.5m
+	creator.update_height_point(Vector3(0, 1.5, 0))
+	assert_almost_eq(creator.values["height"], 1.5, 0.0001)
+	var data := creator.build_data()
+	var aabb := AABB(data.positions[0], Vector3.ZERO)
+	for p in data.positions:
+		aabb = aabb.expand(p)
+	assert_almost_eq(aabb.size.x, 6.0, 0.001, "Door mesh spans full 6m dragged area")
+	assert_almost_eq(aabb.size.y, 1.5, 0.001, "Door mesh height is 1.5m")
 func test_door_drag_mapping_is_drag_order_independent():
 	## The same footprint drawn in either direction must produce the same
 	## door (the old heuristic made creation nondeterministic).

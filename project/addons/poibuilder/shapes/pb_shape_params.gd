@@ -258,12 +258,18 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		values["depth"] = maxf(0.05, v_size)
 	if values.has("width"):
 		if values.has("opening_height"):
-			# Door: cap width to reasonable door proportions (at most 1.5x height)
+			# Door: extends to the selected base area bounds.
+			# When the door opening is smaller because it's not tall enough for the arc,
+			# the outer frame legs are extended so the side faces reach the bounds of the base area.
 			var dh: float = float(values["height"]) if (height_known and height > 0.0) else float(values.get("height", 2.5))
 			if height_known and height > 0.0:
 				values["opening_height"] = clampf(dh * 0.8, 0.5, dh - 0.2)
-			var max_door_w: float = maxf(3.0, dh * 1.5)
-			values["width"] = clampf(u_size, 0.5, max_door_w)
+			values["width"] = maxf(0.5, u_size)
+			var max_opening_w: float = maxf(2.0, dh * 1.5 - 1.0)
+			if values["width"] > max_opening_w + 1.0:
+				values["leg_width"] = (values["width"] - max_opening_w) * 0.5
+			else:
+				values["leg_width"] = clampf(0.5, 0.05, (values["width"] - 0.2) * 0.5)
 		else:
 			values["width"] = maxf(0.05, u_size)
 	if values.has("stair_width"):

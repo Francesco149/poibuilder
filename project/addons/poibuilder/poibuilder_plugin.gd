@@ -64,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.59"
+const VERSION := "0.9.60"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1292,7 +1292,7 @@ func _on_shape_requested(shape_id: StringName) -> void:
 		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
 			% String(shape_id).capitalize())
 	else:
-		_set_creation_hint("%s — drag a base on any surface (Esc cancels)" % String(shape_id).capitalize())
+		_set_creation_hint("%s — drag a base on any surface (Ctrl: lock direction, Esc cancels)" % String(shape_id).capitalize())
 	if logger:
 		logger.info("plugin", "Creating '%s' — drag on a surface to draw the base" % shape_id)
 
@@ -1303,6 +1303,9 @@ func _set_creation_hint(text: String) -> void:
 		tool_overlay.set_creation_hint(text)
 
 func _creation_input(camera: Camera3D, event: InputEvent) -> int:
+	if event is InputEventWithModifiers:
+		shape_creator.lock_direction = event.ctrl_pressed or Input.is_key_pressed(KEY_CTRL)
+
 	if event is InputEventMouseMotion:
 		_last_mouse_pos = event.position
 		_last_mouse_camera = camera

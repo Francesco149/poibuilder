@@ -10,7 +10,11 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR/project"
 
-MAP_ARG="${1:-res://test_scenes/showcase_retro_baked.glb}"
+DEFAULT_MAP="res://exports/showcase_retro_baked.glb"
+if [ ! -f "$REPO_DIR/project/exports/showcase_retro_baked.glb" ] && [ -f "$REPO_DIR/project/test_scenes/showcase_retro_baked.glb" ]; then
+    DEFAULT_MAP="res://test_scenes/showcase_retro_baked.glb"
+fi
+MAP_ARG="${1:-$DEFAULT_MAP}"
 
 echo "============================================================"
 echo " PoiBuilder Retro Map Viewer Launcher"
