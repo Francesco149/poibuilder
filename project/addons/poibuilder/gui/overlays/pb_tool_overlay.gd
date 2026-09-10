@@ -68,6 +68,7 @@ var _creation_label: Label
 var _extents_row: HBoxContainer
 var _extents_label: Label
 var _btn_edit_shape_props: Button
+var _current_param_defs: Dictionary = {}
 var _grid_section: VBoxContainer
 var _grid_step_label: Label
 var _grid_controls: Dictionary = {}
@@ -533,11 +534,13 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		child.queue_free()
 	_param_spinboxes.clear()
 	_param_checkboxes.clear()
+	_current_param_defs.clear()
 
 	for def in defs:
 		var caption := _make_row_label(str(def.get("label", def.get("name", "?"))))
 		_params_grid.add_child(caption)
 		var param_name := str(def.get("name", ""))
+		_current_param_defs[param_name] = def
 		if str(def.get("kind", "")) == PBShapeParams.KIND_BOOL:
 			var check := CheckBox.new()
 			check.name = "Param" + param_name
@@ -550,11 +553,17 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		var spin := SpinBox.new()
 		spin.name = "Param" + param_name
 		spin.custom_minimum_size = Vector2(64, 0)
-		spin.min_value = float(def.get("min", 0.01))
+		var p_min := float(def.get("min", 0.1))
+		var p_step := float(def.get("step", 0.1))
+		# Prevent Godot's Range::_calc_value from phase-shifting values by +min
+		if p_step > 0.0 and absf(fmod(p_min, p_step)) > 0.0001:
+			spin.min_value = 0.0
+		else:
+			spin.min_value = p_min
 		spin.max_value = float(def.get("max", 1000.0))
-		spin.step = float(def.get("step", 0.1))
+		spin.step = p_step
 		spin.suffix = str(def.get("suffix", ""))
-		spin.value = float(values.get(param_name, def.get("min", 0.01)))
+		spin.value = float(values.get(param_name, p_min))
 		spin.value_changed.connect(_on_param_value_changed.bind(param_name))
 		_params_grid.add_child(spin)
 		_param_spinboxes[param_name] = spin
@@ -603,7 +612,10 @@ func close_params() -> void:
 
 func _on_param_value_changed(value: float, param_name: String) -> void:
 	if params_open:
-		param_changed.emit(param_name, value)
+		var def: Dictionary = _current_param_defs.get(param_name, {})
+		var min_v: float = float(def.get("min", 0.1))
+		var clamped_v := maxf(min_v, value)
+		param_changed.emit(param_name, clamped_v)
 
 func _on_param_toggled(pressed: bool, param_name: String) -> void:
 	if params_open:

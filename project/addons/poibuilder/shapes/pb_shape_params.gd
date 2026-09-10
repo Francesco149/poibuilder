@@ -29,7 +29,7 @@ static func get_param_defs(shape_id: StringName) -> Array:
 		&"curved_stair":
 			return [
 				_value_def("stair_width", "Stair Width", 0.1, 50.0, 1.5, "m"),
-				_value_def("height", "Height", 0.05, 100.0, 2.0, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 2.0, "m"),
 				_value_def("inner_radius", "Inner Radius", 0.0, 50.0, 0.5, "m"),
 				_value_def("curvature", "Curvature", -360.0, 360.0, 180.0, "°"),
 				_count_def("steps", "Steps", 1, 64, 8),
@@ -39,8 +39,8 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			return _size_defs()
 		&"cylinder":
 			return [
-				_value_def("radius", "Radius", 0.05, 50.0, 0.5, "m"),
-				_value_def("height", "Height", 0.05, 100.0, 1.0, "m"),
+				_value_def("radius", "Radius", 0.1, 50.0, 0.5, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
 				_count_def("sides", "Sides", 3, 64, 8),
 			]
 		&"plane":
@@ -52,23 +52,23 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			return [
 				_value_def("width", "Width", 0.1, 100.0, 3.0, "m"),
 				_value_def("height", "Height", 0.1, 100.0, 2.5, "m"),
-				_value_def("depth", "Depth", 0.05, 50.0, 1.0, "m"),
+				_value_def("depth", "Depth", 0.1, 50.0, 1.0, "m"),
 				_value_def("opening_height", "Opening Height", 0.1, 100.0, 2.0, "m"),
-				_value_def("leg_width", "Frame Width", 0.05, 50.0, 0.5, "m"),
+				_value_def("leg_width", "Frame Width", 0.1, 50.0, 0.5, "m"),
 				_bool_def("arched", "Arched", true),
 				_count_def("arch_segments", "Arch Segments", 1, 32, 6),
 			]
 		&"pipe":
 			return [
-				_value_def("radius", "Radius", 0.05, 50.0, 0.5, "m"),
-				_value_def("height", "Height", 0.05, 100.0, 1.0, "m"),
+				_value_def("radius", "Radius", 0.1, 50.0, 0.5, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
 				_value_def("thickness", "Thickness", 0.01, 25.0, 0.125, "m"),
 				_count_def("sides", "Sides", 3, 64, 8),
 			]
 		&"cone":
 			return [
-				_value_def("radius", "Radius", 0.05, 50.0, 0.5, "m"),
-				_value_def("height", "Height", 0.05, 100.0, 1.0, "m"),
+				_value_def("radius", "Radius", 0.1, 50.0, 0.5, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
 				_count_def("sides", "Sides", 3, 64, 8),
 			]
 		&"sprite":
@@ -82,14 +82,14 @@ static func get_param_defs(shape_id: StringName) -> Array:
 		&"arch":
 			return [
 				_value_def("radius", "Radius", 0.1, 50.0, 1.0, "m"),
-				_value_def("depth", "Depth", 0.05, 50.0, 0.5, "m"),
+				_value_def("depth", "Depth", 0.1, 50.0, 0.5, "m"),
 				_value_def("thickness", "Thickness", 0.01, 25.0, 0.3, "m"),
 				_count_def("sides", "Sides", 3, 64, 8),
 				_value_def("sweep", "Sweep", 30.0, 360.0, 180.0, "°"),
 			]
 		&"sphere":
 			return [
-				_value_def("radius", "Radius", 0.05, 50.0, 0.5, "m"),
+				_value_def("radius", "Radius", 0.1, 50.0, 0.5, "m"),
 				_count_def("subdivisions", "Subdivisions", 1, 4, 2),
 			]
 		&"torus":
@@ -99,8 +99,8 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			]
 		&"ngon":
 			return [
-				_value_def("radius", "Radius", 0.05, 50.0, 1.0, "m"),
-				_value_def("height", "Height", 0.05, 100.0, 2.0, "m"),
+				_value_def("radius", "Radius", 0.1, 50.0, 1.0, "m"),
+				_value_def("height", "Height", 0.1, 100.0, 2.0, "m"),
 				_count_def("sides", "Sides", 3, 64, 6),
 			]
 	return []
@@ -217,11 +217,11 @@ static func facing_across_dominant(shape_id: StringName) -> bool:
 static func height_drag_param(shape_id: StringName) -> Dictionary:
 	match shape_id:
 		&"sphere":
-			return {"param": "radius", "rate": 0.5, "min": 0.05}
+			return {"param": "radius", "rate": 0.5, "min": 0.1}
 		&"torus":
 			return {"param": "tube_radius", "rate": 0.5, "min": 0.01}
 		&"arch":
-			return {"param": "radius", "rate": 1.0, "min": 0.05}
+			return {"param": "radius", "rate": 1.0, "min": 0.1}
 	return {}
 
 ## True when the shape must stay sitting ON the surface no matter which way
@@ -253,9 +253,9 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		height: float, base_values: Dictionary = {}) -> void:
 	var height_known := not is_nan(height)
 	if values.has("height") and height_known:
-		values["height"] = maxf(0.05, height)
+		values["height"] = maxf(0.1, height)
 	if values.has("depth"):
-		values["depth"] = maxf(0.05, v_size)
+		values["depth"] = maxf(0.1, v_size)
 	if values.has("width"):
 		if values.has("opening_height"):
 			# Door: extends to the selected base area bounds.
@@ -269,9 +269,9 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 			if values["width"] > max_opening_w + 1.0:
 				values["leg_width"] = (values["width"] - max_opening_w) * 0.5
 			else:
-				values["leg_width"] = clampf(0.5, 0.05, (values["width"] - 0.2) * 0.5)
+				values["leg_width"] = clampf(0.5, 0.1, (values["width"] - 0.2) * 0.5)
 		else:
-			values["width"] = maxf(0.05, u_size)
+			values["width"] = maxf(0.1, u_size)
 	if values.has("stair_width"):
 		var max_dim: float = maxf(u_size, v_size)
 		var in_r: float = float(values.get("inner_radius", 0.5))
@@ -286,7 +286,7 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 	if values.has("depth"):
 		footprint = u_size
 	if values.has("radius"):
-		values["radius"] = maxf(0.05, footprint * 0.5)
+		values["radius"] = maxf(0.1, footprint * 0.5)
 	elif values.has("outer_radius"):
 		values["outer_radius"] = maxf(0.1, footprint * 0.5)
 	if not values.has("height"):
@@ -318,9 +318,9 @@ static func _shape_id_of_values(values: Dictionary) -> StringName:
 
 static func _size_defs() -> Array:
 	return [
-		_value_def("width", "Width", 0.05, 100.0, 1.0, "m"),
-		_value_def("height", "Height", 0.05, 100.0, 1.0, "m"),
-		_value_def("depth", "Depth", 0.05, 100.0, 1.0, "m"),
+		_value_def("width", "Width", 0.1, 100.0, 1.0, "m"),
+		_value_def("height", "Height", 0.1, 100.0, 1.0, "m"),
+		_value_def("depth", "Depth", 0.1, 100.0, 1.0, "m"),
 	]
 
 static func _value_def(name: String, label: String, min_v: float, max_v: float,
@@ -342,8 +342,6 @@ static func _bool_def(name: String, label: String, default_v: bool) -> Dictionar
 ## Keeps SpinBox steps human (0.1 for ranges spanning <10, 0.5 below 100,
 ## 1.0 beyond).
 static func _step_for(span: float) -> float:
-	if span <= 10.0:
-		return 0.1
 	if span <= 100.0:
-		return 0.5
+		return 0.1
 	return 1.0

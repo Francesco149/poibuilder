@@ -818,6 +818,11 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
   - Implemented `PBMeshData.load_material_or_texture(path)`: loads `.tres` materials directly or wraps textures (`.png`, `.jpg`, `.webp`) in a `StandardMaterial3D` (`roughness = 0.8`, `vertex_color_use_as_albedo = true`, `texture_filter = LINEAR_WITH_MIPMAPS`).
   - `PBMeshData.get_default_material()` now reads `"poibuilder/materials/default_material_path"` from `EditorSettings` and loads the user's selected material or texture.
   - `PBMaterialDock` tracks texture paths via `mat.set_meta("source_texture_path", full_path)` and calls `PBMeshData.invalidate_default_material()` upon setting a new default. Newly placed shapes now automatically receive the user-chosen default material.
+- SHAPE CREATION GRID SNAP OVERSHOOT FIX (`PBShapeParams`, `PBToolOverlay`):
+  - Root cause of stairs (and other shapes) slightly overshooting the grid snap on creation on all sides: `PBShapeParams._size_defs()` and parameter definitions had `min_v = 0.05` with `_step_for()` returning `0.5` or `0.1`. In Godot C++ (`Range::_calc_value`), ranges with a non-zero `min` compute `p_val = _snapped(p_val - min, step) + min`. Because `min = 0.05` is not a multiple of `0.1` or `0.5`, every single dimension passed to the placement modal was phase-shifted by `+0.05m` (e.g. 5.00m became 5.05m, 4.00m became 4.05m, 3.50m became 3.55m). This caused the mesh to be oversized by +0.05m on height, +0.025m on top/bottom depth, and +0.025m on right/left width.
+  - Updated all spatial parameter minimums to `0.1m` and `_step_for(span)` to return `0.1m` for spans $\le 100\text{m}$.
+  - In `PBToolOverlay.open_params`: if `fmod(min, step) != 0`, sets `spin.min_value = 0.0` and clamps `value` in `_on_param_value_changed`, completely preventing Godot's `Range` from introducing any phase shift.
+  - Result: newly created stairs, boxes, and shapes land with 100% exact grid-aligned boundaries (zero overshoot).
 - Tests: 822/822 GUT unit tests passing (+12), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:

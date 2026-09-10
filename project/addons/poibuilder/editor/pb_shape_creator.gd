@@ -32,7 +32,7 @@ enum State { INACTIVE, ARMED, BASE, HEIGHT, OFFSET, PARAMS }
 const RAY_MISS := Vector3(INF, INF, INF)
 
 ## Minimum base extent so a stray click cannot create a degenerate shape.
-const MIN_EXTENT := 0.05
+const MIN_EXTENT := 0.1
 
 var state: State = State.INACTIVE
 

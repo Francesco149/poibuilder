@@ -363,7 +363,7 @@ func test_end_base_starts_flat_on_the_surface():
 	creator.update_base(Vector3(2, 0, 2))
 	assert_true(creator.end_base())
 	assert_almost_eq(creator.height, 0.0, 0.0001, "Release lands at height 0")
-	assert_almost_eq(creator.values["height"], 0.05, 0.0001,
+	assert_almost_eq(creator.values["height"], 0.1, 0.0001,
 		"The preview is a flat slab (min height), sitting ON the surface")
 	var data := creator.build_data()
 	var xf := creator.placement_transform(data)
