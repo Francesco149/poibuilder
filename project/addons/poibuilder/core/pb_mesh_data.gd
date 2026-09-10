@@ -643,15 +643,17 @@ static func get_default_material() -> Material:
 			_cached_default_material = load("res://addons/poibuilder/materials/pb_default_material.tres") as Material
 	return _cached_default_material
 
-## Returns the material assigned to a face, or null if unassigned.
+## Returns the material assigned to a face, falling back to materials[0] or default material.
 func get_face_material(face: PBFace) -> Material:
 	if face == null:
 		return null
 	var idx: int = face.submesh_index
-	if idx >= 0 and idx < materials.size():
+	if idx >= 0 and idx < materials.size() and materials[idx] != null:
 		return materials[idx]
-	return null
-
+	# Fallback matching to_array_mesh(): use slot 0 or default material
+	if not materials.is_empty() and materials[0] != null:
+		return materials[0]
+	return get_default_material()
 ## Assigns a material to a face. Allocates or reuses a submesh slot.
 func set_face_material(face: PBFace, mat: Material) -> void:
 	if face == null:

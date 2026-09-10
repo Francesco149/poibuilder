@@ -51,6 +51,27 @@ static var _brush_lut_cache: Dictionary = {}
 static var _brush_lut_bytes_cache: Dictionary = {}
 const BRUSH_LUT_SIZE := 1024
 
+## In-memory CPU mask and stamp image cache (keyed by mat.get_instance_id() and slot/name).
+## Eliminates storing uncompressed multi-megabyte Images in Resource metadata,
+## which caused .tscn text scenes to explode to 30+ MB.
+static var _cpu_image_cache: Dictionary = {}
+
+static func _get_cached_image(mat: ShaderMaterial, key: String) -> Image:
+	if mat == null:
+		return null
+	var id := mat.get_instance_id()
+	if _cpu_image_cache.has(id):
+		return _cpu_image_cache[id].get(key, null)
+	return null
+
+static func _set_cached_image(mat: ShaderMaterial, key: String, img: Image) -> void:
+	if mat == null or img == null:
+		return
+	var id := mat.get_instance_id()
+	if not _cpu_image_cache.has(id):
+		_cpu_image_cache[id] = {}
+	_cpu_image_cache[id][key] = img
+
 static func _get_brush_lut(softness: float) -> PackedFloat32Array:
 	var key := int(round(softness * 1000.0))
 	var lut: PackedFloat32Array = _brush_lut_cache.get(key, PackedFloat32Array())
@@ -223,9 +244,10 @@ static func add_layer(mat: ShaderMaterial, texture: Texture2D, color: Color = Co
 	mat.set_shader_parameter("layer_%d_color" % slot, color)
 	mat.set_shader_parameter("layer_%d_roughness" % slot, roughness)
 
-	# Store mask image in metadata for fast in-place painting without GPU readback
-	mat.set_meta("layer_%d_mask_image" % slot, mask_img)
-
+	# Store mask image in CPU memory cache (never serialize raw uncompressed Images to scene metadata)
+	_set_cached_image(mat, "layer_%d" % slot, mask_img)
+	if mat.has_meta("layer_%d_mask_image" % slot):
+		mat.remove_meta("layer_%d_mask_image" % slot)
 	return slot
 
 ## Ensures that a layer exists for `texture`. If already present, returns its index.
@@ -259,17 +281,20 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 	if mat == null or layer_idx < 1 or layer_idx > MAX_LAYERS:
 		return null
 
-	var meta_key := "layer_%d_mask_image" % layer_idx
-	var img: Image = null
+	var cache_key := "layer_%d" % layer_idx
+	var img := _get_cached_image(mat, cache_key)
 
-	if mat.has_meta(meta_key):
-		var meta_val = mat.get_meta(meta_key)
-		if meta_val is Image:
-			img = meta_val
-	elif mat.get_shader_parameter("layer_%d_mask" % layer_idx) is ImageTexture:
-		img = (mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture).get_image()
+	if img == null:
+		var meta_key := "layer_%d_mask_image" % layer_idx
+		if mat.has_meta(meta_key):
+			var meta_val = mat.get_meta(meta_key)
+			if meta_val is Image:
+				img = meta_val
+			mat.remove_meta(meta_key)
+		elif mat.get_shader_parameter("layer_%d_mask" % layer_idx) is ImageTexture:
+			img = (mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture).get_image()
 		if img != null:
-			mat.set_meta(meta_key, img)
+			_set_cached_image(mat, cache_key, img)
 
 	if img != null:
 		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
@@ -288,9 +313,8 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 	new_img.fill(Color(0, 0, 0, 1))
 	var new_tex := ImageTexture.create_from_image(new_img)
 	mat.set_shader_parameter("layer_%d_mask" % layer_idx, new_tex)
-	mat.set_meta(meta_key, new_img)
+	_set_cached_image(mat, cache_key, new_img)
 	return new_img
-
 # ==============================================================================
 # Dedicated Stamp Layer Management
 # ==============================================================================
@@ -306,15 +330,19 @@ static func get_stamp_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 	if mat == null:
 		return null
 
-	var img: Image = null
-	if mat.has_meta("stamp_layer_image"):
-		var meta_val = mat.get_meta("stamp_layer_image")
-		if meta_val is Image:
-			img = meta_val
-	elif mat.get_shader_parameter("stamp_layer_texture") is ImageTexture:
-		img = (mat.get_shader_parameter("stamp_layer_texture") as ImageTexture).get_image()
+	var cache_key := "stamp"
+	var img := _get_cached_image(mat, cache_key)
+
+	if img == null:
+		if mat.has_meta("stamp_layer_image"):
+			var meta_val = mat.get_meta("stamp_layer_image")
+			if meta_val is Image:
+				img = meta_val
+			mat.remove_meta("stamp_layer_image")
+		elif mat.get_shader_parameter("stamp_layer_texture") is ImageTexture:
+			img = (mat.get_shader_parameter("stamp_layer_texture") as ImageTexture).get_image()
 		if img != null:
-			mat.set_meta("stamp_layer_image", img)
+			_set_cached_image(mat, cache_key, img)
 
 	if img != null:
 		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
@@ -334,7 +362,7 @@ static func get_stamp_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 	var new_tex := ImageTexture.create_from_image(new_img)
 	mat.set_shader_parameter("stamp_layer_enabled", true)
 	mat.set_shader_parameter("stamp_layer_texture", new_tex)
-	mat.set_meta("stamp_layer_image", new_img)
+	_set_cached_image(mat, cache_key, new_img)
 	return new_img
 ## Clears the dedicated stamp layer to transparent on `mat`.
 static func clear_stamp_layer(mat: ShaderMaterial) -> void:
@@ -1014,8 +1042,7 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 				cloned_img.copy_from(src_img)
 				var cloned_tex := ImageTexture.create_from_image(cloned_img)
 				clone.set_shader_parameter("layer_%d_mask" % i, cloned_tex)
-				clone.set_meta("layer_%d_mask_image" % i, cloned_img)
-
+				_set_cached_image(clone, "layer_%d" % i, cloned_img)
 	# Clone dedicated stamp layer if enabled
 	if source.get_shader_parameter("stamp_layer_enabled") == true:
 		clone.set_shader_parameter("stamp_layer_enabled", true)
@@ -1025,6 +1052,5 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 			cloned_stamp_img.copy_from(src_stamp_img)
 			var cloned_stamp_tex := ImageTexture.create_from_image(cloned_stamp_img)
 			clone.set_shader_parameter("stamp_layer_texture", cloned_stamp_tex)
-			clone.set_meta("stamp_layer_image", cloned_stamp_img)
-
+			_set_cached_image(clone, "stamp", cloned_stamp_img)
 	return clone

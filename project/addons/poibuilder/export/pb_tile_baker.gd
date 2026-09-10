@@ -282,13 +282,14 @@ static func enforce_pot_texture(tex: Texture2D, max_size: int = 512) -> Texture2
 	return tex
 
 static func _get_or_create_base_material(src_mat: Material, cache: Dictionary, max_size: int = 512) -> StandardMaterial3D:
+	if src_mat == null:
+		src_mat = PBMeshData.get_default_material()
 	var cache_key = src_mat if src_mat != null else "null_default"
 	if cache.has(cache_key):
 		return cache[cache_key]
 
 	var out := StandardMaterial3D.new()
 	out.resource_name = src_mat.resource_name if src_mat != null else "BaseMaterial"
-	out.vertex_color_use_as_albedo = true
 	out.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 
 	if src_mat is StandardMaterial3D:

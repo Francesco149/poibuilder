@@ -775,6 +775,17 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.58 round complete ✓ — material fallback for unmapped submesh indices & in-memory splat mask cache:
+- UNMAPPED SUBMESH MATERIAL FALLBACK (`PBMeshData.get_face_material`, `PBTileBaker._get_or_create_base_material`):
+  - Root cause of untextured tiles on cut+extrude shapes: `get_face_material()` previously returned `null` whenever a face's `submesh_index` exceeded `materials.size()`, and `_get_or_create_base_material(null)` created a flat gray untextured material (`Color(0.8, 0.8, 0.8)`). In contrast, Godot editor's `to_array_mesh()` automatically fell back to `materials[0]` (or `get_default_material()`), causing a visual mismatch where textured faces in the editor exported as flat untextured gray caps.
+  - `get_face_material()` now mirrors `to_array_mesh()` by falling back to `materials[0]` and `get_default_material()` when a submesh slot is unassigned or out of bounds. `_get_or_create_base_material()` also defaults null source materials to `PBMeshData.get_default_material()`.
+  - Verified in `exported_map.glb`: cut+extrude cube front caps export fully textured with matching checkerboard tiles.
+- IN-MEMORY SPLAT MASK CACHE & SCENE FILE SIZE OPTIMIZATION (`pb_splat.gd`):
+  - Root cause of 32.35 MiB `.tscn` warning: `pb_splat.gd` previously saved uncompressed 2048x2048 `Image` instances into `ShaderMaterial` metadata (`set_meta("layer_%d_mask_image")`), which Godot serialized as plain text Base64 blobs duplicating the `ImageTexture` parameter data and bloating text scene files by 32+ MiB.
+  - Replaced metadata storage with `_cpu_image_cache` (in-memory Dictionary keyed by material instance ID): guarantees zero GPU readback during painting without writing megabytes of uncompressed binary text to disk on save. Automatically strips legacy metadata from loaded materials.
+  - Cleaned `/home/headpats/poibuilder-demo-map/playground.tscn` of duplicate metadata image blobs, cutting file size from 32.36 MB down to 16.36 MB.
+- Tests: 809/809 GUT unit tests passing, 49/49 GUI harness tests passing (0 failures).
+
 v0.9.57 round complete ✓ — collider inspection mode (wireframe), first-person play mode, ramp collider export & default 2-row toolbar:
 - COLLIDER INSPECTION MODE (`DisplayMode.COLLIDERS_ONLY` / Key 5, `test_scenes/retro_map_viewer.gd`):
   - Added Mode 5 to standalone map viewer for verifying collider correctness in exported maps.
