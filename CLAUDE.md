@@ -789,6 +789,101 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.64 round complete ✓ — scrolling textures end to end (PBM 3.0), soft
+alpha through the whole pipeline, and the plane reshaped into a
+surface-decoration tool:
+- PBM 3.0 (BREAKING, version + magic bumped, v1/v2 still load): the mesh
+  header grew 64 -> 72 bytes with `uv_scroll_u` / `uv_scroll_v`, and the
+  texture header's `has_alpha` became a three-valued `alpha_mode`
+  (NONE/CUTOUT/BLEND). The failure that forced the bump is worth remembering:
+  the SPEC documented a 72-byte mesh header with `float reserved[2]` while
+  every writer and the loader used 64, and both sides had "passed" for
+  releases. Now the doc and the code agree, and the loader sizes the header
+  from the file version (v<3 reads 64 bytes and leaves the meshes static).
+- SCROLL SEMANTICS: `uv_scroll_u/v` are the VELOCITY OF THE PATTERN across the
+  surface, in texture repeats per second, along the surface's own UV axes
+  (V up on a wall, +Z on a floor) — so falling water is NEGATIVE V and churn
+  spreading away from the wall is POSITIVE V. GET THE SIGN WRONG AND IT IS
+  INVISIBLE IN A STATIC FRAME: the first demo shipped with the water climbing
+  the wall. The GE's `sceGuTexOffset` is documented as an offset ADDED to the
+  texture coordinate, and MEASURED on hardware an increasing offset moves the
+  pattern toward +V — i.e. the doc's reading is backwards for this purpose.
+  The file keeps the pattern-velocity meaning; the renderer writes the offset
+  and the sign relation is recorded in `apply_uv_scroll` and §5.1 of the spec.
+  Measurement recipe (also in run_psp_headless.sh + the spec): the benchmark
+  now freezes its orbit at frame 60 and captures AGAIN 20 frames later, so two
+  frames of the same camera isolate the animation; correlate the scrolling
+  mesh's pixels (the correlation returns dy = -motion; validate with a
+  synthetic shift before trusting it — this was got wrong once too). PPSSPP's
+  frame captures are NOT pixel-stable between different frame indices, so a
+  same-frame A/B against a map with zeroed scroll speeds is the artifact-free
+  control.
+- GE STATE LEAKS ACROSS FRAMES: a display list does not reset registers, so a
+  texture offset left by the previous frame's last animated mesh is still live
+  when the next frame starts. The per-frame offset cache therefore starts
+  INVALID (-1) and always emits on the first mesh; starting it at 0,0 painted
+  the whole static scene through the stale offset.
+- SOFT ALPHA (the "wetness" feature): `alpha_mode = BLEND` textures travel as
+  RGBA8888 (5551 has ONE alpha bit — it can cut a texel out, not fade it),
+  keep their mip chain (averaged alpha is exactly what a blended surface
+  wants), and draw with a zero alpha-test threshold so early-Z still works.
+  CUTOUT keeps the old behaviour byte for byte (alpha-tested, NO mip chain:
+  box-filtering a 1-bit alpha erodes the silhouette). The loader builds an
+  UNSWIZZLED mip chain for 32-bit textures (the 16-bit swizzle layout does not
+  apply; the GE takes a base/size register per level either way).
+  Godot's transparency drives it: Alpha -> BLEND, Alpha Scissor/Hash ->
+  CUTOUT; in glTF it is `alphaMode` (BLEND/MASK/absent), which is also how the
+  GLB converters read it. `_get_or_create_base_material` now carries
+  transparency across its copy (it used to silently drop it), and PBTileBaker
+  refuses to bake a scrolling or non-opaque face (a baked tile is an opaque
+  5551 crop and cannot express either).
+- ONE AUTHORING KNOB, THREE CONSUMERS: the speed lives on the MATERIAL
+  (Material & UV dock → Scrolling Texture: Speed U/V + Apply/Clear), because
+  that is the unit the exporters split meshes by; applying it duplicates a
+  shared material rather than animating faces the user did not select. From
+  there the same value reaches (a) `_write_pbm_from_tree` (native .pbm),
+  (b) the GLB material `extras` as `{"poi_uv_scroll": [u, v]}` for
+  pbm_conv.py and PBPbmConverter.gd, and (c) the retro viewer, which replays
+  the animation with `uv1_offset` so the Godot preview matches the device.
+  Converters bucket meshes by (texture, scroll) — two materials sharing one
+  texture but scrolling at different speeds must not merge, or one animation
+  is lost — and neither atlases a scrolling or blended texture.
+- THE PLANE IS NOW THE SURFACE-DECORATION SHAPE (it was janky: a flat grid
+  you sized by dragging a height that meant nothing, while sprites covered
+  billboards). It drags its base rect out PARALLEL to the surface like every
+  other shape, then the mouse offsets it ALONG THE SURFACE NORMAL (clamped
+  >= 0) and the click confirms — the same OFFSET stage the sprite introduced,
+  reached by a drag instead of a click. Size comes from the base rect alone,
+  which is what makes it the natural host for a scrolling sheet hanging in
+  front of a wall. GUI harness covers it: "PLANE: offset 2.40m leaves the
+  1.60x2.20m sheet unchanged" + "created 1.90 m above the surface".
+- THE VIEWER'S ARGS NEVER WORKED: `OS.get_cmdline_args()` excludes everything
+  after a bare `--` (that is `get_cmdline_user_args()`), so `--screenshot=`,
+  `--map=`, `--cam_pos=`, `--mode=` were silently ignored — every documented
+  invocation. It parses both lists now. The animation itself was dead too:
+  `uv1_offset` is a Vector3 and the code subtracted a Vector2 from it, so the
+  script errored on every frame and the waterfall never moved. Both fixed;
+  `--scroll_time=<s>` pins the animation to a fixed scene time for
+  deterministic A/B captures.
+- TEXTURES: the water art was regenerated (gen_water_textures.py) after the
+  first pass read as "a bunch of dots". It is now layered torrents in the
+  spirit of cosmic2d's waterwall: long ropes with real gaps where the wall
+  shows through, per-rope variation along the length, off-centre highlight
+  patches, and foam heads on the fast inner layer. Objective check while
+  authoring: `_shift_diff` measures how much the image changes for a given
+  scroll step — a vertically uniform rope scores ~0 and reads as frozen no
+  matter how correct the animation is, which is exactly how one version of
+  this sheet shipped.
+- DEMO: the courtyard waterfall is 6 scrolling surfaces (sheet + faster core,
+  ripple pool, foam ribbon, spray billboard, on a wall panel), all authored
+  through the ordinary material workflow. Pool/foam/spray hug the impact point
+  (the first pass left a visible dry gap under the fall). Device numbers:
+  59.9 fps locked, cpu 0.72 / gpu 0.01 ms in the emulator benchmark, 4578
+  verts, 26 draws.
+- Tests: 828/828 GUT (the PBM parity test now pins the alpha modes, the
+  format-aware texture sizes, the scroll directions and the never-atlas rule),
+  GUI harness green including the new plane flow.
+
 v0.9.63 round complete ✓ — PSP frame cost found and fixed on REAL HARDWARE
 (not the emulator), plus the live-hardware debugging harness:
 - WHY THE EMULATOR COULD NOT FIND IT: PPSSPP rasterises on the host GPU with a
