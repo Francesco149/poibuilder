@@ -605,3 +605,17 @@ func test_creator_show_height_plane_toggle():
 	assert_true(c.show_height_plane)
 	c.reset()
 	assert_false(c.show_height_plane, "Resetting creator turns off height plane")
+
+func test_creator_cursor_extents_text_xyz():
+	var c := _armed_creator(&"cube")
+	assert_eq(c.get_cursor_extents_text(), "", "Armed state has empty cursor text")
+
+	# BASE phase: shows dimensions of base box as (X, Y, 0.00)
+	_begin_base(c, Vector3.ZERO)
+	c.update_base(Vector3(4.0, 0.0, 2.5))
+	assert_eq(c.get_cursor_extents_text(), "(4.00, 2.50, 0.00)", "Base phase shows (X, Y, 0.00)")
+
+	# HEIGHT phase: shows (X, Y, Z) with live height as Z
+	c.end_base()
+	c.update_height_point(Vector3(0.0, 1.8, 0.0))
+	assert_eq(c.get_cursor_extents_text(), "(4.00, 2.50, 1.80)", "Height phase shows (X, Y, Z)")

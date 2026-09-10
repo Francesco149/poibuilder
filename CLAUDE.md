@@ -809,10 +809,11 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
 - ALT CREATION HEIGHT PLANE (`PBShapeCreator`, `PBGizmoPlugin`, `poibuilder_plugin.gd`):
   - Added `show_height_plane` flag on `PBShapeCreator`, toggled by holding `Alt` during `State.HEIGHT`.
   - `PBGizmoPlugin._draw_creation_preview` renders a 4000m x 4000m double-sided unshaded white plane at 0.25 opacity (`Color(1.0, 1.0, 1.0, 0.25)`) with depth test enabled at the shape's live height elevation, slicing through nearby scene geometry to make alignment immediately visible.
-- LIVE SHAPE EXTENTS IN OVERLAY PANEL (`PBShapeCreator.get_extents_readout`, `PBToolOverlay`):
-  - Added `_extents_row` and `_extents_label` in `PBToolOverlay` below the creation guidance row.
-  - Displays live dimensions as shapes are drawn: width and depth in BASE (`W: 4.00m  D: 2.00m`), width, depth, and height in HEIGHT (`W: 4.00m  D: 2.00m  H: 2.50m`), radius and height for round shapes (`Radius: 1.00m  Height: 2.00m`), and offset for sprites (`Offset: 1.20m`). Cleared upon confirmation or abort.
-- Tests: 820/820 GUT unit tests passing (+10), 50/50 GUI harness tests passing (0 failures).
+- LIVE CURSOR EXTENTS OVERLAY (`PBShapeCreator.get_cursor_extents_text`, `poibuilder_plugin.gd`):
+  - Added live `(x, y, z)` text overlay displayed directly next to the mouse cursor during shape placement in bold white text with a thick 8px black outline.
+  - Shows base box dimensions during BASE state as `(X, Y, 0.00)` and updates live during HEIGHT state to `(X, Y, Z)` with height as the Z component, rounded to 2 decimal places.
+  - Automatically positions next to the cursor, clamps to viewport boundaries, and clears upon shape confirmation or abort. Also mirrors into `_extents_row` in `PBToolOverlay`.
+- Tests: 821/821 GUT unit tests passing (+11), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):

@@ -443,6 +443,19 @@ func get_extents_readout() -> String:
 			return "Offset: %.2fm" % height
 		_:
 			return ""
+
+## Returns the live (x, y, z) extents text displayed next to the cursor during placement.
+## x and y are the base box dimensions drawn, and z is the height (0.00 during BASE).
+func get_cursor_extents_text() -> String:
+	match state:
+		State.BASE:
+			return "(%.2f, %.2f, 0.00)" % [u_size, v_size]
+		State.HEIGHT:
+			return "(%.2f, %.2f, %.2f)" % [u_size, v_size, absf(height)]
+		State.OFFSET:
+			return "(0.00, 0.00, %.2f)" % absf(height)
+		_:
+			return ""
 ## parameters (width, depth, height, radius). One mapping fits every surface:
 ## local Y along the face normal, local +Z along facing (depth), and local +X
 ## perpendicular (width).

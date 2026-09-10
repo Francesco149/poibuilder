@@ -39,7 +39,7 @@ var material_dock: PBMaterialDock = null
 var material_drop_overlay: PBMaterialDropOverlay = null
 var paint_controller: PBPaintController = PBPaintController.new()
 var _export_dialog: PBExportDialog = null
-
+var _cursor_extents_label: Label = null
 ## Hover id already reflected in the last gizmo redraw (avoids redundant
 ## update_gizmos calls on every motion event).
 var _hover_drawn_last: int = -1
@@ -173,6 +173,17 @@ func _enter_tree():
 	_load_display_settings()
 	_add_overlay_to_3d_viewport(tool_overlay)
 
+	# Live (x, y, z) cursor extents label next to mouse during shape creation
+	_cursor_extents_label = Label.new()
+	_cursor_extents_label.name = "PoiBuilderCursorExtents"
+	_cursor_extents_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cursor_extents_label.add_theme_color_override("font_color", Color.WHITE)
+	_cursor_extents_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_cursor_extents_label.add_theme_constant_override("outline_size", 8)
+	_cursor_extents_label.add_theme_font_size_override("font_size", 14)
+	_cursor_extents_label.visible = false
+	_cursor_extents_label.z_index = 100
+	_add_overlay_to_3d_viewport(_cursor_extents_label)
 	# Material drag-and-drop overlay in the 3D viewport
 	material_drop_overlay = PBMaterialDropOverlay.new()
 	material_drop_overlay.plugin = self
@@ -282,6 +293,11 @@ func _exit_tree():
 		if is_instance_valid(material_drop_overlay):
 			material_drop_overlay.queue_free()
 		material_drop_overlay = null
+	if _cursor_extents_label != null:
+		if is_instance_valid(_cursor_extents_label) and _cursor_extents_label.get_parent() != null:
+			_cursor_extents_label.get_parent().remove_child(_cursor_extents_label)
+			_cursor_extents_label.queue_free()
+		_cursor_extents_label = null
 	if paint_controller != null:
 		paint_controller.cleanup_previews()
 
@@ -1528,6 +1544,7 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 			if hit != PBShapeCreator.RAY_MISS:
 				shape_creator.update_base(hit)
 				_refresh_preview()
+				_update_cursor_extents(screen_pos)
 			# No hover highlight while the base drag is out — the cursor is
 			# busy drawing the rect, not picking a face.
 		PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
@@ -1535,6 +1552,7 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
 			shape_creator.update_height_point(ref)
 			_refresh_preview()
+			_update_cursor_extents(screen_pos)
 			_clear_creation_hover()
 		PBShapeCreator.State.PARAMS:
 			_clear_creation_hover()
@@ -1679,7 +1697,10 @@ func _creation_confirm() -> void:
 	_set_creation_hint("")
 	if tool_overlay != null:
 		tool_overlay.set_creation_extents("")
+	if _cursor_extents_label != null:
+		_cursor_extents_label.visible = false
 	shape_creator.show_height_plane = false
+
 	# Select the created node immediately so the editor recognises it as active
 	# and doesn't treat initial placement as a deselect event
 	var editor_selection := get_editor_interface().get_selection()
@@ -1723,6 +1744,8 @@ func _creation_abort(reason: String) -> void:
 	_set_creation_hint("")
 	if tool_overlay != null:
 		tool_overlay.set_creation_extents("")
+	if _cursor_extents_label != null:
+		_cursor_extents_label.visible = false
 	shape_creator.show_height_plane = false
 	_update_editing_context()
 	if logger:
@@ -1737,6 +1760,8 @@ func _finish_creation_session(node: PBMesh) -> void:
 	_set_creation_hint("")
 	if tool_overlay != null:
 		tool_overlay.set_creation_extents("")
+	if _cursor_extents_label != null:
+		_cursor_extents_label.visible = false
 	shape_creator.show_height_plane = false
 	tool_overlay.close_params()
 	_params_session_kind = ""
@@ -1745,12 +1770,50 @@ func _finish_creation_session(node: PBMesh) -> void:
 		# re-attach before selecting so add_node sees a live tree node.
 		if not node.is_inside_tree():
 			_attach_detached(node, get_editor_interface().get_edited_scene_root())
-		var editor_selection := get_editor_interface().get_selection()
-		editor_selection.clear()
-		editor_selection.add_node(node)
-		editor.restore_element_mode()
-	_update_editing_context()
 
+func _update_cursor_extents(screen_pos: Vector2) -> void:
+	if _cursor_extents_label == null:
+		return
+	if shape_creator == null or not (shape_creator.state == PBShapeCreator.State.BASE or shape_creator.state == PBShapeCreator.State.HEIGHT or shape_creator.state == PBShapeCreator.State.OFFSET):
+		_cursor_extents_label.visible = false
+		return
+
+	var text := shape_creator.get_cursor_extents_text()
+	if text.is_empty():
+		_cursor_extents_label.visible = false
+		return
+
+	_cursor_extents_label.text = text
+	_cursor_extents_label.visible = true
+
+	var pos := screen_pos + Vector2(18, 18)
+	var parent_ctrl := _cursor_extents_label.get_parent_control()
+	if parent_ctrl != null:
+		var vp_size := parent_ctrl.size
+		var lbl_size := _cursor_extents_label.get_minimum_size()
+		if pos.x + lbl_size.x > vp_size.x - 10:
+			pos.x = maxf(10.0, screen_pos.x - lbl_size.x - 10)
+		if pos.y + lbl_size.y > vp_size.y - 10:
+			pos.y = maxf(10.0, screen_pos.y - lbl_size.y - 10)
+	_cursor_extents_label.position = pos
+
+func _forward_3d_draw_over_viewport(viewport_control: Control) -> void:
+	if _cursor_extents_label != null and _cursor_extents_label.is_inside_tree() and _cursor_extents_label.visible:
+		return
+	if shape_creator == null or not (shape_creator.state == PBShapeCreator.State.BASE or shape_creator.state == PBShapeCreator.State.HEIGHT or shape_creator.state == PBShapeCreator.State.OFFSET):
+		return
+	var text := shape_creator.get_cursor_extents_text()
+	if text.is_empty():
+		return
+	var font := viewport_control.get_theme_default_font()
+	if font == null:
+		font = ThemeDB.fallback_font
+	var font_size := 14
+	var outline_size := 8
+	var ascent := font.get_ascent(font_size) if font != null else 12.0
+	var pos := _last_mouse_pos + Vector2(18, 18 + ascent)
+	viewport_control.draw_string_outline(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, outline_size, Color.BLACK)
+	viewport_control.draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.WHITE)
 func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
 	var base := "Shape_%s" % String(shape_id).capitalize().replace(" ", "")
 	if scene_root.get_node_or_null(NodePath(base)) == null:
