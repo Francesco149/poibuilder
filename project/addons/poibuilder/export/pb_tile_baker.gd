@@ -43,6 +43,19 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 			result.tile_materials[frag] = base_mat
 		return result
 
+	# A scrolling face keeps its base material and standalone texture: the
+	# animation moves the texture coordinates, and a baked tile lives at fixed
+	# slot coordinates inside an atlas, where an offset would drag it across
+	# the slot border. It also means the moving texture cannot carry paint.
+	#
+	# A non-opaque face (cutout or blended) keeps its base material for the same
+	# structural reason: a baked tile is an opaque 5551 crop of the composite,
+	# which cannot express either a cutout silhouette or a soft alpha.
+	if PBUv.has_scroll(src_mat) or _is_non_opaque(src_mat):
+		for frag in fragments:
+			result.tile_materials[frag] = base_mat
+		return result
+
 	# Collect paint and stamp state for this face
 	var paint_state := PBSplat.collect_face_paint_state(mesh_data, face)
 	var all_stamps := PBSplat.collect_stamp_data(mesh_node)
@@ -297,6 +310,10 @@ static func _get_or_create_base_material(src_mat: Material, cache: Dictionary, m
 		out.albedo_color = sm.albedo_color
 		out.albedo_texture = sm.albedo_texture
 		out.roughness = sm.roughness
+		# The transparency mode is what the retro exporters map to a texture's
+		# alpha handling (cutout vs soft blend), so it has to survive this copy.
+		out.transparency = sm.transparency
+		out.alpha_scissor_threshold = sm.alpha_scissor_threshold
 	elif src_mat is ShaderMaterial:
 		var sh := src_mat as ShaderMaterial
 		var col = sh.get_shader_parameter("base_color")
@@ -312,8 +329,21 @@ static func _get_or_create_base_material(src_mat: Material, cache: Dictionary, m
 	if out.albedo_texture != null:
 		out.albedo_texture = enforce_pot_texture(out.albedo_texture, max_size)
 
+	# Carry the animated-UV scroll across the copy: it is what the retro
+	# exporters read to emit the per-mesh scroll speed, and what the glTF
+	# writer serializes into the material's `extras` for the GLB pipeline.
+	var scroll := PBUv.get_scroll_speed(src_mat)
+	if scroll != Vector2.ZERO:
+		PBUv.set_scroll_speed(out, scroll)
+
 	cache[cache_key] = out
 	return out
+## True when the material draws with transparency — a baked tile is opaque.
+static func _is_non_opaque(mat: Material) -> bool:
+	if mat is StandardMaterial3D:
+		return (mat as StandardMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
+	return false
+
 static func _extract_base_image(src_mat: Material, paint_state: Dictionary) -> Image:
 	var tex: Texture2D = null
 	var path: String = paint_state.get("base_texture_path", "")

@@ -5,11 +5,17 @@ extends RefCounted
 ## PBPbmConverter — Ports the PoiRetro PBMv2 Map Converter with Tile Atlasing to GDScript.
 ## Converts PoiBuilder exported GLB maps to PBM (PoiBuilder Retro Map) v2.0 binary format.
 
-const PBM_MAGIC := 0x324D4250 # "PBM2"
-const PBM_VERSION := 2
+const PBM_MAGIC := 0x334D4250 # "PBM3"
+const PBM_VERSION := 3
 
 const PBM_TEX_FMT_RGBA8888 := 0
 const PBM_TEX_FMT_RGBA5551 := 1
+
+## Alpha handling stored per texture (PBM v3). 5551 carries ONE alpha bit, so a
+## soft (partial) alpha has to travel as RGBA8888.
+const PBM_ALPHA_NONE := 0
+const PBM_ALPHA_CUTOUT := 1
+const PBM_ALPHA_BLEND := 2
 const PBM_TEX_FMT_RGBA4444 := 2
 const PBM_TEX_FMT_RGB565   := 3
 
@@ -212,6 +218,42 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	var raw_images: Array = gltf.get("images", [])
 	var buffer_views: Array = gltf.get("bufferViews", [])
 
+	# Animated UV scroll (PBM 2.1). PoiBuilder stores the speed in the material
+	# metadata; Godot's glTF writer serializes it verbatim into the material's
+	# `extras` as {"poi_uv_scroll": [u, v]} — texture repeats per second, 0,0 =
+	# static. Two consequences, both handled here: meshes must be bucketed per
+	# speed as well as per texture, and a scrolling texture must never be packed
+	# into a shared atlas (an offset would drag the tile across its slot edge).
+	var materials_gltf: Array = gltf.get("materials", [])
+	var textures_gltf: Array = gltf.get("textures", [])
+	var material_scroll: Dictionary = {} # glTF material index -> Vector2
+	var material_alpha: Dictionary = {} # glTF material index -> PBM_ALPHA_*
+	var atlas_exempt_images: Dictionary = {} # raw image index -> true
+	for mat_idx in range(materials_gltf.size()):
+		var mat: Dictionary = materials_gltf[mat_idx]
+		# How a surface blends travels in the glTF alphaMode: BLEND is a soft
+		# alpha (needs 8 bits per channel, so it can never share a 5551 atlas),
+		# MASK a hard-edged cutout.
+		var gltf_alpha := String(mat.get("alphaMode", "OPAQUE"))
+		match gltf_alpha:
+			"BLEND": material_alpha[mat_idx] = PBM_ALPHA_BLEND
+			"MASK": material_alpha[mat_idx] = PBM_ALPHA_CUTOUT
+			_: material_alpha[mat_idx] = PBM_ALPHA_NONE
+
+		var bct: Dictionary = mat.get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+		var t_idx: int = bct.get("index", -1)
+		var src_img := -1
+		if t_idx >= 0 and t_idx < textures_gltf.size():
+			src_img = int(textures_gltf[t_idx].get("source", -1))
+
+		var speed := PBUv.scroll_from_extras(mat.get("extras", {}))
+		if speed != Vector2.ZERO:
+			material_scroll[mat_idx] = speed
+			if src_img >= 0:
+				atlas_exempt_images[src_img] = true
+		if gltf_alpha == "BLEND" and src_img >= 0:
+			atlas_exempt_images[src_img] = true
+
 	# 1. Separate Base Textures from 128x128 Baked Tiles
 	var base_images: Array[Dictionary] = []
 	var tile_images: Array[Dictionary] = []
@@ -241,7 +283,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			continue
 
 		var name_str: String = img_info.get("name", "img_%d" % img_idx)
-		if (img.get_width() == 128 and img.get_height() == 128) or name_str.contains("BakedTile"):
+		if not atlas_exempt_images.has(img_idx) and ((img.get_width() == 128 and img.get_height() == 128) or name_str.contains("BakedTile")):
 			tile_images.append({ "index": img_idx, "name": name_str, "image": img })
 		else:
 			base_images.append({ "index": img_idx, "name": name_str, "image": img })
@@ -281,8 +323,6 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		tile_to_atlas_map[uid] = { "atlas_idx": atlas_idx, "col": col, "row": row }
 	# Collect baseColorFactor from materials for any tinted base textures
 	var img_base_colors: Dictionary = {}
-	var materials_gltf: Array = gltf.get("materials", [])
-	var textures_gltf: Array = gltf.get("textures", [])
 	for mat in materials_gltf:
 		var pbr: Dictionary = mat.get("pbrMetallicRoughness", {})
 		var col: Array = pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])
@@ -315,13 +355,25 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 					var p_col: Color = img.get_pixel(px, py)
 					img.set_pixel(px, py, Color(p_col.r * bcol.r, p_col.g * bcol.g, p_col.b * bcol.b, p_col.a))
 
-		var converted := convert_image_to_bytes(img, format_16bit)
+		# The image's alpha mode is the strongest any material using it needs.
+		var mode := PBM_ALPHA_NONE
+		for mat_idx in material_alpha:
+			var bct: Dictionary = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+			var t_idx: int = bct.get("index", -1)
+			if t_idx >= 0 and t_idx < textures_gltf.size() and int(textures_gltf[t_idx].get("source", -1)) == int(base["index"]):
+				mode = maxi(mode, int(material_alpha[mat_idx]))
+		# Soft alpha needs the 8 bits per channel that 5551 cannot carry.
+		var converted := convert_image_to_bytes(img, format_16bit and mode != PBM_ALPHA_BLEND)
+		if mode == PBM_ALPHA_NONE and int(converted["has_alpha"]) != 0:
+			# Opaque material, transparent art: the pixels still need the alpha
+			# pass, as a cutout.
+			mode = PBM_ALPHA_CUTOUT
 		var tex_id := textures.size()
 		textures.append({
 			"name": base["name"].substr(0, 31),
 			"width": w, "height": h,
 			"format": converted["format"],
-			"has_alpha": converted["has_alpha"],
+			"alpha_mode": mode,
 			"data": converted["data"]
 		})
 		img_to_tex_mapping[base["index"]] = { "tex_id": tex_id, "is_atlas": false, "col": 0, "row": 0 }
@@ -334,7 +386,8 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			"name": "TileAtlas_%d" % a_idx,
 			"width": 512, "height": 512,
 			"format": converted["format"],
-			"has_alpha": converted["has_alpha"],
+			# Baked tiles are 5551, so their alpha can only cut a texel out.
+			"alpha_mode": PBM_ALPHA_CUTOUT if int(converted["has_alpha"]) != 0 else PBM_ALPHA_NONE,
 			"data": converted["data"]
 		})
 	for tile in tile_images:
@@ -365,10 +418,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	var nodes: Array = gltf.get("nodes", [])
 	var meshes_gltf: Array = gltf.get("meshes", [])
 
-	var mesh_buckets: Dictionary = {} # tex_id -> Array[Dictionary]
-	for t_idx in range(textures.size()):
-		mesh_buckets[t_idx] = []
-	mesh_buckets[-1] = []
+	var mesh_buckets: Dictionary = {} # "tex|su|sv" -> {tex_id, scroll, verts}
 
 	var all_colliders: Array[Dictionary] = []
 	var bounds_min := Vector3(INF, INF, INF)
@@ -418,6 +468,16 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 				var is_atlas: bool = mapping.get("is_atlas", false)
 				var col_slot: int = mapping.get("col", 0)
 				var row_slot: int = mapping.get("row", 0)
+				var scroll: Vector2 = material_scroll.get(mat_idx, Vector2.ZERO)
+
+				# Bucket key: the scroll speed is a per-mesh property of the
+				# file, so two materials sharing one texture but scrolling at
+				# different speeds must not merge into one mesh — one of the two
+				# animations would be lost.
+				var bucket: String = "%d|%f|%f" % [tex_id, scroll.x, scroll.y]
+				if not mesh_buckets.has(bucket):
+					mesh_buckets[bucket] = { "tex_id": tex_id, "scroll": scroll, "verts": [] as Array[Dictionary] }
+				var bucket_verts: Array = mesh_buckets[bucket]["verts"]
 
 				for idx in idx_list:
 					var p: Vector3 = positions[idx]
@@ -453,7 +513,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 					var a_b := int(clampf(c.a, 0.0, 1.0) * 255.0)
 					var c_int := r_b | (g_b << 8) | (b_b << 16) | (a_b << 24)
 
-					mesh_buckets[tex_id].append({
+					bucket_verts.append({
 						"u": u_val, "v": v_val,
 						"color": c_int,
 						"x": wp.x, "y": wp.y, "z": wp.z
@@ -461,8 +521,11 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 
 	# 7. Group into spatial chunks of <= 384 vertices (128 triangles)
 	var all_meshes: Array[Dictionary] = []
-	for tex_id in mesh_buckets:
-		var vlist: Array = mesh_buckets[tex_id]
+	for key in mesh_buckets:
+		var bucket: Dictionary = mesh_buckets[key]
+		var tex_id: int = bucket["tex_id"]
+		var scroll: Vector2 = bucket["scroll"]
+		var vlist: Array = bucket["verts"]
 		if vlist.is_empty(): continue
 		var batch_size := 384
 		for i in range(0, vlist.size(), batch_size):
@@ -478,6 +541,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			all_meshes.append({
 				"name": ("%s_%d" % [tex_name, i / batch_size]).substr(0, 31),
 				"texture_id": tex_id,
+				"uv_scroll": scroll,
 				"vertices": batch,
 				"bounds_min": b_min,
 				"bounds_max": b_max
@@ -638,7 +702,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		f.store_16(tex["width"])
 		f.store_16(tex["height"])
 		f.store_16(tex["format"])
-		f.store_16(tex["has_alpha"])
+		f.store_16(tex["alpha_mode"])
 		f.store_32((tex["data"] as PackedByteArray).size())
 		f.store_buffer(tex["data"])
 
@@ -654,6 +718,10 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		var b_max: Vector3 = m["bounds_max"]
 		f.store_float(b_min.x); f.store_float(b_min.y); f.store_float(b_min.z)
 		f.store_float(b_max.x); f.store_float(b_max.y); f.store_float(b_max.z)
+		# PBM 2.1 animated UV scroll (was `reserved[2]`, always 0.0 before).
+		var scroll: Vector2 = m.get("uv_scroll", Vector2.ZERO)
+		f.store_float(scroll.x)
+		f.store_float(scroll.y)
 		for v in v_list:
 			f.store_float(v["u"])
 			f.store_float(v["v"])

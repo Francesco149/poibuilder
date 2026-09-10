@@ -214,3 +214,79 @@ static func scale_face_tiling(face: PBFace, factor: float) -> void:
 	if face == null or factor == 0.0:
 		return
 	face.uv_scale *= factor
+
+# ==============================================================================
+# Animated UV scroll (retro-exportable scrolling textures)
+# ==============================================================================
+#
+# A scrolling texture is a property of the MATERIAL, because that is the unit
+# the retro exporters split meshes by: one mesh in the .pbm references one
+# texture, and the scroll is stored per mesh in the file. The speed lives in
+# the material's metadata under SCROLL_META as a Vector2, in TEXTURE REPEATS
+# PER SECOND (1.0 = the texture crawls one full tile per second along that
+# axis, 0.0 = that axis is static). The speed is signed, so a negative value
+# scrolls the other way — that is how a waterfall sheet and its foam layer are
+# given different directions from the same texture.
+
+## Material metadata key holding the scroll speed (Vector2, repeats/second).
+const SCROLL_META := "poi_uv_scroll"
+## Material metadata key Godot's glTF exporter serializes to `extras` verbatim.
+const GLTF_EXTRAS_META := "extras"
+
+## The material's scroll speed in repeats/second, or Vector2.ZERO when it does
+## not scroll. Accepts any Material (metadata is a Resource-level feature).
+static func get_scroll_speed(mat: Material) -> Vector2:
+	if mat == null or not mat.has_meta(SCROLL_META):
+		return Vector2.ZERO
+	var v = mat.get_meta(SCROLL_META)
+	if v is Vector2:
+		return v
+	if v is Vector3:
+		return Vector2(v.x, v.y)
+	return Vector2.ZERO
+
+static func has_scroll(mat: Material) -> bool:
+	return get_scroll_speed(mat) != Vector2.ZERO
+
+## Writes (or clears, with Vector2.ZERO) the material's scroll speed and keeps
+## the glTF `extras` mirror in sync so an exported GLB carries the animation
+## through to the retro converters.
+static func set_scroll_speed(mat: Material, speed: Vector2) -> void:
+	if mat == null:
+		return
+	if speed == Vector2.ZERO:
+		mat.remove_meta(SCROLL_META)
+	else:
+		mat.set_meta(SCROLL_META, speed)
+	_sync_gltf_extras(mat, speed)
+
+## Mirrors the scroll speed into the material's `extras` metadata dictionary.
+## Godot's glTF exporter serializes that dictionary verbatim into the material
+## JSON (`_attach_meta_to_extras` in gltf_document.cpp), which is how
+## pbm_conv.py and PBPbmConverter see the animation on the GLB path. Values are
+## [u, v] float pairs: Vector2 is not a JSON type, and a Stringified Vector2
+## would have to be parsed back out.
+static func _sync_gltf_extras(mat: Material, speed: Vector2) -> void:
+	var extras: Dictionary = mat.get_meta(GLTF_EXTRAS_META, {}) if mat.has_meta(GLTF_EXTRAS_META) else {}
+	if speed == Vector2.ZERO:
+		extras.erase(SCROLL_META)
+		if extras.is_empty():
+			mat.remove_meta(GLTF_EXTRAS_META)
+		else:
+			mat.set_meta(GLTF_EXTRAS_META, extras)
+		return
+	extras[SCROLL_META] = [speed.x, speed.y]
+	mat.set_meta(GLTF_EXTRAS_META, extras)
+
+## Reads a scroll speed out of a glTF `extras` dictionary (the inverse of
+## _sync_gltf_extras; used by the converters, which see GLB JSON, not GDScript
+## materials). Returns Vector2.ZERO when the extras carry no animation.
+static func scroll_from_extras(extras) -> Vector2:
+	if not (extras is Dictionary) or not extras.has(SCROLL_META):
+		return Vector2.ZERO
+	var v = extras[SCROLL_META]
+	if v is Array and v.size() >= 2:
+		return Vector2(float(v[0]), float(v[1]))
+	if v is Dictionary and v.has("u") and v.has("v"):
+		return Vector2(float(v["u"]), float(v["v"]))
+	return Vector2.ZERO

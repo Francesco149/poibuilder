@@ -98,10 +98,10 @@ func test_end_to_end_godot_entity_authoring_to_pbm() -> void:
 	assert_not_null(f)
 
 	var magic := f.get_32()
-	assert_eq(magic, PBMapExporter.PBM_MAGIC, "Magic must be PBM2 (0x324D4250)")
+	assert_eq(magic, PBMapExporter.PBM_MAGIC, "Magic must be PBM3 (0x334D4250)")
 
 	var version := f.get_32()
-	assert_eq(version, PBMapExporter.PBM_VERSION, "Version must be 2")
+	assert_eq(version, PBMapExporter.PBM_VERSION, "Version must be 3")
 
 	var num_textures := f.get_32()
 	var num_meshes := f.get_32()
@@ -118,11 +118,11 @@ func test_end_to_end_godot_entity_authoring_to_pbm() -> void:
 		var dsize := f.get_32()
 		f.seek(f.get_position() + dsize)
 
-	# Skip meshes
+	# Skip meshes (v3 header = 32 name + 4 tex_id + 4 num_vertices + 6 bounds floats + 2 scroll floats)
 	for mi in range(num_meshes):
 		f.seek(f.get_position() + 32 + 4)
 		var nv := f.get_32()
-		f.seek(f.get_position() + 24 + nv * 24)
+		f.seek(f.get_position() + 24 + 8 + nv * 24)
 
 	# Skip colliders
 	for ci in range(num_colliders):

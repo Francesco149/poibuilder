@@ -79,6 +79,13 @@ var _chk_flip_v: CheckBox
 var _color_picker: ColorPickerButton
 var _btn_reset_tint: Button
 
+# Scrolling Texture (animated UV) Controls
+var _spin_scroll_u: Range
+var _spin_scroll_v: Range
+var _btn_scroll_apply: Button
+var _btn_scroll_clear: Button
+var _lbl_scroll_speed: Label
+
 # Paint Tool Controls
 var _active_paint_label: Label
 var _spin_brush_radius: Range
@@ -400,6 +407,56 @@ func _build_ui() -> void:
 	)
 	tint_row.add_child(_btn_reset_tint)
 	_uv_and_tint_section.add_child(tint_row)
+
+	# -------------------------------------------------------------------------
+	# Scrolling Texture (animated UV): the animation a retro engine can play
+	# without a shader or a texture flipbook. It is a MATERIAL property — the
+	# unit the retro exporters split meshes by — so applying it to a face whose
+	# material is shared with faces outside the selection duplicates the
+	# material rather than animating them too.
+	# -------------------------------------------------------------------------
+	_uv_and_tint_section.add_child(HSeparator.new())
+
+	var scroll_title := Label.new()
+	scroll_title.text = "Scrolling Texture (UV Animation)"
+	_uv_and_tint_section.add_child(scroll_title)
+
+	var scroll_grid := GridContainer.new()
+	scroll_grid.columns = 2
+	scroll_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	scroll_grid.add_child(_make_label("Speed U:"))
+	_spin_scroll_u = _make_spinbox(-8.0, 8.0, 0.01, 0.0)
+	_spin_scroll_u.tooltip_text = "Horizontal scroll in texture repeats per second (negative = leftwards)"
+	_spin_scroll_u.value_changed.connect(func(_v): _refresh_scroll_label_from_selection())
+	scroll_grid.add_child(_spin_scroll_u)
+
+	scroll_grid.add_child(_make_label("Speed V:"))
+	_spin_scroll_v = _make_spinbox(-8.0, 8.0, 0.01, 0.0)
+	_spin_scroll_v.tooltip_text = "Vertical scroll in texture repeats per second (negative = downwards on a wall)"
+	_spin_scroll_v.value_changed.connect(func(_v): _refresh_scroll_label_from_selection())
+	scroll_grid.add_child(_spin_scroll_v)
+	_uv_and_tint_section.add_child(scroll_grid)
+
+	_lbl_scroll_speed = Label.new()
+	_lbl_scroll_speed.add_theme_color_override("font_color", Color(0.6, 0.75, 0.85))
+	_lbl_scroll_speed.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_uv_and_tint_section.add_child(_lbl_scroll_speed)
+
+	var scroll_row := HBoxContainer.new()
+	_btn_scroll_apply = Button.new()
+	_btn_scroll_apply.text = "Apply Scroll"
+	_btn_scroll_apply.tooltip_text = "Animate the selected faces' texture at this speed. Exported maps (and the PSP demo) scroll it live; the texture is kept out of the tile atlases so it can wrap."
+	_btn_scroll_apply.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_scroll_apply.pressed.connect(_on_scroll_apply_pressed)
+	scroll_row.add_child(_btn_scroll_apply)
+
+	_btn_scroll_clear = Button.new()
+	_btn_scroll_clear.text = "Clear"
+	_btn_scroll_clear.tooltip_text = "Stop animating the selected faces' texture"
+	_btn_scroll_clear.pressed.connect(_on_scroll_clear_pressed)
+	scroll_row.add_child(_btn_scroll_clear)
+	_uv_and_tint_section.add_child(scroll_row)
 
 	# =========================================================================
 	# Section B: Texture Paint Tool Controls (Visible in PAINT mode)
@@ -1150,6 +1207,10 @@ func sync_selection() -> void:
 	_chk_flip_v.disabled = not has_selection
 	_color_picker.disabled = not has_selection
 	_btn_reset_tint.disabled = not has_selection
+	_set_slider_enabled(_spin_scroll_u, has_selection)
+	_set_slider_enabled(_spin_scroll_v, has_selection)
+	_btn_scroll_apply.disabled = not has_selection
+	_btn_scroll_clear.disabled = not has_selection
 
 	if first_face != null:
 		_spin_tiling_u.value = first_face.uv_scale.x
@@ -1160,6 +1221,12 @@ func sync_selection() -> void:
 		_chk_flip_u.button_pressed = first_face.uv_flip_u
 		_chk_flip_v.button_pressed = first_face.uv_flip_v
 
+		# Scrolling texture: the speed lives on the face's material.
+		var scroll := PBUv.get_scroll_speed(mesh.pb_mesh_data.get_face_material(first_face))
+		_spin_scroll_u.value = scroll.x
+		_spin_scroll_v.value = scroll.y
+		_update_scroll_speed_label(scroll, first_face)
+
 		# Read vertex color tint if available
 		var data: PBMeshData = mesh.pb_mesh_data
 		var idxs := first_face.get_distinct_indexes()
@@ -1167,8 +1234,39 @@ func sync_selection() -> void:
 			_color_picker.color = data.colors[idxs[0]]
 		else:
 			_color_picker.color = Color.WHITE
+	else:
+		_update_scroll_speed_label(Vector2.ZERO, null)
 
 	_syncing = false
+
+## Second line under the scroll spins: the same speed in metres per second.
+## "Repeats per second" is the format's unit (it survives any tiling change),
+## but what an author is actually choosing is how fast the surface appears to
+## move — and that depends on how many metres one repeat covers, i.e. the
+## face's tiling. Both are shown so the number in the file stays honest.
+## Recomputed from the spins as they are typed, so the metres/second figure
+## tracks the edit before it is applied.
+func _refresh_scroll_label_from_selection() -> void:
+	if _syncing or _lbl_scroll_speed == null:
+		return
+	var face: PBFace = null
+	var mesh: PBMesh = editor.active_mesh if editor != null else null
+	if mesh != null and editor != null and editor.selection != null and not editor.selection.selected_faces.is_empty():
+		var fi: int = editor.selection.selected_faces[0]
+		if fi >= 0 and fi < mesh.pb_mesh_data.faces.size():
+			face = mesh.pb_mesh_data.faces[fi]
+	_update_scroll_speed_label(Vector2(_spin_scroll_u.value, _spin_scroll_v.value), face)
+
+func _update_scroll_speed_label(speed: Vector2, face: PBFace) -> void:
+	if _lbl_scroll_speed == null:
+		return
+	if face == null or speed == Vector2.ZERO:
+		_lbl_scroll_speed.text = "static" if face != null else ""
+		return
+	var mps := Vector2(
+		speed.x / maxf(face.uv_scale.x, 0.0001),
+		speed.y / maxf(face.uv_scale.y, 0.0001))
+	_lbl_scroll_speed.text = "≈ %.2f, %.2f m/s on this face" % [mps.x, mps.y]
 
 # ==============================================================================
 # UV & Material Actions
@@ -1256,6 +1354,55 @@ func _on_diagonal_pressed() -> void:
 
 	_commit_mesh_action(mesh, "45° Diagonal UV Tiling", before, after)
 	sync_selection()
+
+## Applies the scroll speed currently in the spins to every target face.
+## The speed is written to a COPY of each face's material: the scroll lives on
+## the material (that is the granularity the retro exporters split meshes by),
+## so editing a shared material in place would silently animate every other
+## face that happens to use the same texture. Copying also gives undo a clean
+## handle — the snapshots then differ by which material a slot points at.
+func _on_scroll_apply_pressed() -> void:
+	var speed := Vector2(_spin_scroll_u.value, _spin_scroll_v.value)
+	if speed == Vector2.ZERO:
+		# "0,0" is the encoding for static — treat it as the Clear button so an
+		# apply can never silently do nothing.
+		_on_scroll_clear_pressed()
+		return
+	_apply_scroll_to_selection(speed, "Set Scrolling Texture")
+
+func _on_scroll_clear_pressed() -> void:
+	_apply_scroll_to_selection(Vector2.ZERO, "Clear Scrolling Texture")
+
+func _apply_scroll_to_selection(speed: Vector2, action_name: String) -> void:
+	var mesh: PBMesh = editor.active_mesh if editor != null else null
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var target_faces := _get_target_faces(mesh)
+	if target_faces.is_empty():
+		return
+
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	var changed := 0
+	for face in target_faces:
+		var mat: Material = mesh.pb_mesh_data.get_face_material(face)
+		if mat == null:
+			continue
+		if PBUv.get_scroll_speed(mat) == speed:
+			continue
+		var copy: Material = mat.duplicate()
+		copy.resource_name = mat.resource_name
+		PBUv.set_scroll_speed(copy, speed)
+		mesh.pb_mesh_data.set_faces_material([face], copy)
+		changed += 1
+	if changed == 0:
+		return
+	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+
+	_commit_mesh_action(mesh, action_name, before, after)
+	sync_selection()
+	if plugin != null and plugin.get("logger") != null:
+		plugin.logger.info("uv", "%s on %d face(s): %.2f, %.2f repeats/sec"
+			% [action_name, changed, speed.x, speed.y])
 
 func _on_uv_property_changed() -> void:
 	if _syncing:
