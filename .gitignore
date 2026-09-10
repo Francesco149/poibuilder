@@ -8,9 +8,11 @@ project/.godot/
 # Test results
 project/tests/results.xml
 
-# Untracked external Raylib runner (not vendored)
-retro_engine/raylib/
-tools/raylib_runner/
+# Raylib demo: the SOURCE is committed, only build output and the generated
+# screenshot are ignored. (The raylib library itself is a system dependency and
+# is not vendored; retro_engine/raylib/flake.nix provides a dev shell for it.)
+retro_engine/raylib/raylib_runner
+retro_engine/raylib/raylib_proof_of_concept.png
 
 # PSP real-hardware profiling harness
 retro_engine/psp/hwrun/

@@ -32,20 +32,10 @@ if [ ! -f "$EBOOT" ]; then
     "$PSP_DIR/build_psp.sh"
 fi
 
-# Auto-detect Wayland / X11 environment
-if [ -z "${DISPLAY:-}" ]; then
-    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v Xwayland >/dev/null 2>&1; then
-        echo "[DISPLAY] Detected Wayland ($WAYLAND_DISPLAY). Starting background Xwayland bridge on :99..."
-        Xwayland :99 -ac >/dev/null 2>&1 &
-        XW_PID=$!
-        sleep 0.3
-        trap "kill $XW_PID 2>/dev/null || true" EXIT
-        export DISPLAY=:99
-    elif command -v xvfb-run >/dev/null 2>&1; then
-        echo "[DISPLAY] No display server detected. Running under xvfb-run virtual display..."
-        exec xvfb-run -a PPSSPPSDL "$EBOOT" "$@"
-    fi
-fi
+# PPSSPPSDL is SDL and will use Wayland when available, but the X path needs a
+# real display too; see xdisplay.sh.
+source "$REPO_DIR/xdisplay.sh"
+ensure_display || true
 
 echo "============================================================"
 echo " PoiRetro Sony PSP Homebrew Emulator Launcher"
