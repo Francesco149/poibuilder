@@ -775,6 +775,31 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.62 round complete ✓ — PSP hardware clipping & near-plane optimization, formalized PBMv2 specification, breaking version signaling, arbitrary binary metadata & entity scripting, and native GDScript converter:
+- PSP CLIPPING & NEAR-PLANE OPTIMIZATION (`main.c`, `pbm_conv.py`, `PBPbmConverter.gd`):
+  - Root cause of 24 FPS floor-clipping slowdown and 35-40 FPS stairs drops:
+    1. Perspective near plane was previously set to `0.5f` (50cm). In tight spaces or when looking up at the floor from below, this placed a large volume of the 12m courtyard floor inside the near-clipping volume, forcing the hardware clipper to divide dozens of quads and re-triangulate in a serialized pipeline.
+    2. The courtyard floor was previously merged into one single 1,152-vertex draw call spanning from (-6, -6) to (+6, +6), so the GE was forced to transform all 1,152 vertices every frame and feed every partially overlapping polygon into clipping.
+  - Implemented 8cm near plane: `sceGumPerspective(65.0f, 16.0f / 9.0f, 0.08f, 200.0f)` reduces the near-clipping volume by >80%, keeping floor and stair treads cleanly in front of the near plane.
+  - Enabled hardware Z-clipping: `sceGuEnable(GU_CLIP_PLANES)` ensures near-plane triangles are clipped cleanly by hardware without driver fallback or discarded triangle artifacts.
+  - Spatial mesh chunking: both Python oracle (`pbm_conv.py`) and GDScript exporter (`pb_pbm_converter.gd`) now subdivide large surfaces into spatial chunks of $\le 384$ vertices (128 triangles), giving each chunk a tight bounding box and preventing massive single-mesh draw calls from overwhelming the hardware clipper.
+- FORMALIZED PBMv2 RETRO MAP SPECIFICATION (`SPEC_RETRO_FORMAT.md`, `pbm.h`, `pbm_loader.h`, `pbm_loader.c`):
+  - Authored dense, exhaustive specification in `SPEC_RETRO_FORMAT.md` covering file architecture, Little-Endian layout, 64-byte `PbmHeader`, texture swizzling, 24-byte interleaved vertex format matching Sony GU DMA specifications, collider chunk, metadata chunk, and entity scripting conventions.
+  - Incremented format version to 2 (`PBM_MAGIC = 0x324D4250` / `"PBM2"`).
+  - Explicit version breaking change signaling: `pbm_loader.c` validates `version` against supported range (`1..2`), emitting explicit fatal diagnostic `[PBM] Error: Incompatible map version %u! (Loader supports up to v%u). FATAL: Breaking format change detected.` when reading future/incompatible formats, and cleanly rejects without memory corruption.
+- ARBITRARY BINARY METADATA & SCRIPTED ENTITY ENGINE (`pbm.h`, `pbm_loader.c`, `main.c`, `pbm_conv.py`, `pb_pbm_converter.gd`):
+  - Implemented 40-byte `PbmMetadataHeader` (`char tag[32]`, `uint32_t type`, `uint32_t data_size`) with 4-byte aligned binary payload storage. Supports `RAW`, `STRING`, `JSON`, and `ENTITY` payload types.
+  - Proof of concept:
+    1. Map name metadata: encoded tag `"map_name"` (`"PoiRetro Courtyard Showcase"`), parsed by `pbm_loader.c` and displayed live on the HUD.
+    2. Scripted entity: encoded tag `"entities"` with `PbmEntityPatrolSphere` (88 bytes: radius 0.35m, color `0xFF00C8FF` gold, speed 2.5 m/s, 3 cyclic 3D waypoints).
+    3. PSP 3D runtime execution: `main.c` animates the sphere position continuously along the cyclic 3-point route ($W_0 \rightarrow W_1 \rightarrow W_2 \rightarrow W_0$) based on delta time and renders a shaded 3D sphere mesh at the interpolated coordinate in Pass 1, displaying live entity coordinates on the HUD.
+- NATIVE GDSCRIPT PBM CONVERTER & ORACLE VERIFICATION (`PBPbmConverter.gd`, `pb_map_exporter.gd`, `test_pb_pbm_export.gd`):
+  - Ported entire GLB-to-PBMv2 conversion pipeline to pure GDScript in `PBPbmConverter.gd` (`convert_glb_to_pbm`) and added forwarder to `PBMapExporter`: parses GLB binary chunks, extracts buffers, deduplicates baked tiles, packs 128x128 tiles into 512x512 4x4 atlases with half-texel UV slot clamping, converts textures to `RGBA5551`, packs 24-byte interleaved vertices, extracts colliders, and serializes metadata.
+  - Oracle verification test in `test_pb_pbm_export.gd`: converts `showcase_retro_baked.glb` in GDScript and verifies 100% binary structural parity against the Python oracle (12 textures, 18 mesh chunks, 3,840 vertices, 8 colliders, 2 metadata entries).
+- README FEATURE HIGHLIGHT:
+  - Added dense feature description directly below the demo video in `README.md` highlighting dual-pipeline authoring (modern glTF/GLB + dedicated retro `.pbm` proved on PSP).
+- Tests: 827/827 GUT unit tests passing (+1), 50/50 GUI harness tests passing (0 failures).
+
 v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal lifecycle hardening, & PSP retro export renderer:
 - N-GON TOOL GRID SNAPPING OFFSET FIX (`PBNgonDrawer`, `poibuilder_plugin.gd`):
   - Root cause of n-gon tool being offset on both axes: `PBNgonDrawer.begin()` previously stored the raw un-snapped ray hit as `plane_point`. Furthermore, `_snap_to_grid()` calculated `d = p - plane_point` and snapped in-plane along U/V axes relative to `plane_point`, permanently locking the raw click point's fractional offset onto every single placed vertex. On confirm, it placed the node origin at the floating-point centroid, drifting gizmo and vertex coordinates off-grid.

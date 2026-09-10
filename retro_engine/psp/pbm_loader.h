@@ -31,13 +31,25 @@ typedef struct {
     uint32_t num_triangles;
     float* triangles;
 } PbmCollider;
+typedef struct {
+    char tag[32];
+    uint32_t type;
+    uint32_t data_size;
+    void* data;
+} PbmMetadata;
+
 
 typedef struct {
     PbmHeader header;
     PbmTexture* textures;
     PbmMesh* meshes;
     PbmCollider* colliders;
+    PbmMetadata* metadata;
     uint32_t total_vertices;
+    /* Parsed proof-of-concept convenience fields */
+    char map_name[64];
+    PbmEntityPatrolSphere patrol_sphere;
+    int has_patrol_sphere;
 } PbmMap;
 
 PbmMap* pbm_load(const char* filepath);

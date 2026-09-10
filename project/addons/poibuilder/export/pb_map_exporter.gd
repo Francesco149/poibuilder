@@ -21,8 +21,14 @@ enum ExportMode {
 	MODERN = 1,
 }
 
-const PBM_MAGIC := 0x314D4250 # "PBM1"
-const PBM_VERSION := 1
+const PBM_MAGIC := 0x324D4250 # "PBM2"
+const PBM_VERSION := 2
+
+const PBM_META_RAW    := 0
+const PBM_META_STRING := 1
+const PBM_META_JSON   := 2
+const PBM_META_ENTITY := 3
+const PBM_ENTITY_PATROL_SPHERE := 1
 
 const PBM_TEX_FMT_RGBA8888 := 0
 const PBM_TEX_FMT_RGBA5551 := 1
@@ -622,6 +628,10 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 	export_tree.free()
 	return err
 
+## Convenience method: converts an exported GLB file to PBMv2 format directly via GDScript.
+static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit: bool = true) -> Error:
+	return PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, format_16bit)
+
 static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
 	var f := FileAccess.open(file_path, FileAccess.WRITE)
 	if f == null:
@@ -760,12 +770,17 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 					})
 
 				if not tri_verts.is_empty():
-					meshes.append({
-						"name": name_str.substr(0, 31),
-						"texture_id": tex_id,
-						"vertices": tri_verts
-					})
-
+					# Chunk large meshes into <= 384 vertices to eliminate near-plane clipping bottleneck
+					var chunk_size := 384
+					for ci in range(0, tri_verts.size(), chunk_size):
+						var cverts: Array[Dictionary] = []
+						for vi in range(ci, mini(ci + chunk_size, tri_verts.size())):
+							cverts.append(tri_verts[vi])
+						meshes.append({
+							"name": ("%s_%d" % [name_str, ci / chunk_size]).substr(0, 31),
+							"texture_id": tex_id,
+							"vertices": cverts
+						})
 	if bounds_min.x == INF:
 		bounds_min = Vector3(-10, 0, -10)
 		bounds_max = Vector3(10, 5, 10)
@@ -774,17 +789,46 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 	spawn.y = bounds_min.y + 1.6
 	spawn.z = bounds_max.z + 4.0
 
-	# Header
+	# Metadata entries (v2.0+)
+	var metadata_entries: Array[Dictionary] = []
+	var map_name_bytes := "PoiRetro Courtyard Showcase".to_utf8_buffer()
+	map_name_bytes.append(0)
+	metadata_entries.append({
+		"tag": "map_name",
+		"type": PBM_META_STRING,
+		"data": map_name_bytes
+	})
+
+	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
+	ent_name_bytes.resize(32)
+	var ent_buf := PackedByteArray()
+	ent_buf.resize(88)
+	for bi in range(32): ent_buf[bi] = ent_name_bytes[bi]
+	ent_buf.encode_u32(32, PBM_ENTITY_PATROL_SPHERE)
+	ent_buf.encode_float(36, 0.35)
+	ent_buf.encode_u32(40, 0xFF00C8FF) # Gold
+	ent_buf.encode_float(44, 2.5)
+	ent_buf.encode_u32(48, 3)
+	ent_buf.encode_float(52, -3.0); ent_buf.encode_float(56, 1.2); ent_buf.encode_float(60, -1.0)
+	ent_buf.encode_float(64, 0.0);  ent_buf.encode_float(68, 2.2); ent_buf.encode_float(72, -4.5)
+	ent_buf.encode_float(76, 3.0);  ent_buf.encode_float(80, 1.2); ent_buf.encode_float(84, 0.5)
+	metadata_entries.append({
+		"tag": "entities",
+		"type": PBM_META_ENTITY,
+		"data": ent_buf
+	})
+
+	# Header (64 bytes)
 	f.store_32(PBM_MAGIC)
 	f.store_32(PBM_VERSION)
 	f.store_32(textures.size())
 	f.store_32(meshes.size())
 	f.store_32(colliders.size())
+	f.store_32(metadata_entries.size())
 	f.store_float(spawn.x); f.store_float(spawn.y); f.store_float(spawn.z)
 	f.store_float(0.0)
 	f.store_float(bounds_min.x); f.store_float(bounds_min.y); f.store_float(bounds_min.z)
 	f.store_float(bounds_max.x); f.store_float(bounds_max.y); f.store_float(bounds_max.z)
-
 	# Textures
 	for tex in textures:
 		var name_bytes: PackedByteArray = (tex["name"] as String).to_ascii_buffer()
@@ -842,6 +886,19 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 			f.store_float(p.y)
 			f.store_float(p.z)
 
+
+	# Metadata Chunk (v2.0+)
+	for mentry in metadata_entries:
+		var tag_b: PackedByteArray = (mentry["tag"] as String).to_ascii_buffer()
+		tag_b.resize(32)
+		f.store_buffer(tag_b)
+		f.store_32(mentry["type"])
+		var mdata: PackedByteArray = mentry["data"]
+		f.store_32(mdata.size())
+		f.store_buffer(mdata)
+		var pad := (4 - (mdata.size() % 4)) % 4
+		for pi in range(pad):
+			f.store_8(0)
 	f.close()
 	return OK
 

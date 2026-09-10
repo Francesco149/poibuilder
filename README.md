@@ -20,6 +20,20 @@ Another open source Godot level builder in a similar spirit is **GoBuild**:
 
 https://github.com/user-attachments/assets/bc2a71ff-8978-433f-8258-80be66e44397
 
+### Author Once, Target Everywhere: Modern Engines + Retro Hardware
+
+PoiBuilder bridges the gap between **modern 3D level authoring** and **hardcore retro hardware constraints**:
+
+- **Modern Engine Target (glTF / GLB)**: Author complex scenes using native PBR materials, multi-layer alpha splatting, decal stamps, arbitrary n-gons, and curved geometry — exported directly to standard `.glb` for modern engines (Godot 4, Unreal, Unity, WebGL).
+- **Dedicated Retro Target (PoiRetro `.pbm` v2 — Proven on Sony PSP)**: One-click export to a zero-overhead binary map format tailored for fixed-function hardware (PlayStation Portable MIPS Allegrex 333MHz, Dreamcast, PS2, custom retro engines):
+  - **Zero-CPU Direct DMA**: Interleaved 24-byte vertex structures (`float u,v; uint32_t color; float x,y,z;`) matching Sony GU hardware registers (`GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D`), 16-byte aligned for direct display list DMA rendering with zero runtime vertex conversion.
+  - **Power-of-Two 4x4 Tile Atlasing**: Packs 128x128 baked splat/stamp tiles into 512x512 atlases with half-texel clamped UV slot remapping, cutting draw calls and texture swaps by ~85% (81 $\rightarrow$ 12 calls).
+  - **Native 16-bit Swizzled Textures**: Direct `RGBA5551` conversion and memory swizzling (16-byte $\times$ 8-row tiles), cutting VRAM bandwidth in half and eliminating GPU texture cache thrashing.
+  - **Pre-Baked Vertex Lighting & AO**: Direct sunlight, point lights, raytraced shadow casting, and Fibonacci hemisphere ambient occlusion pre-baked into 32-bit vertex colors (`0xAABBGGRR`) for rich atmospheric lighting with zero runtime lighting cost.
+  - **Guardband Clipping & Spatial Chunking**: Optimized for the PSP Graphic Engine's 4096x4096 guardband and 8cm near plane, subdividing large surfaces into spatial chunks ($\le 384$ vertices) to eliminate clipping bottlenecks.
+  - **Arbitrary Binary Metadata & Entity Scripting**: Extensible lump table embedding level descriptors, waypoints, and animated scripted entities (e.g. cyclic patrol spheres) directly within the map binary.
+  - **Native Physical Collision**: Automatic extraction of box, trimesh, and ramp collision hulls for instant player traversal and raycasting.
+  - **Standalone Homebrew Player & Viewer**: Includes native C PSP homebrew application (`EBOOT.PBP`, 60 FPS fly camera, HUD) and standalone Godot retro viewer with live physics play mode.
 ## Status
 
 Experimental but actively developed. Every phase lands with a green headless
