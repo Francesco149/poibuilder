@@ -327,6 +327,78 @@ func _run() -> void:
 				_fail("CREATE: creator still active after confirm")
 				plugin._creation_abort("test cleanup")
 
+	# ── Test 2b: the PLANE — a base drag, then a normal OFFSET ───────────────
+	# The plane's third dimension is a STAND-OFF from the surface, not a size:
+	# it is how a waterfall sheet or a sign hangs clear of the wall it was
+	# drawn on. The drag rectangle must survive the offset untouched, and the
+	# confirming click must land a node displaced along the surface normal.
+	plugin._on_shape_requested(&"plane")
+	await _frames(10)
+	if not plugin.shape_creator.is_active():
+		_fail("PLANE: creator not armed")
+	else:
+		var pstart := _window_pos(vp, host, Vector3(-0.6, 0.5001, 1.4))
+		var pend := _window_pos(vp, host, Vector3(1.1, 0.5001, 0.2))
+		_mouse_motion(pstart)
+		await _frames(3)
+		_mouse_button(pstart, true)
+		await _frames(3)
+		for i in range(1, 5):
+			_mouse_motion(pstart.lerp(pend, float(i) / 4.0))
+			await _frames(2)
+		_mouse_button(pend, false)
+		await _frames(5)
+
+		if plugin.shape_creator.state != PBShapeCreator.State.OFFSET:
+			_fail("PLANE: expected the OFFSET stage after the base drag, got state %d"
+				% plugin.shape_creator.state)
+		else:
+			_pass("PLANE: base drag hands over to the offset stage")
+		var w_dragged: float = plugin.shape_creator.values["width"]
+		var d_dragged: float = plugin.shape_creator.values["depth"]
+
+		# Moving the cursor up must lift the sheet off the surface without
+		# touching its size — the bug this flow exists to prevent is the drag
+		# rectangle being re-applied as a height.
+		var up := _window_pos(vp, host, Vector3(0.25, 2.4, 0.8))
+		_mouse_motion(up)
+		await _frames(5)
+		var off_height: float = plugin.shape_creator.height
+		if off_height <= 0.1:
+			_fail("PLANE: offset stayed at %.3f after moving off the surface" % off_height)
+		elif absf(plugin.shape_creator.values["width"] - w_dragged) > 0.001 \
+				or absf(plugin.shape_creator.values["depth"] - d_dragged) > 0.001:
+			_fail("PLANE: the offset changed the sheet's size (%.2fx%.2f -> %.2fx%.2f)"
+				% [w_dragged, d_dragged,
+				   plugin.shape_creator.values["width"], plugin.shape_creator.values["depth"]])
+		else:
+			_pass("PLANE: offset %.2fm leaves the %.2fx%.2fm sheet unchanged"
+				% [off_height, w_dragged, d_dragged])
+
+		await _click(up)
+		await _frames(20)
+		var plane_node := root.get_node_or_null(NodePath("Shape_Plane"))
+		if plane_node == null:
+			_fail("PLANE: no Shape_Plane node after confirm")
+		elif plane_node.pb_mesh_data == null:
+			_fail("PLANE: created node has no mesh data")
+		else:
+			var pn: PBMesh = plane_node
+			var id_ok: bool = pn.pb_mesh_data.shape_id == &"plane"
+			var lifted: bool = pn.position.y > 0.5001 + 0.1
+			if id_ok and lifted:
+				_pass("PLANE: created %.2f m above the surface it was drawn on"
+					% (pn.position.y - 0.5001))
+			else:
+				_fail("PLANE: created node is wrong (shape_id=%s, y=%.3f)"
+					% [str(pn.pb_mesh_data.shape_id), pn.position.y])
+			if pn.pb_mesh_data.faces.size() != 1:
+				_fail("PLANE: a plane must be a single face, got %d"
+					% pn.pb_mesh_data.faces.size())
+		if plugin.shape_creator.is_active():
+			_fail("PLANE: creator still active after confirm")
+			plugin._creation_abort("test cleanup")
+
 	# ── Test 3: ELEMENT picking — face click, hover, edge click ─────────────
 	# The user's broken layer: builder modes must select elements and hover
 	# must show overlays. Model the scene-graph path: select B explicitly.
