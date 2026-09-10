@@ -394,6 +394,26 @@ func test_cube_back_face_uvs_horizontally_flipped():
 	assert_eq(box.textures0[6], Vector2(0.0, 1.0))
 	assert_eq(box.textures0[7], Vector2(1.0, 1.0))
 
+func test_set_texture_as_default_applies_to_new_shapes():
+	PBMeshData.invalidate_default_material()
+	var tex_path := "res://addons/poibuilder/materials/textures/flower_patch.png"
+	var custom_mat := PBMeshData.load_material_or_texture(tex_path)
+	assert_not_null(custom_mat, "Texture must load as StandardMaterial3D")
+	assert_true(custom_mat is StandardMaterial3D)
+	assert_not_null((custom_mat as StandardMaterial3D).albedo_texture)
+
+	PBMeshData._cached_default_material = custom_mat
+
+	var new_shape := PBShapeParams.build(&"cube", PBShapeParams.get_default_values(&"cube"))
+	assert_not_null(new_shape)
+	assert_gt(new_shape.materials.size(), 0, "New shape must receive materials")
+	var applied_mat := new_shape.get_face_material(new_shape.faces[0]) as StandardMaterial3D
+	assert_not_null(applied_mat)
+	assert_not_null(applied_mat.albedo_texture)
+	assert_eq(applied_mat.albedo_texture.resource_path, tex_path, "New shape must use custom default texture")
+
+	PBMeshData.invalidate_default_material()
+
 func test_material_undo_redo_via_snapshots():
 	var cube := PBMeshData.create_cube(1.0)
 	var mat1 := StandardMaterial3D.new()

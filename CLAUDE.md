@@ -813,7 +813,12 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
   - Added live `(x, y, z)` text overlay displayed directly next to the mouse cursor during shape placement in bold white text with a thick 8px black outline.
   - Shows base box dimensions during BASE state as `(X, Y, 0.00)` and updates live during HEIGHT state to `(X, Y, Z)` with height as the Z component, rounded to 2 decimal places.
   - Automatically positions next to the cursor, clamps to viewport boundaries, and clears upon shape confirmation or abort. Also mirrors into `_extents_row` in `PBToolOverlay`.
-- Tests: 821/821 GUT unit tests passing (+11), 50/50 GUI harness tests passing (0 failures).
+- DEFAULT SHAPE MATERIAL APPLIES TO NEW SHAPES (`PBMaterialDock`, `PBMeshData.get_default_material`, `PBMeshData.load_material_or_texture`):
+  - Root cause of "Set as Default for New Shapes" failing to apply to new shapes: (1) `PBMeshData.get_default_material()` hardcoded loading `pb_default_material.tres` and never checked `EditorSettings`; (2) `PBMaterialDock` created in-memory wrapper materials for project textures without tracking source paths, so the context menu's check `if not _context_material.resource_path.is_empty()` evaluated to false and skipped saving the setting; (3) even when saved, loading a `.png` via `ResourceLoader.load() as Material` returned null.
+  - Implemented `PBMeshData.load_material_or_texture(path)`: loads `.tres` materials directly or wraps textures (`.png`, `.jpg`, `.webp`) in a `StandardMaterial3D` (`roughness = 0.8`, `vertex_color_use_as_albedo = true`, `texture_filter = LINEAR_WITH_MIPMAPS`).
+  - `PBMeshData.get_default_material()` now reads `"poibuilder/materials/default_material_path"` from `EditorSettings` and loads the user's selected material or texture.
+  - `PBMaterialDock` tracks texture paths via `mat.set_meta("source_texture_path", full_path)` and calls `PBMeshData.invalidate_default_material()` upon setting a new default. Newly placed shapes now automatically receive the user-chosen default material.
+- Tests: 822/822 GUT unit tests passing (+12), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):

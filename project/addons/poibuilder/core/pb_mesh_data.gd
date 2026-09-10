@@ -636,13 +636,51 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 ## Cached default material reference.
 static var _cached_default_material: Material = null
 
-## Returns the default PoiBuilder material (stock 2x2 soft dark gray checkerboard).
+## Clears the cached default material reference so it re-reads from settings.
+static func invalidate_default_material() -> void:
+	_cached_default_material = null
+
+## Returns the default PoiBuilder material (from EditorSettings, or stock 2x2 checkerboard fallback).
 static func get_default_material() -> Material:
-	if _cached_default_material == null:
-		if ResourceLoader.exists("res://addons/poibuilder/materials/pb_default_material.tres"):
-			_cached_default_material = load("res://addons/poibuilder/materials/pb_default_material.tres") as Material
+	if _cached_default_material != null:
+		return _cached_default_material
+
+	var path := ""
+	if Engine.is_editor_hint():
+		var iface := EditorInterface
+		if iface != null:
+			var settings = iface.get_editor_settings()
+			if settings != null and settings.has_setting("poibuilder/materials/default_material_path"):
+				path = String(settings.get_setting("poibuilder/materials/default_material_path"))
+
+	if path.is_empty():
+		path = "res://addons/poibuilder/materials/pb_default_material.tres"
+
+	_cached_default_material = load_material_or_texture(path)
 	return _cached_default_material
 
+## Helper: loads a Material from path, or if path is a Texture2D, creates a StandardMaterial3D wrapping it.
+static func load_material_or_texture(path: String) -> Material:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		var fallback_path := "res://addons/poibuilder/materials/pb_default_material.tres"
+		if path != fallback_path and ResourceLoader.exists(fallback_path):
+			return load(fallback_path) as Material
+		return null
+
+	var res = ResourceLoader.load(path)
+	if res is Material:
+		return res as Material
+	elif res is Texture2D:
+		var mat := StandardMaterial3D.new()
+		mat.resource_name = path.get_file().get_basename().capitalize()
+		mat.set_meta("source_texture_path", path)
+		mat.albedo_texture = res as Texture2D
+		mat.roughness = 0.8
+		mat.vertex_color_use_as_albedo = true
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		return mat
+
+	return null
 ## Returns the material assigned to a face, falling back to materials[0] or default material.
 func get_face_material(face: PBFace) -> Material:
 	if face == null:

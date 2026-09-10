@@ -181,19 +181,25 @@ func _load_default_material_setting() -> void:
 	else:
 		_default_material_path = DEFAULT_MATERIAL_PATH
 
+func _get_material_or_texture_path(mat: Material) -> String:
+	if mat == null:
+		return ""
+	if mat.has_meta("source_texture_path"):
+		return str(mat.get_meta("source_texture_path"))
+	if mat is StandardMaterial3D and mat.albedo_texture != null and not mat.albedo_texture.resource_path.is_empty():
+		return mat.albedo_texture.resource_path
+	return mat.resource_path
+
 func _save_default_material_setting(path: String) -> void:
 	_default_material_path = path
 	var settings = EditorInterface.get_editor_settings() if Engine.is_editor_hint() else null
 	if settings != null:
 		settings.set_setting(SETTING_DEFAULT_MATERIAL, path)
+	PBMeshData.invalidate_default_material()
 
 func get_default_material() -> Material:
-	if ResourceLoader.exists(_default_material_path):
-		return ResourceLoader.load(_default_material_path) as Material
-	if ResourceLoader.exists(DEFAULT_MATERIAL_PATH):
-		return ResourceLoader.load(DEFAULT_MATERIAL_PATH) as Material
-	return null
-
+	_load_default_material_setting()
+	return PBMeshData.load_material_or_texture(_default_material_path)
 # ==============================================================================
 # UI Construction
 # ==============================================================================
@@ -920,8 +926,11 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 						if tex is Texture2D:
 							var mat := StandardMaterial3D.new()
 							mat.resource_name = name_str.get_basename().capitalize()
+							mat.set_meta("source_texture_path", full_path)
 							mat.albedo_texture = tex
 							mat.roughness = 0.8
+							mat.vertex_color_use_as_albedo = true
+							mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 							_project_materials.append(mat)
 		name_str = d.get_next()
 	d.list_dir_end()
@@ -995,7 +1004,13 @@ func _create_material_card(mat: Material) -> Control:
 	btn.set("material_resource", mat)
 
 	# Default indicator badge
-	var is_default := (mat.resource_path == _default_material_path or mat == get_default_material())
+	var is_default := false
+	var def_path := _default_material_path
+	var card_path := _get_material_or_texture_path(mat)
+	if not def_path.is_empty() and not card_path.is_empty() and card_path == def_path:
+		is_default = true
+	elif mat == get_default_material():
+		is_default = true
 	if is_default:
 		var badge := Label.new()
 		badge.text = "★"
@@ -1003,7 +1018,6 @@ func _create_material_card(mat: Material) -> Control:
 		badge.add_theme_font_size_override("font_size", 14)
 		badge.position = Vector2(4, 2)
 		btn.add_child(badge)
-
 	# Active selection badge for Paint / Stamp
 	var is_active_paint := (dock_mode == DockMode.PAINT and paint_controller != null and tex != null and paint_controller.paint_texture == tex)
 	var is_active_stamp := (dock_mode == DockMode.STAMP and paint_controller != null and tex != null and paint_controller.stamp_texture == tex)
@@ -1046,8 +1060,9 @@ func _on_context_menu_id_pressed(id: int) -> void:
 		return
 	match id:
 		1: # Set as default
-			if not _context_material.resource_path.is_empty():
-				_save_default_material_setting(_context_material.resource_path)
+			var mat_path := _get_material_or_texture_path(_context_material)
+			if not mat_path.is_empty():
+				_save_default_material_setting(mat_path)
 				_rebuild_material_grid()
 				if plugin != null and plugin.logger != null:
 					plugin.logger.info("materials", "Set default shape material to %s" % _default_material_path)
