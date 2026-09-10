@@ -18,7 +18,12 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RAYLIB_DIR="$REPO_DIR/retro_engine/raylib"
-MAP_FILE="${1:-"$REPO_DIR/retro_engine/psp/showcase_retro_baked.pbm"}"
+MAP_FILE="$REPO_DIR/retro_engine/psp/showcase_retro_baked.pbm"
+for arg in "$@"; do
+    if [[ "$arg" != -* && -f "$arg" ]]; then
+        MAP_FILE="$arg"
+    fi
+done
 
 echo "============================================================"
 echo " PoiRetro Raylib Custom Engine & Entity Playground"
@@ -35,6 +40,21 @@ cd "$RAYLIB_DIR"
 if [ ! -f "raylib_runner" ] || [ "main.c" -nt "raylib_runner" ]; then
     echo "Compiling raylib_runner with system Raylib..."
     gcc main.c -O2 -I/usr/include -o raylib_runner -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
+fi
+
+# Auto-detect Wayland / X11 environment
+if [ -z "${DISPLAY:-}" ]; then
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v Xwayland >/dev/null 2>&1; then
+        echo "[DISPLAY] Detected Wayland ($WAYLAND_DISPLAY). Starting background Xwayland bridge on :99..."
+        Xwayland :99 -ac >/dev/null 2>&1 &
+        XW_PID=$!
+        sleep 0.3
+        trap "kill $XW_PID 2>/dev/null || true" EXIT
+        export DISPLAY=:99
+    elif command -v xvfb-run >/dev/null 2>&1; then
+        echo "[DISPLAY] No display server detected. Running under xvfb-run virtual display..."
+        exec xvfb-run -a ./raylib_runner "$@"
+    fi
 fi
 
 exec ./raylib_runner "$@"
