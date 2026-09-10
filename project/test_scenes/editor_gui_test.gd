@@ -1314,7 +1314,10 @@ func _run() -> void:
 	sel.clear()
 	await _frames(3)
 	print("[GUI TEST] done, failures=%d" % _failures)
-	get_tree().quit(_failures)
+	if OS.get_environment("PB_GUI_TEST_INTERACTIVE") != "":
+		print("[GUI TEST] Interactive mode: Leaving editor open for interactive play/inspection. Close window to exit.")
+	else:
+		get_tree().quit(_failures)
 
 func _press_key(keycode: Key) -> void:
 	var ev := InputEventKey.new()
