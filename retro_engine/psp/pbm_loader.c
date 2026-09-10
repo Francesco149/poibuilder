@@ -4,6 +4,33 @@
 #include <malloc.h>
 #include <psputils.h>
 #include <string.h>
+/* Swizzles a 16-bit texture into 16-byte wide x 8-line high blocks for Sony GE texture cache */
+static void swizzle_texture_16(uint8_t* out, const uint8_t* in, unsigned int width, unsigned int height) {
+    unsigned int width_bytes = width * 2;
+    unsigned int width_blocks = width_bytes / 16;
+    unsigned int height_blocks = height / 8;
+    unsigned int src_pitch = (width_bytes - 16) / 4;
+    unsigned int src_row = width_bytes * 8;
+    const uint8_t* ysrc = in;
+    uint32_t* dst = (uint32_t*)out;
+    const uint32_t* xsrc;
+
+    for (unsigned int blocky = 0; blocky < height_blocks; ++blocky) {
+        const uint8_t* xsrc_b = ysrc;
+        for (unsigned int blockx = 0; blockx < width_blocks; ++blockx) {
+            xsrc = (const uint32_t*)xsrc_b;
+            for (unsigned int j = 0; j < 8; ++j) {
+                *(dst++) = *(xsrc++);
+                *(dst++) = *(xsrc++);
+                *(dst++) = *(xsrc++);
+                *(dst++) = *(xsrc++);
+                xsrc += src_pitch;
+            }
+            xsrc_b += 16;
+        }
+        ysrc += src_row;
+    }
+}
 
 PbmMap* pbm_load(const char* filepath) {
     FILE* f = fopen(filepath, "rb");
@@ -61,6 +88,18 @@ PbmMap* pbm_load(const char* filepath) {
             if (pixels) {
                 fread(pixels, 1, thdr.data_size, f);
                 map->textures[i].pixels = pixels;
+                map->textures[i].is_swizzled = 0;
+
+                /* Swizzle 16-bit power-of-two textures to eliminate texture cache thrashing and memory bus congestion! */
+                if (thdr.format == PBM_TEX_FMT_RGBA5551 && thdr.width >= 16 && thdr.height >= 8 && (thdr.width & (thdr.width - 1)) == 0) {
+                    void* swizzled = memalign(16, thdr.data_size);
+                    if (swizzled) {
+                        swizzle_texture_16((uint8_t*)swizzled, (const uint8_t*)pixels, thdr.width, thdr.height);
+                        free(pixels);
+                        map->textures[i].pixels = swizzled;
+                        map->textures[i].is_swizzled = 1;
+                    }
+                }
             }
         }
     }
