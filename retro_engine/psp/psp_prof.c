@@ -363,7 +363,7 @@ static void test_emit(PbmMap* map, const ProfTest* t, RenderStats* stats, float 
         case TK_SCENE:
             psp_render_scene(map, &t->cfg, t->cam[0], t->cam[1], t->cam[2],
                              t->yaw, t->pitch, 1.0f, stats);
-            if (t->hud) psp_draw_hud(map, stats, fps, t->cfg.display_mode, NULL, NULL, NULL);
+            if (t->hud) psp_draw_hud(map, stats, fps, t->cfg.display_mode, NULL, NULL, NULL, 0);
             break;
 
         case TK_FILL2D:

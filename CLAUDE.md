@@ -851,7 +851,10 @@ v0.9.63 round complete ✓ — PSP frame cost found and fixed on REAL HARDWARE
   unchanged). Structural to tiled textures on a GE with no anisotropic filtering;
   the escape hatches are `bias=+N` (blurrier, compresses the steps) and
   `level_mode=const` (one LOD everywhere, removes them, mild aliasing) — both
-  live in host0:/poi_render.txt.
+  live in host0:/poi_render.txt. STATUS: known PSP-hardware limitation, not a bug
+  with a known fix — recorded in retro_engine/psp/HARDWARE-TESTING.md along with
+  everything ruled out, so it is not re-investigated from scratch; contributors
+  are invited to propose a technique.
 - HUD: the control hints were only drawn when the map had NO entity, so on any
   map with one they were invisible and the controls looked missing. They are now
   always shown, along with a live `in: x,y btn NNNN` input readout — which is how

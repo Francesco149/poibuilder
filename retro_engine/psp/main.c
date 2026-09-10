@@ -318,6 +318,7 @@ int main(int argc, char** argv) {
     float last_cpu_ms = 0.0f, last_gpu_ms = 0.0f;
     char hud_extra[128];
     char hud_input[64];
+    int pad_hold = 0;
     hud_input[0] = '\0';
 
     printf("[PSP] Entering render loop (benchmark=%d)\n", is_benchmark);
@@ -346,6 +347,7 @@ int main(int argc, char** argv) {
          * are undocumented" from "the pad is not being read". */
         snprintf(hud_input, sizeof(hud_input), "in: %3d,%3d btn %04X",
                  (int)pad.Lx, (int)pad.Ly, (unsigned)pad.Buttons);
+        pad_hold = (pad.Buttons & PSP_CTRL_HOLD) ? 1 : 0;
 
         if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
             printf("[PSP] Start+Select: exiting.\n");
@@ -427,7 +429,7 @@ int main(int argc, char** argv) {
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
         psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
-                     "Start+Select: quit & unload | L+R: dump trace", hud_input);
+                     "Start+Select: quit & unload | L+R: dump trace", hud_input, pad_hold);
 
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();
