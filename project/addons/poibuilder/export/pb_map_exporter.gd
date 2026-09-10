@@ -21,8 +21,8 @@ enum ExportMode {
 	MODERN = 1,
 }
 
-const PBM_MAGIC := 0x324D4250 # "PBM2"
-const PBM_VERSION := 2
+const PBM_MAGIC := 0x334D4250 # "PBM3"
+const PBM_VERSION := 3
 
 const PBM_META_RAW    := 0
 const PBM_META_STRING := 1
@@ -32,6 +32,13 @@ const PBM_ENTITY_PATROL_SPHERE := 1
 
 const PBM_TEX_FMT_RGBA8888 := 0
 const PBM_TEX_FMT_RGBA5551 := 1
+
+## Alpha handling stored per texture (PBM v3). A texture may only carry the
+## alpha its pixels were exported with: 5551 has ONE alpha bit, so anything
+## that needs a soft, partial alpha has to travel as RGBA8888.
+const PBM_ALPHA_NONE := 0
+const PBM_ALPHA_CUTOUT := 1
+const PBM_ALPHA_BLEND := 2
 ## Configuration settings for map export.
 class ExportSettings extends RefCounted:
 	var export_mode: ExportMode = ExportMode.RETRO
@@ -587,7 +594,10 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 				if sm.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
 					sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 				sm.cull_mode = BaseMaterial3D.CULL_DISABLED
-				sm.texture_repeat = false
+				# A billboard's quad maps 0..1 across the sprite, so tiling is
+				# off by default — but a SCROLLING sprite samples outside that
+				# range every frame, and clamping would smear its edge texels.
+				sm.texture_repeat = PBUv.has_scroll(mat)
 				sm.vertex_color_use_as_albedo = true
 				am.surface_set_material(s, sm)
 		export_mi.mesh = am
@@ -631,6 +641,18 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 ## Convenience method: converts an exported GLB file to PBMv2 format directly via GDScript.
 static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit: bool = true) -> Error:
 	return PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, format_16bit)
+
+## The alpha handling a material's surface needs, from how the author set its
+## transparency. Scissor/hash are hard-edged cutouts (foliage, decals); plain
+## Alpha is a soft blend (water, glass, smoke).
+static func material_alpha_mode(mat: Material) -> int:
+	if mat is StandardMaterial3D:
+		match (mat as StandardMaterial3D).transparency:
+			BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR, BaseMaterial3D.TRANSPARENCY_ALPHA_HASH:
+				return PBM_ALPHA_CUTOUT
+			BaseMaterial3D.TRANSPARENCY_ALPHA, BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS:
+				return PBM_ALPHA_BLEND
+	return PBM_ALPHA_NONE
 
 static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
 	var f := FileAccess.open(file_path, FileAccess.WRITE)
@@ -685,6 +707,9 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 				var mat: Material = mi.material_override
 				if mat == null:
 					mat = mesh.surface_get_material(s)
+				# Animated UV scroll travels with the material (see PBUv).
+				var scroll := PBUv.get_scroll_speed(mat)
+				var mat_alpha := material_alpha_mode(mat)
 				var tex_id := -1
 				if mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null:
 					var albedo_tex: Texture2D = (mat as StandardMaterial3D).albedo_texture
@@ -705,25 +730,37 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 								w = pot_w
 								h = pot_h
 
-							var tex_data := PackedByteArray()
-							tex_data.resize(w * h * 2)
 							img.convert(Image.FORMAT_RGBA8)
 							var raw_bytes := img.get_data()
-							var has_alpha: int = 0
-							for px_idx in range(w * h):
-								var r: int = raw_bytes[px_idx * 4]
-								var g: int = raw_bytes[px_idx * 4 + 1]
-								var b: int = raw_bytes[px_idx * 4 + 2]
-								var a: int = raw_bytes[px_idx * 4 + 3]
-								if a < 250:
-									has_alpha = 1
-								var r5: int = (r >> 3) & 0x1F
-								var g5: int = (g >> 3) & 0x1F
-								var b5: int = (b >> 3) & 0x1F
-								var a1: int = 1 if a > 127 else 0
-								var p16: int = (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
-								tex_data[px_idx * 2] = p16 & 0xFF
-								tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
+							var alpha_mode := mat_alpha
+							var tex_data := PackedByteArray()
+							var tex_format := PBM_TEX_FMT_RGBA5551
+							if alpha_mode == PBM_ALPHA_BLEND:
+								# A soft alpha needs the full 8 bits: 5551 carries
+								# one, which can only cut a pixel out, not fade it.
+								tex_data = raw_bytes.duplicate()
+								tex_format = PBM_TEX_FMT_RGBA8888
+							else:
+								tex_data.resize(w * h * 2)
+								var any_alpha := false
+								for px_idx in range(w * h):
+									var r: int = raw_bytes[px_idx * 4]
+									var g: int = raw_bytes[px_idx * 4 + 1]
+									var b: int = raw_bytes[px_idx * 4 + 2]
+									var a: int = raw_bytes[px_idx * 4 + 3]
+									if a < 250:
+										any_alpha = true
+									var r5: int = (r >> 3) & 0x1F
+									var g5: int = (g >> 3) & 0x1F
+									var b5: int = (b >> 3) & 0x1F
+									var a1: int = 1 if a > 127 else 0
+									var p16: int = (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
+									tex_data[px_idx * 2] = p16 & 0xFF
+									tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
+								if any_alpha and alpha_mode == PBM_ALPHA_NONE:
+									# Opaque material, transparent art: the pixels
+									# still need the alpha pass, as a cutout.
+									alpha_mode = PBM_ALPHA_CUTOUT
 
 							var data_hash: int = hash(tex_data)
 							if tex_map.has(data_hash):
@@ -735,8 +772,8 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 									"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
 									"width": w,
 									"height": h,
-									"format": PBM_TEX_FMT_RGBA5551,
-									"has_alpha": has_alpha,
+									"format": tex_format,
+									"alpha_mode": alpha_mode,
 									"data": tex_data
 								})
 								tex_map[tex_key] = tex_id
@@ -779,6 +816,7 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 						meshes.append({
 							"name": ("%s_%d" % [name_str, ci / chunk_size]).substr(0, 31),
 							"texture_id": tex_id,
+							"uv_scroll": scroll,
 							"vertices": cverts
 						})
 	if bounds_min.x == INF:
@@ -812,7 +850,7 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 		f.store_16(tex["width"])
 		f.store_16(tex["height"])
 		f.store_16(tex["format"])
-		f.store_16(tex.get("has_alpha", 0))
+		f.store_16(tex.get("alpha_mode", 0))
 		f.store_32((tex["data"] as PackedByteArray).size())
 		f.store_buffer(tex["data"])
 
@@ -833,6 +871,10 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 			m_min.z = minf(m_min.z, v["z"]); m_max.z = maxf(m_max.z, v["z"])
 		f.store_float(m_min.x); f.store_float(m_min.y); f.store_float(m_min.z)
 		f.store_float(m_max.x); f.store_float(m_max.y); f.store_float(m_max.z)
+		# PBM 2.1 animated UV scroll (was `reserved[2]`, always 0.0 before).
+		var scroll: Vector2 = m.get("uv_scroll", Vector2.ZERO)
+		f.store_float(scroll.x)
+		f.store_float(scroll.y)
 
 		for v in v_list:
 			f.store_float(v["u"])
