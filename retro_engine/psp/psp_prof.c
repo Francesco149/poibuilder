@@ -23,6 +23,7 @@
 #include <pspdisplay.h>
 #include <pspgu.h>
 #include <pspgum.h>
+#include <psputils.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -213,7 +214,14 @@ static void fill2d_emit(int count, const float rect[4], int tex_id,
 #define FILL3D_D 2.0f
 #define FILL3D_TANH 0.6371f
 
-static void fill3d_emit(float scale, int textured) {
+static float s_fill3d_built_scale = -1.0f;
+
+/* Geometry is built once and flushed to RAM; only the draw call is timed, so
+ * the probe measures submission + GE execution rather than the CPU cost of
+ * generating its own vertices. */
+static void fill3d_build(float scale) {
+    if (s_fill3d_built_scale == scale) return;
+    s_fill3d_built_scale = scale;
     float hh = FILL3D_D * FILL3D_TANH;
     float hw = hh * (16.0f / 9.0f);
     float x = hw * scale, y = hh * scale;
@@ -230,7 +238,11 @@ static void fill3d_emit(float scale, int textured) {
         s_fill3d[i].y = pos[k][1];
         s_fill3d[i].z = pos[k][2];
     }
+    sceKernelDcacheWritebackRange(s_fill3d, sizeof(s_fill3d));
+}
 
+static void fill3d_emit(float scale, int textured) {
+    fill3d_build(scale);
     if (textured) {
         sceGuEnable(GU_TEXTURE_2D);
         sceGuTexMode(GU_PSM_5551, 0, 0, 1);
@@ -252,10 +264,11 @@ static void fill3d_emit(float scale, int textured) {
 
 /* N tiny (4x4 px) quads, as N separate draw calls or one batched call:
  * separates per-draw-call submission cost from raw triangle throughput. */
-static void tiny_emit(int count, int separate_calls) {
-    const int verts_per_quad = 6;
-    if (count * verts_per_quad > (int)(sizeof(s_tiny) / sizeof(s_tiny[0]))) return;
+static int s_tiny_built = -1;
 
+static void tiny_build(int count) {
+    if (s_tiny_built == count) return;
+    s_tiny_built = count;
     float hh = FILL3D_D * FILL3D_TANH, hw = hh * (16.0f / 9.0f);
     int n = 0;
     for (int i = 0; i < count; ++i) {
@@ -278,6 +291,14 @@ static void tiny_emit(int count, int separate_calls) {
             n++;
         }
     }
+    sceKernelDcacheWritebackRange(s_tiny, (size_t)n * sizeof(PspVertex));
+}
+
+static void tiny_emit(int count, int separate_calls) {
+    const int verts_per_quad = 6;
+    int total = count * verts_per_quad;
+    if (total > (int)(sizeof(s_tiny) / sizeof(s_tiny[0]))) return;
+    tiny_build(count);
 
     sceGuDisable(GU_TEXTURE_2D);
     sceGuDisable(GU_CULL_FACE);
@@ -296,7 +317,7 @@ static void tiny_emit(int count, int separate_calls) {
     } else {
         sceGuDrawArray(GU_TRIANGLES,
             GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-            n, 0, s_tiny);
+            total, 0, s_tiny);
     }
 }
 
@@ -549,12 +570,15 @@ void psp_prof_suite(PbmMap* map) {
     int n = build_tests(map, tests, &pc);
     if (n > MAX_TESTS) n = MAX_TESTS;
 
-    FILE* f = fopen("ms0:/poi_profile.txt", "w");
-    int on_stick = (f != NULL);
-    if (!f) f = fopen("poi_profile.txt", "w");
+    /* host0:/ is the PSPLink USB host filesystem: when the profiler runs over
+     * USB the log lands directly on the development machine, with no memory
+     * stick, no mounting and no file copying. */
+    FILE* f = fopen("host0:/poi_profile.txt", "w");
+    const char* log_path = "host0:/poi_profile.txt";
+    if (!f) { f = fopen("ms0:/poi_profile.txt", "w"); log_path = "ms0:/poi_profile.txt"; }
+    if (!f) { f = fopen("poi_profile.txt", "w"); log_path = "poi_profile.txt"; }
 
-    printf("[PROF] %d tests x %d frames (log: %s)\n", n, pc.frames,
-           on_stick ? "ms0:/poi_profile.txt" : "cwd/poi_profile.txt");
+    printf("[PROF] %d tests x %d frames (log: %s)\n", n, pc.frames, log_path);
 
     if (f) {
         fprintf(f, "PoiRetro PSP profile\n");

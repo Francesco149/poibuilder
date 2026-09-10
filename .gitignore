@@ -11,3 +11,10 @@ project/tests/results.xml
 # Untracked external Raylib runner (not vendored)
 retro_engine/raylib/
 tools/raylib_runner/
+
+# PSP real-hardware profiling harness
+retro_engine/psp/hwrun/
+retro_engine/psp/poi_profile.txt
+retro_engine/psp/poi_trace.txt
+retro_engine/psp/poiretro_psp_hwtest.prx
+retro_engine/psp/poiretro_hwtest.PBP
