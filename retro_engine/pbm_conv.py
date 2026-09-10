@@ -276,7 +276,6 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         node_world_mats[node_idx] = world_mat
         for child_idx in node.get("children", []):
             compute_world_transforms(child_idx, world_mat)
-
     scene_idx = gltf.get("scene", 0)
     root_nodes = gltf.get("scenes", [{}])[scene_idx].get("nodes", list(range(len(nodes))))
     ident = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -284,7 +283,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         if r_idx < len(nodes):
             compute_world_transforms(r_idx, ident)
 
-    # Extract Meshes and Colliders
+
     all_meshes = []
     all_colliders = []
     bounds_min = [float("inf"), float("inf"), float("inf")]
@@ -350,13 +349,16 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     
                     # Atlas UV Remapping: slot (col_slot, row_slot) in 4x4 atlas (512x512)
                     if is_atlas:
-                        # Raw tile UV is [0.0, 1.0]. Remap into slot:
-                        u_val = (col_slot + (raw_uv[0] % 1.0)) * 0.25
-                        v_val = (row_slot + (raw_uv[1] % 1.0)) * 0.25
+                        half_texel = 0.5 / 128.0
+                        u_c = max(0.0, min(1.0, raw_uv[0]))
+                        v_c = max(0.0, min(1.0, raw_uv[1]))
+                        u_in_slot = half_texel + u_c * (1.0 - 2.0 * half_texel)
+                        v_in_slot = half_texel + v_c * (1.0 - 2.0 * half_texel)
+                        u_val = (col_slot + u_in_slot) * 0.25
+                        v_val = (row_slot + v_in_slot) * 0.25
                     else:
                         u_val = raw_uv[0]
                         v_val = raw_uv[1]
-                    
                     r_b = int(max(0.0, min(1.0, col[0])) * 255.0)
                     g_b = int(max(0.0, min(1.0, col[1])) * 255.0)
                     b_b = int(max(0.0, min(1.0, col[2])) * 255.0)
