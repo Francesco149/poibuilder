@@ -282,6 +282,61 @@ func test_ngon_drawer_state_machine_extrude():
 	assert_eq(data.validate(), "")
 	assert_false(drawer.is_active())
 
+func test_ngon_drawer_grid_snapping_exact_ticks():
+	var drawer := PBNgonDrawer.new()
+	var grid := PBGrid.new()
+	grid.enabled = true
+	grid.unit = 1.0
+	grid.subdivisions = 5 # step = 0.2m
+	drawer.grid = grid
+
+	drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
+	# Start at an arbitrary off-grid point on the floor (Y=0)
+	drawer.begin(Vector3(1.13, 0.0, 2.47), Vector3.UP)
+	assert_eq(drawer.points.size(), 1)
+	# Must snap to nearest 0.2m tick on both axes with zero fractional offset
+	assert_almost_eq(drawer.points[0].x, 1.2, 0.0001, "X should snap to 1.2, not 1.13")
+	assert_almost_eq(drawer.points[0].y, 0.0, 0.0001)
+	assert_almost_eq(drawer.points[0].z, 2.4, 0.0001, "Z should snap to 2.4, not 2.47")
+
+	# Add off-grid second point
+	assert_true(drawer.add_point(Vector3(3.04, 0.0, 4.19)))
+	assert_eq(drawer.points.size(), 2)
+	assert_almost_eq(drawer.points[1].x, 3.0, 0.0001)
+	assert_almost_eq(drawer.points[1].y, 0.0, 0.0001)
+	assert_almost_eq(drawer.points[1].z, 4.2, 0.0001)
+
+	# Live cursor plane update
+	drawer.update_cursor_plane(Vector3(2.57, 0.0, 1.83))
+	assert_almost_eq(drawer.live_cursor_point.x, 2.6, 0.0001)
+	assert_almost_eq(drawer.live_cursor_point.z, 1.8, 0.0001)
+	assert_true(drawer.add_point(drawer.live_cursor_point))
+	assert_eq(drawer.points.size(), 3)
+
+	# Complete & adjust height (should also snap height)
+	var comp_res := drawer.complete()
+	assert_true(comp_res.get("ok", false))
+	drawer.update_height_point(Vector3(0.0, 1.77, 0.0))
+	assert_almost_eq(drawer.height, 1.8, 0.0001, "Height should snap to 1.8m")
+
+	# Confirm height
+	var final_res := drawer.confirm_height()
+	assert_true(final_res.get("ok", false))
+	var xf: Transform3D = final_res["transform"]
+	assert_almost_eq(xf.origin.x, 1.2, 0.0001, "Pivot X should be grid tick 1.2")
+	assert_almost_eq(xf.origin.y, 0.0, 0.0001)
+	assert_almost_eq(xf.origin.z, 2.4, 0.0001, "Pivot Z should be grid tick 2.4")
+
+	var data: PBMeshData = final_res["data"]
+	assert_not_null(data)
+	# Local vertex 0 is at (0, 0, 0)
+	assert_almost_eq(data.positions[0].x, 0.0, 0.0001)
+	assert_almost_eq(data.positions[0].z, 0.0, 0.0001)
+	# World position matches the snapped poly[1]
+	var world_p1 := xf * data.positions[1]
+	assert_almost_eq(world_p1.x, 3.0, 0.0001)
+	assert_almost_eq(world_p1.z, 4.2, 0.0001)
+
 func test_snap_to_face_and_boundary_clamping():
 	var node := PBMesh.new()
 	node.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 2, 2))

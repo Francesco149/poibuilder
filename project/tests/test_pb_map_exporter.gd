@@ -171,3 +171,34 @@ func test_cleanup_intermediate_files() -> void:
 	DirAccess.remove_absolute(glb_path)
 	DirAccess.remove_absolute(unrelated)
 	DirAccess.remove_absolute(test_dir)
+
+func test_export_retro_pbm_format() -> void:
+	var root := Node3D.new()
+	var pb := PBMesh.new()
+	pb.name = "TestCube"
+	pb.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 2, 2))
+	root.add_child(pb)
+	add_child_autofree(root)
+
+	var pbm_path := "user://test_export_retro.pbm"
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	settings.bake_textures = false
+
+	var err := PBMapExporter.export_retro_pbm(root, pbm_path, settings)
+	assert_eq(err, OK, "PBM export must return OK")
+	assert_true(FileAccess.file_exists(pbm_path), "PBM file must exist on disk")
+
+	var f := FileAccess.open(pbm_path, FileAccess.READ)
+	assert_not_null(f)
+	var magic := f.get_32()
+	assert_eq(magic, PBMapExporter.PBM_MAGIC, "Magic must match PBM1")
+	var ver := f.get_32()
+	assert_eq(ver, PBMapExporter.PBM_VERSION, "Version must match 1")
+	var n_tex := f.get_32()
+	var n_mesh := f.get_32()
+	assert_gt(n_mesh, 0, "Must have at least 1 mesh exported")
+	f.close()
+
+	# Cleanup
+	DirAccess.remove_absolute(pbm_path)

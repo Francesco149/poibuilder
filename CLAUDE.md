@@ -775,6 +775,39 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal lifecycle hardening, & PSP retro export renderer:
+- N-GON TOOL GRID SNAPPING OFFSET FIX (`PBNgonDrawer`, `poibuilder_plugin.gd`):
+  - Root cause of n-gon tool being offset on both axes: `PBNgonDrawer.begin()` previously stored the raw un-snapped ray hit as `plane_point`. Furthermore, `_snap_to_grid()` calculated `d = p - plane_point` and snapped in-plane along U/V axes relative to `plane_point`, permanently locking the raw click point's fractional offset onto every single placed vertex. On confirm, it placed the node origin at the floating-point centroid, drifting gizmo and vertex coordinates off-grid.
+  - Implemented `PBNgonDrawer.snap_starting_point(point, normal, p_mesh, p_face)`: on cardinal surfaces (floors and walls), snaps points directly to the world grid via `grid.snap_point_masked(point, normal)` before setting `plane_point`.
+  - Updated `_snap_to_grid()`: cardinal surfaces snap directly to absolute world grid ticks via `grid.snap_point_masked(p, n)`, producing 100% exact grid alignment on both axes with zero fractional offset.
+  - Node placement alignment: `confirm_height()` now pivots on `poly[0]` (snapped to the grid), ensuring local vertex coordinates are exact multiples of the grid step with the node origin resting cleanly on a grid intersection.
+- OVERLAY MODAL LIFECYCLE & STALE PANEL HARDENING (`PBToolOverlay`, `poibuilder_plugin.gd`):
+  - Root cause of stale panels and permanently stuck sprite parameters: (1) `open_params()` called `toolbar.set_overlay_pinned(true)`, permanently flipping the user's pin toggle so the panel stayed visible indefinitely; (2) `_on_params_canceled()` under `_params_session_kind == "edit"` omitted `tool_overlay.close_params()`, clearing the session kind to `""` while leaving `params_open = true`, locking Apply/Cancel buttons into no-ops and permanently trapping the modal on screen; (3) `_forward_3d_gui_input()` lacked modal input handling when `_params_session_kind == "edit"`, ignoring viewport clicks and Escape keys; (4) in `update_visibility()`, `can_edit_props` alone forced the unpinned overlay to appear whenever an unedited shape was selected.
+  - Hardened modal lifecycle:
+    - In `_forward_3d_gui_input()`: when any parameter modal is open, Escape cancels, Enter applies, and any viewport click outside the panel or keypress auto-dismisses the modal cleanly and passes through to the scene.
+    - Switching tools (`_on_shape_requested`, `_start_sprite_tool`, `_start_knife_tool`, `_start_ngon_shape_tool`), switching modes (`_on_tool_mode_changed`, `_on_select_mode_changed`), or deselecting/changing selection immediately dismisses and applies/cancels open modals.
+    - `_on_params_canceled()` calls `tool_overlay.close_params()` unconditionally across all branches, guaranteeing `params_open` never leaks.
+    - Removed `toolbar.set_overlay_pinned(true)` from `open_params()`: opening a modal displays as a modal without mutating the user's manual pin setting; closing the modal auto-hides the overlay if unpinned.
+    - In `PBToolOverlay.refresh()`: self-heals stale `params_open` by auto-closing if the active mesh is null and no creation session is running.
+    - In `PBToolOverlay.update_visibility()`: `can_edit_props` no longer forces an unpinned overlay to pop up uninvited on pristine shapes (the toolbar's "Edit Params" button remains accessible on-demand).
+- RETRO EXPORT PIPELINE & SONY PSP HOMEBREW RENDERER (`PBMapExporter`, `pbm_conv.py`, `retro_engine/psp/`):
+  - Retro hardware analysis (PlayStation Portable — MIPS Allegrex 333MHz, 32MB RAM, 2MB eDRAM):
+    - GLB snags on retro hardware: 81 separate PNG images take minutes to decompress with zlib on a 333MHz CPU; 81 uncompressed 128x128 RGBA8888 textures take 5.2MB (exceeding 2MB VRAM); parsing complex glTF JSON schemas and bufferView strides fragments 32MB RAM; separate non-interleaved float attribute streams require runtime re-interleaving.
+  - Custom Retro Map binary format (`.pbm` — PoiBuilder Retro Map):
+    - Compact 64-byte `PbmHeader` with magic `PBM1` (0x314D4250), version, counts, spawn point, and scene AABB.
+    - Raw uncompressed texture table in `PbmTextureHeader` supporting 16-bit RGBA5551 (halving memory to 2.59MB for 81 textures) and 32-bit RGBA8888, directly uploadable to `sceGuTexImage` without decompression.
+    - 24-byte interleaved vertex format `PbmVertex` (`float u, v; uint32_t color; float x, y, z;`), matching Sony GU hardware vertex specification `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D` for single-call DMA rendering via `sceGumDrawArray()`.
+    - Collision table preserving bounding boxes and triangle meshes.
+  - Standalone converter & Godot export:
+    - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization and draw-call batching.
+    - Integrated native `.pbm` export in `PBMapExporter.export_retro_pbm()` and added `.pbm` file filter in `PBExportDialog`.
+  - Complete PSP homebrew application (`retro_engine/psp/`):
+    - `main.c`: Sony GU double-buffered 480x272 setup, smooth Gouraud shading, texture modulation with baked vertex lighting + AO, orbital camera, and benchmark mode.
+    - `pbm_loader.c`: 16-byte aligned DMA memory loader.
+    - `build_psp.sh`: compiles `poiretro_psp.elf` and `EBOOT.PBP` in < 1s using containerized `pspdev/pspdev`.
+    - `run_psp_headless.sh`: executes under `PPSSPPHeadless`, rendering 120 frames and exporting a 480x272 screenshot (`screenshot_psp.png`, 1012 unique colors).
+- Tests: 826/826 GUT unit tests passing (+4), 50/50 GUI harness tests passing (0 failures).
+
 v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exports dir & cleanup, & Ctrl direction lock:
 - DOOR BASE EXTENSION & FRAME EXPANSION (`PBShapeParams.apply_drag_extents`):
   - Root cause of doors failing to fill dragged base area: `apply_drag_extents` previously clamped door `width` via `max_door_w = maxf(3.0, dh * 1.5)`. When height was small (e.g. 1.0m to 2.0m) or during initial BASE phase, dragging a wide base area (e.g. 6m or 10m) resulted in a door clamped to 3m that floated in the middle of the selected rectangle and only expanded once height exceeded `u_size / 1.5`.

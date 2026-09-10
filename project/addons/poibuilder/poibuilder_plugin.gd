@@ -64,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.60"
+const VERSION := "0.9.61"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -425,6 +425,25 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if paint_controller != null and paint_controller.is_active():
 		return _paint_controller_input(camera, event)
 
+	# If a shape-parameter modal is open (Edit Params session), handle its modal lifecycle:
+	if _params_session_kind == "edit" or (tool_overlay != null and tool_overlay.params_open and not shape_creator.is_active()):
+		if event is InputEventKey and event.pressed:
+			var k := event as InputEventKey
+			if k.keycode == KEY_ESCAPE:
+				_on_params_canceled()
+				return AFTER_GUI_INPUT_STOP
+			elif k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER:
+				_on_params_applied()
+				return AFTER_GUI_INPUT_STOP
+			else:
+				_on_params_canceled()
+				return AFTER_GUI_INPUT_PASS
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			if logger:
+				logger.info("plugin", "Params modal cancelled (viewport press)")
+			_on_params_canceled()
+			return AFTER_GUI_INPUT_PASS
+
 	# Everything key-driven funnels through the rebindable action table BEFORE
 	# the editing gate: grid keys work with nothing selected (the grid must be
 	# adjustable before use), while action-internal context gates keep unbound
@@ -663,15 +682,13 @@ func _on_selection_changed() -> void:
 	# unconfirmed changes are reverted like clicking Cancel.
 	# Re-entrant call from _finish_creation_session's own selection
 	# change is a no-op (the session kind is already cleared).
-	if _params_session_kind == "edit":
-		if logger:
-			logger.info("plugin", "Edit Params session cancelled (selection changed)")
-		_on_params_canceled()
-	elif _params_session_kind == "create" and pb_mesh != null and pb_mesh != shape_creator.preview_node:
-		if logger:
-			logger.info("plugin", "Create Params session cancelled (selection changed)")
-		_on_params_canceled()
-
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		if _params_session_kind == "create" and pb_mesh == shape_creator.preview_node:
+			pass
+		else:
+			if logger:
+				logger.info("plugin", "Params session cancelled (selection changed)")
+			_on_params_canceled()
 # ==============================================================================
 # Editor State Callbacks
 # ==============================================================================
@@ -727,6 +744,8 @@ func _auto_pick_element(mesh: PBMesh) -> void:
 	mesh.update_gizmos()
 
 func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		_on_params_applied()
 	# Clear element selection when mode changes (ProBuilder behavior).
 	# The engine's subgizmo selection is the authoritative drag source, so it
 	# must be cleared too, and the gizmo redrawn for the new element type.
@@ -765,6 +784,8 @@ func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 		editor.active_mesh.update_gizmos()
 
 func _on_tool_mode_changed(_tool: PBEditor.ToolMode) -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		_on_params_applied()
 	_update_engine_tool()
 	# The center scale handle lives on the ELEMENT gizmo, which only renders
 	# on a redraw — switching MOVE↔SCALE must refresh it or the handle simply
@@ -1286,7 +1307,7 @@ var _params_edit_values: Dictionary = {}
 ## an Edit Params session commits) so the new shape never replaces the node
 ## a still-open dialog was editing.
 func _on_shape_requested(shape_id: StringName) -> void:
-	if _params_session_kind != "":
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
 		_on_params_applied()
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
@@ -1631,10 +1652,7 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
 		best_point = shape_creator.snap_starting_point(best_point, best_normal)
 	elif ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED:
-		if best_node != null and best_face >= 0:
-			best_point = ngon_drawer.snap_to_face(best_node, best_face, best_point)
-		elif grid != null and grid.enabled:
-			best_point = grid.snap_point(best_point)
+		best_point = ngon_drawer.snap_starting_point(best_point, best_normal, best_node, best_face)
 	elif sprite_placer != null and sprite_placer.is_active() and sprite_placer.state == PBSpritePlacer.State.ARMED:
 		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
 			best_point = grid.snap_point_masked(best_point, best_normal)
@@ -1712,7 +1730,6 @@ func _creation_confirm() -> void:
 	if PBShapeParams.needs_params_modal(shape_creator.shape_id):
 		_params_session_kind = "create"
 		tool_overlay.panel_enabled = true
-		toolbar.set_overlay_pinned(true)
 		tool_overlay.open_params("%s Parameters" % String(shape_creator.shape_id).capitalize(),
 			PBShapeParams.get_param_defs(shape_creator.shape_id), shape_creator.values)
 		if logger:
@@ -1828,6 +1845,8 @@ func _unique_shape_name(scene_root: Node, shape_id: StringName) -> String:
 # ==============================================================================
 
 func _start_knife_tool() -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		_on_params_applied()
 	if shape_creator.is_active():
 		_creation_abort("switched to knife tool")
 	if ngon_drawer.is_active():
@@ -1847,6 +1866,8 @@ func _start_knife_tool() -> void:
 		logger.info("plugin", "Knife tool active — click on a face to place vertices")
 
 func _start_ngon_shape_tool() -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		_on_params_applied()
 	if shape_creator.is_active():
 		_creation_abort("switched to n-gon tool")
 	if ngon_drawer.is_active():
@@ -1896,10 +1917,8 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 								best_dist = res.distance
 								best_m = node
 								best_f = res.face_index
-					if best_m != null and best_f >= 0:
-						pt = ngon_drawer.snap_to_face(best_m, best_f, pt)
-					elif grid != null and grid.enabled:
-						pt = grid.snap_point(pt)
+					var norm: Vector3 = hit.get("normal", Vector3.UP)
+					pt = ngon_drawer.snap_starting_point(pt, norm, best_m, best_f)
 					ngon_drawer.live_cursor_point = pt
 					if ngon_drawer.preview_node != null:
 						ngon_drawer.preview_node.update_gizmos()
@@ -2006,14 +2025,15 @@ func _ngon_drawer_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> b
 	if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE:
 		if best_mesh == null or best_face < 0:
 			return false
-		ngon_drawer.begin(hit["point"], hit["normal"], best_mesh, best_face)
+		var start_pt := ngon_drawer.snap_starting_point(hit["point"], hit["normal"], best_mesh, best_face)
+		ngon_drawer.begin(start_pt, hit["normal"], best_mesh, best_face)
 		_clear_creation_hover()
 		_set_creation_hint("Knife: click to place cut vertices, drag to move, Enter to complete cut")
 		best_mesh.update_gizmos()
 		return true
 	else:
-		ngon_drawer.begin(hit["point"], hit["normal"], best_mesh, best_face)
-		_clear_creation_hover()
+		var start_pt := ngon_drawer.snap_starting_point(hit["point"], hit["normal"], best_mesh, best_face)
+		ngon_drawer.begin(start_pt, hit["normal"], best_mesh, best_face)
 		_set_creation_hint("N-Gon: click to place vertices, drag to move, Enter to extrude")
 		_make_ngon_preview_node()
 		_refresh_ngon_preview()
@@ -2151,7 +2171,7 @@ func _ngon_drawer_abort(reason: String) -> void:
 # ==============================================================================
 
 func _start_sprite_tool() -> void:
-	if _params_session_kind != "":
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
 		_on_params_applied()
 	if shape_creator.is_active():
 		_creation_abort("switched to sprite tool")
@@ -2392,7 +2412,14 @@ func _on_params_canceled() -> void:
 		_params_edit_values = {}
 		if logger:
 			logger.info("plugin", "Shape parameters edit cancelled")
+	else:
+		_params_session_kind = ""
+		_params_edit_node = null
+		_params_edit_snapshot = null
+		_params_edit_values = {}
 
+	if tool_overlay != null:
+		tool_overlay.close_params()
 ## Edit Params on a pristine factory shape: live param rebuilds; Apply
 ## commits a snapshot undo, Cancel restores the pre-session data. Ignored
 ## while another params session is running.
@@ -2412,7 +2439,7 @@ func _on_edit_params_requested() -> void:
 	_params_edit_snapshot = PBCommand.copy_mesh_data(data)
 	_params_edit_snapshot_cast_shadow = mesh.cast_shadow
 	_params_edit_values = data.shape_params.duplicate()
-	toolbar.set_overlay_pinned(true)
+
 	tool_overlay.open_params("%s Parameters" % String(data.shape_id).capitalize(),
 		PBShapeParams.get_param_defs(data.shape_id), _params_edit_values)
 func _commit_edit_params() -> void:
