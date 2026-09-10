@@ -205,10 +205,14 @@ Following each `PbmMetadataHeader`, exactly `data_size` bytes of binary data are
 
 ---
 
-## 8. Custom Entities & Behaviors Specification
+## 8. Custom Entities & Behaviors: Example Recipes
 
-Version 2.0 provides first-class support for game entities, navigation surfaces, physics simulations, and gameplay triggers. These are stored within the extensible Metadata Chunk.
-
+> **CRITICAL ARCHITECTURAL DISTINCTION — RECIPES VS. STANDARD**:  
+> The specific entity tags and structures detailed below (`"walkable_mesh"`, `"triggers"`, `"player_spawn"`, `"particle_emitters"`, `"rigid_bodies"`, `"entities"`) are **EXAMPLE IMPLEMENTATION RECIPES**, **NOT** fixed schema constraints of the PBMv2 specification.
+>
+> The PBMv2 specification defines **only the general binary lump transport container** (Section 7: 32-byte tag string, 32-bit type integer, 32-bit length integer, and raw payload bytes). The payload data can be **anything you want**: flat binary structs, UTF-8 JSON, byte-encoded bytecode, dialog trees, navmesh graphs, or audio cue tables. You are completely free to invent your own tags and payload formats for your custom game engine.
+>
+> The recipes below demonstrate tested, real-world patterns for authoring custom data in the Godot editor and consuming them in custom C/Raylib/PSP game engines.
 ### 8.1 Map Name (`tag = "map_name"`)
 - **Type**: `PBM_META_STRING` (`1`)
 - **Payload**: Null-terminated UTF-8 string identifying the map name for HUD display and save states.
@@ -353,27 +357,158 @@ Enables real-time physics simulations on retro or custom hardware without extern
 
 ---
 
-## 9. Godot Authoring Guide
+## 9. Full End-to-End Walkthrough: Godot Authoring to Custom Engine Implementation
 
-Level designers author custom entities and behaviors in Godot 4 using standard node patterns:
+This section provides a complete, tested walkthrough of authoring custom data in Godot 4, exporting via PoiBuilder, and implementing the runtime behavior in a custom C engine (verified via the Raylib runner).
 
-1. **Walkable Mesh**:
-   - Add a `MeshInstance3D` or `PBMesh` named with prefix `Walkable_` (e.g. `Walkable_Floor`).
-   - Disable visibility in game (`visible = false`) or set transparent editor material.
-   - The PoiBuilder export pipeline extracts its world-space triangles into the `walkable_mesh` metadata lump.
-2. **Triggers**:
-   - Add an `Area3D` or box node named with prefix `Trigger_` (e.g. `Trigger_Archway`).
-   - In node metadata or script, assign:
-     - `event_name = "on_enter_archway"`
-     - `oneshot = true`
-3. **Particle Emitters**:
-   - Add a `GPUParticles3D` or `Marker3D` named `Emitter_Torch`.
-   - Set metadata `particle_rate = 30`, `particle_lifetime = 1.2`, `particle_color = Color(...)`.
-4. **Physics Rigid Bodies**:
-   - Add nodes under a `BallPit` container with `RigidBody3D` or metadata `is_rigid_body = true`.
-5. **Player Spawn Point**:
-   - Add a `Marker3D` named `PlayerSpawn`. Its position and rotation define the default spawn transform.
+```
+  [ Godot 4 3D Editor ]           [ PoiBuilder Exporter ]            [ Custom Engine / Raylib / PSP ]
+  ---------------------           -----------------------            --------------------------------
+  1. Place Visual Geometry        PBMapExporter:                     pbm_load("map.pbm"):
+  2. Place Marker3D (PlayerSpawn) -> Discovers scene nodes           -> Uploads GPU textures & meshes
+  3. Place Area3D (Trigger)       -> Computes world transforms       -> Parses metadata lump table
+  4. Place Mesh (Walkable)        -> Extracts AABB bounds / triangles-> Initializes Player at Spawn
+  5. Attach Inspector Metadata    -> Encodes JSON / Binary lumps     -> Drops rays onto Walkable Mesh
+  6. Click "Export Retro PBM"     -> Writes PBMv2 (64-byte header)   -> Checks Trigger containment
+                                                                     -> Steps Physics Ball Pit & Particles
+```
 
+---
+
+### Step 1: Authoring in Godot 4 Editor
+
+In the Godot 3D Viewport and Scene Dock, authoring entities uses standard, intuitive node patterns:
+
+#### 1. Player Spawn Point
+1. Add a `Marker3D` or `Node3D` anywhere in your level.
+2. Name the node `PlayerSpawn` (or any name starting with `Spawn`).
+3. Rotate and position it where the player should begin.
+4. *(Optional)* In the Inspector, scroll to **Metadata**, click **Add Metadata**, and set `camera_fov = 75.0`.
+
+#### 2. Walkable Mesh Navigation Surface
+1. When creating stepped terraced stairs, complex ruins, or decorative balustrades, computing exact physics collision against 4,000 detailed visual triangles is slow and prone to snagging.
+2. Add an invisible `MeshInstance3D` named `Walkable_Floor` spanning the walkable area.
+3. Assign it a simple quad or low-poly ramp surface.
+4. The exporter extracts its triangles into `"walkable_mesh"` and excludes it from opaque visual drawing so it does not render twice.
+
+#### 3. Event / Cutscene Trigger Area
+1. Add an `Area3D` or simple box `MeshInstance3D` named `Trigger_VaultDoor`.
+2. Position and scale it over the doorway or entrance volume.
+3. In the Inspector, under **Metadata**, click **Add Metadata**:
+   - `event` (String): `"open_vault_cutscene"`
+   - `dialogue_id` (String): `"vault_lore_01"`
+   - `oneshot` (bool): `true`
+
+#### 4. Particle Emitter Marker
+1. Add a `Marker3D` or `GPUParticles3D` named `Emitter_Torch`.
+2. Position it on a wall bracket or campfire.
+3. In the Inspector, add metadata:
+   - `rate` (int): `45`
+   - `lifetime` (float): `2.0`
+   - `velocity` (Vector3): `(0.0, 3.0, 0.0)`
+   - `spread` (float): `0.4`
+   - `color` (Color): `Color(1.0, 0.5, 0.1, 1.0)`
+
+#### 5. Physics Rigid Bodies (Ball Pit)
+1. Add a container `Node3D` named `BallPit`.
+2. In the Inspector, add metadata:
+   - `count` (int): `24`
+   - `radius` (float): `0.22`
+   - `restitution` (float): `0.85`
+   - `mass` (float): `1.2`
+
+#### 6. Arbitrary Custom Gameplay Entities (NPCs, Loot, Audio)
+On **ANY** node in your Godot scene, you can attach arbitrary custom metadata:
+1. Add metadata `poi_metadata_tag = "dialogue_npc"`.
+2. Add your custom fields: `npc_name = "Elder Olaru"`, `quest_id = 101`, `greeting = "Welcome to the Sunken Vault."`.
+3. The exporter will package all metadata on that node into a clean JSON lump under tag `"dialogue_npc"`.
+
+---
+
+### Step 2: Exporting from Godot via PoiBuilder
+
+In the PoiBuilder Toolbar, click **Export** $\rightarrow$ select **PoiRetro (.pbm)** $\rightarrow$ click **Export**.
+
+Under the hood, `PBMapExporter`:
+1. Iterates the authored Godot scene tree (`root`).
+2. Resolves world-space transforms (`_get_world_transform`).
+3. Dynamically extracts `player_spawn`, `walkable_mesh`, `triggers`, `particle_emitters`, `rigid_bodies`, and custom metadata lumps.
+4. Subdivides large surfaces into $\le 384$-vertex spatial chunks and packs textures into $512 \times 512$ atlases.
+5. Writes the `.pbm` v2 binary file with the 64-byte header and lump table.
+
+---
+
+### Step 3: Loading & Parsing in a Custom Engine (C / Raylib / PSP)
+
+In your custom engine, loading metadata is simple and decoupled:
+
+```c
+// 1. Read PBM Header
+PbmHeader hdr;
+fread(&hdr, sizeof(PbmHeader), 1, file);
+
+// 2. Skip textures, meshes, and colliders to reach Metadata Chunk
+// (or jump directly using chunk offsets)
+
+// 3. Read Metadata Lumps
+for (uint32_t i = 0; i < hdr.num_metadata; ++i) {
+    PbmMetadataHeader mhdr;
+    fread(&mhdr, sizeof(PbmMetadataHeader), 1, file);
+    
+    uint8_t* payload = malloc(mhdr.data_size + 1);
+    fread(payload, mhdr.data_size, 1, file);
+    payload[mhdr.data_size] = '\0';
+    
+    // Skip 4-byte padding
+    uint32_t pad = (4 - (mhdr.data_size % 4)) % 4;
+    if (pad > 0) fseek(file, pad, SEEK_CUR);
+
+    // Route by tag:
+    if (strcmp(mhdr.tag, "walkable_mesh") == 0) {
+        load_walkable_triangles((float*)payload, mhdr.data_size / sizeof(float));
+    } else if (strcmp(mhdr.tag, "triggers") == 0) {
+        // Parse JSON triggers using cJSON, parson, or jsmn:
+        parse_triggers_json((const char*)payload);
+    } else if (strcmp(mhdr.tag, "player_spawn") == 0) {
+        parse_spawn_json((const char*)payload);
+    } else if (strcmp(mhdr.tag, "dialogue_npc") == 0) {
+        spawn_npc_from_json((const char*)payload);
+    }
+    
+    free(payload);
+}
+```
+
+---
+
+### Step 4: Real-time Runtime Execution in Custom Engine
+
+In your frame loop:
+1. **Ground Snapping**: When the player moves, sample ground elevation from the walkable triangles via 2D barycentric raycast:
+   `player.y = get_walkable_ground_y(player.x, player.z, 0.0f) + player_eye_height;`
+2. **Trigger Evaluation**: Check if the player position is contained in any trigger's AABB:
+   `if (is_in_bounds(player.pos, trigger.min, trigger.max)) fire_event(trigger.event);`
+3. **Physics Simulation (Ball Pit)**:
+   Integrate gravity, resolve floor bounces ($v_y = -v_y \times \text{restitution}$), boundary walls, and elastic sphere-sphere collisions.
+
+---
+
+### Step 5: Testing & Visual Verification
+
+You can test your exported map interactively or headlessly:
+
+```bash
+# Launch interactive Raylib custom engine playground:
+./test.sh raylib
+
+# Or launch interactive Sony PSP homebrew on PPSSPPSDL:
+./test.sh psp
+
+# Run headless verification:
+./test.sh raylib -h
+```
+
+The Raylib test runner simulates the physics ball pit, navigates the walkable mesh, trips the cutscene trigger, steps particles, and captures visual verification to `raylib_proof_of_concept.png`.
 ## 10. Hardware Clipping & Performance Rules (PSP Guidelines)
 
 1. **Near-Plane Distance**:

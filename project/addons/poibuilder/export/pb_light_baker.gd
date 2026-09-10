@@ -385,7 +385,7 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid) -> void:
 				var arrays := m.surface_get_arrays(s)
 				if arrays.size() > Mesh.ARRAY_VERTEX:
 					var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays.size() > Mesh.ARRAY_INDEX else PackedInt32Array()
+					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if (arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] != null) else PackedInt32Array()
 
 					if not indices.is_empty():
 						for i in range(0, indices.size() - 2, 3):
