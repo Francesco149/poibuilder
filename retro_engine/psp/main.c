@@ -174,12 +174,21 @@ static inline int is_billboard_mesh(const char* name) {
         strstr(name, "sprite")    || strstr(name, "Sprite")    ||
         strstr(name, "tree")      || strstr(name, "Tree")      ||
         strstr(name, "bush")      || strstr(name, "Bush")      ||
-        strstr(name, "flower")    || strstr(name, "Flower")) {
+        strstr(name, "flower")    || strstr(name, "Flower")    ||
+        strstr(name, "wildflower")|| strstr(name, "Wildflower")) {
         return 1;
     }
     return 0;
 }
 
+static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
+    if (!mesh) return 0;
+    if (is_billboard_mesh(mesh->name)) return 1;
+    if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
+        if (map->textures[mesh->texture_id].has_alpha) return 1;
+    }
+    return 0;
+}
 int main(int argc, char* argv[]) {
     /* Set up Home button exit callback thread */
     setup_callbacks();
@@ -446,13 +455,13 @@ int main(int argc, char* argv[]) {
 
         /* PASS 1: Solid Opaque Meshes */
         sceGuDisable(GU_BLEND);
+        sceGuDisable(GU_ALPHA_TEST);
         sceGuEnable(GU_CULL_FACE);
 
         for (uint32_t mi = 0; mi < map->header.num_meshes; ++mi) {
             PbmMesh* mesh = &map->meshes[mi];
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
-            if (is_billboard_mesh(mesh->name)) continue; /* Rendered in Pass 2 */
-
+            if (is_transparent_mesh(map, mesh)) continue; /* Rendered in Pass 2 */
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
@@ -490,7 +499,9 @@ int main(int argc, char* argv[]) {
             total_rendered_verts += mesh->num_vertices;
         }
 
-        /* PASS 2: Alpha-blended Billboards */
+        /* PASS 2: Alpha-tested & Alpha-blended Billboards / Foliage */
+        sceGuEnable(GU_ALPHA_TEST);
+        sceGuAlphaFunc(GU_GREATER, 0x10, 0xFF); /* Discard transparent fragments */
         sceGuEnable(GU_BLEND);
         sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
         sceGuDisable(GU_CULL_FACE);
@@ -498,8 +509,7 @@ int main(int argc, char* argv[]) {
         for (uint32_t mi = 0; mi < map->header.num_meshes; ++mi) {
             PbmMesh* mesh = &map->meshes[mi];
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
-            if (!is_billboard_mesh(mesh->name)) continue; /* Already rendered in Pass 1 */
-
+            if (!is_transparent_mesh(map, mesh)) continue; /* Already rendered in Pass 1 */
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
@@ -527,6 +537,7 @@ int main(int argc, char* argv[]) {
 
             total_rendered_verts += mesh->num_vertices;
         }
+        sceGuDisable(GU_ALPHA_TEST);
 
         /* ── PASS 3: Hardware 2D On-Screen HUD Overlay (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) ─── */
         char buf[80];
