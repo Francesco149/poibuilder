@@ -1141,15 +1141,14 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 						if not _drag_mouse_driven and logger != null:
 							logger.warn("drag", "EXTRUDE MISMATCH — engine rel along normal=%.3f but cursor says %.3f (px_per_world=%.1f); driving the cap from the cursor" % [rel_normal_dist, mouse_world_dist, _extrude_px_per_world])
 						_drag_mouse_driven = true
-				# Grid snapping (incremental, ProBuilder's relative mode):
-				# plain MOVE quantizes the translation DELTA per world
-				# component; the EXTRUDE cap snaps its world-space distance
-				# ALONG the extrude normal (tangential motion passes through).
+				# Grid snapping:
+				# plain MOVE snaps active axes to absolute world grid lines;
+				# the EXTRUDE cap snaps its world-space distance ALONG the extrude normal.
 				if grid != null and grid.enabled:
 					if _drag_gesture == DragGesture.EXTRUDE_MOVE:
 						motion = _snap_extrude_motion(node, motion)
 					else:
-						motion = grid.snap_local_delta(node.global_transform.basis, motion)
+						motion = _snap_move_motion(node, motion)
 				# Spec (VertexManipulationTool.cs): shift+move extrudes at
 				# begin, then ApplyTranslation pulls the new faces along the
 				# translation delta — the cap follows the cursor.
@@ -1261,6 +1260,32 @@ func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
 	var snapped := grid.snap_val(dist)
 	return basis.inverse() * (world + world_normal * (snapped - dist))
 
+
+## Snaps element translation to absolute world grid lines along active axes.
+## Even if an element starts with an off-grid position (fractional dimensions or
+## centered geometry), dragging it snaps the landing position directly onto the grid ticks.
+func _snap_move_motion(node: PBMesh, motion: Vector3) -> Vector3:
+	if grid == null or not grid.enabled or node == null:
+		return motion
+	if not _drag_start_xf.has(_drag_latest_id):
+		return grid.snap_local_delta(node.global_transform.basis, motion)
+
+	var basis := node.global_transform.basis
+	var world_motion := basis * motion
+	var start_pivot_world: Vector3 = node.global_transform * _drag_start_xf[_drag_latest_id].origin
+	var target_pivot_world := start_pivot_world + world_motion
+	var snapped_target := grid.snap_point(target_pivot_world)
+
+	var applied_world := Vector3.ZERO
+	# Snap only axes with active motion; un-dragged axes stay at 0
+	if absf(world_motion.x) > 0.0001:
+		applied_world.x = snapped_target.x - start_pivot_world.x
+	if absf(world_motion.y) > 0.0001:
+		applied_world.y = snapped_target.y - start_pivot_world.y
+	if absf(world_motion.z) > 0.0001:
+		applied_world.z = snapped_target.z - start_pivot_world.z
+
+	return basis.inverse() * applied_world
 # ==============================================================================
 # Center scale handle (uniform scale + inset, ProBuilder-style)
 # ==============================================================================

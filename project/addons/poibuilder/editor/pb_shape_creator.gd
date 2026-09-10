@@ -152,7 +152,9 @@ func placement_transform(data: PBMeshData) -> Transform3D:
 		lift = -(aabb.position.y + aabb.size.y)
 	elif PBShapeParams.height_drags_offset(shape_id):
 		lift += height
-	return Transform3D(basis, rect_center + plane_normal * lift)
+	var aabb_center_local := aabb.get_center()
+	var center_offset: Vector3 = basis * Vector3(aabb_center_local.x, 0.0, aabb_center_local.z)
+	return Transform3D(basis, rect_center - center_offset + plane_normal * lift)
 
 # ── Transitions ──────────────────────────────────────────────────────────────
 

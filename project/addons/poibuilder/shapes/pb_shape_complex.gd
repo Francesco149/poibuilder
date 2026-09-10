@@ -663,7 +663,6 @@ static func create_curved_stairs(
 		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
 		for i in range(positions.size()):
 			positions[i] -= offset
-
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
 	mesh_data.faces = faces
@@ -821,10 +820,7 @@ static func create_curved_stairs_ramp(
 		var offset := Vector3((min_x + max_x) * 0.5, 0.0, (min_z + max_z) * 0.5)
 		for i in range(ramp.size()):
 			ramp[i] -= offset
-
 	return ramp
-
-
 # ==============================================================================
 # 5. Door Generator
 # ==============================================================================

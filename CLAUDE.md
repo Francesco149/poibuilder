@@ -775,6 +775,17 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
+- ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):
+  - Root cause of elements landing "in between two ticks": `pb_element_editor.gd` previously used incremental delta snapping (`grid.snap_local_delta`), which only quantized the relative displacement delta. If an element began with a fractional or off-grid position (e.g. door frame offset $x = -2.15\text{m}$ or curved stair step $x = -7.05\text{m}$), delta snapping permanently preserved the off-grid offset, moving in $+0.2\text{m}$ steps that never aligned with grid lines.
+  - Implemented `_snap_move_motion`: derives the element's world-space target pivot (`start_pivot_world + world_motion`) and snaps it to the absolute world grid via `grid.snap_point()`, calculating the exact displacement needed to land the pivot on grid lines. Snapping is applied exclusively along active motion axes so un-dragged axes do not jump.
+  - Result: dragging any off-grid face, edge, or vertex snaps its landing position directly onto the grid ticks (e.g. $-2.000\text{m}, -1.800\text{m}, -1.600\text{m}$), allowing clean alignment with adjacent structures and walls.
+- SHAPE CREATION AABB CENTERING OFFSET (`PBShapeCreator.placement_transform`):
+  - Added `center_offset = basis * Vector3(aabb_center.x, 0, aabb_center.z)` in `placement_transform`: accounts for shapes whose local mesh center differs from their origin, ensuring the base rectangle dragged on the grid aligns its edges to the grid start and end points without fractional displacement.
+- PARAMETER STEP RESOLUTION TUNING (`PBShapeParams._step_for`):
+  - Updated `_step_for` to `0.1\text{m}` for spans $\le 10\text{m}$ (matching doc-comment and default grid increments), preventing odd $0.05\text{m}$ steps from introducing fractional half-dimensions ($0.275\text{m}, 2.05\text{m}$).
+- Tests: 810/810 GUT unit tests passing (`test_element_drag_absolute_grid_snapping`), 49/49 GUI harness tests passing (0 failures).
+
 v0.9.58 round complete ✓ — material fallback for unmapped submesh indices & in-memory splat mask cache:
 - UNMAPPED SUBMESH MATERIAL FALLBACK (`PBMeshData.get_face_material`, `PBTileBaker._get_or_create_base_material`):
   - Root cause of untextured tiles on cut+extrude shapes: `get_face_material()` previously returned `null` whenever a face's `submesh_index` exceeded `materials.size()`, and `_get_or_create_base_material(null)` created a flat gray untextured material (`Color(0.8, 0.8, 0.8)`). In contrast, Godot editor's `to_array_mesh()` automatically fell back to `materials[0]` (or `get_default_material()`), causing a visual mismatch where textured faces in the editor exported as flat untextured gray caps.

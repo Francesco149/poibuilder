@@ -1095,3 +1095,40 @@ func test_build_face_fill_mesh_multi():
 	# Each quad face has 2 triangles = 6 vertices; 3 faces = 18 vertices
 	assert_eq(verts.size(), 18, "Combined fill must contain all triangles of selected faces")
 
+func test_element_drag_absolute_grid_snapping():
+	var s := _make_setup(PBEditor.SelectMode.FACE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+
+	var grid := PBGrid.new()
+	grid.unit = 1.0
+	grid.subdivisions = 5 # 0.2m snap step
+	grid.enabled = true
+	logic.grid = grid
+
+	# Move vertices of face 0 to an off-grid coordinate (x = -2.15)
+	var f0: PBFace = md.faces[0]
+	for idx in f0.get_indexes():
+		md.positions[idx].x = -2.15
+
+	var ids := _ids([0])
+	var start_xf: Transform3D = logic.get_subgizmo_transform(md, mesh, 0)
+	assert_almost_eq(start_xf.origin.x, -2.15, 0.001, "Face 0 start x should be -2.15")
+
+	# Drag right by +0.10: target is -2.05 -> should snap directly onto the -2.00 grid line!
+	var target_xf := start_xf.translated(Vector3(0.10, 0, 0))
+	logic.set_subgizmo_transform(mesh, ids, 0, target_xf)
+
+	for idx in f0.get_indexes():
+		assert_almost_eq(md.positions[idx].x, -2.00, 0.001, "Off-grid face should snap directly to -2.00 grid line")
+
+	# Drag further right by another +0.20 (delta +0.30): target is -1.85 -> should snap to -1.80!
+	var target_xf2 := start_xf.translated(Vector3(0.30, 0, 0))
+	logic.set_subgizmo_transform(mesh, ids, 0, target_xf2)
+
+	for idx in f0.get_indexes():
+		assert_almost_eq(md.positions[idx].x, -1.80, 0.001, "Should snap to next grid line -1.80")
+
+	logic.commit_subgizmos(mesh, ids, false)
+

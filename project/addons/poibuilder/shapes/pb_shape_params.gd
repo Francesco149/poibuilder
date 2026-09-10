@@ -337,7 +337,7 @@ static func _bool_def(name: String, label: String, default_v: bool) -> Dictionar
 ## 1.0 beyond).
 static func _step_for(span: float) -> float:
 	if span <= 10.0:
-		return 0.05
+		return 0.1
 	if span <= 100.0:
 		return 0.5
 	return 1.0
