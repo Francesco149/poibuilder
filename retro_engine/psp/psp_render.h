@@ -18,6 +18,7 @@ typedef struct {
     int   entity;          /* the scripted patrol sphere */
     int   tex_filter;      /* PBFILT_* */
     float tex_lod_bias;    /* negative = sharper (picks a smaller mip level) */
+    int   tex_level_mode;  /* PBLEVEL_*: how the mip level is chosen */
     int   force_small_tex; /* bind a cache-resident 64x64 texture to every mesh */
     int   use_mips;        /* sample the load-time mip chain (mipmap min filter) */
     float near_plane;
@@ -25,6 +26,13 @@ typedef struct {
 
 /* tex_filter values. Note sceGuTexFilter(min, mag): the first argument is the
  * MINIFICATION filter, the second the MAGNIFICATION filter. */
+/* How the GE picks the mip level. AUTO derives it per primitive from the UV
+ * derivatives; CONST uses one level everywhere. Per-primitive derivation is
+ * what puts a visible step in sharpness at every tile boundary on a grazing
+ * floor, so CONST is the escape hatch when that reads as a seam. */
+#define PBLEVEL_AUTO   0
+#define PBLEVEL_CONST  1
+
 #define PBFILT_MIP_LIN 0   /* min LINEAR_MIPMAP_NEAREST, mag LINEAR (default) */
 #define PBFILT_LINEAR  1   /* min LINEAR_MIPMAP_LINEAR (trilinear), mag LINEAR */
 #define PBFILT_NEAREST 2   /* both NEAREST: 1 tap per fragment, no filter work */
@@ -64,7 +72,8 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str);
 /* The in-game HUD block (frame stats + map/mode line + optional extra line).
  * Shared by the game loop and the profiler so both measure the same pixels. */
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
-                  int display_mode, const char* extra, const char* extra2);
+                  int display_mode, const char* extra, const char* extra2,
+                  const char* input);
 
 /* A 64x64 swizzled RGBA5551 texture used by the profiler's cache-residency
  * ablation. */

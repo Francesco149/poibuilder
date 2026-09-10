@@ -317,6 +317,8 @@ int main(int argc, char** argv) {
     float patrol_time = 0.0f;
     float last_cpu_ms = 0.0f, last_gpu_ms = 0.0f;
     char hud_extra[128];
+    char hud_input[64];
+    hud_input[0] = '\0';
 
     printf("[PSP] Entering render loop (benchmark=%d)\n", is_benchmark);
 
@@ -340,6 +342,10 @@ int main(int argc, char** argv) {
         if (frame_count < 5) dbg("loop: before ctrl read");
         sceCtrlReadBufferPositive(&pad, 1);
         if (frame_count < 5) dbg("loop: after ctrl read");
+        /* Live input readout: without it there is no way to tell "the controls
+         * are undocumented" from "the pad is not being read". */
+        snprintf(hud_input, sizeof(hud_input), "in: %3d,%3d btn %04X",
+                 (int)pad.Lx, (int)pad.Ly, (unsigned)pad.Buttons);
 
         if ((pad.Buttons & PSP_CTRL_START) && (pad.Buttons & PSP_CTRL_SELECT)) {
             printf("[PSP] Start+Select: exiting.\n");
@@ -421,7 +427,7 @@ int main(int argc, char** argv) {
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
         psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
-                     "Start+Select: quit & unload | L+R: dump trace");
+                     "Start+Select: quit & unload | L+R: dump trace", hud_input);
 
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();

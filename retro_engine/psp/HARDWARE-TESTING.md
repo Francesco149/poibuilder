@@ -60,6 +60,15 @@ the defaults in `psp_prof.c`: `frames`, `warmup`, `sweep`.
 4. **Suspend kills the USB link**, after which the shell is unresponsive.
    `scePowerIdleTimerDisable()` was tried as a guard and **removed** — it hung
    startup from a PSPLink-loaded module. Use the Hold switch.
+   **But Hold blocks the controller**: with it on, every button reads 0 and the
+   only set bit is `PSP_CTRL_HOLD` (0x20000), so an app looks like it has no
+   working input. Hold ON is right for unattended profiling runs; Hold OFF is
+   required to interact with an app. The HUD's `in: x,y btn NNNN` readout tells
+   you which state you are in — check it before debugging "the controls".
+
+7. **Read the input readout before touching the control code.** `in: 117,117 btn
+   20000` with an app that ignores buttons is the Hold switch, not a bug in the
+   input handling.
 5. **Keep module BSS small.** PSPLink loads modules into the kernel partition;
    a 512 KB maximum free block was observed. The display list is 128 KB (a frame
    emits a few KB), and large scratch buffers (the profiler's triangle probe,
@@ -116,12 +125,43 @@ The app reads `host0:/poi_render.txt` once at startup:
 
 ```
 filter=linear     # linear (trilinear) | mip_lin | nearest | asym
-bias=-1           # negative = sharper (sceGuTexLevelMode)
+bias=-1           # negative = sharper; also the constant level when level_mode=const
 mips=0            # 1 = use the load-time mip chain
+level_mode=const  # auto (per-primitive derivative) | const (one level everywhere)
+skip_mesh=Foo     # drop any mesh whose name contains this (isolate a draw)
 ```
 
 Edit the file, re-run, screenshot. This is how the tile-seam and blur issues
 were A/B'd without a build per data point.
+
+## Grazing-angle seams on tiled surfaces (investigated, partly inherent)
+
+Thin lines at tile boundaries on a floor seen at a shallow angle. What was
+ruled out, so it does not get re-investigated:
+
+- **Not mipmapping** — they persist with `mips=0`, which instead brings
+  aliasing/shimmer.
+- **Not atlas mip bleeding** — slots are 128 px, the box filter halves on even
+  boundaries, and levels therefore never mix across slots.
+- **Not the atlas UV remap** once fixed (the half-texel inset WAS a real,
+  separate seam bug; see CLAUDE.md v0.9.63).
+- **Not coplanar z-fighting** between the base floor material and the baked tile
+  quads: dropping one layer with `skip_mesh=FloorSplatMat` leaves the lines
+  unchanged (and leaves holes, so the layers are adjacent, not stacked).
+
+What remains is the **GE's per-primitive LOD**: the level is derived from each
+triangle's own UV derivatives, so adjacent tile quads land on different levels
+and a step in sharpness appears along their shared edge. It changes as the
+camera moves, which reads as flickering. The PSP has no anisotropic filtering
+and no per-surface LOD smoothing, so this is structural to tiled textures on
+this hardware.
+
+Two knobs, both one line in `poi_render.txt`:
+- `bias=+N` — blurrier, which compresses the differences between neighbouring
+  levels (measured: bias +1 costs 1.40 ms vs 2.04 at bias -0.5).
+- `level_mode=const` with `bias=<level>` — one LOD everywhere, which removes the
+  steps entirely and looks sharper, at the cost of aliasing on the most-minified
+  surfaces. Needs a level tuned per scene, so it is not the default.
 
 ## Profiling methodology
 
