@@ -451,6 +451,7 @@ static func _create_billboard_node(name_str: String, tex_path: String,
 	mi.mesh = qm
 
 	var mat := StandardMaterial3D.new()
+	mat.resource_name = name_str + "_Mat"
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
