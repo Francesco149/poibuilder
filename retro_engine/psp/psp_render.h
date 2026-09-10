@@ -18,6 +18,7 @@ typedef struct {
     int   entity;          /* the scripted patrol sphere */
     int   tex_filter;      /* PBFILT_* */
     int   force_small_tex; /* bind a cache-resident 64x64 texture to every mesh */
+    int   use_mips;        /* sample the load-time mip chain (mipmap min filter) */
     float near_plane;
 } RenderCfg;
 
