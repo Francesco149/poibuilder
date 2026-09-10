@@ -7,8 +7,8 @@
 #include <string.h>
 #include <math.h>
 
-#define PBM_MAGIC   0x324D4250 /* "PBM2" */
-#define PBM_VERSION 2
+#define PBM_MAGIC   0x334D4250 /* "PBM3" */
+#define PBM_VERSION 3
 
 #define PBM_META_RAW    0
 #define PBM_META_STRING 1
@@ -158,6 +158,34 @@ typedef struct {
 
 static RigidBall g_ball_pit[NUM_BALLS];
 
+/* ── Animated UV scroll (PBM 3.0) ─────────────────────────────────────────
+ * Meshes with a non-zero uv_scroll advance their texture coordinates every
+ * frame. Raylib exposes no texture-offset state, so the shift is applied to
+ * the CPU-side UV array from a pristine base copy. */
+#define MAX_ANIM_MESHES 64
+typedef struct {
+    int model_idx;
+    uint32_t vertex_count;
+    float speed_u, speed_v;
+    float* base_uv;      /* the mesh's original texcoords */
+} AnimMesh;
+
+static AnimMesh g_anim[MAX_ANIM_MESHES];
+static int g_anim_count = 0;
+
+static void update_animated_uvs(Model* models, float time_s) {
+    for (int i = 0; i < g_anim_count; ++i) {
+        AnimMesh* am = &g_anim[i];
+        Mesh* mesh = &models[am->model_idx].meshes[0];
+        for (uint32_t v = 0; v < am->vertex_count; ++v) {
+            mesh->texcoords[v * 2 + 0] = am->base_uv[v * 2 + 0] + time_s * am->speed_u;
+            mesh->texcoords[v * 2 + 1] = am->base_uv[v * 2 + 1] + time_s * am->speed_v;
+        }
+        UpdateMeshBuffer(*mesh, 1, mesh->texcoords,
+                         (int)(am->vertex_count * 2 * sizeof(float)), 0);
+    }
+}
+
 static void init_ball_pit(void) {
     for (int i = 0; i < NUM_BALLS; ++i) {
         g_ball_pit[i].radius = 0.22f;
@@ -279,12 +307,12 @@ int main(int argc, char* argv[]) {
     }
 
     if (hdr.magic != PBM_MAGIC || hdr.version != PBM_VERSION) {
-        printf("[RAYLIB] Error: Invalid PBMv2 format (magic=0x%08X, ver=%u)\n", hdr.magic, hdr.version);
+        printf("[RAYLIB] Error: Invalid PBMv3 format (magic=0x%08X, ver=%u)\n", hdr.magic, hdr.version);
         fclose(f);
         return 1;
     }
 
-    printf("[RAYLIB] Loaded PBMv2 Header: %u textures, %u meshes, %u colliders, %u metadata lumps\n",
+    printf("[RAYLIB] Loaded PBMv3 Header: %u textures, %u meshes, %u colliders, %u metadata lumps\n",
         hdr.num_textures, hdr.num_meshes, hdr.num_colliders, hdr.num_metadata);
     printf("[RAYLIB] Player Spawn Point: (%.2f, %.2f, %.2f), Yaw=%.2f rad\n",
         hdr.spawn_pos[0], hdr.spawn_pos[1], hdr.spawn_pos[2], hdr.spawn_rot);
@@ -401,9 +429,12 @@ int main(int argc, char* argv[]) {
 
     for (uint32_t mi = 0; mi < hdr.num_meshes; ++mi) {
         char name[32]; int32_t tid; uint32_t nv; float bmin[3], bmax[3];
+        float scroll_u = 0.0f, scroll_v = 0.0f;
         fread(name, 32, 1, f);
         fread(&tid, 4, 1, f); fread(&nv, 4, 1, f);
         fread(bmin, 12, 1, f); fread(bmax, 12, 1, f);
+        /* PBM 3.0 mesh header: the two UV-scroll words (repeats/second). */
+        fread(&scroll_u, 4, 1, f); fread(&scroll_v, 4, 1, f);
         name[31] = '\0';
 
         if ((tid >= 0 && tid < (int)hdr.num_textures && tex_has_alpha[tid]) ||
@@ -451,6 +482,19 @@ int main(int argc, char* argv[]) {
         }
         if (model_is_billboard[mi]) {
             models[mi].materials[0].shader = alpha_cutout_shader;
+        }
+        /* Animated UV scroll (PBM 3.0). Raylib has no texture-coordinate
+         * offset, so the scrolled meshes keep a pristine copy of their UVs and
+         * have them advanced on the CPU each frame — a handful of small meshes
+         * at most, so the upload stays negligible. */
+        if (scroll_u != 0.0f || scroll_v != 0.0f) {
+            AnimMesh* am = &g_anim[g_anim_count++];
+            am->model_idx = mi;
+            am->speed_u = scroll_u;
+            am->speed_v = scroll_v;
+            am->base_uv = (float*)malloc(nv * 2 * sizeof(float));
+            memcpy(am->base_uv, mesh.texcoords, nv * 2 * sizeof(float));
+            am->vertex_count = nv;
         }
     }
     /* Skip Colliders */
@@ -601,6 +645,10 @@ int main(int argc, char* argv[]) {
         /* Render 3D Frame */
         BeginDrawing();
         ClearBackground((Color){ 20, 24, 30, 255 });
+
+        /* Animated UV scroll: advance the scrolled meshes' texture coordinates
+         * before the draw calls below. */
+        update_animated_uvs(models, sim_time);
 
         BeginMode3D(camera);
         for (uint32_t mi = 0; mi < hdr.num_meshes; ++mi) {

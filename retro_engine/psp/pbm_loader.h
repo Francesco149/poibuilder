@@ -10,7 +10,7 @@ typedef struct {
     uint16_t width;
     uint16_t height;
     uint16_t format;
-    uint16_t has_alpha;
+    uint16_t alpha_mode;                /* PBM_ALPHA_* */
     uint16_t is_swizzled;
     uint32_t data_size;
     void* pixels;                       /* mip level 0 */
@@ -33,6 +33,9 @@ typedef struct {
     uint32_t num_vertices;
     float bounds_min[3];
     float bounds_max[3];
+    /* Texture repeats per second; 0,0 = static (see PbmMeshHeader). */
+    float uv_scroll_u;
+    float uv_scroll_v;
     PbmVertex* vertices;
 } PbmMesh;
 

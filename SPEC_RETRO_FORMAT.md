@@ -1,8 +1,16 @@
 # PoiBuilder Retro Map Binary Format Specification (.pbm)
-**Version: 2.0 (PBM2)**  
+**Version: 3.0 (PBM3)**  
 **Status: Formal Standard**  
 **Author: PoiBuilder Project**  
 **Date: 2026-09-10**
+
+> **What v3 changed (breaking):** the mesh header grew from 64 to 72 bytes by
+> appending the animated-UV-scroll words `uv_scroll_u` / `uv_scroll_v`, and the
+> texture header's `has_alpha` became a three-valued `alpha_mode`
+> (`NONE` / `CUTOUT` / `BLEND`). Both changes are what makes scrolling and
+> translucent textures a first-class part of the format instead of something an
+> engine has to infer. v1 and v2 files still load (see §3.1) — their meshes are
+> simply static and their alpha is a cutout.
 
 ---
 
@@ -61,8 +69,8 @@ The file begins with an exact 64-byte header:
 
 | Offset | Type | Field Name | Description |
 |---|---|---|---|
-| `0x00` | `uint32_t` | `magic` | Magic identifier. Must be `0x324D4250` (`"PBM2"` in ASCII Little-Endian). Version 1 used `0x314D4250` (`"PBM1"`). |
-| `0x04` | `uint32_t` | `version` | Format major version number. Must be `2` for PBM2. |
+| `0x00` | `uint32_t` | `magic` | Magic identifier. Must be `0x334D4250` (`"PBM3"` in ASCII Little-Endian). Version 2 used `0x324D4250` (`"PBM2"`), version 1 `0x314D4250` (`"PBM1"`). |
+| `0x04` | `uint32_t` | `version` | Format major version number. Must be `3` for PBM3. |
 | `0x08` | `uint32_t` | `num_textures` | Total number of texture records in the Texture Chunk. |
 | `0x0C` | `uint32_t` | `num_meshes` | Total number of visual mesh records in the Mesh Chunk. |
 | `0x10` | `uint32_t` | `num_colliders` | Total number of collision shapes in the Collider Chunk. |
@@ -79,7 +87,22 @@ The file begins with an exact 64-byte header:
 - **Loader Compliance Rule**:
   Loaders MUST inspect `header.version`. If `header.version > PBM_SUPPORTED_VERSION`, the loader MUST reject the file with an explicit diagnostic:
   `[PBM] Error: Incompatible map version %u (supported: 1..%u). Breaking format change detected.`
-  Loaders supporting version 2 SHOULD maintain backwards-compatibility with version 1 files by detecting `PBM1` (`0x314D4250`, version 1, 60-byte header) and defaulting `num_metadata = 0`.
+  Loaders supporting version 3 SHOULD maintain backwards-compatibility with version 1 and 2 files.
+
+### 3.1 Version Differences a Loader Must Handle
+
+| | v1 | v2 | v3 |
+|---|---|---|---|
+| magic | `PBM1` | `PBM2` | `PBM3` |
+| `PbmHeader` size | 60 | 64 | 64 |
+| Metadata chunk | absent (`num_metadata` = 0) | present | present |
+| Mesh header size | 64 | 64 | **72** |
+| Texture `has_alpha` | 0 / 1 | 0 / 1 | **`alpha_mode` 0 / 1 / 2** |
+
+Practical rule: read the version first, then read `PBM_MESH_HEADER_V2` (64) bytes
+of every mesh header when the version is below 3, and treat the missing
+`uv_scroll_*` words as `0,0` (static). A v1/v2 map therefore renders exactly as
+it did before the upgrade.
 
 ---
 
@@ -95,8 +118,23 @@ The Texture Chunk contains `header.num_textures` sequential records. Each record
 | `0x20` | `uint16_t` | `width` | Texture width in pixels. Must be a power of two ($\ge 16$, e.g. 128, 256, 512). |
 | `0x22` | `uint16_t` | `height` | Texture height in pixels. Must be a power of two ($\ge 8$, e.g. 128, 256, 512). |
 | `0x24` | `uint16_t` | `format` | Pixel storage format (`PBM_TEX_FMT_*`). |
-| `0x26` | `uint16_t` | `has_alpha` | `1` if texture has transparent pixels (alpha < 250); `0` if solid opaque. |
+| `0x26` | `uint16_t` | `alpha_mode` | How the surface blends, `PBM_ALPHA_*` (see below). v1/v2 called this `has_alpha` and used only `0`/`1`, which load as `NONE`/`CUTOUT`. |
 | `0x28` | `uint32_t` | `data_size` | Length of pixel payload in bytes ($= \text{width} \times \text{height} \times \text{bytes\_per\_pixel}$). |
+
+### Alpha Modes
+
+| Constant | Value | Meaning | Engine behaviour |
+|---|---|---|---|
+| `PBM_ALPHA_NONE` | `0` | Fully opaque | Opaque pass; mip chain built. |
+| `PBM_ALPHA_CUTOUT` | `1` | Hard-edged transparency (foliage, decals, lace) | Alpha-tested in the alpha pass (a threshold near 1/16 of full range); **no mip chain** — box-filtering a 1-bit alpha makes every level further transparent and eats the silhouette. |
+| `PBM_ALPHA_BLEND` | `2` | Soft, partial alpha (water, glass, smoke, wetness overlays) | Blended in the alpha pass with a zero threshold (only fully transparent texels are discarded, which keeps early-Z working); mip chain built. |
+
+**A `BLEND` texture MUST be stored as `PBM_TEX_FMT_RGBA8888`.** The 16-bit
+formats carry a single alpha bit, which can only cut a texel out — a soft edge
+quantised to it becomes a hard one, which is precisely the difference between
+the two modes. Exporters derive the mode from the authoring tool (in Godot:
+`transparency = Alpha` → `BLEND`, `Alpha Scissor`/`Alpha Hash` → `CUTOUT`,
+everything else → `NONE`; in glTF: `alphaMode` `BLEND` / `MASK` / absent).
 
 ### Pixel Storage Formats
 
@@ -141,7 +179,47 @@ The Mesh Chunk contains `header.num_meshes` records. Each record consists of a 7
 | `0x24` | `uint32_t` | `num_vertices` | Total vertices. Must be a multiple of 3 ($\text{triangles} = \text{num\_vertices} / 3$). |
 | `0x28` | `float[3]` | `bounds_min` | Mesh AABB minimum coordinates $(X, Y, Z)$ in world space. |
 | `0x34` | `float[3]` | `bounds_max` | Mesh AABB maximum coordinates $(X, Y, Z)$ in world space. |
-| `0x40` | `float[2]` | `reserved` | Reserved for future spatial partitioning tags / padding to 72 bytes. |
+| `0x40` | `float` | `uv_scroll_u` | Animated UV scroll along U (§5.1). `0.0` = static. |
+| `0x44` | `float` | `uv_scroll_v` | Animated UV scroll along V (§5.1). `0.0` = static. |
+
+*(The 64-byte v2 mesh header ended at `0x40`; the two scroll words are what
+makes a v3 header 72 bytes.)*
+
+### 5.1 Animated UV Scroll
+
+`uv_scroll_u` / `uv_scroll_v` carry the **velocity of the texture pattern
+across the surface**, in texture repeats per second, along that surface's own
+UV axes:
+
+- `1.0` slides the pattern one full repeat per second along that axis.
+- The sign is a direction: on a wall (where V runs *up*) a waterfall falls
+  downward and is therefore **negative** in V; on a floor (where V runs toward
+  `+Z`) water spreading away from a wall is **positive**.
+- `0.0` on both axes is a static mesh, which is what every v1/v2 file contains.
+
+```
+uv(t) = uv(0) + t * (uv_scroll_u, uv_scroll_v)
+```
+
+Implementations may realise this any way they like — a texture-coordinate
+offset register, a texture matrix, or a shader uniform. Two constraints are
+part of the format, not of any one engine:
+
+1. **A scrolling mesh's texture MUST be a standalone texture**, never a tile
+   inside a packed atlas. Atlas tiles address absolute slot coordinates and are
+   sampled with clamping; sliding one with an offset drags it across the slot
+   border and pulls its neighbours in.
+2. **The texture MUST wrap** (`GL_REPEAT` / `GU_REPEAT`), since the pattern
+   legitimately samples outside `[0,1]` once it has moved.
+
+**Implementation note — the offset register is inverted.** On the Sony GE the
+natural implementation is `sceGuTexOffset(u, v)`, which is documented as an
+offset *added* to the texture coordinate. Measured on hardware, an increasing
+offset slides the pattern toward **+V**, i.e. the opposite of what "add to the
+coordinate" suggests. Keep the file's meaning (pattern velocity) and negate at
+the point of use if the API behaves that way, rather than reversing the field
+— a sign error here is invisible in any static frame and obvious the moment
+something moves.
 
 ### `PbmVertex` (24 bytes, 4-byte aligned)
 
@@ -165,7 +243,7 @@ GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D
 
 The Collider Chunk contains `header.num_colliders` collision hulls. Each record has a 68-byte `PbmColliderHeader` followed by triangle vertex data if `type == PBM_COL_TRIMESH`.
 
-### `PbmColliderHeader` (68 bytes, packed)
+### `PbmColliderHeader` (64 bytes, packed)
 
 | Offset | Type | Field Name | Description |
 |---|---|---|---|
@@ -174,7 +252,9 @@ The Collider Chunk contains `header.num_colliders` collision hulls. Each record 
 | `0x24` | `float[3]` | `bounds_min` | Collider AABB minimum $(X, Y, Z)$. |
 | `0x30` | `float[3]` | `bounds_max` | Collider AABB maximum $(X, Y, Z)$. |
 | `0x3C` | `uint32_t` | `num_triangles` | Number of triangles in payload (`0` for simple AABB BOX). |
-| `0x40` | `uint32_t` | `reserved` | Padding to 68 bytes. |
+
+*(`PbmColliderHeader` is 64 bytes as implemented and written; there is no
+padding field in the binary layout.)*
 
 - If `num_triangles > 0`, exactly `num_triangles * 9 * sizeof(float)` bytes follow (3 vertices $\times$ 3 floats $(x, y, z)$ per triangle, total 36 bytes per triangle).
 
@@ -385,7 +465,136 @@ To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 # Or launch Raylib runner directly:
 #   ./run_raylib.sh
 ```
-## 9. Hardware Clipping & Performance Rules (PSP Guidelines)
+
+---
+
+## 9. Recipe: A Scrolling Texture (Waterfall), Godot → Retro Engine
+
+A worked example of the pattern above, end to end. It is the recipe behind the
+courtyard waterfall in the showcase map
+(`project/test_scenes/test_map_showcase_builder.gd`), and every value in it is
+read straight out of the Godot material — there is no special-casing anywhere
+in the pipeline.
+
+### Step 1 — Author the surface
+
+1. **New Shape → Plane**. The plane is the surface-decoration shape: drag it out
+   **parallel to the surface** you are decorating (it starts coplanar with it),
+   then move the mouse to **offset it clear of that surface** and click to
+   confirm. The stand-off is the plane's third dimension — it is not a size — so
+   a waterfall sheet can hang a few centimetres in front of a wall without
+   z-fighting it. Plane values are `width`/`depth` only; the offset is
+   placement, so it never reaches the params modal.
+2. Assign the water texture to the face (Material & UV dock) and set its
+   **Tiling** to fix how many metres one repeat covers. That matters for the
+   speed you pick next: `metres per second = speed × (metres per repeat)`. The
+   dock prints the metres/second figure under the speed fields, so the number
+   can be judged in world terms rather than in texture terms.
+
+### Step 2 — Give the material a scroll speed
+
+In the Material & UV dock, **Scrolling Texture**:
+
+| field | meaning |
+|---|---|
+| Speed U / Speed V | texture repeats per second, along the face's own U / V axes |
+| Apply Scroll | writes the speed onto the selected faces' material |
+| Clear | removes it (the surface becomes static again) |
+
+The sign is a direction, and V runs *up* on a wall (and toward `+Z` on a
+floor), so:
+
+- a sheet falling down a wall: **Speed V negative** (e.g. `-0.75`),
+- a second, faster sheet in front of it: `-1.15` (the parallax reads as depth),
+- churn spreading away from the base of the fall: **Speed V positive**,
+- rising mist on a billboard: **positive** (a sprite's V runs down its own face).
+
+Applying a speed duplicates the material when other faces share it, because the
+animation is a property of the *material* — that is the unit the exporters split
+meshes by.
+
+### Step 3 — Choose the transparency
+
+Water almost never wants to be opaque. Set the material's **Transparency** and
+the exporter carries it through:
+
+| Godot | glTF | PBM `alpha_mode` | Result in the engine |
+|---|---|---|---|
+| Disabled | *(absent)* | `NONE` | opaque pass, mip chain |
+| Alpha Scissor / Hash | `MASK` | `CUTOUT` | alpha-tested, **no** mip chain |
+| Alpha | `BLEND` | `BLEND` | blended, **RGBA8888** + mip chain |
+
+`Alpha` on the waterfall sheet is what lets the stone read through the thin
+parts of the water. Foliage and other hard-edged cutouts stay on `Alpha
+Scissor`: their silhouette is 1-bit, and a mip chain would erode it.
+
+### Step 4 — Export
+
+Toolbar **Export → PoiRetro (.pbm)**. For each scrolling face the exporter
+writes the mesh's `uv_scroll_u`/`uv_scroll_v`, keeps its texture out of the tile
+atlases (a scrolling atlas tile would drag across its slot), and stores a
+blended texture as RGBA8888. Nothing else changes: lighting still bakes into
+vertex colours, tiles still atlas, colliders still export.
+
+The same data also rides a GLB round trip, for the Python oracle
+(`retro_engine/pbm_conv.py`) and the GDScript converter
+(`PBPbmConverter.convert_glb_to_pbm`), because the speed is mirrored into the
+material's glTF `extras` as `{"poi_uv_scroll": [u, v]}`. The two converters are
+expected to agree bit for bit apart from float rounding.
+
+### Step 5 — Consume it in the engine
+
+```c
+/* Per frame, before the draw calls: advance each animated mesh's texture
+ * coordinates. On the GE this is one register write per axis, and only for
+ * meshes whose offset actually changed — a static scene emits none. */
+static void apply_uv_scroll(PbmMap* map, PbmMesh* mesh, float t,
+                            float* cur_u, float* cur_v) {
+    float su = mesh->uv_scroll_u, sv = mesh->uv_scroll_v;
+    if (mesh->texture_id < 0 ||
+        strstr(map->textures[mesh->texture_id].name, "TileAtlas")) {
+        su = sv = 0.0f;              /* atlases must never be offset (see 5.1) */
+    }
+    /* The register holds one repeat: wrap, so a long-running clock keeps full
+     * fixed-point precision. */
+    float u = t * su, v = t * sv;
+    u -= floorf(u);
+    v -= floorf(v);
+    if (u != *cur_u || v != *cur_v) {
+        sceGuTexOffset(u, v);        /* pattern velocity; the GE inverts it */
+        *cur_u = u; *cur_v = v;
+    }
+}
+```
+
+Draw scrolling meshes in the same passes as everything else: `BLEND` meshes
+belong to the alpha pass (after the opaques), and two translucent layers must
+be emitted back to front. Scene-tree order is preserved into the file, so list
+the far sheet before the near one.
+
+### Step 6 — Verify it actually moves
+
+A scrolling texture that is wrong looks exactly like one that is frozen. Check
+the *rendered* result, not the numbers:
+
+```bash
+cd retro_engine/psp
+./run_psp_headless.sh     # builds, runs the benchmark, writes two PNGs
+```
+
+The benchmark captures twice — at frame 60 and 20 frames later, with the camera
+frozen — into `screenshot_psp.png` and `screenshot_psp_scroll.png`. Diff them,
+or correlate the scrolling mesh's pixels. To isolate the animation from
+everything else, zero every `uv_scroll` field in a copy of the map, capture the
+same frame from both, and diff: the pixels that change are exactly the ones the
+scroll owns. (Remember the capture's alpha byte is meaningless — the framebuffer
+is 5551 — so drop it before viewing, or the image looks blank.)
+
+If the pattern moves the wrong way, the sign flipped somewhere: the file's
+meaning is "where the pattern travels", and hardware offset registers are
+commonly the opposite of it (see the implementation note in §5.1).
+
+## 10. Hardware Clipping & Performance Rules (PSP Guidelines)
 
 1. **Near-Plane Distance**:
    Perspective projection near plane MUST be set between `0.05f` and `0.10f` meters (`sceGumPerspective(fov, aspect, 0.08f, 200.0f)`). A near plane of `0.5m` causes geometry within arm's reach of floors and stairs to intersect the near clipping plane, inducing heavy hardware re-triangulation.
@@ -398,11 +607,17 @@ To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 
 ---
 
-## 10. Compliance Verification
+## 11. Compliance Verification
 
 A compliant PBM exporter and loader MUST pass the following tests:
-1. `magic == 0x324D4250` and `version == 2`.
-2. Reject files where `version > 2` with explicit error logging.
+1. `magic == 0x334D4250` and `version == 3`.
+2. Reject files where `version > 3` with explicit error logging, and load v1/v2
+   files (64-byte mesh headers, `has_alpha` 0/1) with their meshes static.
 3. Successfully load textures with power-of-two dimensions and 16-byte memory alignment.
 4. Successfully parse arbitrary metadata entries by tag and type.
-5. 100% binary validation against the reference Python oracle (`pbm_conv.py`) and GDScript exporter (`pb_pbm_exporter.gd`).
+5. Store a `BLEND` texture as RGBA8888 and never leave it without its mip chain;
+   store a `CUTOUT` texture without a mip chain.
+6. Never apply a UV scroll to a tile-atlas texture, and keep every scrolling
+   mesh's texture standalone.
+7. 100% binary validation against the reference Python oracle (`pbm_conv.py`)
+   and the GDScript converter (`project/addons/poibuilder/export/pb_pbm_converter.gd`).

@@ -16,6 +16,7 @@ typedef struct {
     int   clip_planes;     /* GE near/far clip planes vs guardband-only */
     int   alpha_pass;      /* the billboard/foliage alpha+blend pass */
     int   entity;          /* the scripted patrol sphere */
+    int   uv_scroll;       /* animated UV scroll (PBM 3.0) on scrolling meshes */
     int   tex_filter;      /* PBFILT_* */
     float tex_lod_bias;    /* negative = sharper (picks a smaller mip level) */
     int   tex_level_mode;  /* PBLEVEL_*: how the mip level is chosen */
@@ -80,9 +81,11 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
 const void* psp_small_texture(int* width, int* height);
 
 /* Emits the 3D scene (clear, both passes, entity) into the currently open
- * display list. Does not start/finish/sync the list. */
+ * display list. Does not start/finish/sync the list.
+ * `time_s` is the scene clock in seconds: it drives the scripted patrol
+ * entity and every mesh's animated UV scroll (PbmMeshHeader uv_scroll_u/v). */
 void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                       float cx, float cy, float cz, float yaw, float pitch,
-                      float ent_time, RenderStats* stats);
+                      float time_s, RenderStats* stats);
 
 #endif /* PSP_RENDER_H */

@@ -89,6 +89,31 @@ static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, 
     }
 }
 
+/* 2x2 box filter for the 32-bit path. A blend texture carries an 8-bit alpha
+ * ramp, and averaging is exactly what a mip level of a soft alpha edge should
+ * be; RGB is alpha-weighted so a fading edge does not darken as it shrinks. */
+static void downsample_8888(uint32_t* dst, const uint32_t* src, int sw, int sh) {
+    int dw = sw >> 1, dh = sh >> 1;
+    for (int y = 0; y < dh; ++y) {
+        for (int x = 0; x < dw; ++x) {
+            int r = 0, g = 0, b = 0, a = 0, wsum = 0;
+            for (int k = 0; k < 4; ++k) {
+                uint32_t p = src[(2 * y + (k >> 1)) * sw + (2 * x + (k & 1))];
+                int sa = (int)((p >> 24) & 0xFF);
+                int w = sa + 1;
+                r += (int)(p & 0xFF) * w;
+                g += (int)((p >> 8) & 0xFF) * w;
+                b += (int)((p >> 16) & 0xFF) * w;
+                a += sa;
+                wsum += w;
+            }
+            if (wsum < 1) wsum = 1;
+            dst[y * dw + x] = (uint32_t)(r / wsum) | ((uint32_t)(g / wsum) << 8) |
+                              ((uint32_t)(b / wsum) << 16) | ((uint32_t)(a >> 2) << 24);
+        }
+    }
+}
+
 /* Load diagnostics go both to the on-device debug screen and to a file on the
  * host (host0: when running under PSPLink, else the memory stick). A map that
  * fails to load must never be a silent black screen. */
@@ -141,9 +166,10 @@ PbmMap* pbm_load(const char* filepath) {
     }
 
     /* Validate Magic */
-    if (magic != PBM_MAGIC && magic != PBM_MAGIC_V1) {
-        printf("[PBM] Error: Invalid magic 0x%08X (expected 'PBM2' 0x%08X or 'PBM1' 0x%08X)\n",
-            (unsigned int)magic, (unsigned int)PBM_MAGIC, (unsigned int)PBM_MAGIC_V1);
+    if (magic != PBM_MAGIC && magic != PBM_MAGIC_V2 && magic != PBM_MAGIC_V1) {
+        printf("[PBM] Error: Invalid magic 0x%08X (expected 'PBM3' 0x%08X, 'PBM2' 0x%08X or 'PBM1' 0x%08X)\n",
+            (unsigned int)magic, (unsigned int)PBM_MAGIC,
+            (unsigned int)PBM_MAGIC_V2, (unsigned int)PBM_MAGIC_V1);
         free(map);
         fclose(f);
         return NULL;
@@ -251,7 +277,7 @@ PbmMap* pbm_load(const char* filepath) {
             map->textures[i].width = thdr.width;
             map->textures[i].height = thdr.height;
             map->textures[i].format = thdr.format;
-            map->textures[i].has_alpha = thdr.has_alpha;
+            map->textures[i].alpha_mode = thdr.alpha_mode;
             map->textures[i].data_size = thdr.data_size;
 
             PbmTexture* tex = &map->textures[i];
@@ -284,7 +310,12 @@ PbmMap* pbm_load(const char* filepath) {
                 lh[0] = thdr.height;
                 src[0] = (const uint16_t*)linear;
 
-                if (!thdr.has_alpha) {
+                /* Mip chains for everything except hard-edged cutouts: halving
+                 * a 1-bit alpha turns a level fully transparent long before
+                 * the texels are small, which eats the silhouette. Soft alpha
+                 * (PBM_ALPHA_BLEND) averages exactly the way a blended surface
+                 * wants, and opaque textures have nothing to lose. */
+                if (thdr.alpha_mode != PBM_ALPHA_CUTOUT) {
                     while (built < PBM_MAX_MIP_LEVELS && lw[built - 1] >= 32 && lh[built - 1] >= 32) {
                         int pw = lw[built - 1] >> 1, ph = lh[built - 1] >> 1;
                         uint16_t* lvl = (uint16_t*)malloc((size_t)pw * ph * 2);
@@ -313,6 +344,49 @@ PbmMap* pbm_load(const char* filepath) {
                     tex->pixels = tex->level_ptr[0];
                     tex->is_swizzled = 1;
                 }
+            } else if (thdr.format == PBM_TEX_FMT_RGBA8888 &&
+                       thdr.alpha_mode == PBM_ALPHA_BLEND &&
+                       thdr.width >= 16 && thdr.height >= 16 &&
+                       (thdr.width & (thdr.width - 1)) == 0 &&
+                       (thdr.height & (thdr.height - 1)) == 0) {
+                /* 32-bit blend textures get an UNswizzled mip chain: the 16-bit
+                 * swizzle layout does not apply, and the GE takes one base/size
+                 * register per level, so a linear chain is legal and still
+                 * collapses the minified fetch footprint. Soft alpha needs the
+                 * 8 bits per channel that 5551 cannot carry. */
+                int lw[PBM_MAX_MIP_LEVELS];
+                int lh[PBM_MAX_MIP_LEVELS];
+                const uint32_t* src[PBM_MAX_MIP_LEVELS];
+                int built = 1;
+                lw[0] = thdr.width;
+                lh[0] = thdr.height;
+                src[0] = (const uint32_t*)linear;
+                while (built < PBM_MAX_MIP_LEVELS && lw[built - 1] >= 16 && lh[built - 1] >= 16) {
+                    int pw = lw[built - 1] >> 1, ph = lh[built - 1] >> 1;
+                    uint32_t* lvl = (uint32_t*)malloc((size_t)pw * ph * 4);
+                    if (!lvl) break;
+                    downsample_8888(lvl, src[built - 1], lw[built - 1], lh[built - 1]);
+                    src[built] = lvl;
+                    lw[built] = pw;
+                    lh[built] = ph;
+                    built++;
+                }
+                int done = 0;
+                for (; done < built; ++done) {
+                    uint32_t sz = (uint32_t)lw[done] * lh[done] * 4;
+                    void* dst = memalign(16, sz);
+                    if (!dst) break;
+                    memcpy(dst, src[done], sz);
+                    tex->level_w[done] = (uint16_t)lw[done];
+                    tex->level_h[done] = (uint16_t)lh[done];
+                    tex->level_ptr[done] = dst;
+                }
+                for (int k = 1; k < built; ++k) free((void*)src[k]);
+                if (done > 0) {
+                    tex->num_levels = done;
+                    tex->pixels = tex->level_ptr[0];
+                    tex->is_swizzled = 0;
+                }
             } else {
                 void* pixels = memalign(16, thdr.data_size);
                 if (!pixels) pixels = malloc(thdr.data_size);
@@ -331,11 +405,18 @@ PbmMap* pbm_load(const char* filepath) {
 
     /* 2. Meshes */
     map->total_vertices = 0;
+    uint32_t animated_meshes = 0;
     if (map->header.num_meshes > 0) {
         map->meshes = (PbmMesh*)calloc(map->header.num_meshes, sizeof(PbmMesh));
         for (uint32_t i = 0; i < map->header.num_meshes; ++i) {
             PbmMeshHeader mhdr;
-            if (fread(&mhdr, sizeof(PbmMeshHeader), 1, f) != 1) {
+            memset(&mhdr, 0, sizeof(mhdr));
+            /* v3 grew the mesh header by the two UV-scroll words; v1/v2 files
+             * end where uv_scroll_u would begin, so read exactly that much and
+             * leave the scroll at zero (their meshes are static by definition). */
+            size_t hdr_size = (map->header.version >= 3)
+                ? sizeof(PbmMeshHeader) : (size_t)PBM_MESH_HEADER_V2;
+            if (fread(&mhdr, hdr_size, 1, f) != 1) {
                 pbm_log("[PBM] FATAL: short read on mesh header %u\n", (unsigned int)i);
                 goto load_failed;
             }
@@ -344,6 +425,15 @@ PbmMap* pbm_load(const char* filepath) {
             map->meshes[i].num_vertices = mhdr.num_vertices;
             memcpy(map->meshes[i].bounds_min, mhdr.bounds_min, sizeof(float) * 3);
             memcpy(map->meshes[i].bounds_max, mhdr.bounds_max, sizeof(float) * 3);
+            map->meshes[i].uv_scroll_u = mhdr.uv_scroll_u;
+            map->meshes[i].uv_scroll_v = mhdr.uv_scroll_v;
+            if (mhdr.uv_scroll_u != 0.0f || mhdr.uv_scroll_v != 0.0f) {
+                animated_meshes++;
+                if (map->meshes[i].texture_id < 0) {
+                    pbm_log("[PBM] Warning: mesh '%s' scrolls but has no texture; "
+                            "the offset will be ignored.\n", map->meshes[i].name);
+                }
+            }
             map->total_vertices += mhdr.num_vertices;
 
             uint32_t vbuf_size = mhdr.num_vertices * sizeof(PbmVertex);
@@ -456,6 +546,10 @@ PbmMap* pbm_load(const char* filepath) {
 #ifdef __PSP__
     sceKernelDcacheWritebackAll();
 #endif
+    if (animated_meshes > 0) {
+        pbm_log("[PBM] %u of %u meshes have an animated UV scroll (PBM 3.0)\n",
+                (unsigned)animated_meshes, (unsigned)map->header.num_meshes);
+    }
     pbm_log_mem("after load");
     return map;
 

@@ -27,16 +27,25 @@ echo "ELF: $TEST_ELF"
 PPSSPPHeadless "$TEST_ELF" "$MAP_FILE" --graphics=software --timeout=15
 
 echo "=== Execution finished ==="
+# The benchmark captures the orbit at frame 60, freezes the camera, and
+# captures again 20 frames later (screenshot_psp_scroll.tga). Two frames of the
+# SAME camera are what make the animated UV scroll measurable: diff them, or
+# correlate the scrolling mesh's pixels, to see which way the texture moves.
+# NOTE: the TGA's alpha byte is 0 for every pixel (the PSP framebuffer is
+# 5551), so it must be dropped or an image viewer shows a blank white frame.
 if [ -f "screenshot_psp.tga" ]; then
     echo "Screenshot saved: screenshot_psp.tga"
     ls -lh screenshot_psp.tga
-    # Convert TGA to PNG for easy viewing/inspection
-    python3 -c '
-from PIL import Image
+    python3 - <<'PYEOF'
 import os
-if os.path.exists("screenshot_psp.tga"):
-    img = Image.open("screenshot_psp.tga")
-    img.save("screenshot_psp.png")
-    print(f"Saved screenshot_psp.png ({img.size[0]}x{img.size[1]}, {len(img.getcolors(100000))} unique colors)")
-'
+from PIL import Image
+for name in ("screenshot_psp.tga", "screenshot_psp_scroll.tga"):
+    if not os.path.exists(name):
+        continue
+    img = Image.open(name).convert("RGBA")
+    img.putalpha(255)   # see the note above: the TGA alpha is meaningless
+    out = name.replace(".tga", ".png")
+    img.convert("RGB").save(out)
+    print(f"Saved {out} ({img.size[0]}x{img.size[1]})")
+PYEOF
 fi

@@ -55,9 +55,11 @@ class Mesh:
 def load_pbm(path):
     data = open(path, "rb").read()
     magic, ver, n_tex, n_mesh, n_col, n_meta = struct.unpack_from("<6I", data, 0)
-    if magic != 0x324D4250:
-        raise SystemExit(f"{path}: bad magic {magic:#x} (need PBM2)")
-    off = 64
+    if magic not in (0x334D4250, 0x324D4250, 0x314D4250):
+        raise SystemExit(f"{path}: bad magic {magic:#x} (need PBM1/2/3)")
+    # The mesh header grew by the two UV-scroll words in v3.
+    mesh_hdr_size = 72 if ver >= 3 else 64
+    off = 64 if ver >= 2 else 60
     textures = []
     for _ in range(n_tex):
         nm, w, h, fmt, alpha, dsz = struct.unpack_from("<32sHHHHI", data, off)
@@ -66,7 +68,7 @@ def load_pbm(path):
     meshes = []
     for _ in range(n_mesh):
         nm, tid, nv = struct.unpack_from("<32siI", data, off)
-        off += 64
+        off += mesh_hdr_size
         v = np.frombuffer(data, dtype=np.dtype([
             ("u", "<f4"), ("v", "<f4"), ("c", "<u4"), ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
         ]), count=nv, offset=off)
