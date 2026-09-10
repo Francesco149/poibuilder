@@ -1538,6 +1538,7 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 	var best_node: PBMesh = null
 	var best_face := -1
 	var best_point := Vector3.ZERO
+	var best_normal := Vector3.UP
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
 		for node in _collect_pbmeshes(scene_root):
@@ -1549,6 +1550,9 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 				best_node = node
 				best_face = res.face_index
 				best_point = res.hit_point
+				var normal := PBMath.normal_from_positions(
+					node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
+				best_normal = (node.global_transform.basis * normal).normalized()
 		for node in _collect_mesh_instances(scene_root):
 			if not node.is_visible_in_tree() or node.mesh == null:
 				continue
@@ -1568,6 +1572,8 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 							best_node = null
 							best_face = -1
 							best_point = world_hit
+							var fn := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).normalized()
+							best_normal = (node.global_transform.basis * fn).normalized()
 		var w3d := camera.get_world_3d()
 		if w3d != null and w3d.direct_space_state != null:
 			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
@@ -1582,27 +1588,46 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 						best_node = null
 						best_face = -1
 						best_point = phys_hit["position"]
-	if best_point == Vector3.ZERO:
+						if phys_hit.has("normal"):
+							best_normal = phys_hit["normal"]
+	if grid.draw_on_grid or best_point == Vector3.ZERO:
 		var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d, grid.origin, Vector3.UP)
 		if hit != PBShapeCreator.RAY_MISS:
 			best_point = hit
-	if best_node != null and best_face >= 0 and ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED:
-		best_point = ngon_drawer.snap_to_face(best_node, best_face, best_point)
-	elif grid != null and grid.enabled and (ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED):
-		best_point = grid.snap_point(best_point)
+			best_normal = Vector3.UP
+			best_node = null
+			best_face = -1
+
+	# Snap the hover vertex to the exact starting point creation will use when clicked:
+	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
+		best_point = shape_creator.snap_starting_point(best_point, best_normal)
+	elif ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED:
+		if best_node != null and best_face >= 0:
+			best_point = ngon_drawer.snap_to_face(best_node, best_face, best_point)
+		elif grid != null and grid.enabled:
+			best_point = grid.snap_point(best_point)
+	elif sprite_placer != null and sprite_placer.is_active() and sprite_placer.state == PBSpritePlacer.State.ARMED:
+		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
+			best_point = grid.snap_point_masked(best_point, best_normal)
+
+	var target_node: PBMesh = best_node
+	var target_face: int = best_face
+	if target_node == null and editor.active_mesh != null and is_instance_valid(editor.active_mesh):
+		target_node = editor.active_mesh
+		target_face = -1
 
 	var prev_node := gizmo_plugin.creation_hover_node
-	var node_changed := (best_node != prev_node or best_face != gizmo_plugin.creation_hover_face)
+	var node_changed := (target_node != prev_node or target_face != gizmo_plugin.creation_hover_face)
 	var pt_changed := gizmo_plugin.creation_hover_point.distance_to(best_point) > 0.001
 	if node_changed:
-		gizmo_plugin.creation_hover_node = best_node
-		gizmo_plugin.creation_hover_face = best_face
+		gizmo_plugin.creation_hover_node = target_node
+		gizmo_plugin.creation_hover_face = target_face
 		if prev_node != null and is_instance_valid(prev_node):
 			prev_node.update_gizmos()
-		if best_node != null:
-			best_node.update_gizmos()
-	elif pt_changed and best_node != null:
-		best_node.update_gizmos()
+		if target_node != null:
+			target_node.update_gizmos()
+	elif pt_changed and target_node != null:
+		target_node.update_gizmos()
 	# Always tracked (cheap): the ARMED cursor square sits at this point.
 	gizmo_plugin.creation_hover_point = best_point
 func _clear_creation_hover() -> void:

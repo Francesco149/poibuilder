@@ -344,8 +344,7 @@ func _redraw(gizmo) -> void:
 			# During an active drag the preview is the only gizmo host.
 			_draw_creation_preview(gizmo, mesh_data, shape_creator)
 			return
-		if creation_hover_node == node and creation_hover_face >= 0 \
-				and creation_hover_face < mesh_data.faces.size():
+		if creation_hover_node == node:
 			_draw_creation_hover(gizmo, mesh_data, creation_hover_face)
 			return
 
@@ -900,8 +899,8 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 ## session is still ARMED (no drag yet), also draws the yellow vertex square
 ## under the cursor.
 func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
-	var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
-	if fill != null:
+	if face_index >= 0 and face_index < mesh_data.faces.size():
+		var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
 		var col := Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
 		if _face_hover_fill_material == null:
 			_face_hover_fill_material = _make_face_fill_material(col)

@@ -254,6 +254,35 @@ func test_creator_press_exact_on_non_cardinal_surface():
 	c.begin(Vector3(0.13, 0.26, 0.35), n, Vector3(0, 0, 1))
 	assert_almost_eq(c.base_start.x, 0.13, 0.0001, "arbitrary surfaces keep the exact press point")
 
+func test_creator_snap_starting_point_matches_begin_press():
+	var c := PBShapeCreator.new()
+	c.grid = PBGrid.new()
+	c.arm(&"cube")
+	# Cardinal floor: snaps X and Z to 0.2m grid tick
+	var floor_pt := Vector3(0.13, 0.0, 0.26)
+	var snapped_floor := c.snap_starting_point(floor_pt, Vector3.UP)
+	assert_almost_eq(snapped_floor.x, 0.2, 0.0001)
+	assert_almost_eq(snapped_floor.y, 0.0, 0.0001)
+	assert_almost_eq(snapped_floor.z, 0.2, 0.0001)
+	c.begin(floor_pt, Vector3.UP, Vector3(0, 0, 1))
+	assert_eq(c.base_start, snapped_floor, "begin() press point must match snap_starting_point exactly")
+
+	# Cardinal wall: X is masked, Y and Z snap
+	var wall_pt := Vector3(3.35, 0.09, 0.11)
+	var snapped_wall := c.snap_starting_point(wall_pt, Vector3.RIGHT)
+	assert_almost_eq(snapped_wall.x, 3.35, 0.0001, "Wall X must stay masked")
+	assert_almost_eq(snapped_wall.y, 0.0, 0.0001)
+	assert_almost_eq(snapped_wall.z, 0.2, 0.0001)
+	c.begin(wall_pt, Vector3.RIGHT, Vector3(0, 0, 1))
+	assert_eq(c.base_start, snapped_wall, "begin() on wall must match snap_starting_point exactly")
+
+	# Snapping disabled: returns exact un-snapped point
+	c.grid.enabled = false
+	var unsnapped := c.snap_starting_point(floor_pt, Vector3.UP)
+	assert_eq(unsnapped, floor_pt, "When grid is disabled, returns exact un-snapped point")
+	c.begin(floor_pt, Vector3.UP, Vector3(0, 0, 1))
+	assert_eq(c.base_start, floor_pt)
+
 func test_creator_base_extents_snap():
 	var c := PBShapeCreator.new()
 	c.grid = PBGrid.new()

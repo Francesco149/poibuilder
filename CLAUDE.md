@@ -791,7 +791,11 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
   - Added `var lock_direction: bool = false` in `PBShapeCreator`. When active, `_update_facing()` skips re-evaluating the dynamic facing heuristic and preserves the current `facing` vector.
   - Wired modifier tracking into `_creation_input`: holding `Ctrl` (`event.ctrl_pressed` / `Input.is_key_pressed(KEY_CTRL)`) locks the direction to the current orientation, allowing base rectangles to be resized freely without unexpected 90° flips or reversed climbing directions.
   - Updated creation hint overlay to display `(Ctrl: lock direction, Esc cancels)`.
-- Tests: 815/815 GUT unit tests passing (+5), 49/49 GUI harness tests passing (0 failures).
+- ARMED CREATION HOVER VERTEX SNAPPING (`poibuilder_plugin.gd`, `PBShapeCreator.snap_starting_point`):
+  - Root cause of vertex indicator smoothly following mouse before drag instead of snapping: `_update_creation_hover` previously only ran snapping when `ngon_drawer` was armed; for `shape_creator` it left `best_point` as the raw un-snapped ray hit. Upon pressing LMB, `shape_creator.begin()` snapped the start point to the grid tick, causing an unexpected visual jump from the cursor position to the snapped origin.
+  - Implemented `PBShapeCreator.snap_starting_point(surface_point, surface_normal)`: unified single source of truth for start-point snapping. While ARMED with grid snapping enabled, `_update_creation_hover` snaps `best_point` to the exact grid tick that clicking will use (`grid.snap_point_masked(p, n)` on cardinal surfaces).
+  - Result: before dragging, the yellow vertex square snaps cleanly to the upcoming click starting point in real time.
+- Tests: 816/816 GUT unit tests passing (+6), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):

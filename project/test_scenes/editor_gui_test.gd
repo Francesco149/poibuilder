@@ -257,6 +257,14 @@ func _run() -> void:
 			var end := _window_pos(vp, host, Vector3(1.2, 0.5001, -1))
 			_mouse_motion(start)
 			await _frames(3)
+			var hover_pt: Vector3 = plugin.gizmo_plugin.creation_hover_point
+			var grid_step: float = plugin.grid.step()
+			var rem_x := absf(hover_pt.x - roundf(hover_pt.x / grid_step) * grid_step)
+			var rem_z := absf(hover_pt.z - roundf(hover_pt.z / grid_step) * grid_step)
+			if rem_x < 0.001 and rem_z < 0.001 and hover_pt != Vector3.ZERO:
+				_pass("CREATE: ARMED hover vertex snapped to grid starting point")
+			else:
+				_fail("CREATE: ARMED hover vertex not snapped to grid (x=%.3f, z=%.3f, step=%.3f)" % [hover_pt.x, hover_pt.z, grid_step])
 			_mouse_button(start, true)
 			await _frames(3)
 			for i in range(1, 5):

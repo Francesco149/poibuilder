@@ -171,17 +171,19 @@ func arm(p_shape_id: StringName) -> void:
 
 ## Begins the base drag on the surface point/normal under the press. `view_z`
 ## is the camera's forward direction — the drag axis seeds from the view so
+## Computes the snapped starting point on a surface when grid snapping is enabled
+## on cardinal surfaces, or returns the un-snapped surface point otherwise.
+func snap_starting_point(surface_point: Vector3, surface_normal: Vector3) -> Vector3:
+	var n := surface_normal.normalized()
+	if grid != null and grid.enabled and PBGrid.is_cardinal(n):
+		return grid.snap_point_masked(surface_point, n)
+	return surface_point
+
 ## horizontal drags feel natural on walls too.
 func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> void:
 	state = State.BASE
 	plane_normal = surface_normal.normalized()
-	# Snap the press point onto the grid on world-ALIGNED surfaces only —
-	# the masked axis keeps the rect coplanar with walls at arbitrary offsets.
-	# Arbitrary (sloped) surfaces keep the exact press point and snap the
-	# drag extents incrementally instead (ProBuilder behavior).
-	var press := surface_point
-	if grid != null and grid.enabled and PBGrid.is_cardinal(plane_normal):
-		press = grid.snap_point_masked(surface_point, plane_normal)
+	var press := snap_starting_point(surface_point, plane_normal)
 	plane_point = press
 	# Seed the drag axis: camera forward projected into the plane, falling
 	# back to the plane-perpendicular-of-up and then world X.
