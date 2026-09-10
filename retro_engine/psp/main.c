@@ -205,7 +205,8 @@ int main(int argc, char** argv) {
     sceGuDisplay(GU_TRUE);
 
     const char* map_path = "showcase_retro_baked.pbm";
-    PbmMap* map = pbm_load(map_path);
+    PbmMap* map = pbm_load("host0:/showcase_retro_baked.pbm");   /* PSPLink USB host fs */
+    if (!map) map = pbm_load(map_path);
     if (!map) map = pbm_load("disc0:/showcase_retro_baked.pbm");
     if (!map) map = pbm_load("ms0:/showcase_retro_baked.pbm");
     if (!map) map = pbm_load("PSP/GAME/PoiRetro/showcase_retro_baked.pbm");
@@ -228,6 +229,17 @@ int main(int argc, char** argv) {
            map->map_name, (unsigned)map->header.num_meshes, (unsigned)map->total_vertices);
 
     /* ── Profiling run, triggered by ms0:/poi_profile.cfg ─────────────── */
+#ifdef HWTEST
+    /* Hardware-test build: always profile, then stop. Meant to be loaded and
+     * started over PSPLink USB (see run_psp_hw.sh), so it never touches the
+     * memory stick and never enters the interactive loop. */
+    printf("[HWTEST] running the profiling battery over PSPLink\n");
+    psp_prof_suite(map);
+    pbm_free(map);
+    printf("[HWTEST] done; results on the host as host0:/poi_profile.txt\n");
+    sceKernelExitThread(0);
+    return 0;
+#endif
     if (file_exists("ms0:/poi_profile.cfg")) {
         psp_prof_suite(map);
         remove("ms0:/poi_profile.cfg");

@@ -21,3 +21,13 @@ test_build:
 	$(CC) $(CFLAGS) -L. -L$(shell psp-config --psp-prefix)/lib -L$(shell psp-config --pspsdk-path)/lib -Wl,-zmax-page-size=128 main_test.o psp_render_test.o psp_prof_test.o pbm_loader.o $(LIBS) -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpspnet -lpspnet_apctl -o poiretro_psp_test.elf
 	psp-fixup-imports poiretro_psp_test.elf
 	rm -f main_test.o psp_render_test.o psp_prof_test.o
+
+# Real-hardware profiling build: a PRX that PSPLink can load and start over
+# USB. It reads the map and writes its results through host0: (a directory on
+# the development machine), so a profiling round trip never touches the memory
+# stick. See run_psp_hw.sh.
+hwtest:
+	$(MAKE) clean
+	$(MAKE) BUILD_PRX=1 TARGET=poiretro_psp_hwtest \
+	        PSP_EBOOT=poiretro_hwtest.PBP EXTRA_TARGETS=poiretro_hwtest.PBP \
+	        CFLAGS="$(CFLAGS) -DHWTEST=1" all
