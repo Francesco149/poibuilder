@@ -265,6 +265,8 @@ func load_map(path: String) -> bool:
 	return true
 
 func _collect_mesh_instances(node: Node) -> void:
+	if node is Light3D:
+		(node as Light3D).visible = false
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		if mi.mesh != null:
@@ -346,8 +348,17 @@ func set_display_mode(mode: DisplayMode) -> void:
 			var base_mat: Material = orig_mats[s] if s < orig_mats.size() else null
 
 			if mode == DisplayMode.FULL_BAKED:
-				mi.set_surface_override_material(s, base_mat)
-
+				var sm := StandardMaterial3D.new()
+				sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				sm.vertex_color_use_as_albedo = true
+				if base_mat is StandardMaterial3D:
+					var bm := base_mat as StandardMaterial3D
+					sm.albedo_texture = bm.albedo_texture
+					sm.albedo_color = bm.albedo_color
+					sm.transparency = bm.transparency
+					sm.cull_mode = bm.cull_mode
+					sm.texture_repeat = not bm.resource_name.begins_with("BakedTile_")
+				mi.set_surface_override_material(s, sm)
 			elif mode == DisplayMode.VERTEX_COLORS_ONLY:
 				var sm := StandardMaterial3D.new()
 				sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED

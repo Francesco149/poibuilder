@@ -802,10 +802,12 @@ v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal life
     - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization and draw-call batching.
     - Integrated native `.pbm` export in `PBMapExporter.export_retro_pbm()` and added `.pbm` file filter in `PBExportDialog`.
   - Complete PSP homebrew application (`retro_engine/psp/`):
-    - `main.c`: Sony GU double-buffered 480x272 setup, smooth Gouraud shading, texture modulation with baked vertex lighting + AO, orbital camera, and benchmark mode.
-    - `pbm_loader.c`: 16-byte aligned DMA memory loader.
-    - `build_psp.sh`: compiles `poiretro_psp.elf` and `EBOOT.PBP` in < 1s using containerized `pspdev/pspdev`.
-    - `run_psp_headless.sh`: executes under `PPSSPPHeadless`, rendering 120 frames and exporting a 480x272 screenshot (`screenshot_psp.png`, 1012 unique colors).
+    - `main.c`: Sony GU double-buffered 480x272 setup, smooth Gouraud shading, texture modulation with baked vertex lighting + AO, and interactive fly camera.
+    - Winding and depth buffer fix: corrected depth test to `GU_LEQUAL` with `clearDepth(65535)` and `GU_CCW` front-face culling, eliminating the inverted depth artifact where distant backfaces overwrote foreground walls.
+    - Omnilight chromaticity preservation (`PBLightBaker.gd`, `retro_map_viewer.gd`): replaced independent RGB channel clamping with proportional chromaticity-preserving tonemapping when light exceeds 1.0, preserving the rich amber/orange torchlight on the front face of the archway instead of bleaching to white. In `retro_map_viewer.gd`, hid imported dynamic lights in `FULL_BAKED` mode so both Godot and PSP viewers render 1:1 identical baked lighting.
+    - Hardware 2D on-screen HUD & FPS counter: embedded 8x8 bitmap font rendered natively via Sony GE command stream (`GU_SPRITES` with `GU_TRANSFORM_2D`), displaying live FPS, triangle/vertex counts, and controls hint with drop shadow on graphical PPSSPP (Vulkan, OpenGL, D3D) and real PSP hardware.
+    - Interactive fly camera & test separation: default build (`poiretro_psp.elf` / `EBOOT.PBP`) is a continuous flythrough with Analog stick movement/strafe, LT/RT yaw, X up, Circle down, and Triangle/Square pitch. Separate test binary (`poiretro_psp_test.elf`, `make test_build`) handles automated 120-frame orbital benchmark and screenshot capture for headless verification.
+    - Ready-to-copy real PSP homebrew package: `build_psp.sh` creates `package/PSP/GAME/PoiRetro/` (`EBOOT.PBP`, `showcase_retro_baked.pbm`, `README.txt`) and packages `PoiRetro_PSP.zip` ready for root extraction onto any homebrew-enabled PSP Memory Stick.
 - Tests: 826/826 GUT unit tests passing (+4), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exports dir & cleanup, & Ctrl direction lock:
