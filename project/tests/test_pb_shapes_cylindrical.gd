@@ -16,25 +16,27 @@ func test_cylinder_default():
 	assert_eq(md.validate(), "", "Cylinder should validate")
 	# 8 sides, 0 height cuts:
 	# Wall: 8 × 1 × 4 = 32 verts, 8 faces
-	# Caps: 8 × 6 = 48 verts, 16 faces
-	# Total: 80 verts, 24 faces
-	assert_eq(md.vertex_count(), 80, "Default cylinder: 80 vertices")
-	assert_eq(md.face_count(), 24, "Default cylinder: 24 faces")
-	assert_eq(md.textures0.size(), 80, "UV count matches vertex count")
+	# Caps: (1 + 8) × 2 = 18 verts, 2 n-gon faces (1 top, 1 bottom)
+	# Total: 50 verts, 10 faces
+	assert_eq(md.vertex_count(), 50, "Default cylinder: 50 vertices")
+	assert_eq(md.face_count(), 10, "Default cylinder: 10 faces (8 wall + 1 top n-gon + 1 bottom n-gon)")
+	assert_eq(md.textures0.size(), 50, "UV count matches vertex count")
+	assert_eq(md.faces[8].get_edges().size(), 8, "Top cap has 8 perimeter edges (single n-gon)")
+	assert_eq(md.faces[9].get_edges().size(), 8, "Bottom cap has 8 perimeter edges (single n-gon)")
 
 func test_cylinder_with_height_cuts():
 	var md = PBShapeCylinder.create_cylinder(0.5, 1.0, 6, 2)
 	assert_eq(md.validate(), "", "Cylinder with cuts should validate")
-	# Wall: 6 × 3 × 4 = 72, Caps: 6 × 6 = 36. Total: 108 verts
-	# Wall: 6 × 3 = 18, Caps: 12. Total: 30 faces
-	assert_eq(md.vertex_count(), 108)
-	assert_eq(md.face_count(), 30)
+	# Wall: 6 × 3 × 4 = 72, Caps: (1 + 6) × 2 = 14. Total: 86 verts
+	# Wall: 6 × 3 = 18, Caps: 2. Total: 20 faces
+	assert_eq(md.vertex_count(), 86)
+	assert_eq(md.face_count(), 20)
 
 func test_cylinder_min_sides():
 	var md = PBShapeCylinder.create_cylinder(0.5, 1.0, 3)
 	assert_eq(md.validate(), "", "3-sided cylinder should validate")
-	assert_eq(md.face_count(), 9)  # 3 wall + 6 cap
-	assert_eq(md.vertex_count(), 30) # 3*4 + 3*6 = 30
+	assert_eq(md.face_count(), 5)  # 3 wall + 2 cap
+	assert_eq(md.vertex_count(), 20) # 3*4 + (1+3)*2 = 20
 
 func test_cylinder_normals():
 	var md = PBShapeCylinder.create_cylinder()
@@ -46,11 +48,11 @@ func test_cylinder_normals():
 func test_cylinder_smoothing():
 	var md_smooth = PBShapeCylinder.create_cylinder(0.5, 1.0, 8, 0, true)
 	var md_flat = PBShapeCylinder.create_cylinder(0.5, 1.0, 8, 0, false)
-	# First 8 faces are walls, remaining 16 are caps
+	# First 8 faces are walls, remaining 2 are n-gon caps
 	for i in range(8):
 		assert_eq(md_smooth.faces[i].smoothing_group, 1, "Smooth wall face has smoothing_group = 1")
 		assert_eq(md_flat.faces[i].smoothing_group, 0, "Flat wall face has smoothing_group = 0")
-	for i in range(8, 24):
+	for i in range(8, 10):
 		assert_eq(md_smooth.faces[i].smoothing_group, 0, "Cap face has smoothing_group = 0")
 		assert_eq(md_flat.faces[i].smoothing_group, 0, "Cap face has smoothing_group = 0")
 
@@ -122,19 +124,22 @@ func test_pipe_default():
 	var md = PBShapeCylinder.create_pipe()
 	assert_eq(md.validate(), "", "Pipe should validate")
 	# 8 sides, 0 height cuts:
-	# Wall: 8 × 1 × 8 = 64, Rim: 8 × 8 = 64. Total: 128 verts
-	# Wall: 8 × 1 × 2 = 16, Rim: 16. Total: 32 faces
-	assert_eq(md.vertex_count(), 128)
-	assert_eq(md.face_count(), 32)
-	assert_eq(md.textures0.size(), 128)
+	# Wall: 8 × 1 × 8 = 64 verts, 16 faces
+	# Rims: 8 × 2 × 2 = 32 verts, 2 n-gon annular faces
+	# Total: 96 verts, 18 faces
+	assert_eq(md.vertex_count(), 96)
+	assert_eq(md.face_count(), 18)
+	assert_eq(md.textures0.size(), 96)
+	assert_eq(md.faces[16].get_edges().size(), 16, "Top rim has 16 perimeter edges (8 outer + 8 inner)")
+	assert_eq(md.faces[17].get_edges().size(), 16, "Bottom rim has 16 perimeter edges (8 outer + 8 inner)")
 
 func test_pipe_with_cuts():
 	var md = PBShapeCylinder.create_pipe(0.5, 1.0, 0.15, 6, 2)
 	assert_eq(md.validate(), "")
-	# Wall: 6 × 3 × 8 = 144, Rim: 6 × 8 = 48. Total: 192
-	# Wall: 6 × 3 × 2 = 36, Rim: 12. Total: 48
-	assert_eq(md.vertex_count(), 192)
-	assert_eq(md.face_count(), 48)
+	# Wall: 6 × 3 × 8 = 144, Rim: 6 × 2 × 2 = 24. Total: 168 verts
+	# Wall: 6 × 3 × 2 = 36, Rim: 2. Total: 38 faces
+	assert_eq(md.vertex_count(), 168)
+	assert_eq(md.face_count(), 38)
 
 func test_pipe_hollow():
 	var md = PBShapeCylinder.create_pipe(1.0, 2.0, 0.2, 6)
@@ -162,11 +167,11 @@ func test_pipe_normals():
 func test_pipe_smoothing():
 	var md_smooth = PBShapeCylinder.create_pipe(0.5, 1.0, 0.15, 8, 0, true)
 	var md_flat = PBShapeCylinder.create_pipe(0.5, 1.0, 0.15, 8, 0, false)
-	# 8 outer walls + 8 inner walls = 16 wall faces; 8 top rims + 8 bottom rims = 16 rim faces
+	# 8 outer walls + 8 inner walls = 16 wall faces; 1 top rim + 1 bottom rim = 2 rim faces
 	for i in range(16):
 		assert_eq(md_smooth.faces[i].smoothing_group, 1, "Wall face smoothing = 1")
 		assert_eq(md_flat.faces[i].smoothing_group, 0, "Flat wall face smoothing = 0")
-	for i in range(16, 32):
+	for i in range(16, 18):
 		assert_eq(md_smooth.faces[i].smoothing_group, 0, "Rim face smoothing = 0")
 		assert_eq(md_flat.faces[i].smoothing_group, 0, "Rim face smoothing = 0")
 

@@ -1305,6 +1305,17 @@ func _set_creation_hint(text: String) -> void:
 func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventWithModifiers:
 		shape_creator.lock_direction = event.ctrl_pressed or Input.is_key_pressed(KEY_CTRL)
+		if shape_creator.state == PBShapeCreator.State.HEIGHT:
+			var alt_down: bool = event.alt_pressed or Input.is_key_pressed(KEY_ALT)
+			if shape_creator.show_height_plane != alt_down:
+				shape_creator.show_height_plane = alt_down
+				_refresh_preview()
+	elif event is InputEventKey:
+		if shape_creator.state == PBShapeCreator.State.HEIGHT:
+			var alt_down: bool = event.alt_pressed or Input.is_key_pressed(KEY_ALT)
+			if shape_creator.show_height_plane != alt_down:
+				shape_creator.show_height_plane = alt_down
+				_refresh_preview()
 
 	if event is InputEventMouseMotion:
 		_last_mouse_pos = event.position
@@ -1503,10 +1514,10 @@ func _refresh_preview() -> void:
 	node.pb_mesh_data = data
 	if shape_creator.state == PBShapeCreator.State.BASE:
 		node.mesh = null
-	# The creation overlays (outline/bounds) live on the node's gizmo — a
 	# rebuild alone never redraws it.
 	node.update_gizmos()
-
+	if tool_overlay != null:
+		tool_overlay.set_creation_extents(shape_creator.get_extents_readout())
 func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
@@ -1647,7 +1658,7 @@ func _creation_end_base() -> void:
 	# the surface (height 0) instead of popping in below it with a jump at
 	# the first mouse move.
 	_refresh_preview()
-	_set_creation_hint("move to size it, then click to confirm")
+	_set_creation_hint("move to size it, then click to confirm (Alt: height plane)")
 
 ## The confirming click (after the height drag): the shape exists from here
 ## on (its node-add undo is registered now). Parameterized shapes open the
@@ -1666,7 +1677,9 @@ func _creation_confirm() -> void:
 	undo.add_undo_method(self, "_detach_node", node)
 	undo.commit_action()
 	_set_creation_hint("")
-
+	if tool_overlay != null:
+		tool_overlay.set_creation_extents("")
+	shape_creator.show_height_plane = false
 	# Select the created node immediately so the editor recognises it as active
 	# and doesn't treat initial placement as a deselect event
 	var editor_selection := get_editor_interface().get_selection()
@@ -1708,6 +1721,9 @@ func _creation_abort(reason: String) -> void:
 		node.queue_free()
 	_clear_creation_hover()
 	_set_creation_hint("")
+	if tool_overlay != null:
+		tool_overlay.set_creation_extents("")
+	shape_creator.show_height_plane = false
 	_update_editing_context()
 	if logger:
 		logger.info("plugin", "Shape creation aborted (%s)" % reason)
@@ -1719,6 +1735,9 @@ func _finish_creation_session(node: PBMesh) -> void:
 	shape_creator.reset()
 	_clear_creation_hover()
 	_set_creation_hint("")
+	if tool_overlay != null:
+		tool_overlay.set_creation_extents("")
+	shape_creator.show_height_plane = false
 	tool_overlay.close_params()
 	_params_session_kind = ""
 	if node != null and is_instance_valid(node):

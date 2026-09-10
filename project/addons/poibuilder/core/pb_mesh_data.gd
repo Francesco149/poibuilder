@@ -636,7 +636,7 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 ## Cached default material reference.
 static var _cached_default_material: Material = null
 
-## Returns the default PoiBuilder material (stock 2x2 soft dark gray checkerboard).
+## Returns the default PoiBuilder material (stock 3x3 soft dark gray checkerboard).
 static func get_default_material() -> Material:
 	if _cached_default_material == null:
 		if ResourceLoader.exists("res://addons/poibuilder/materials/pb_default_material.tres"):

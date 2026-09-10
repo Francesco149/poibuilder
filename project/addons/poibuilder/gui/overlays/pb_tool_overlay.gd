@@ -65,6 +65,8 @@ var _params_grid: GridContainer
 var _params_hint: Label
 var _creation_row: HBoxContainer
 var _creation_label: Label
+var _extents_row: HBoxContainer
+var _extents_label: Label
 var _btn_edit_shape_props: Button
 var _grid_section: VBoxContainer
 var _grid_step_label: Label
@@ -288,6 +290,17 @@ func _ensure_ui() -> void:
 	_creation_row.add_child(_creation_label)
 	_creation_row.visible = false
 
+	# EXTENTS row: live shape creation extents readout
+	_extents_row = HBoxContainer.new()
+	_extents_row.name = "ExtentsRow"
+	_extents_row.add_theme_constant_override("separation", 8)
+	_body.add_child(_extents_row)
+	_extents_row.add_child(_make_row_label("Extents"))
+	_extents_label = _make_value_label()
+	_extents_label.name = "ExtentsValue"
+	_extents_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_extents_row.add_child(_extents_label)
+	_extents_row.visible = false
 	# Shape properties edit button (shown when an unedited shape is selected)
 	_btn_edit_shape_props = Button.new()
 	_btn_edit_shape_props.name = "EditShapeProperties"
@@ -496,6 +509,16 @@ func set_creation_hint(text: String) -> void:
 func has_creation_hint() -> bool:
 	return _ui_built and _creation_row.visible
 
+func set_creation_extents(text: String) -> void:
+	_ensure_ui()
+	if _extents_label != null:
+		_extents_label.text = text
+	if _extents_row != null:
+		_extents_row.visible = text != ""
+	update_visibility()
+
+func has_creation_extents() -> bool:
+	return _ui_built and _extents_row != null and _extents_row.visible
 # ==============================================================================
 # Params session (modal)
 # ==============================================================================
@@ -965,7 +988,7 @@ func refresh() -> void:
 		_btn_edit_shape_props.visible = can_edit_props
 
 	# Content presence: is there anything meaningful to display in the body?
-	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or dragging or has_selection or can_edit_props
+	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or has_creation_extents() or dragging or has_selection or can_edit_props
 
 	# "empty panel is auto collapsed to just the header, not displayed empty."
 	if editor != null and not has_content:
@@ -986,9 +1009,9 @@ func update_visibility() -> void:
 	if not panel_enabled:
 		visible = false
 		return
-	var creation_hint := has_creation_hint()
+	var creation_active := has_creation_hint() or has_creation_extents()
 	if editor == null:
-		visible = params_open or creation_hint
+		visible = params_open or creation_active
 		return
 	var mesh_selected := editor.active_mesh != null
 	var can_edit_props := false
@@ -997,7 +1020,7 @@ func update_visibility() -> void:
 		can_edit_props = md.shape_id != &"" and not md.shape_edited
 	visible = (mesh_selected and (pinned or params_open or can_edit_props or _has_selection() \
 		or (element_editor != null and element_editor.drag_active))) \
-		or creation_hint or grid_panel_open or settings_panel_open
+		or creation_active or grid_panel_open or settings_panel_open
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
 		return false

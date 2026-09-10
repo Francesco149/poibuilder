@@ -833,4 +833,52 @@ func test_stamp_delete_hover_and_click_deletion() -> void:
 	assert_eq(stamps_container.get_child_count(), 0, "Stamp node should be removed from container")
 
 	controller.cleanup_previews()
-	root.queue_free()
+
+func test_cross_object_paint_stroke_multi_mesh_undo() -> void:
+	var floor_mesh := PBMesh.create_cube(20.0)
+	floor_mesh.name = "Floor"
+	add_child_autofree(floor_mesh)
+
+	var cube_mesh := PBMesh.create_cube(2.0)
+	cube_mesh.name = "Cube"
+	cube_mesh.position = Vector3(0, 11, 0)
+	add_child_autofree(cube_mesh)
+
+	var controller := PBPaintController.new()
+	controller.set_mode(PBPaintController.Mode.PAINT)
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color.GREEN)
+	controller.paint_texture = ImageTexture.create_from_image(img)
+
+	# 1. Begin stroke on Floor
+	controller.update_cursor(Vector3(0, 10, 0), Vector3.UP, floor_mesh, 1)
+	controller.begin_stroke()
+	assert_true(controller.is_stroke_active)
+	assert_true(controller._stroke_meshes.has(floor_mesh), "Floor must be registered in stroke meshes")
+
+	# 2. Cross over to Cube in the same stroke
+	controller.update_cursor(Vector3(0, 12, 0), Vector3.UP, cube_mesh, 1)
+	controller.apply_paint_stroke()
+	assert_true(controller._stroke_meshes.has(cube_mesh), "Cube must be registered in stroke meshes")
+
+	# Pre-stroke geometric extents
+	var floor_pos_before := floor_mesh.pb_mesh_data.positions[0]
+	var cube_pos_before := cube_mesh.pb_mesh_data.positions[0]
+	assert_almost_eq(absf(floor_pos_before.x), 10.0, 0.001, "Floor corner is at 10m")
+	assert_almost_eq(absf(cube_pos_before.x), 1.0, 0.001, "Cube corner is at 1m")
+
+	# Record before snapshots captured by controller
+	var floor_before_snap: PBMeshData = controller._stroke_meshes[floor_mesh]["before"]
+	var cube_before_snap: PBMeshData = controller._stroke_meshes[cube_mesh]["before"]
+
+	# End stroke
+	controller.end_stroke()
+	assert_false(controller.is_stroke_active)
+
+	# Simulate undo by restoring each mesh's captured before snapshot
+	PBCommand.restore_mesh_data(floor_mesh.pb_mesh_data, floor_before_snap)
+	PBCommand.restore_mesh_data(cube_mesh.pb_mesh_data, cube_before_snap)
+
+	# Verify: neither mesh got the other's geometry (no "floor comes up" or cube becoming floor)
+	assert_almost_eq(absf(floor_mesh.pb_mesh_data.positions[0].x), 10.0, 0.001, "Floor retained its 10m extent")
+	assert_almost_eq(absf(cube_mesh.pb_mesh_data.positions[0].x), 1.0, 0.001, "Cube retained its 1m extent")

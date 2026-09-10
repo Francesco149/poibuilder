@@ -516,7 +516,7 @@ static func insert_edge_loop(mesh_data: PBMeshData, edge_ids: PackedInt32Array) 
 		if hits.size() == 1:
 			continue  # ring ends here (mesh boundary or fan cap) — unsplit
 		if loop.size() != 4:
-			return _fail("Insert edge loop: ring face %d is not a quad" % fi)
+			continue  # non-quad (triangle or n-gon cap): ring ends here — unsplit
 		if hits.size() != 2:
 			return _fail("Insert edge loop: face %d touches %d ring edges (expected 2)" % [fi, hits.size()])
 		# The two hits must be opposite perimeter edges (i and i+2).

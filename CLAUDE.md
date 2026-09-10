@@ -795,7 +795,24 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
   - Root cause of vertex indicator smoothly following mouse before drag instead of snapping: `_update_creation_hover` previously only ran snapping when `ngon_drawer` was armed; for `shape_creator` it left `best_point` as the raw un-snapped ray hit. Upon pressing LMB, `shape_creator.begin()` snapped the start point to the grid tick, causing an unexpected visual jump from the cursor position to the snapped origin.
   - Implemented `PBShapeCreator.snap_starting_point(surface_point, surface_normal)`: unified single source of truth for start-point snapping. While ARMED with grid snapping enabled, `_update_creation_hover` snaps `best_point` to the exact grid tick that clicking will use (`grid.snap_point_masked(p, n)` on cardinal surfaces).
   - Result: before dragging, the yellow vertex square snaps cleanly to the upcoming click starting point in real time.
-- Tests: 816/816 GUT unit tests passing (+6), 50/50 GUI harness tests passing (0 failures).
+- CYLINDER & PIPE SINGLE N-GON CAPS (`PBShapeCylinder.create_cylinder`, `PBShapeCylinder.create_pipe`):
+  - Cylinder: top and bottom caps previously generated `div` separate triangular `PBFace` pie-slices. Now generated as 1 single n-gon `PBFace` each; internal radial fan edges cancel out via `PBFace._cache_edges()`, leaving only the true outer circle perimeter. Clicking top or bottom selects the entire cap as 1 face.
+  - Pipe: top and bottom rims previously generated `side_count` separate quad `PBFace`s. Now generated as 1 single annular n-gon `PBFace` each; internal radial and diagonal edges cancel out, leaving the true outer and inner circle perimeters.
+  - `PBTopology.edge_ring_next`: restricted ring stepping strictly to quads (`i == 1`). Edge rings on cylinder barrels stop cleanly at the caps without jumping across non-quad n-gons.
+- MULTI-OBJECT PAINT STROKE UNDO (`PBPaintController`):
+  - Root cause of mesh corruption ("floor comes up" / object displacement on undo): `begin_stroke()` previously captured a single `stroke_snapshot_before` of whichever mesh the stroke started on. When the cursor crossed over to another mesh (e.g. from floor to cube), dabs painted onto the second mesh, but on `end_stroke()` the action registered the second mesh with the first mesh's before snapshot. Undoing applied the floor's geometry onto the cube.
+  - Implemented `_stroke_meshes: Dictionary`: tracks all meshes touched during a stroke independently (`{mesh: {before: PBMeshData, dirty: bool}}`), capturing each mesh's pre-stroke state before its first dab.
+  - `end_stroke()` commits a multi-mesh undo action registering dedicated before/after snapshot pairs for each modified mesh. Undoing restores each mesh's own geometry without cross-contamination.
+- 3X3 CHECKERBOARD TEXTURE (`checkerboard_3x3.png`, `pb_default_material.tres`):
+  - Replaced 2x2 checkerboard with a 3x3 pattern in `checkerboard_3x3.png` (and updated `checkerboard_2x2.png` to 3x3 for backwards compatibility).
+  - Symmetrical 3x3 grid (light corners and light-dark-light edges) wraps seamlessly around cylinders, cubes, and tiled surfaces without phase-inversion seams where edges meet.
+- ALT CREATION HEIGHT PLANE (`PBShapeCreator`, `PBGizmoPlugin`, `poibuilder_plugin.gd`):
+  - Added `show_height_plane` flag on `PBShapeCreator`, toggled by holding `Alt` during `State.HEIGHT`.
+  - `PBGizmoPlugin._draw_creation_preview` renders a 4000m x 4000m double-sided unshaded white plane at 0.25 opacity (`Color(1.0, 1.0, 1.0, 0.25)`) with depth test enabled at the shape's live height elevation, slicing through nearby scene geometry to make alignment immediately visible.
+- LIVE SHAPE EXTENTS IN OVERLAY PANEL (`PBShapeCreator.get_extents_readout`, `PBToolOverlay`):
+  - Added `_extents_row` and `_extents_label` in `PBToolOverlay` below the creation guidance row.
+  - Displays live dimensions as shapes are drawn: width and depth in BASE (`W: 4.00m  D: 2.00m`), width, depth, and height in HEIGHT (`W: 4.00m  D: 2.00m  H: 2.50m`), radius and height for round shapes (`Radius: 1.00m  Height: 2.00m`), and offset for sprites (`Offset: 1.20m`). Cleared upon confirmation or abort.
+- Tests: 819/819 GUT unit tests passing (+9), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):

@@ -571,3 +571,37 @@ func test_door_drag_mapping_is_drag_order_independent():
 	b.end_base()
 	assert_almost_eq(b.values["width"], a.values["width"], 0.0001)
 	assert_almost_eq(b.values["depth"], a.values["depth"], 0.0001)
+
+func test_creator_extents_readout_in_all_states():
+	var c := _armed_creator(&"cube")
+	assert_eq(c.get_extents_readout(), "", "Armed state has empty extents")
+
+	# BASE phase
+	_begin_base(c, Vector3.ZERO)
+	c.update_base(Vector3(3.5, 0.0, 2.0))
+	var base_ro := c.get_extents_readout()
+	assert_true(base_ro.contains("3.50m"), "Base readout contains width")
+	assert_true(base_ro.contains("2.00m"), "Base readout contains depth")
+
+	# HEIGHT phase
+	c.end_base()
+	c.update_height_point(Vector3(0.0, 1.8, 0.0))
+	var height_ro := c.get_extents_readout()
+	assert_true(height_ro.contains("1.80m"), "Height readout contains height")
+
+	# Cylinder (radius shape)
+	var cyl := _armed_creator(&"cylinder")
+	_begin_base(cyl, Vector3.ZERO)
+	cyl.update_base(Vector3(2.0, 0.0, 2.0))
+	assert_true(cyl.get_extents_readout().contains("Radius"), "Cylinder base readout shows Radius")
+	cyl.end_base()
+	cyl.update_height_point(Vector3(0.0, 4.0, 0.0))
+	assert_true(cyl.get_extents_readout().contains("Height"), "Cylinder height readout shows Height")
+
+func test_creator_show_height_plane_toggle():
+	var c := _armed_creator(&"cube")
+	assert_false(c.show_height_plane)
+	c.show_height_plane = true
+	assert_true(c.show_height_plane)
+	c.reset()
+	assert_false(c.show_height_plane, "Resetting creator turns off height plane")

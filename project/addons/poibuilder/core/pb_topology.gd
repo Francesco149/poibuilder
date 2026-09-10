@@ -277,7 +277,7 @@ static func _distinct_wings_by_common(wings: Array[PBWingedEdge]) -> Array[PBWin
 # Edge Ring Traversal
 # ==============================================================================
 
-## Returns the opposite edge across an even-sided polygon face (e.g. quad), or null for odd-sided polygons.
+## Returns the opposite edge across a quad face, or null for non-quad polygons.
 static func edge_ring_next(edge: PBWingedEdge) -> PBWingedEdge:
 	if edge == null:
 		return null
@@ -295,11 +295,10 @@ static func edge_ring_next(edge: PBWingedEdge) -> PBWingedEdge:
 		prev = prev.previous
 		i += 1
 
-	if i % 2 == 0 or next == edge:
+	if i != 1 or next == edge:
 		return null
 
 	return next
-
 ## Given seed edges, find all edges in the edge ring(s).
 static func get_edge_ring(mesh_data: PBMeshData, edges: Array[PBEdge]) -> Array[PBEdge]:
 	if mesh_data == null or edges.is_empty():

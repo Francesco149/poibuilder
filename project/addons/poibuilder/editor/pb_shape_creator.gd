@@ -101,6 +101,10 @@ var _has_initial_base: bool = false
 ## When true (e.g. while holding Ctrl), the facing direction is locked to its
 ## current vector and will not be recomputed or flipped during mouse drag.
 var lock_direction: bool = false
+## When true (e.g. while holding Alt during HEIGHT state), the gizmo renders
+## a translucent infinite white plane representing the shape's current height.
+var show_height_plane: bool = false
+
 
 ## Threshold difference between u_size and v_size to consider one dimension clearly dominant.
 const ASPECT_BIAS_THRESHOLD := 0.20
@@ -336,10 +340,9 @@ func reset() -> void:
 	_has_initial_base = false
 	facing = Vector3.ZERO
 	lock_direction = false
+	show_height_plane = false
 	_last_point = Vector3.ZERO
 	preview_node = null
-
-# ── Geometry helpers ─────────────────────────────────────────────────────────
 
 ## Facing-arrow heuristic:
 ## 1. Biased towards the dimension that makes sense for the shape:
@@ -402,6 +405,44 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 	var sign_val: float = signf(toward) if toward != 0.0 else signf(step.dot(chosen_axis))
 	facing = chosen_axis * (sign_val if sign_val != 0.0 else 1.0)
 
+
+## Returns a human-readable readout of the shape's live extents during placement
+## (e.g. "W: 4.00m  D: 2.00m  H: 2.50m" or "Radius: 1.00m  Height: 2.00m").
+func get_extents_readout() -> String:
+	match state:
+		State.BASE:
+			if shape_id == &"sphere":
+				return "Radius: %.2fm" % float(values.get("radius", maxf(u_size, v_size) * 0.5))
+			elif shape_id == &"torus":
+				return "Radius: %.2fm" % float(values.get("outer_radius", maxf(u_size, v_size) * 0.5))
+			elif values.has("radius") or values.has("outer_radius"):
+				var r: float = float(values.get("radius", values.get("outer_radius", maxf(u_size, v_size) * 0.5)))
+				return "Radius: %.2fm" % r
+			else:
+				var w: float = float(values.get("width", u_size))
+				var d: float = float(values.get("depth", v_size))
+				return "W: %.2fm  D: %.2fm" % [w, d]
+		State.HEIGHT:
+			if shape_id == &"sphere":
+				return "Radius: %.2fm" % float(values.get("radius", 0.5))
+			elif shape_id == &"torus":
+				return "Outer R: %.2fm  Tube R: %.2fm" % [
+					float(values.get("outer_radius", 1.0)),
+					float(values.get("tube_radius", 0.2))
+				]
+			elif values.has("radius") or values.has("outer_radius"):
+				var r: float = float(values.get("radius", values.get("outer_radius", 0.5)))
+				var h: float = float(values.get("height", height))
+				return "Radius: %.2fm  Height: %.2fm" % [r, h]
+			else:
+				var w: float = float(values.get("width", u_size))
+				var d: float = float(values.get("depth", v_size))
+				var h: float = float(values.get("height", height))
+				return "W: %.2fm  D: %.2fm  H: %.2fm" % [w, d, h]
+		State.OFFSET:
+			return "Offset: %.2fm" % height
+		_:
+			return ""
 ## parameters (width, depth, height, radius). One mapping fits every surface:
 ## local Y along the face normal, local +Z along facing (depth), and local +X
 ## perpendicular (width).

@@ -138,7 +138,7 @@ var target_face_idx: int = -1
 var is_stroke_active: bool = false
 var stroke_dirty: bool = false
 var stroke_snapshot_before: PBMeshData = null
-# Per-stroke touch bookkeeping handed to PBSplat.paint_face_splat (replace
+var _stroke_meshes: Dictionary = {} # PBMesh -> {"before": PBMeshData, "dirty": bool}
 # semantics for paint, once-per-pixel for erase). Fresh per stroke.
 var _stroke_ctx: Dictionary = {}
 # Dab spacing: the stroke only re-paints after the cursor traveled at least
@@ -423,21 +423,34 @@ func clear_cursor() -> void:
 # Paint Stroke Execution
 # ==============================================================================
 
+func _register_stroke_mesh(mesh: PBMesh) -> void:
+	if mesh == null or not is_instance_valid(mesh) or mesh.pb_mesh_data == null:
+		return
+	if not _stroke_meshes.has(mesh):
+		_stroke_meshes[mesh] = {
+			"before": PBCommand.copy_mesh_data(mesh.pb_mesh_data),
+			"dirty": false
+		}
+		PBSplat.ensure_mesh_uv2(mesh.pb_mesh_data)
+
 func begin_stroke() -> void:
 	if mode != Mode.PAINT or target_mesh == null or target_mesh.pb_mesh_data == null:
 		return
 	is_stroke_active = true
 	stroke_dirty = false
-	stroke_snapshot_before = PBCommand.copy_mesh_data(target_mesh.pb_mesh_data)
+	_stroke_meshes.clear()
+	_register_stroke_mesh(target_mesh)
+	stroke_snapshot_before = _stroke_meshes[target_mesh]["before"] if _stroke_meshes.has(target_mesh) else null
 	_stroke_ctx = {}
 	_stroke_last_dab_local = Vector3.INF
 	_stroke_last_dab_mesh = null
-	# Ensure UV2 channel is present once at stroke begin (not per motion event)
-	PBSplat.ensure_mesh_uv2(target_mesh.pb_mesh_data)
 	apply_paint_stroke()
+
 func apply_paint_stroke() -> void:
 	if not is_stroke_active or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
 		return
+
+	_register_stroke_mesh(target_mesh)
 
 	var data := target_mesh.pb_mesh_data
 	if target_face_idx < 0 or target_face_idx >= data.faces.size():
@@ -481,19 +494,30 @@ func apply_paint_stroke() -> void:
 
 	if modified:
 		stroke_dirty = true
+		if _stroke_meshes.has(target_mesh):
+			_stroke_meshes[target_mesh]["dirty"] = true
+
 func end_stroke() -> void:
 	if not is_stroke_active:
 		return
 	is_stroke_active = false
 
-	if stroke_dirty and target_mesh != null and target_mesh.pb_mesh_data != null and stroke_snapshot_before != null:
-		var snapshot_after := PBCommand.copy_mesh_data(target_mesh.pb_mesh_data)
-		_commit_mesh_action(target_mesh, "Paint Texture Splat", stroke_snapshot_before, snapshot_after)
+	var to_commit: Dictionary = {}
+	for mesh in _stroke_meshes:
+		if mesh != null and is_instance_valid(mesh) and _stroke_meshes[mesh]["dirty"]:
+			to_commit[mesh] = {
+				"before": _stroke_meshes[mesh]["before"],
+				"after": PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+			}
+
+	_stroke_meshes.clear()
+
+	if not to_commit.is_empty():
+		_commit_multi_mesh_action("Paint Texture Splat", to_commit)
 		stroke_committed.emit()
 
 	stroke_snapshot_before = null
 	stroke_dirty = false
-
 # ==============================================================================
 # Stamp Execution
 # ==============================================================================
@@ -767,12 +791,24 @@ func _ensure_face_splat_material(mesh: PBMesh, face: PBFace) -> ShaderMaterial:
 # ==============================================================================
 
 func _commit_mesh_action(mesh: PBMesh, action_name: String, before: PBMeshData, after: PBMeshData) -> void:
-	mesh.rebuild()
-	mesh.update_gizmos()
+	_commit_multi_mesh_action(action_name, {mesh: {"before": before, "after": after}})
+
+func _commit_multi_mesh_action(action_name: String, mesh_entries: Dictionary) -> void:
+	if mesh_entries.is_empty():
+		return
+	var meshes := mesh_entries.keys()
+	for m in meshes:
+		if m != null and is_instance_valid(m):
+			m.rebuild()
+			m.update_gizmos()
 	if plugin != null and plugin.has_method("get_undo_redo"):
 		var undo = plugin.get_undo_redo()
 		if undo != null:
-			undo.create_action(action_name, UndoRedo.MERGE_DISABLE, mesh)
-			undo.add_do_method(plugin, "_restore_mesh_snapshot", mesh.get_instance_id(), after)
-			undo.add_undo_method(plugin, "_restore_mesh_snapshot", mesh.get_instance_id(), before)
+			undo.create_action(action_name, UndoRedo.MERGE_DISABLE, meshes[0])
+			for m in meshes:
+				if m != null and is_instance_valid(m):
+					var mid: int = m.get_instance_id()
+					var entry: Dictionary = mesh_entries[m]
+					undo.add_do_method(plugin, "_restore_mesh_snapshot", mid, entry["after"])
+					undo.add_undo_method(plugin, "_restore_mesh_snapshot", mid, entry["before"])
 			undo.commit_action()

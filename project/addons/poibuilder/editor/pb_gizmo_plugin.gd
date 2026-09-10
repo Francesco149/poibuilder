@@ -189,6 +189,25 @@ func _make_face_fill_material(color: Color) -> StandardMaterial3D:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
+var _height_plane_mesh: PlaneMesh = null
+var _height_plane_material: StandardMaterial3D = null
+
+func _get_height_plane_mesh() -> PlaneMesh:
+	if _height_plane_mesh == null:
+		_height_plane_mesh = PlaneMesh.new()
+		_height_plane_mesh.size = Vector2(4000.0, 4000.0)
+	return _height_plane_mesh
+
+func _get_height_plane_material() -> StandardMaterial3D:
+	if _height_plane_material == null:
+		_height_plane_material = StandardMaterial3D.new()
+		_height_plane_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_height_plane_material.albedo_color = Color(1.0, 1.0, 1.0, 0.25)
+		_height_plane_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_height_plane_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_height_plane_material.no_depth_test = false
+	return _height_plane_material
+
 # ==============================================================================
 # GizmoPlugin identity
 # ==============================================================================
@@ -893,6 +912,13 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	var lifted := creator.base_end + creator.plane_normal * creator.height
 	_add_vert_squares(gizmo, to_local,
 		PackedVector3Array([creator.base_start, creator.base_end, lifted]))
+
+	# Height plane: when Alt is held while raising a shape, draw a translucent
+	# infinite white plane at 0.25 opacity at the shape's current height.
+	if creator.state == PBShapeCreator.State.HEIGHT and creator.show_height_plane:
+		var lifted_local: Vector3 = to_local * lifted
+		gizmo.add_mesh(_get_height_plane_mesh(), _get_height_plane_material(),
+			Transform3D(Basis.IDENTITY, Vector3(0.0, lifted_local.y, 0.0)))
 
 ## The hovered surface face during creation: cyan translucent fill at the
 ## selection opacity + its outline as thick on-top cyan strokes. While the

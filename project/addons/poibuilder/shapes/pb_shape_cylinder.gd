@@ -128,71 +128,51 @@ static func create_cylinder(
 			faces.append(face)
 			vert_offset += 4
 
-	# 2. Top Cap (+Y)
+	# 2. Top Cap (+Y) - single n-gon face
+	var base_top: int = positions.size()
 	var top_center := Vector3(0.0, hy, 0.0)
-	var top_center_uv := Vector2(0.5, 0.5)
+	positions.append(top_center)
+	textures0.append(Vector2(0.5, 0.5))
 
 	for i in range(div):
-		var theta0: float = float(i) * TAU / float(div)
-		var theta1: float = float(i + 1) * TAU / float(div)
+		var theta: float = float(i) * TAU / float(div)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(radius * cos_t, hy, radius * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * cos_t, 0.5 + 0.5 * sin_t))
 
-		var cos0: float = cos(theta0)
-		var sin0: float = sin(theta0)
-		var cos1: float = cos(theta1)
-		var sin1: float = sin(theta1)
+	var top_indices := PackedInt32Array()
+	for i in range(div):
+		var idx0: int = base_top + 1 + i
+		var idx1: int = base_top + 1 + ((i + 1) % div)
+		top_indices.append_array(PackedInt32Array([base_top, idx1, idx0]))
 
-		var p0 := Vector3(radius * cos0, hy, radius * sin0)
-		var p1 := Vector3(radius * cos1, hy, radius * sin1)
+	var top_face := PBFace.new(top_indices)
+	top_face.smoothing_group = 0
+	faces.append(top_face)
 
-		# Winding for +Y normal (CCW viewed from above): top_center, p1, p0.
-		# (theta0, p0, p1) crosses to -Y — that is the bottom-cap order.
-		positions.append(top_center)
-		positions.append(p1)
-		positions.append(p0)
-
-		textures0.append(top_center_uv)
-		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
-		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
-
-		var face := PBFace.new(PackedInt32Array([
-			vert_offset + 0, vert_offset + 1, vert_offset + 2
-		]))
-		face.smoothing_group = 0
-		faces.append(face)
-		vert_offset += 3
-
-	# 3. Bottom Cap (-Y)
+	# 3. Bottom Cap (-Y) - single n-gon face
+	var base_bottom: int = positions.size()
 	var bottom_center := Vector3(0.0, -hy, 0.0)
-	var bottom_center_uv := Vector2(0.5, 0.5)
+	positions.append(bottom_center)
+	textures0.append(Vector2(0.5, 0.5))
 
 	for i in range(div):
-		var theta0: float = float(i) * TAU / float(div)
-		var theta1: float = float(i + 1) * TAU / float(div)
+		var theta: float = float(i) * TAU / float(div)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(radius * cos_t, -hy, radius * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * cos_t, 0.5 + 0.5 * sin_t))
 
-		var cos0: float = cos(theta0)
-		var sin0: float = sin(theta0)
-		var cos1: float = cos(theta1)
-		var sin1: float = sin(theta1)
+	var bottom_indices := PackedInt32Array()
+	for i in range(div):
+		var idx0: int = base_bottom + 1 + i
+		var idx1: int = base_bottom + 1 + ((i + 1) % div)
+		bottom_indices.append_array(PackedInt32Array([base_bottom, idx0, idx1]))
 
-		var p0 := Vector3(radius * cos0, -hy, radius * sin0)
-		var p1 := Vector3(radius * cos1, -hy, radius * sin1)
-
-		# Winding for -Y normal (CCW viewed from below): bottom_center, p0, p1.
-		positions.append(bottom_center)
-		positions.append(p0)
-		positions.append(p1)
-
-		textures0.append(bottom_center_uv)
-		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
-		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
-
-		var face := PBFace.new(PackedInt32Array([
-			vert_offset + 0, vert_offset + 1, vert_offset + 2
-		]))
-		face.smoothing_group = 0
-		faces.append(face)
-		vert_offset += 3
-
+	var bottom_face := PBFace.new(bottom_indices)
+	bottom_face.smoothing_group = 0
+	faces.append(bottom_face)
 	var mesh_data := PBMeshData.new()
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
@@ -418,76 +398,61 @@ static func create_pipe(
 			faces.append(face)
 			vert_offset += 4
 
-	# 3. Top Rim Quads (connecting inner and outer rings at Y = +hy, normal +Y)
+	# 3. Top Rim (+Y) - single n-gon annular face
+	var base_top: int = positions.size()
 	for i in range(side_count):
-		var theta0: float = float(i) * TAU / float(side_count)
-		var theta1: float = float(i + 1) * TAU / float(side_count)
-
-		var cos0: float = cos(theta0)
-		var sin0: float = sin(theta0)
-		var cos1: float = cos(theta1)
-		var sin1: float = sin(theta1)
-
-		var p_in0 := Vector3(r_inner * cos0, hy, r_inner * sin0)
-		var p_in1 := Vector3(r_inner * cos1, hy, r_inner * sin1)
-		var p_out1 := Vector3(r_outer * cos1, hy, r_outer * sin1)
-		var p_out0 := Vector3(r_outer * cos0, hy, r_outer * sin0)
-
-		# Top rim quad: normal +Y
-		positions.append(p_in0)
-		positions.append(p_in1)
-		positions.append(p_out1)
-		positions.append(p_out0)
-
-		# Planar radial UV projection
-		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos0, 0.5 + 0.5 * (r_inner / r_outer) * sin0))
-		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos1, 0.5 + 0.5 * (r_inner / r_outer) * sin1))
-		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
-		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
-
-		var face := PBFace.new(PackedInt32Array([
-			vert_offset + 0, vert_offset + 1, vert_offset + 2,
-			vert_offset + 2, vert_offset + 3, vert_offset + 0
-		]))
-		face.smoothing_group = 0
-		faces.append(face)
-		vert_offset += 4
-
-	# 4. Bottom Rim Quads (connecting outer and inner rings at Y = -hy, normal -Y)
+		var theta: float = float(i) * TAU / float(side_count)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(r_inner * cos_t, hy, r_inner * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos_t, 0.5 + 0.5 * (r_inner / r_outer) * sin_t))
 	for i in range(side_count):
-		var theta0: float = float(i) * TAU / float(side_count)
-		var theta1: float = float(i + 1) * TAU / float(side_count)
+		var theta: float = float(i) * TAU / float(side_count)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(r_outer * cos_t, hy, r_outer * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * cos_t, 0.5 + 0.5 * sin_t))
 
-		var cos0: float = cos(theta0)
-		var sin0: float = sin(theta0)
-		var cos1: float = cos(theta1)
-		var sin1: float = sin(theta1)
+	var top_rim_indices := PackedInt32Array()
+	for i in range(side_count):
+		var next_i: int = (i + 1) % side_count
+		var in0: int = base_top + i
+		var in1: int = base_top + next_i
+		var out0: int = base_top + side_count + i
+		var out1: int = base_top + side_count + next_i
+		top_rim_indices.append_array(PackedInt32Array([in0, in1, out1, out1, out0, in0]))
 
-		var p_out0 := Vector3(r_outer * cos0, -hy, r_outer * sin0)
-		var p_out1 := Vector3(r_outer * cos1, -hy, r_outer * sin1)
-		var p_in1 := Vector3(r_inner * cos1, -hy, r_inner * sin1)
-		var p_in0 := Vector3(r_inner * cos0, -hy, r_inner * sin0)
+	var top_rim_face := PBFace.new(top_rim_indices)
+	top_rim_face.smoothing_group = 0
+	faces.append(top_rim_face)
 
-		# Bottom rim quad: normal -Y
-		positions.append(p_out0)
-		positions.append(p_out1)
-		positions.append(p_in1)
-		positions.append(p_in0)
+	# 4. Bottom Rim (-Y) - single n-gon annular face
+	var base_bottom: int = positions.size()
+	for i in range(side_count):
+		var theta: float = float(i) * TAU / float(side_count)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(r_outer * cos_t, -hy, r_outer * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * cos_t, 0.5 + 0.5 * sin_t))
+	for i in range(side_count):
+		var theta: float = float(i) * TAU / float(side_count)
+		var cos_t: float = cos(theta)
+		var sin_t: float = sin(theta)
+		positions.append(Vector3(r_inner * cos_t, -hy, r_inner * sin_t))
+		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos_t, 0.5 + 0.5 * (r_inner / r_outer) * sin_t))
 
-		# Planar radial UV projection
-		textures0.append(Vector2(0.5 + 0.5 * cos0, 0.5 + 0.5 * sin0))
-		textures0.append(Vector2(0.5 + 0.5 * cos1, 0.5 + 0.5 * sin1))
-		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos1, 0.5 + 0.5 * (r_inner / r_outer) * sin1))
-		textures0.append(Vector2(0.5 + 0.5 * (r_inner / r_outer) * cos0, 0.5 + 0.5 * (r_inner / r_outer) * sin0))
+	var bottom_rim_indices := PackedInt32Array()
+	for i in range(side_count):
+		var next_i: int = (i + 1) % side_count
+		var out0: int = base_bottom + i
+		var out1: int = base_bottom + next_i
+		var in0: int = base_bottom + side_count + i
+		var in1: int = base_bottom + side_count + next_i
+		bottom_rim_indices.append_array(PackedInt32Array([out0, out1, in1, in1, in0, out0]))
 
-		var face := PBFace.new(PackedInt32Array([
-			vert_offset + 0, vert_offset + 1, vert_offset + 2,
-			vert_offset + 2, vert_offset + 3, vert_offset + 0
-		]))
-		face.smoothing_group = 0
-		faces.append(face)
-		vert_offset += 4
-
+	var bottom_rim_face := PBFace.new(bottom_rim_indices)
+	bottom_rim_face.smoothing_group = 0
+	faces.append(bottom_rim_face)
 	var mesh_data := PBMeshData.new()
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
