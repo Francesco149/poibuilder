@@ -206,8 +206,12 @@ static func bake_vertex_colors(positions: PackedVector3Array, normals: PackedVec
 
 		# Final color = ambient + direct
 		var final_col := ambient + direct
+		# Preserve chromaticity / light hue when combined light exceeds 1.0
+		var max_comp := maxf(final_col.r, maxf(final_col.g, final_col.b))
+		if max_comp > 1.0:
+			var mapped_max := max_comp / (1.0 + max_comp * 0.35)
+			final_col = final_col * (mapped_max / max_comp)
 		out[i] = Color(clampf(final_col.r, 0.0, 1.0), clampf(final_col.g, 0.0, 1.0), clampf(final_col.b, 0.0, 1.0), 1.0)
-
 	return out
 
 ## Bakes vertex colors for a billboard (sprite) node.

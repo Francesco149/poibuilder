@@ -13,12 +13,18 @@ if [ ! -f "$MAP_FILE" ]; then
     fi
 fi
 
-echo "=== Running PoiRetro PSP Homebrew under PPSSPPHeadless ==="
+TEST_ELF="./poiretro_psp_test.elf"
+if [ ! -f "$TEST_ELF" ]; then
+    echo "Building test binary $TEST_ELF..."
+    podman run --rm -v "${SCRIPT_DIR}:/src:Z" -w /src docker.io/pspdev/pspdev:latest make test_build
+fi
+
+echo "=== Running PoiRetro PSP Homebrew Test under PPSSPPHeadless ==="
 echo "Map: $MAP_FILE"
-echo "ELF: ./poiretro_psp.elf"
+echo "ELF: $TEST_ELF"
 
 # Run with timeout to prevent hangs
-PPSSPPHeadless ./poiretro_psp.elf "$MAP_FILE" --graphics=software --timeout=15
+PPSSPPHeadless "$TEST_ELF" "$MAP_FILE" --graphics=software --timeout=15
 
 echo "=== Execution finished ==="
 if [ -f "screenshot_psp.tga" ]; then
