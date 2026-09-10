@@ -434,11 +434,16 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 					var v_val: float = raw_uv.y
 
 					if is_atlas:
-						var half_texel: float = 0.5 / 128.0
 						var u_c := clampf(raw_uv.x, 0.0, 1.0)
 						var v_c := clampf(raw_uv.y, 0.0, 1.0)
-						var u_in_slot := half_texel + u_c * (1.0 - 2.0 * half_texel)
-						var v_in_slot := half_texel + v_c * (1.0 - 2.0 * half_texel)
+						# Edge-to-edge: a tile owns the full width of its slot.
+						# (The old half-texel inset mapped the tile onto texel
+						# CENTRES 0..127, which leaves a one-texel band that no
+						# tile displays -- neighbouring tiles then do not meet and
+						# the pattern shifts at every seam. Must stay identical to
+						# pbm_conv.py: the two converters are meant to agree.)
+						var u_in_slot := u_c
+						var v_in_slot := v_c
 						u_val = (col_slot + u_in_slot) * 0.25
 						v_val = (row_slot + v_in_slot) * 0.25
 
