@@ -4,6 +4,7 @@
 #include <pspgu.h>
 #include <pspgum.h>
 #include <pspctrl.h>
+#include <psprtc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,18 @@ static void save_tga(const char* filename, void* vram_buffer, int width, int hei
     printf("[PSP] Saved screenshot to '%s'\n", filename);
 }
 
+static inline int is_billboard_mesh(const char* name) {
+    if (!name) return 0;
+    if (strstr(name, "billboard") || strstr(name, "Billboard") ||
+        strstr(name, "sprite")    || strstr(name, "Sprite")    ||
+        strstr(name, "tree")      || strstr(name, "Tree")      ||
+        strstr(name, "bush")      || strstr(name, "Bush")      ||
+        strstr(name, "flower")    || strstr(name, "Flower")) {
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     pspDebugScreenInit();
     printf("[PSP] Starting PoiRetro Homebrew Engine v0.9.61...\n");
@@ -55,14 +68,24 @@ int main(int argc, char* argv[]) {
     sceGuDepthBuffer(zbp, BUF_WIDTH);
     sceGuOffset(2048 - (SCR_WIDTH / 2), 2048 - (SCR_HEIGHT / 2));
     sceGuViewport(2048, 2048, SCR_WIDTH, SCR_HEIGHT);
+
+    /* CORRECT DEPTH BUFFER:
+     * Near = 0, Far = 65535. Clear to 65535.
+     * Use GU_LEQUAL so closer fragments (smaller Z) pass and occlude background! */
     sceGuDepthRange(0, 65535);
+    sceGuDepthFunc(GU_LEQUAL);
+    sceGuEnable(GU_DEPTH_TEST);
+
+    /* SCISSOR */
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
     sceGuEnable(GU_SCISSOR_TEST);
-    sceGuDepthFunc(GU_GEQUAL);
-    sceGuEnable(GU_DEPTH_TEST);
+
+    /* WINDING & CULLING:
+     * Front faces are Counter-Clockwise (CCW). Cull backfaces (GU_BACK).
+     * Billboards dynamically disable culling during draw. */
     sceGuFrontFace(GU_CCW);
+    sceGuEnable(GU_CULL_FACE);
     sceGuShadeModel(GU_SMOOTH);
-    sceGuDisable(GU_CULL_FACE); /* Double-sided faces for retro showcase */
 
     /* Texture settings */
     sceGuEnable(GU_TEXTURE_2D);
@@ -115,23 +138,69 @@ int main(int argc, char* argv[]) {
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
+    /* Interactive Fly Camera State */
+    float cam_x = map->header.spawn_pos[0];
+    float cam_y = map->header.spawn_pos[1] + 1.2f;
+    float cam_z = map->header.spawn_pos[2];
+    float cam_yaw = map->header.spawn_rot + 3.14159f; /* Look forward into the scene */
+    float cam_pitch = -0.1f; /* Slightly downward */
+
     int running = 1;
     int frame_count = 0;
-    float orbit_angle = 0.6f;
-    int display_mode = 0; /* 0: Textured + Vertex Color Lighting, 1: Lighting Only, 2: Wireframe */
-    int headless = 1; /* Default to benchmark / headless mode for automated pipeline testing */
+    int display_mode = 0; /* 0: Textured + Lighting, 1: Lighting Only, 2: Wireframe */
+    int auto_orbit = 1;   /* Auto-orbits until user interacts with gamepad */
+    float orbit_angle = 0.5f;
+
+    /* Timing / FPS */
+    u64 last_tick = 0;
+    sceRtcGetCurrentTick(&last_tick);
+    float fps = 60.0f;
+    int fps_frames = 0;
+    float fps_timer = 0.0f;
 
     void* curr_fbp = fbp0;
 
     printf("[PSP] Entering 3D rendering loop...\n");
 
     while (running) {
+        /* Compute Delta Time */
+        u64 curr_tick = 0;
+        sceRtcGetCurrentTick(&curr_tick);
+        float dt = (float)(curr_tick - last_tick) / 1000000.0f;
+        if (dt <= 0.0001f || dt > 0.2f) dt = 1.0f / 60.0f;
+        last_tick = curr_tick;
+
+        fps_timer += dt;
+        fps_frames++;
+        if (fps_timer >= 0.4f) {
+            fps = (float)fps_frames / fps_timer;
+            fps_frames = 0;
+            fps_timer = 0.0f;
+        }
+
+        /* Read Controller Input */
         SceCtrlData pad;
         sceCtrlReadBufferPositive(&pad, 1);
 
+        /* Detect user interaction: switches from auto-orbit demo to interactive fly camera */
+        int has_input = 0;
+        if (abs((int)pad.Lx - 128) > 20 || abs((int)pad.Ly - 128) > 20) has_input = 1;
+        if (pad.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER | PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                           PSP_CTRL_TRIANGLE | PSP_CTRL_SQUARE   | PSP_CTRL_UP    | PSP_CTRL_DOWN)) {
+            has_input = 1;
+        }
+        if (has_input) {
+            auto_orbit = 0;
+        }
+
         if (pad.Buttons & PSP_CTRL_START) {
-            headless = 0;
-            orbit_angle = 0.0f;
+            /* Reset camera to spawn position */
+            cam_x = map->header.spawn_pos[0];
+            cam_y = map->header.spawn_pos[1] + 1.2f;
+            cam_z = map->header.spawn_pos[2];
+            cam_yaw = map->header.spawn_rot + 3.14159f;
+            cam_pitch = -0.1f;
+            auto_orbit = 0;
         }
         if (pad.Buttons & PSP_CTRL_SELECT) {
             display_mode = (display_mode + 1) % 3;
@@ -139,23 +208,65 @@ int main(int argc, char* argv[]) {
         }
 
         /* Update Camera */
-        if (headless) {
-            orbit_angle += 0.025f;
+        if (auto_orbit) {
+            orbit_angle += 0.02f;
+            cam_x = center_x + sinf(orbit_angle) * radius;
+            cam_y = center_y + radius * 0.4f;
+            cam_z = center_z + cosf(orbit_angle) * radius;
+            /* Point directly at map center */
+            float dx = center_x - cam_x;
+            float dz = center_z - cam_z;
+            cam_yaw = atan2f(dx, -dz);
+            cam_pitch = -0.32f;
         } else {
-            if (pad.Buttons & PSP_CTRL_LEFT)  orbit_angle -= 0.03f;
-            if (pad.Buttons & PSP_CTRL_RIGHT) orbit_angle += 0.03f;
-        }
+            /* 1. Fly camera movement via Analog Stick (or D-Pad) */
+            float move_speed = 9.0f * dt;
+            if (pad.Buttons & PSP_CTRL_SQUARE) move_speed *= 2.0f; /* Sprint with Square */
 
-        float cam_x = center_x + sinf(orbit_angle) * radius;
-        float cam_y = center_y + radius * 0.45f;
-        float cam_z = center_z + cosf(orbit_angle) * radius;
+            float in_fwd = 0.0f;
+            float in_strafe = 0.0f;
+
+            if (abs((int)pad.Ly - 128) > 20) {
+                in_fwd = -(float)((int)pad.Ly - 128) / 128.0f;
+            }
+            if (abs((int)pad.Lx - 128) > 20) {
+                in_strafe = (float)((int)pad.Lx - 128) / 128.0f;
+            }
+            if (pad.Buttons & PSP_CTRL_UP)    in_fwd += 1.0f;
+            if (pad.Buttons & PSP_CTRL_DOWN)  in_fwd -= 1.0f;
+            if (pad.Buttons & PSP_CTRL_LEFT)  in_strafe -= 1.0f;
+            if (pad.Buttons & PSP_CTRL_RIGHT) in_strafe += 1.0f;
+
+            float fwd_x = sinf(cam_yaw);
+            float fwd_z = -cosf(cam_yaw);
+            float right_x = cosf(cam_yaw);
+            float right_z = sinf(cam_yaw);
+
+            cam_x += (fwd_x * in_fwd + right_x * in_strafe) * move_speed;
+            cam_z += (fwd_z * in_fwd + right_z * in_strafe) * move_speed;
+
+            /* 2. Look left and right via LT / RT */
+            float turn_speed = 2.4f * dt;
+            if (pad.Buttons & PSP_CTRL_LTRIGGER) cam_yaw -= turn_speed;
+            if (pad.Buttons & PSP_CTRL_RTRIGGER) cam_yaw += turn_speed;
+
+            /* 3. Up / Down elevation: X to go up, Circle to go down */
+            float vert_speed = 7.5f * dt;
+            if (pad.Buttons & PSP_CTRL_CROSS)  cam_y += vert_speed;
+            if (pad.Buttons & PSP_CTRL_CIRCLE) cam_y -= vert_speed;
+
+            /* 4. Look pitch (up/down): Triangle looks up, Square looks down (when not strafing) */
+            if (pad.Buttons & PSP_CTRL_TRIANGLE) cam_pitch += 1.8f * dt;
+            if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
+            if (cam_pitch < -1.45f) cam_pitch = -1.45f;
+        }
 
         /* Begin Frame */
         sceGuStart(GU_DIRECT, dlist);
 
-        /* Clear background: deep dusk sky blue */
+        /* Clear background: deep atmospheric dusk blue */
         sceGuClearColor(0xFF382218);
-        sceGuClearDepth(0);
+        sceGuClearDepth(65535); /* Clear depth to farthest */
         sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
 
         /* Projection Matrix */
@@ -166,8 +277,11 @@ int main(int argc, char* argv[]) {
         /* View Matrix */
         sceGumMatrixMode(GU_VIEW);
         sceGumLoadIdentity();
+        float target_x = cam_x + sinf(cam_yaw) * cosf(cam_pitch);
+        float target_y = cam_y + sinf(cam_pitch);
+        float target_z = cam_z - cosf(cam_yaw) * cosf(cam_pitch);
         ScePspFVector3 eye    = { cam_x, cam_y, cam_z };
-        ScePspFVector3 target = { center_x, center_y + 1.2f, center_z };
+        ScePspFVector3 target = { target_x, target_y, target_z };
         ScePspFVector3 up     = { 0.0f, 1.0f, 0.0f };
         sceGumLookAt(&eye, &target, &up);
 
@@ -181,11 +295,13 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
+            int is_billboard = is_billboard_mesh(mesh->name);
+
             if (display_mode == 1) {
-                /* Vertex colors only */
+                /* Vertex colors / baked lighting only */
                 sceGuDisable(GU_TEXTURE_2D);
             } else if (display_mode == 2) {
-                /* Wireframe / untextured */
+                /* Wireframe */
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
                 /* Textured */
@@ -206,6 +322,13 @@ int main(int argc, char* argv[]) {
                 }
             }
 
+            /* Culling: billboards are double-sided; solid geometry culls backfaces */
+            if (is_billboard || display_mode == 2) {
+                sceGuDisable(GU_CULL_FACE);
+            } else {
+                sceGuEnable(GU_CULL_FACE);
+            }
+
             sceGumMatrixMode(GU_MODEL);
             sceGumLoadIdentity();
 
@@ -220,20 +343,40 @@ int main(int argc, char* argv[]) {
         sceGuFinish();
         sceGuSync(0, 0);
 
+        /* Draw on-screen HUD (FPS counter, vertex count, controls hint) */
+        pspDebugScreenSetOffset((int)curr_fbp);
+        pspDebugScreenEnableBackColor(0); /* Transparent background */
+
+        pspDebugScreenSetTextColor(0xFF00FF55); /* Vibrant Green */
+        pspDebugScreenSetXY(1, 1);
+        pspDebugScreenPrintf("FPS: %4.1f | Tris: %u | Verts: %u",
+            fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_rendered_verts);
+
+        pspDebugScreenSetTextColor(0xFFEEEE00); /* Cyan */
+        pspDebugScreenSetXY(1, 2);
+        pspDebugScreenPrintf("Cam: (%.1f, %.1f, %.1f) | Mode: %s",
+            cam_x, cam_y, cam_z,
+            display_mode == 0 ? "Textured (Baked Lit)" : (display_mode == 1 ? "Baked Lighting" : "Wireframe"));
+
+        pspDebugScreenSetTextColor(0xFFDDDDDD); /* Light Gray */
+        pspDebugScreenSetXY(1, 3);
+        pspDebugScreenPrintf("Analog: Move | LT/RT: Turn | X: Up | O: Down | Sel: Mode");
+
         sceDisplayWaitVblankStart();
         curr_fbp = (curr_fbp == fbp0) ? fbp1 : fbp0;
         sceGuSwapBuffers();
 
         frame_count++;
 
-        /* In headless mode, capture screenshot at frame 60 and exit at frame 120 */
-        if (headless) {
+        /* Headless test capture: screenshot at frame 60, exit cleanly at frame 120 */
+        if (auto_orbit) {
             if (frame_count == 60) {
-                printf("[PSP] Capturing benchmark screenshot at frame 60 (%u vertices)...\n", (unsigned int)total_rendered_verts);
+                printf("[PSP] Capturing benchmark screenshot at frame 60 (%u vertices, %.1f FPS)...\n",
+                    (unsigned int)total_rendered_verts, fps);
                 save_tga("screenshot_psp.tga", (void*)(0x04000000), SCR_WIDTH, SCR_HEIGHT, BUF_WIDTH);
             }
             if (frame_count >= 120) {
-                printf("[PSP] Headless benchmark completed successfully: %d frames rendered!\n", frame_count);
+                printf("[PSP] Headless benchmark completed: %d frames rendered at ~%.1f FPS!\n", frame_count, fps);
                 running = 0;
             }
         }
