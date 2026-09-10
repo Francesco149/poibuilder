@@ -61,6 +61,27 @@ the defaults in `psp_prof.c`: `frames`, `warmup`, `sweep`.
    for the rest of the session. **Exit the app with the Home button** instead —
    the PSP's own quit dialog — and re-run. (`run_psp_hw.sh` tries a harmless
    `modunld` and otherwise tells you.)
+
+   **Home is not a fallback you can plan around: it often does nothing.** A
+   wedged app never runs its exit callback, and there is no way to press a
+   button over USB. When that happens the module stays resident, `modunld`
+   answers `0x80020138` (busy), and no new build can be loaded — this has
+   already cost a session that sat waiting for a Home press that could not
+   happen. **A resident `PoiRetro` module IS the condition `reset` exists to
+   clear**, so reach for it immediately:
+
+   ```bash
+   P=/tmp/psplinkusb/pspsh/pspsh
+   $P -n -e "reset"                       # clears the wedge
+   for i in $(seq 1 40); do sleep 1; timeout 10 $P -n -e "modlist" 2>/dev/null \
+       | grep -q "UID:" && break; done    # link is usually back within a second
+   $P -n -e "modlist" | grep -i poiretro  # must print nothing before loading
+   ```
+
+   `./run_psp_hw.sh` (either mode) performs exactly this check and reset by
+   itself, which is the other reason to drive the device through it rather than
+   by hand. Keep the reset for a *wedged or resident* module only — resetting a
+   healthy device is what rule 1 is about.
 3. **Recovery does not need a power cycle**: `pspsh -n -e "reset"` clears the
    wedged state; the USB link re-establishes by itself within a second or two.
 4. **Suspend kills the USB link**, after which the shell is unresponsive.
@@ -131,6 +152,53 @@ inspected rather than described by another model.
 psplink's values (`0x44000000`, `pixel_format 3`) rather than ours
 (`0x4044000`, `pixel_format 1` = 5551), the app never took the display — that
 alone distinguishes "our renderer is broken" from "nothing is running".
+
+### Verifying a scrolling texture on the device
+
+A scrolling texture that is wrong looks exactly like one that is frozen, and a
+sign error is invisible in any single frame. Two captures of the app (no input,
+so the camera is static) are enough:
+
+```bash
+P=/tmp/psplinkusb/pspsh/pspsh
+for i in 1 2 3 4; do $P -n -e "scrshot host0:/hw_$i.bmp"; done   # ~0.1-0.3 s apart
+
+python3 - <<'EOF'
+from PIL import Image
+import numpy as np
+f = [np.asarray(Image.open(f"hw_{i}.bmp").convert("L")).astype(float) for i in (1,2,3,4)]
+x0, x1, y0, y1 = 318, 372, 82, 132      # a window of pure scrolling surface
+def best(a, b, rng=30):
+    return sorted(((dy, float(np.abs(a - np.roll(b, dy, axis=0)).mean()))
+                   for dy in range(-rng, rng+1)), key=lambda t: t[1])
+for i in range(3):
+    c = best(f[i][y0:y1, x0:x1], f[i+1][y0:y1, x0:x1])
+    print(f"dy {c[0][0]:+d} (err {c[0][1]:.2f}) vs zero-shift {dict(c)[0]:.2f}")
+EOF
+```
+
+Rules that make the answer trustworthy:
+
+- **Validate the sign with a synthetic control first**: `np.roll(a, +6)` is
+  content moved DOWN, and the correlation reports `dy = -6`. This repository
+  shipped a waterfall that climbed its wall because the sign was assumed
+  instead of measured.
+- A real match drops the error well below the zero-shift value (e.g. 9.1 vs
+  12.9). If the best error equals the zero-shift error, nothing moved in that
+  window — pick a window that covers only the scrolling surface, not the whole
+  region around it.
+- The pattern is quasi-periodic vertically, so the *magnitude* can lock onto a
+  multiple of the repeat. The **sign** is what this measures; the magnitude
+  follows from the speed and the interval.
+- The window must exclude anything else that moves: the scripted patrol sphere
+  crosses the water in the showcase map, and it will happily pin the
+  correlation at zero.
+
+`./run_psp_headless.sh` does the same check in PPSSPP (two captures with a
+frozen camera, `screenshot_psp.png` / `screenshot_psp_scroll.png`) for a first
+look, but PPSSPP's frame captures are not pixel-stable between different frame
+indices — use the device, or a same-frame A/B against a map with zeroed scroll
+speeds, before believing a direction.
 
 ### Breadcrumbs written by the binaries
 

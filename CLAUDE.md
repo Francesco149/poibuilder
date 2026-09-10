@@ -38,10 +38,14 @@ a window nobody can see. That was the entire "no window appears" bug.
 - `IMPLEMENTATION.md` — Phased implementation plan + mandatory verification gates
 - `retro_engine/psp/HARDWARE-TESTING.md` — **real PSP measurement and debugging**:
   PSPLink over USB, the `./run_psp_hw.sh` loop, device diagnostics, and the
-  hard-won rules (always `reset` before loading a module, never `modstop` a live
-  one, recovery via psplink's `reset`). Read this BEFORE concluding anything
-  about PSP performance — PPSSPP cannot measure it, and a build that runs at 60
-  fps there can spend 27 ms of a 16.6 ms budget on the device.
+  hard-won rules (never `modstop` a live module; a resident `PoiRetro` module —
+  which happens whenever an app wedges, and **Home then does nothing, since a
+  wedged app never runs its exit callback** — is cleared with psplink's `reset`,
+  which `run_psp_hw.sh` performs by itself; do not sit waiting for someone to
+  press a button). It also documents how to verify a scrolling texture's
+  direction on the device. Read this BEFORE concluding anything about PSP
+  performance — PPSSPP cannot measure it, and a build that runs at 60 fps there
+  can spend 27 ms of a 16.6 ms budget on the device.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
 
 ## Reference Repos
