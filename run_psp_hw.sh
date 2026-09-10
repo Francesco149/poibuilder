@@ -90,28 +90,40 @@ PSPLink is not answering on USB. Check, in order:
   1. Is PSPLink running on the PSP? (Game -> Memory Stick -> PSPLink)
   2. Did the unit suspend? A suspended PSP drops the USB link. Relaunch
      PSPLink, and keep the Hold switch on so it cannot sleep again.
-  3. Is a homebrew of ours already running? Its own Start+Select exits and
-     unloads it, which is the only recovery short of a hard reset.
+  3. Is a homebrew of ours already running? Exit it with the Home button (or
+     press Start+Select if that build still has it), then re-run.
 MSG
     die "no PSPLink link"
 fi
 echo "link OK"
 
-# ALWAYS reset before loading. A module left over from an earlier run keeps the
-# GE and the display controller in whatever state it died in, and the next
-# module then loads, reports success, and never executes — a black screen with
-# no output, which is very easy to misread as a bug in the new build. psplink's
-# own reset clears it without a power cycle; the link re-establishes by itself.
-echo "=== [3c/5] Resetting psplink (clean GE/display state) ==="
-"$PSPSH" -n -e "reset" >/dev/null 2>&1 || true
-for i in $(seq 1 40); do
-    sleep 1
-    if timeout 10 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
-        echo "link back after reset (${i}s)"
-        break
-    fi
-    [ "$i" = 40 ] && die "psplink did not come back after reset; relaunch PSPLink on the device"
-done
+# Reset ONLY when a module is actually left over.
+#
+# A stale module keeps the GE and display controller in whatever state it died
+# in, and the next module then loads, reports success and never executes — a
+# black screen with no output, easy to misread as a bug in the new build.
+# psplink's `reset` clears that.
+#
+# But resetting a HEALTHY device reboots the PSP out of PSPLink for no reason,
+# and if PSPLink does not come back on its own you are left staring at the XMB
+# with nothing running — which is exactly what happened. So: only reset when
+# there is something to clear.
+stale=$("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}' | tr '\n' ' ')
+if [ -n "$stale" ]; then
+    echo "=== [3c/5] stale module(s) present ($stale) -- resetting psplink ==="
+    "$PSPSH" -n -e "reset" >/dev/null 2>&1 || true
+    for i in $(seq 1 40); do
+        sleep 1
+        if timeout 10 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+            echo "link back after reset (${i}s)"
+            break
+        fi
+        [ "$i" = 40 ] && die "psplink did not come back after the reset.
+  The PSP is now sitting at the XMB: relaunch PSPLink, then re-run."
+    done
+else
+    echo "=== [3c/5] no stale module -- loading without a reset ==="
+fi
 
 echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
 # A resident module blocks the next load (ALREADY_LOADED). The test binary
@@ -132,7 +144,7 @@ done
 timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
 
 if [ "$MODE" = app ]; then
-    echo "=== app running on the device (Start+Select quits and unloads) ==="
+    echo "=== app running on the device (Home exits) ==="
     [ "$KEEP" = 0 ] && pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
     echo "Take a screenshot any time with:"
     echo "  $PSPSH -n -e \"scrshot host0:/shot.bmp\"   # lands in $HOSTDIR (480x272x24 BMP)"

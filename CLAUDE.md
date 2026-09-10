@@ -869,6 +869,19 @@ v0.9.63 round complete ✓ — PSP frame cost found and fixed on REAL HARDWARE
   the real cause was found: the PSP's HOLD switch sets PSP_CTRL_HOLD (0x20000)
   and suppresses every button, so with Hold on the app legitimately receives no
   input. Hold ON is for unattended runs; Hold OFF to interact.
+- QUIT PATH vs THE USB LINK: the trace dump ran inside the Start+Select quit
+  handler and tried `host0:` first; `host0:` opens BLOCK while the PSPLink link
+  is down, so quitting after the link dropped froze the game. Home still worked
+  (no I/O), which read as "the quit chord is broken". The trace now writes to
+  `ms0:` first with `host0:` only as a fallback, Start+Select is gone (Home is
+  the exit), and the rule is: nothing reachable while someone is playing does
+  `host0:` I/O. Only the profiling battery, which runs with a live link, does.
+- HARNESS RESET IS CONDITIONAL: `run_psp_hw.sh` used to reset psplink before
+  every load "to be safe". That reboots a healthy PSP out of PSPLink and, if it
+  does not come back on its own, leaves it at the XMB with nothing running --
+  reported as "it reset the psp but didn't run the demo". It now resets only
+  when a stale module is actually resident, which is the only condition the
+  reset exists to clear.
 - Version bump convention applied (0.9.62 -> 0.9.63 in poibuilder_plugin.gd,
   pb_editor.gd, plugin.cfg).
 
