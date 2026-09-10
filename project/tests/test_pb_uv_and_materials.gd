@@ -377,6 +377,23 @@ func test_default_checkerboard_material_exists():
 	assert_not_null(std_mat.albedo_texture, "Default material must have checkerboard albedo texture")
 	assert_true(std_mat.vertex_color_use_as_albedo, "Default material must enable vertex colors for face tint")
 
+func test_cube_back_face_uvs_horizontally_flipped():
+	var cube := PBMeshData.create_cube(1.0)
+	# Face 0 (Front): UVs are standard (0,0), (1,0), (1,1), (0,1)
+	assert_eq(cube.textures0[0], Vector2(0.0, 0.0))
+	assert_eq(cube.textures0[1], Vector2(1.0, 0.0))
+	# Face 1 (Back): UVs are flipped horizontally (1,0), (0,0), (0,1), (1,1)
+	assert_eq(cube.textures0[4], Vector2(1.0, 0.0), "Back face bottom-right U is flipped to 1")
+	assert_eq(cube.textures0[5], Vector2(0.0, 0.0), "Back face bottom-left U is flipped to 0")
+	assert_eq(cube.textures0[6], Vector2(0.0, 1.0), "Back face top-left U is flipped to 0")
+	assert_eq(cube.textures0[7], Vector2(1.0, 1.0), "Back face top-right U is flipped to 1")
+
+	var box := PBShapeGenerators.create_box(Vector3.ONE)
+	assert_eq(box.textures0[4], Vector2(1.0, 0.0))
+	assert_eq(box.textures0[5], Vector2(0.0, 0.0))
+	assert_eq(box.textures0[6], Vector2(0.0, 1.0))
+	assert_eq(box.textures0[7], Vector2(1.0, 1.0))
+
 func test_material_undo_redo_via_snapshots():
 	var cube := PBMeshData.create_cube(1.0)
 	var mat1 := StandardMaterial3D.new()

@@ -406,9 +406,7 @@ static func _get_checker_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = "CheckerMaterial"
 	mat.albedo_color = Color(0.9, 0.9, 0.9, 1.0)
-	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/checkerboard_3x3.png"):
-		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/checkerboard_3x3.png")
-	elif ResourceLoader.exists("res://addons/poibuilder/materials/textures/checkerboard_2x2.png"):
+	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/checkerboard_2x2.png"):
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/checkerboard_2x2.png")
 	mat.roughness = 0.8
 	return mat

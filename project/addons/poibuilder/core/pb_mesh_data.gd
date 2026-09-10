@@ -636,7 +636,7 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 ## Cached default material reference.
 static var _cached_default_material: Material = null
 
-## Returns the default PoiBuilder material (stock 3x3 soft dark gray checkerboard).
+## Returns the default PoiBuilder material (stock 2x2 soft dark gray checkerboard).
 static func get_default_material() -> Material:
 	if _cached_default_material == null:
 		if ResourceLoader.exists("res://addons/poibuilder/materials/pb_default_material.tres"):
@@ -755,9 +755,19 @@ static func create_cube(size: float = 1.0) -> PBMeshData:
 		Vector2(1.0, 1.0),
 		Vector2(0.0, 1.0),
 	])
+	# Face 1 (Back, Z = +h) is flipped horizontally (1.0 - u) so it lines up with Top, Left, and Right
+	var back_uvs: PackedVector2Array = PackedVector2Array([
+		Vector2(1.0, 0.0),
+		Vector2(0.0, 0.0),
+		Vector2(0.0, 1.0),
+		Vector2(1.0, 1.0),
+	])
 	mesh_data.textures0 = PackedVector2Array()
-	for _f in range(6):
-		mesh_data.textures0.append_array(face_uvs)
+	for f in range(6):
+		if f == 1:
+			mesh_data.textures0.append_array(back_uvs)
+		else:
+			mesh_data.textures0.append_array(face_uvs)
 
 	# 6 Faces (each 2 triangles = 6 indices)
 	mesh_data.faces = []

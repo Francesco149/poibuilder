@@ -803,16 +803,16 @@ v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exp
   - Root cause of mesh corruption ("floor comes up" / object displacement on undo): `begin_stroke()` previously captured a single `stroke_snapshot_before` of whichever mesh the stroke started on. When the cursor crossed over to another mesh (e.g. from floor to cube), dabs painted onto the second mesh, but on `end_stroke()` the action registered the second mesh with the first mesh's before snapshot. Undoing applied the floor's geometry onto the cube.
   - Implemented `_stroke_meshes: Dictionary`: tracks all meshes touched during a stroke independently (`{mesh: {before: PBMeshData, dirty: bool}}`), capturing each mesh's pre-stroke state before its first dab.
   - `end_stroke()` commits a multi-mesh undo action registering dedicated before/after snapshot pairs for each modified mesh. Undoing restores each mesh's own geometry without cross-contamination.
-- 3X3 CHECKERBOARD TEXTURE (`checkerboard_3x3.png`, `pb_default_material.tres`):
-  - Replaced 2x2 checkerboard with a 3x3 pattern in `checkerboard_3x3.png` (and updated `checkerboard_2x2.png` to 3x3 for backwards compatibility).
-  - Symmetrical 3x3 grid (light corners and light-dark-light edges) wraps seamlessly around cylinders, cubes, and tiled surfaces without phase-inversion seams where edges meet.
+- 2X2 CHECKERBOARD & BACK-FACE HORIZONTAL UV FLIP (`checkerboard_2x2.png`, `PBMeshData.create_cube`, `PBShapeGenerators.create_box`):
+  - Reverted default checkerboard texture to the standard 2x2 grid (512x512 POT, 256px per tile).
+  - Flipped UVs horizontally (`1.0 - u`) on the back vertical face (Face 1, Z = +h): at the left seam ($X = -h$), Left face has $U=1.0$ and Back face now has $U=1.0$; at the right seam ($X = +h$), Right face has $U=0.0$ and Back face now has $U=0.0$. The pattern lines up seamlessly with the Top, Left, and Right faces.
 - ALT CREATION HEIGHT PLANE (`PBShapeCreator`, `PBGizmoPlugin`, `poibuilder_plugin.gd`):
   - Added `show_height_plane` flag on `PBShapeCreator`, toggled by holding `Alt` during `State.HEIGHT`.
   - `PBGizmoPlugin._draw_creation_preview` renders a 4000m x 4000m double-sided unshaded white plane at 0.25 opacity (`Color(1.0, 1.0, 1.0, 0.25)`) with depth test enabled at the shape's live height elevation, slicing through nearby scene geometry to make alignment immediately visible.
 - LIVE SHAPE EXTENTS IN OVERLAY PANEL (`PBShapeCreator.get_extents_readout`, `PBToolOverlay`):
   - Added `_extents_row` and `_extents_label` in `PBToolOverlay` below the creation guidance row.
   - Displays live dimensions as shapes are drawn: width and depth in BASE (`W: 4.00m  D: 2.00m`), width, depth, and height in HEIGHT (`W: 4.00m  D: 2.00m  H: 2.50m`), radius and height for round shapes (`Radius: 1.00m  Height: 2.00m`), and offset for sprites (`Offset: 1.20m`). Cleared upon confirmation or abort.
-- Tests: 819/819 GUT unit tests passing (+9), 50/50 GUI harness tests passing (0 failures).
+- Tests: 820/820 GUT unit tests passing (+10), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.59 round complete ✓ — absolute grid snapping for element moves, AABB placement alignment, & parameter step tuning:
 - ABSOLUTE GRID SNAPPING FOR ELEMENT MOVES (`PBElementEditor._snap_move_motion`):

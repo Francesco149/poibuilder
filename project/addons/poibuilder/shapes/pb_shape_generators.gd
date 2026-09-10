@@ -127,10 +127,12 @@ static func create_box(
 			positions.append(Vector3(x1, y1, hz))
 			positions.append(Vector3(x0, y1, hz))
 
-			textures0.append(Vector2(u0, v0))
-			textures0.append(Vector2(u1, v0))
-			textures0.append(Vector2(u1, v1))
-			textures0.append(Vector2(u0, v1))
+			var fu0: float = 1.0 - u0
+			var fu1: float = 1.0 - u1
+			textures0.append(Vector2(fu0, v0))
+			textures0.append(Vector2(fu1, v0))
+			textures0.append(Vector2(fu1, v1))
+			textures0.append(Vector2(fu0, v1))
 
 			faces.append(PBFace.new(PackedInt32Array([
 				vert_offset + 0, vert_offset + 1, vert_offset + 2,
