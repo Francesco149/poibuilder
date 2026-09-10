@@ -239,13 +239,14 @@ static void init_sphere_mesh(float radius, uint32_t color) {
                 idx++; \
             } while(0)
 
+            /* Quad as 2 CCW outward-wound triangles */
             V_SPHERE(x0 * zr0, z0, y0 * zr0);
-            V_SPHERE(x1 * zr0, z0, y1 * zr0);
             V_SPHERE(x1 * zr1, z1, y1 * zr1);
+            V_SPHERE(x1 * zr0, z0, y1 * zr0);
 
             V_SPHERE(x0 * zr0, z0, y0 * zr0);
-            V_SPHERE(x1 * zr1, z1, y1 * zr1);
             V_SPHERE(x0 * zr1, z1, y0 * zr1);
+            V_SPHERE(x1 * zr1, z1, y1 * zr1);
             #undef V_SPHERE
         }
     }
