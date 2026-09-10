@@ -13,6 +13,7 @@
 #include <psprtc.h>
 #include <psputils.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -48,7 +49,12 @@ void render_cfg_default(RenderCfg* c) {
     c->clip_planes = 1;
     c->alpha_pass = 1;
     c->entity = 1;
-    c->tex_filter = PBFILT_ASYM;
+    c->tex_filter = PBFILT_LINEAR;   /* trilinear: blends adjacent mip levels, which is what removes the level discontinuity between neighbouring tiles at grazing angles */
+    /* Mips make distant surfaces cheap but soft, and the hardware picks a level
+     * from the geometric mean of the UV derivatives, which over-blurs the
+     * compressed axis of a grazing surface. A small negative bias trades a
+     * little of that softness back for detail. */
+    c->tex_lod_bias = -1.0f;
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
     c->near_plane = 0.08f;
@@ -191,6 +197,47 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
     if (extra2 && *extra2) psp_draw_text(8.0f, 48.0f, 0xFF8888FF, extra2);
 }
 
+/* Runtime render overrides, read once at startup from a file on the host.
+ *
+ * Tuning mip/filter settings otherwise costs a rebuild and a USB round trip per
+ * data point, which is far too slow to iterate on a visual problem. Writing
+ *   host0:/poi_render.txt  with e.g.
+ *       filter=linear      (linear | mip_lin | nearest | asym)
+ *       bias=-2            (negative = sharper)
+ *       mips=0
+ * lets the same binary be re-run with different settings and screenshotted.
+ * Absent file: the compiled defaults apply. */
+void psp_render_overrides(RenderCfg* cfg) {
+    FILE* f = fopen("host0:/poi_render.txt", "r");
+    if (!f) f = fopen("ms0:/poi_render.txt", "r");
+    if (!f) return;
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        char* hash = strchr(line, '#');
+        if (hash) *hash = 0;
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = 0;
+        char* k = line;
+        char* v = eq + 1;
+        while (*k == ' ' || *k == '\t') k++;
+        char* ke = k + strlen(k);
+        while (ke > k && (ke[-1] == ' ' || ke[-1] == '\t')) *--ke = 0;
+        while (*v == ' ' || *v == '\t') v++;
+        char* ve = v + strlen(v);
+        while (ve > v && (ve[-1] == '\n' || ve[-1] == '\r' || ve[-1] == ' ')) *--ve = 0;
+
+        if (!strcmp(k, "filter")) {
+            if (!strcmp(v, "linear"))       cfg->tex_filter = PBFILT_LINEAR;
+            else if (!strcmp(v, "nearest")) cfg->tex_filter = PBFILT_NEAREST;
+            else if (!strcmp(v, "asym"))    cfg->tex_filter = PBFILT_ASYM;
+            else                            cfg->tex_filter = PBFILT_MIP_LIN;
+        } else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
+        else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
+    }
+    fclose(f);
+}
+
 /* ── Scene ──────────────────────────────────────────────────────────────── */
 
 static inline int is_billboard_mesh(const char* name) {
@@ -232,6 +279,12 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
     if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
         if (mesh->texture_id != *last_tex_id) {
             PbmTexture* tex = &map->textures[mesh->texture_id];
+            /* Tile atlases are addressed by absolute slot coordinates: a tile
+             * samples right up to its slot edge, so the sampler must clamp at
+             * the atlas border or it wraps to the opposite side. The tiling base
+             * materials are the opposite case and must repeat. */
+            if (strstr(tex->name, "TileAtlas")) sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+            else                               sceGuTexWrap(GU_REPEAT, GU_REPEAT);
             if (tex->pixels && tex->num_levels > 0) {
                 int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
                 int swizzle = tex->is_swizzled ? 1 : 0;
@@ -348,9 +401,11 @@ static void set_texture_filter(const RenderCfg* cfg) {
          * plain filters ignore the chain entirely. */
         switch (cfg->tex_filter) {
             case PBFILT_NEAREST: sceGuTexFilter(GU_NEAREST_MIPMAP_NEAREST, GU_NEAREST); break;
-            case PBFILT_LINEAR:  sceGuTexFilter(GU_LINEAR_MIPMAP_LINEAR, GU_LINEAR); break;
+            case PBFILT_LINEAR:  sceGuTexFilter(GU_LINEAR_MIPMAP_LINEAR, GU_LINEAR); break;   /* trilinear: blends adjacent levels, which is what smooths the level discontinuity between neighbouring tiles */
+            case PBFILT_ASYM:    sceGuTexFilter(GU_LINEAR_MIPMAP_NEAREST, GU_NEAREST); break;
             default:             sceGuTexFilter(GU_LINEAR_MIPMAP_NEAREST, GU_LINEAR); break;
         }
+        sceGuTexLevelMode(GU_TEXTURE_AUTO, cfg->tex_lod_bias);
         return;
     }
     switch (cfg->tex_filter) {

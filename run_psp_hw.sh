@@ -34,7 +34,13 @@ PRX_NAME="poiretro_psp_hwtest.prx"
 LOG="$HOSTDIR/poi_profile.txt"
 WAIT_SECS="${WAIT_SECS:-240}"
 KEEP=0
-[ "${1:-}" = "--keep" ] && KEEP=1
+MODE=prof
+for arg in "$@"; do
+    case "$arg" in
+        --keep) KEEP=1 ;;
+        --app)  MODE=app ;;   # interactive build instead of the profiling battery
+    esac
+done
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -48,9 +54,17 @@ psp_make() {
   git clone https://github.com/pspdev/psplinkusb.git $PSPLINK_SRC && (cd $PSPLINK_SRC/usbhostfs_pc && make) && (cd $PSPLINK_SRC/pspsh && make)"
 [ -x "$PSPSH" ] || die "pspsh not built at $PSPSH"
 
-echo "=== [1/5] Building the hardware-test PRX ==="
-psp_make hwtest >/tmp/psp_hwtest_build.log 2>&1 \
-    || { tail -30 /tmp/psp_hwtest_build.log; die "build failed (full log: /tmp/psp_hwtest_build.log)"; }
+if [ "$MODE" = app ]; then
+    echo "=== [1/5] Building the interactive PRX ==="
+    psp_make hwapp >/tmp/psp_hwtest_build.log 2>&1 \
+        || { tail -30 /tmp/psp_hwtest_build.log; die "build failed (full log: /tmp/psp_hwtest_build.log)"; }
+    PRX_NAME="poiretro_psp_app.prx"
+else
+    echo "=== [1/5] Building the hardware-test PRX ==="
+    psp_make hwtest >/tmp/psp_hwtest_build.log 2>&1 \
+        || { tail -30 /tmp/psp_hwtest_build.log; die "build failed (full log: /tmp/psp_hwtest_build.log)"; }
+    PRX_NAME="poiretro_psp_hwtest.prx"
+fi
 [ -f "$PSP_DIR/$PRX_NAME" ] || die "$PRX_NAME was not produced"
 
 echo "=== [2/5] Staging host0: ($HOSTDIR) ==="
@@ -83,6 +97,22 @@ MSG
 fi
 echo "link OK"
 
+# ALWAYS reset before loading. A module left over from an earlier run keeps the
+# GE and the display controller in whatever state it died in, and the next
+# module then loads, reports success, and never executes — a black screen with
+# no output, which is very easy to misread as a bug in the new build. psplink's
+# own reset clears it without a power cycle; the link re-establishes by itself.
+echo "=== [3c/5] Resetting psplink (clean GE/display state) ==="
+"$PSPSH" -n -e "reset" >/dev/null 2>&1 || true
+for i in $(seq 1 40); do
+    sleep 1
+    if timeout 10 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+        echo "link back after reset (${i}s)"
+        break
+    fi
+    [ "$i" = 40 ] && die "psplink did not come back after reset; relaunch PSPLink on the device"
+done
+
 echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
 # A resident module blocks the next load (ALREADY_LOADED). The test binary
 # unloads itself on exit, so normally there is nothing to clear.
@@ -100,6 +130,14 @@ for uid in $("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}');
     fi
 done
 timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
+
+if [ "$MODE" = app ]; then
+    echo "=== app running on the device (Start+Select quits and unloads) ==="
+    [ "$KEEP" = 0 ] && pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
+    echo "Take a screenshot any time with:"
+    echo "  $PSPSH -n -e \"scrshot host0:/shot.bmp\"   # lands in $HOSTDIR (480x272x24 BMP)"
+    exit 0
+fi
 
 echo "=== [5/5] Waiting for host0:/poi_profile.txt (up to ${WAIT_SECS}s) ==="
 prev=-1

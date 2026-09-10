@@ -491,8 +491,17 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].cfg.use_mips = 0;
     add_scene_test(t, &n, "abi_mipmap_nearest", "stairs", pc, &base);
     t[n - 1].cfg.tex_filter = PBFILT_NEAREST;
+    add_scene_test(t, &n, "abi_mag_nearest", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_ASYM;
+    add_scene_test(t, &n, "abi_trilinear", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_LINEAR;
+    add_scene_test(t, &n, "abi_bias_m1", "stairs", pc, &base);
+    t[n - 1].cfg.tex_lod_bias = -1.0f;
+    add_scene_test(t, &n, "abi_bias_p1", "stairs", pc, &base);
+    t[n - 1].cfg.tex_lod_bias = 1.0f;
     add_scene_test(t, &n, "abi_filt_nearest", "stairs", pc, &base);
     t[n - 1].cfg.tex_filter = PBFILT_NEAREST;
+    t[n - 1].cfg.tex_lod_bias = 0.0f;
     add_scene_test(t, &n, "abi_filt_linear", "stairs", pc, &base);
     t[n - 1].cfg.tex_filter = PBFILT_LINEAR;
     add_scene_test(t, &n, "abi_nodepth", "stairs", pc, &base);

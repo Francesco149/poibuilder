@@ -375,11 +375,15 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     
                     # Atlas UV Remapping: slot (col_slot, row_slot) in 4x4 atlas (512x512)
                     if is_atlas:
-                        half_texel = 0.5 / 128.0
                         u_c = max(0.0, min(1.0, raw_uv[0]))
                         v_c = max(0.0, min(1.0, raw_uv[1]))
-                        u_in_slot = half_texel + u_c * (1.0 - 2.0 * half_texel)
-                        v_in_slot = half_texel + v_c * (1.0 - 2.0 * half_texel)
+                        # Edge-to-edge: a tile owns the full width of its slot.
+                        # (The old half-texel inset mapped the tile onto texel
+                        # *centres* 0..127, which leaves a one-texel band that
+                        # no tile displays -- neighbouring tiles then do not
+                        # meet and the pattern shifts at every seam.)
+                        u_in_slot = u_c
+                        v_in_slot = v_c
                         u_val = (col_slot + u_in_slot) * 0.25
                         v_val = (row_slot + v_in_slot) * 0.25
                     else:
