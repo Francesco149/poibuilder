@@ -248,7 +248,7 @@ func _build_ui() -> void:
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
 	_file_dialog.access = FileDialog.ACCESS_RESOURCES
-	_file_dialog.filters = PackedStringArray(["*.glb ; Binary glTF Map", "*.gltf ; Text glTF Scene"])
+	_file_dialog.filters = PackedStringArray(["*.glb ; Binary glTF Map", "*.gltf ; Text glTF Scene", "*.pbm ; PoiBuilder Retro Map (PSP / Retro)"])
 	_file_dialog.file_selected.connect(func(path: String): _txt_path.text = path)
 	add_child(_file_dialog)
 

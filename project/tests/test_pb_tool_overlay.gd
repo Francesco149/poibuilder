@@ -399,3 +399,36 @@ func test_empty_panel_auto_collapsed():
 	overlay.refresh()
 	assert_true(overlay._body.visible, "Selecting an element expands the panel body")
 	assert_eq(overlay._collapse_btn.text, "▾", "Collapse button shows down arrow when expanded")
+
+func test_overlay_modal_self_heals_on_deselect():
+	var s := _make_editor_with_cube()
+	var ed: PBEditor = s["ed"]
+	var overlay := _make_overlay()
+	overlay.editor = ed
+
+	# Open a modal
+	overlay.open_params("Sprite Parameters", [{"name": "width", "label": "Width", "min": 0.1, "max": 10.0, "step": 0.1}], {"width": 1.0})
+	assert_true(overlay.params_open)
+	assert_true(overlay.visible)
+
+	# Deselect mesh (active_mesh becomes null)
+	ed.active_mesh = null
+	overlay.refresh()
+	assert_false(overlay.params_open, "Deselecting mesh auto-closes open modal parameters")
+	assert_false(overlay.visible, "Overlay auto-hides when active_mesh is null")
+
+func test_unpinned_pristine_shape_does_not_force_overlay_visible():
+	var s := _make_editor_with_cube()
+	var ed: PBEditor = s["ed"]
+	var overlay := _make_overlay()
+	overlay.editor = ed
+	overlay.pinned = false
+
+	# Mark mesh as pristine shape (shape_id set, shape_edited false)
+	ed.active_mesh.pb_mesh_data.shape_id = &"cube"
+	ed.active_mesh.pb_mesh_data.shape_edited = false
+	ed.selection.clear_all()
+	overlay.refresh()
+
+	# Unpinned panel should NOT pop up uninvited just because a pristine shape is selected
+	assert_false(overlay.visible, "Unpinned panel does not pop up uninvited on pristine shape with no elements selected")

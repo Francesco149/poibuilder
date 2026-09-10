@@ -74,7 +74,6 @@ func arm(p_mode: Mode, p_mesh: PBMesh = null, p_face: int = -1) -> void:
 	target_face_index = p_face
 
 func begin(point: Vector3, normal: Vector3, p_mesh: PBMesh = null, p_face: int = -1) -> void:
-	plane_point = point
 	plane_normal = normal.normalized()
 	if plane_normal.length_squared() < 0.0001:
 		plane_normal = Vector3.UP
@@ -89,13 +88,13 @@ func begin(point: Vector3, normal: Vector3, p_mesh: PBMesh = null, p_face: int =
 		target_face_index = p_face
 
 	points.clear()
-	var snapped_pt := _snap_point(point)
-	points.append(snapped_pt)
-	live_cursor_point = snapped_pt
+	var start_pt := snap_starting_point(point, plane_normal, target_mesh, target_face_index)
+	plane_point = start_pt
+	points.append(start_pt)
+	live_cursor_point = start_pt
 	hovered_vert_idx = -1
 	dragged_vert_idx = -1
 	state = State.DRAWING
-
 func add_point(point: Vector3) -> bool:
 	if state != State.DRAWING:
 		return false
@@ -209,24 +208,22 @@ func confirm_height() -> Dictionary:
 		poly.append(p)
 
 	var eff_height := height if absf(height) > 0.0001 else 0.05
-	var data := PBShapeComplex.create_ngon_prism(poly, eff_height, plane_normal)
-	if data == null:
-		reset()
-		return {"ok": false, "error": "Failed to create n-gon prism"}
-
-	var centroid := Vector3.ZERO
-	for p in poly:
-		centroid += p
-	centroid /= float(poly.size())
-
-	# Center mesh data positions around origin so transform is clean
 	var local_data := PBShapeComplex.create_ngon_prism(
 		poly, eff_height, plane_normal
 	)
-	for i in range(local_data.positions.size()):
-		local_data.positions[i] -= centroid
+	if local_data == null:
+		reset()
+		return {"ok": false, "error": "Failed to create n-gon prism"}
 
-	var placement := Transform3D(Basis(), centroid)
+	# Use poly[0] (which is snapped to grid) as the node pivot for clean grid alignment
+	var pivot := poly[0]
+	if grid != null and grid.enabled:
+		pivot = grid.snap_point(poly[0])
+
+	for i in range(local_data.positions.size()):
+		local_data.positions[i] -= pivot
+
+	var placement := Transform3D(Basis(), pivot)
 
 	var result := {
 		"ok": true,
@@ -237,7 +234,6 @@ func confirm_height() -> Dictionary:
 	}
 	reset()
 	return result
-
 func build_preview_data() -> PBMeshData:
 	if state != State.HEIGHT:
 		return null
@@ -304,6 +300,18 @@ func switch_target_face(face_idx: int) -> void:
 	var up := Vector3.UP if absf(plane_normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
 	u_axis = plane_normal.cross(up).normalized()
 	v_axis = plane_normal.cross(u_axis).normalized()
+## Snaps an initial starting point to face geometry or to the grid.
+func snap_starting_point(point: Vector3, normal: Vector3, p_mesh: PBMesh = null, p_face: int = -1) -> Vector3:
+	if p_mesh != null and p_face >= 0:
+		var face_snapped := snap_to_face(p_mesh, p_face, point)
+		if face_snapped.distance_squared_to(point) > 0.00001:
+			return face_snapped
+	if grid != null and grid.enabled:
+		var n := normal.normalized()
+		if PBGrid.is_cardinal(n):
+			return grid.snap_point_masked(point, n)
+		return grid.snap_point(point)
+	return point
 
 func snap_to_face(node: PBMesh, face_index: int, p: Vector3) -> Vector3:
 	if node == null or node.pb_mesh_data == null or face_index < 0 or face_index >= node.pb_mesh_data.faces.size():
@@ -431,12 +439,14 @@ func _snap_to_grid(p: Vector3) -> Vector3:
 	var s: float = grid.step()
 	if s <= 0.0001:
 		return p
-	# Snap along in-plane u/v axes relative to plane_point
+	var n := plane_normal.normalized()
+	if PBGrid.is_cardinal(n):
+		return grid.snap_point_masked(p, n)
+	# Non-cardinal plane: snap along in-plane u/v axes relative to plane_point
 	var d := p - plane_point
 	var u: float = grid.snap_val(d.dot(u_axis))
 	var v: float = grid.snap_val(d.dot(v_axis))
 	return plane_point + u_axis * u + v_axis * v
-
 static func ray_plane_intersect(ray_o: Vector3, ray_d: Vector3, plane_pt: Vector3, plane_norm: Vector3) -> Vector3:
 	var denom := plane_norm.dot(ray_d)
 	if absf(denom) < 0.00001:

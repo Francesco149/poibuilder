@@ -529,13 +529,15 @@ func has_creation_extents() -> bool:
 ## Changes emit param_changed live (the plugin rebuilds the preview).
 func open_params(title: String, defs: Array, values: Dictionary) -> void:
 	_ensure_ui()
+	params_open = true
+	_params_section.visible = true
 	_params_title.text = title.to_upper()
 	for child in _params_grid.get_children():
+		_params_grid.remove_child(child)
 		child.queue_free()
 	_param_spinboxes.clear()
 	_param_checkboxes.clear()
 	_current_param_defs.clear()
-
 	for def in defs:
 		var caption := _make_row_label(str(def.get("label", def.get("name", "?"))))
 		_params_grid.add_child(caption)
@@ -955,7 +957,10 @@ func _on_editor_changed(_arg = null, _arg2 = null, _arg3 = null, _arg4 = null) -
 ## Refreshes all readouts and re-evaluates the panel's visibility.
 func refresh() -> void:
 	_ensure_ui()
-
+	# Self-heal stale params_open: if params_open is true but the editor deselects with no creation session active
+	if params_open and editor != null and editor.active_mesh == null and not has_creation_hint() and not has_creation_extents():
+		close_params()
+		return
 	var has_selection := false
 	if editor != null and editor.selection != null:
 		var sel := editor.selection
@@ -1021,18 +1026,21 @@ func update_visibility() -> void:
 	if not panel_enabled:
 		visible = false
 		return
-	var creation_active := has_creation_hint() or has_creation_extents()
-	if editor == null:
-		visible = params_open or creation_active
+	# Modal states: always show when a modal session is open
+	if params_open or grid_panel_open or settings_panel_open:
+		visible = true
 		return
-	var mesh_selected := editor.active_mesh != null
-	var can_edit_props := false
-	if mesh_selected and editor.active_mesh.pb_mesh_data != null:
-		var md: PBMeshData = editor.active_mesh.pb_mesh_data
-		can_edit_props = md.shape_id != &"" and not md.shape_edited
-	visible = (mesh_selected and (pinned or params_open or can_edit_props or _has_selection() \
-		or (element_editor != null and element_editor.drag_active))) \
-		or creation_active or grid_panel_open or settings_panel_open
+	var creation_active := has_creation_hint() or has_creation_extents()
+	if creation_active:
+		visible = true
+		return
+	if editor == null:
+		visible = false
+		return
+	var mesh_selected := editor.active_mesh != null and is_instance_valid(editor.active_mesh)
+	var dragging := element_editor != null and element_editor.drag_active
+	visible = mesh_selected and (pinned or _has_selection() or dragging)
+
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:
 		return false

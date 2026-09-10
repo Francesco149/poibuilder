@@ -1,0 +1,6 @@
+*.o
+*.elf
+*.sfo
+PARAM.SFO
+*.tga
+*.pbm

@@ -21,6 +21,11 @@ enum ExportMode {
 	MODERN = 1,
 }
 
+const PBM_MAGIC := 0x314D4250 # "PBM1"
+const PBM_VERSION := 1
+
+const PBM_TEX_FMT_RGBA8888 := 0
+const PBM_TEX_FMT_RGBA5551 := 1
 ## Configuration settings for map export.
 class ExportSettings extends RefCounted:
 	var export_mode: ExportMode = ExportMode.RETRO
@@ -111,6 +116,8 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 	if root == null or file_path.is_empty():
 		return ERR_INVALID_PARAMETER
 
+	if file_path.to_lower().ends_with(".pbm"):
+		return export_retro_pbm(root, file_path, settings)
 	if settings == null:
 		settings = ExportSettings.new()
 
@@ -187,6 +194,17 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 	# skips any descendant node whose owner is null. Recursively set owner = export_root
 	# so that all exported meshes, materials, and colliders are written to glTF.
 	_set_owner_recursive(export_root, export_root)
+
+	if file_path.to_lower().ends_with(".pbm"):
+		if progress_cb.is_valid():
+			progress_cb.call(0.92, "Writing PBM binary file to disk...", file_path.get_file())
+		if Engine.get_main_loop() != null:
+			await Engine.get_main_loop().process_frame
+		var err := _write_pbm_from_tree(export_root, file_path, settings)
+		export_root.free()
+		if progress_cb.is_valid():
+			progress_cb.call(1.0, "Export complete!", file_path.get_file())
+		return err
 
 	if progress_cb.is_valid():
 		progress_cb.call(0.92, "Writing GLB file to disk...", file_path.get_file())
@@ -586,3 +604,248 @@ static func _get_world_transform(node: Node3D) -> Transform3D:
 		xf = (p as Node3D).transform * xf
 		p = p.get_parent()
 	return xf
+
+## Exports the given scene root to a .pbm (PoiBuilder Retro Map) binary file on disk.
+static func export_retro_pbm(root: Node, file_path: String, settings: ExportSettings = null) -> Error:
+	if root == null or file_path.is_empty():
+		return ERR_INVALID_PARAMETER
+	if settings == null:
+		settings = ExportSettings.new()
+
+	ensure_export_dir(file_path)
+
+	var export_tree := build_export_tree(root, settings)
+	if export_tree == null:
+		return ERR_CANT_CREATE
+
+	var err := _write_pbm_from_tree(export_tree, file_path, settings)
+	export_tree.free()
+	return err
+
+static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
+	var f := FileAccess.open(file_path, FileAccess.WRITE)
+	if f == null:
+		return FileAccess.get_open_error()
+
+	var textures: Array[Dictionary] = []
+	var tex_map: Dictionary = {} # RID/Resource -> int index
+
+	var meshes: Array[Dictionary] = []
+	var colliders: Array[Dictionary] = []
+
+	var bounds_min := Vector3(INF, INF, INF)
+	var bounds_max := Vector3(-INF, -INF, -INF)
+
+	var mesh_nodes: Array[MeshInstance3D] = []
+	_collect_mesh_instances_recursive(export_tree, mesh_nodes)
+
+	for mi in mesh_nodes:
+		var name_str := mi.name
+		var xf := _get_world_transform(mi)
+		var mesh := mi.mesh
+		if mesh == null:
+			continue
+
+		var is_collider := name_str.begins_with("Collider_") or name_str.begins_with("collider_")
+
+		for s in range(mesh.get_surface_count()):
+			var arrays := mesh.surface_get_arrays(s)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			if verts.is_empty():
+				continue
+
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+			var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+			var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+
+			if is_collider:
+				var tris: PackedVector3Array = PackedVector3Array()
+				if not indices.is_empty():
+					for idx in indices:
+						tris.append(xf * verts[idx])
+				else:
+					for v in verts:
+						tris.append(xf * v)
+				colliders.append({
+					"name": name_str.substr(0, 31),
+					"type": 2 if name_str.to_lower().contains("ramp") else (0 if name_str.to_lower().contains("box") else 1),
+					"triangles": tris
+				})
+			else:
+				var mat: Material = mi.material_override
+				if mat == null:
+					mat = mesh.surface_get_material(s)
+				var tex_id := -1
+				if mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null:
+					var albedo_tex: Texture2D = (mat as StandardMaterial3D).albedo_texture
+					var tex_key = albedo_tex.get_rid()
+					if tex_map.has(tex_key):
+						tex_id = tex_map[tex_key]
+					else:
+						var img := albedo_tex.get_image()
+						if img != null:
+							if img.is_compressed():
+								img.decompress()
+							var w := img.get_width()
+							var h := img.get_height()
+							var pot_w := _next_pot(w)
+							var pot_h := _next_pot(h)
+							if pot_w != w or pot_h != h:
+								img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
+								w = pot_w
+								h = pot_h
+
+							var tex_data := PackedByteArray()
+							tex_data.resize(w * h * 2)
+							img.convert(Image.FORMAT_RGBA8)
+							var raw_bytes := img.get_data()
+							for px_idx in range(w * h):
+								var r: int = raw_bytes[px_idx * 4]
+								var g: int = raw_bytes[px_idx * 4 + 1]
+								var b: int = raw_bytes[px_idx * 4 + 2]
+								var a: int = raw_bytes[px_idx * 4 + 3]
+								var r5: int = (r >> 3) & 0x1F
+								var g5: int = (g >> 3) & 0x1F
+								var b5: int = (b >> 3) & 0x1F
+								var a1: int = 1 if a > 127 else 0
+								var p16: int = (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
+								tex_data[px_idx * 2] = p16 & 0xFF
+								tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
+
+							tex_id = textures.size()
+							textures.append({
+								"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
+								"width": w,
+								"height": h,
+								"format": PBM_TEX_FMT_RGBA5551,
+								"data": tex_data
+							})
+							tex_map[tex_key] = tex_id
+
+				var tri_verts: Array[Dictionary] = []
+				var idx_list: Array = []
+				if not indices.is_empty():
+					for idx in indices: idx_list.append(idx)
+				else:
+					for i in range(verts.size()): idx_list.append(i)
+
+				for idx in idx_list:
+					var wp: Vector3 = xf * verts[idx]
+					bounds_min.x = minf(bounds_min.x, wp.x); bounds_max.x = maxf(bounds_max.x, wp.x)
+					bounds_min.y = minf(bounds_min.y, wp.y); bounds_max.y = maxf(bounds_max.y, wp.y)
+					bounds_min.z = minf(bounds_min.z, wp.z); bounds_max.z = maxf(bounds_max.z, wp.z)
+
+					var uv: Vector2 = uvs[idx] if idx < uvs.size() else Vector2.ZERO
+					var c: Color = colors[idx] if idx < colors.size() else Color.WHITE
+					var r_b: int = int(clampf(c.r, 0.0, 1.0) * 255.0)
+					var g_b: int = int(clampf(c.g, 0.0, 1.0) * 255.0)
+					var b_b: int = int(clampf(c.b, 0.0, 1.0) * 255.0)
+					var a_b: int = int(clampf(c.a, 0.0, 1.0) * 255.0)
+					var c_int: int = r_b | (g_b << 8) | (b_b << 16) | (a_b << 24)
+
+					tri_verts.append({
+						"u": uv.x, "v": uv.y,
+						"color": c_int,
+						"x": wp.x, "y": wp.y, "z": wp.z
+					})
+
+				if not tri_verts.is_empty():
+					meshes.append({
+						"name": name_str.substr(0, 31),
+						"texture_id": tex_id,
+						"vertices": tri_verts
+					})
+
+	if bounds_min.x == INF:
+		bounds_min = Vector3(-10, 0, -10)
+		bounds_max = Vector3(10, 5, 10)
+
+	var spawn := (bounds_min + bounds_max) * 0.5
+	spawn.y = bounds_min.y + 1.6
+	spawn.z = bounds_max.z + 4.0
+
+	# Header
+	f.store_32(PBM_MAGIC)
+	f.store_32(PBM_VERSION)
+	f.store_32(textures.size())
+	f.store_32(meshes.size())
+	f.store_32(colliders.size())
+	f.store_float(spawn.x); f.store_float(spawn.y); f.store_float(spawn.z)
+	f.store_float(0.0)
+	f.store_float(bounds_min.x); f.store_float(bounds_min.y); f.store_float(bounds_min.z)
+	f.store_float(bounds_max.x); f.store_float(bounds_max.y); f.store_float(bounds_max.z)
+
+	# Textures
+	for tex in textures:
+		var name_bytes: PackedByteArray = (tex["name"] as String).to_ascii_buffer()
+		name_bytes.resize(32)
+		f.store_buffer(name_bytes)
+		f.store_16(tex["width"])
+		f.store_16(tex["height"])
+		f.store_16(tex["format"])
+		f.store_16(0)
+		f.store_32((tex["data"] as PackedByteArray).size())
+		f.store_buffer(tex["data"])
+
+	# Meshes
+	for m in meshes:
+		var name_bytes: PackedByteArray = (m["name"] as String).to_ascii_buffer()
+		name_bytes.resize(32)
+		f.store_buffer(name_bytes)
+		f.store_32(m["texture_id"])
+		var v_list: Array = m["vertices"]
+		f.store_32(v_list.size())
+		var m_min := Vector3(INF, INF, INF)
+		var m_max := Vector3(-INF, -INF, -INF)
+		for v in v_list:
+			m_min.x = minf(m_min.x, v["x"]); m_max.x = maxf(m_max.x, v["x"])
+			m_min.y = minf(m_min.y, v["y"]); m_max.y = maxf(m_max.y, v["y"])
+			m_min.z = minf(m_min.z, v["z"]); m_max.z = maxf(m_max.z, v["z"])
+		f.store_float(m_min.x); f.store_float(m_min.y); f.store_float(m_min.z)
+		f.store_float(m_max.x); f.store_float(m_max.y); f.store_float(m_max.z)
+
+		for v in v_list:
+			f.store_float(v["u"])
+			f.store_float(v["v"])
+			f.store_32(v["color"])
+			f.store_float(v["x"])
+			f.store_float(v["y"])
+			f.store_float(v["z"])
+
+	# Colliders
+	for col in colliders:
+		var name_bytes: PackedByteArray = (col["name"] as String).to_ascii_buffer()
+		name_bytes.resize(32)
+		f.store_buffer(name_bytes)
+		f.store_32(col["type"])
+		var tris: PackedVector3Array = col["triangles"]
+		var c_min := Vector3(INF, INF, INF)
+		var c_max := Vector3(-INF, -INF, -INF)
+		for p in tris:
+			c_min.x = minf(c_min.x, p.x); c_max.x = maxf(c_max.x, p.x)
+			c_min.y = minf(c_min.y, p.y); c_max.y = maxf(c_max.y, p.y)
+			c_min.z = minf(c_min.z, p.z); c_max.z = maxf(c_max.z, p.z)
+		f.store_float(c_min.x); f.store_float(c_min.y); f.store_float(c_min.z)
+		f.store_float(c_max.x); f.store_float(c_max.y); f.store_float(c_max.z)
+		f.store_32(int(tris.size() / 3))
+		for p in tris:
+			f.store_float(p.x)
+			f.store_float(p.y)
+			f.store_float(p.z)
+
+	f.close()
+	return OK
+
+static func _next_pot(x: int) -> int:
+	if x <= 0: return 1
+	var p := 1
+	while p < x: p <<= 1
+	return p
+
+static func _collect_mesh_instances_recursive(node: Node, out: Array[MeshInstance3D]) -> void:
+	if node == null:
+		return
+	if node is MeshInstance3D:
+		out.append(node as MeshInstance3D)
+	for child in node.get_children():
+		_collect_mesh_instances_recursive(child, out)
