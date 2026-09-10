@@ -13,6 +13,18 @@
 # The harness runs with an ISOLATED HOME so it neither reads nor pollutes
 # your real editor settings (last-opened scenes, layout, editor settings),
 # and never trips crash-recovery prompts from either side.
+INTERACTIVE=0
+for arg in "$@"; do
+    if [[ "$arg" == "--interactive" || "$arg" == "-i" ]]; then
+        INTERACTIVE=1
+    fi
+done
+
+if [ "$INTERACTIVE" -eq 1 ]; then
+    echo "=== Running Editor GUI Test Interactively on Active Display ==="
+    exec godot-mono --editor res://test_scenes/editor_gui_test.tscn
+fi
+
 set -uo pipefail
 cd "$(dirname "$0")/project"
 
@@ -24,7 +36,6 @@ HOME="$HARNESS_HOME" LIBGL_ALWAYS_SOFTWARE=1 PB_GUI_TEST=1 \
     xvfb-run -a -s "-screen 0 1600x900x24" \
     godot-mono --editor --rendering-driver opengl3 \
     res://test_scenes/editor_gui_test.tscn 2>&1 | tee "$OUT" || true
-
 if grep -q "done, failures=0" "$OUT"; then
     rm -f "$OUT"
     exit 0
