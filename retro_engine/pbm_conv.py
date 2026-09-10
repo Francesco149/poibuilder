@@ -13,14 +13,18 @@ import io
 import math
 from PIL import Image
 
-PBM_MAGIC = 0x324D4250 # "PBM2"
-PBM_VERSION = 2
+PBM_MAGIC = 0x334D4250 # "PBM3"
+PBM_VERSION = 3
 
 PBM_META_RAW    = 0
 PBM_META_STRING = 1
 PBM_META_JSON   = 2
 PBM_META_ENTITY = 3
 PBM_ENTITY_PATROL_SPHERE = 1
+
+PBM_ALPHA_NONE = 0      # opaque: opaque pass, mip chain
+PBM_ALPHA_CUTOUT = 1    # hard-edged cutout: alpha-tested, no mip chain
+PBM_ALPHA_BLEND = 2     # soft alpha: blended, mip chain kept, RGBA8888
 
 PBM_TEX_FMT_RGBA8888 = 0
 PBM_TEX_FMT_RGBA5551 = 1
@@ -163,6 +167,50 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     raw_images = gltf.get("images", [])
     print(f"Loaded {len(raw_images)} raw images from GLB.")
     
+    # Per-material properties this converter has to know BEFORE it decides how
+    # each image is stored, all of them carried by the glTF material:
+    #   - `extras.poi_uv_scroll`: the animated UV scroll speed, in texture
+    #     repeats per second (PoiBuilder writes the material metadata through
+    #     Godot's glTF writer). A scrolling texture must stay a standalone,
+    #     repeat-wrapped texture: an offset applied to an atlas slot would drag
+    #     the tile across its slot border.
+    #   - `alphaMode`: BLEND means a soft alpha, which needs 8 bits per channel
+    #     (5551 has one) and so must NOT be packed into a 5551 atlas either.
+    materials_gltf = gltf.get("materials", [])
+    textures_gltf = gltf.get("textures", [])
+    material_scroll = {}    # glTF material index -> (speed_u, speed_v)
+    material_alpha = {}     # glTF material index -> PBM_ALPHA_*
+    atlas_exempt_images = set()  # raw image indices that must stay standalone
+    for mat_idx, mat in enumerate(materials_gltf):
+        gltf_alpha = mat.get("alphaMode", "OPAQUE")
+        if gltf_alpha == "BLEND":
+            material_alpha[mat_idx] = PBM_ALPHA_BLEND
+        elif gltf_alpha == "MASK":
+            material_alpha[mat_idx] = PBM_ALPHA_CUTOUT
+        else:
+            material_alpha[mat_idx] = PBM_ALPHA_NONE
+
+        bct = mat.get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+        t_idx = bct.get("index", -1)
+        src_img = -1
+        if 0 <= t_idx < len(textures_gltf):
+            src_img = textures_gltf[t_idx].get("source", -1)
+
+        extras = mat.get("extras") or {}
+        s = extras.get("poi_uv_scroll")
+        if isinstance(s, (list, tuple)) and len(s) >= 2:
+            su, sv = float(s[0]), float(s[1])
+            if su != 0.0 or sv != 0.0:
+                material_scroll[mat_idx] = (su, sv)
+                if src_img >= 0:
+                    atlas_exempt_images.add(src_img)
+        if gltf_alpha == "BLEND" and src_img >= 0:
+            atlas_exempt_images.add(src_img)
+
+    if material_scroll:
+        print(f"Found {len(material_scroll)} scrolling material(s); "
+              f"{len(atlas_exempt_images)} texture(s) kept out of the atlases.")
+    
     # Separate Base Textures from 128x128 Baked Tiles
     base_images = []
     tile_images = []
@@ -175,8 +223,10 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         
         name = img_info.get("name", f"img_{img_idx}")
-        # An image is an individual tile if its size is 128x128 or name contains BakedTile
-        if pil_img.size == (128, 128) or "BakedTile" in name:
+        # An image is an individual tile if its size is 128x128 or its name
+        # says BakedTile -- unless a scrolling or blending material samples it,
+        # in which case it stays a standalone base texture (see above).
+        if img_idx not in atlas_exempt_images and (pil_img.size == (128, 128) or "BakedTile" in name):
             tile_images.append((img_idx, name, pil_img))
         else:
             base_images.append((img_idx, name, pil_img))
@@ -240,12 +290,24 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             g = g.point(lambda p: int(p * bcol[1]))
             b = b.point(lambda p: int(p * bcol[2]))
             pil_img = Image.merge("RGBA", (r, g, b, a))
-        tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit)
+        # The image's alpha mode is the strongest any material using it needs.
+        mode = PBM_ALPHA_NONE
+        for mat_idx, m_alpha in material_alpha.items():
+            bct_m = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+            t_m = bct_m.get("index", -1)
+            if t_m >= 0 and t_m < len(textures_gltf) and textures_gltf[t_m].get("source", -1) == img_idx:
+                mode = max(mode, m_alpha)
+        # Soft alpha needs the 8 bits per channel that 5551 cannot carry.
+        tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit and mode != PBM_ALPHA_BLEND)
+        if mode == PBM_ALPHA_NONE and has_a:
+            # Opaque material, transparent art: the pixels still need the alpha
+            # pass, as a cutout.
+            mode = PBM_ALPHA_CUTOUT
         tex_id = len(textures)
         textures.append({
             "name": name[:31],
             "width": w, "height": h,
-            "format": fmt, "has_alpha": has_a,
+            "format": fmt, "alpha_mode": mode,
             "data": tex_data
         })
         img_to_tex_mapping[img_idx] = { "tex_id": tex_id, "is_atlas": False, "col": 0, "row": 0 }
@@ -258,7 +320,9 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         textures.append({
             "name": f"TileAtlas_{a_idx}"[:31],
             "width": 512, "height": 512,
-            "format": fmt, "has_alpha": has_a,
+            "format": fmt,
+            # Baked tiles are 5551, so their alpha can only cut a texel out.
+            "alpha_mode": PBM_ALPHA_CUTOUT if has_a else PBM_ALPHA_NONE,
             "data": tex_data
         })
 
@@ -358,9 +422,15 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 is_atlas = tex_mapping["is_atlas"] if tex_mapping else False
                 col_slot = tex_mapping["col"] if tex_mapping else 0
                 row_slot = tex_mapping["row"] if tex_mapping else 0
+                scroll = material_scroll.get(mat_idx, (0.0, 0.0))
 
-                if tex_id not in mesh_buckets:
-                    mesh_buckets[tex_id] = []
+                # Bucket key: the scroll speed is a per-mesh property of the
+                # file, so two materials sharing one texture but scrolling at
+                # different speeds must not be merged into a single mesh --
+                # one of the two animations would be lost.
+                bucket = (tex_id, scroll)
+                if bucket not in mesh_buckets:
+                    mesh_buckets[bucket] = []
                     
                 for idx in indices:
                     p = positions[idx]
@@ -395,7 +465,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     a_b = int(max(0.0, min(1.0, col[3])) * 255.0) if len(col) > 3 else 255
                     c_int = r_b | (g_b << 8) | (b_b << 16) | (a_b << 24)
                     
-                    mesh_buckets[tex_id].append({
+                    mesh_buckets[bucket].append({
                         "u": float(u_val),
                         "v": float(v_val),
                         "color": c_int,
@@ -406,7 +476,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
 
     # Group into spatial chunks of <= 384 vertices (128 triangles) or 6m x 6m cells
     # to give meshes tight bounding boxes and eliminate clipping bottleneck on huge floors!
-    for tex_id, vlist in mesh_buckets.items():
+    for (tex_id, scroll), vlist in mesh_buckets.items():
         batch_size = 384
         for i in range(0, len(vlist), batch_size):
             batch = vlist[i : i + batch_size]
@@ -421,6 +491,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             all_meshes.append({
                 "name": f"{tex_name}_{i // batch_size}"[:31],
                 "texture_id": tex_id,
+                "uv_scroll": scroll,
                 "vertices": batch,
                 "bounds_min": b_min,
                 "bounds_max": b_max
@@ -535,7 +606,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         "data": ent_data
     })
 
-    print(f"Writing PBMv2: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders, {len(metadata_entries)} metadata entries...")
+    print(f"Writing PBMv3: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders, {len(metadata_entries)} metadata entries...")
     
     with open(pbm_path, "wb") as f:
         # Header (64 bytes)
@@ -562,7 +633,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 tex["width"],
                 tex["height"],
                 tex["format"],
-                tex["has_alpha"],
+                tex["alpha_mode"],
                 len(tex["data"])
             )
             f.write(thdr)
@@ -571,13 +642,15 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         # Mesh chunk
         for m in all_meshes:
             m_name = m["name"].encode("ascii", errors="ignore")[:31].ljust(32, b"\x00")
+            su, sv = m.get("uv_scroll", (0.0, 0.0))
             mhdr = struct.pack(
-                "<32siI6f",
+                "<32siI6fff",
                 m_name,
                 m["texture_id"],
                 len(m["vertices"]),
                 m["bounds_min"][0], m["bounds_min"][1], m["bounds_min"][2],
-                m["bounds_max"][0], m["bounds_max"][1], m["bounds_max"][2]
+                m["bounds_max"][0], m["bounds_max"][1], m["bounds_max"][2],
+                su, sv
             )
             f.write(mhdr)
             

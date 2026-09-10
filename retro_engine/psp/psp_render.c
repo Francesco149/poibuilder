@@ -49,6 +49,8 @@ void render_cfg_default(RenderCfg* c) {
     c->clip_planes = 1;
     c->alpha_pass = 1;
     c->entity = 1;
+    c->uv_scroll = 1;
+
     c->tex_filter = PBFILT_LINEAR;   /* trilinear: blends adjacent mip levels, which is what removes the level discontinuity between neighbouring tiles at grazing angles */
     /* Mips make distant surfaces cheap but soft, and the hardware picks a level
      * from the geometric mean of the UV derivatives, which over-blurs the
@@ -262,7 +264,8 @@ void psp_render_overrides(RenderCfg* cfg) {
             else if (!strcmp(v, "nearest")) cfg->tex_filter = PBFILT_NEAREST;
             else if (!strcmp(v, "asym"))    cfg->tex_filter = PBFILT_ASYM;
             else                            cfg->tex_filter = PBFILT_MIP_LIN;
-        } else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
+        } else if (!strcmp(k, "uv_scroll")) cfg->uv_scroll = atoi(v);
+        else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
         else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
         else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
         else if (!strcmp(k, "level_mode"))
@@ -283,13 +286,22 @@ static inline int is_billboard_mesh(const char* name) {
            strstr(name, "wildflower") || strstr(name, "Wildflower");
 }
 
-static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
-    if (!mesh) return 0;
-    if (is_billboard_mesh(mesh->name)) return 1;
+/* The alpha handling a mesh needs: PBM_ALPHA_CUTOUT for hard-edged sprites,
+ * PBM_ALPHA_BLEND for soft alpha, PBM_ALPHA_NONE for opaque. A mesh whose
+ * NAME says billboard is a cutout regardless of what its texture claims —
+ * foliage art is frequently saved fully opaque with a hard alpha edge. */
+static inline int mesh_alpha_mode(PbmMap* map, PbmMesh* mesh) {
+    if (!mesh) return PBM_ALPHA_NONE;
     if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
-        if (map->textures[mesh->texture_id].has_alpha) return 1;
+        int mode = map->textures[mesh->texture_id].alpha_mode;
+        if (mode != PBM_ALPHA_NONE) return mode;
     }
-    return 0;
+    if (is_billboard_mesh(mesh->name)) return PBM_ALPHA_CUTOUT;
+    return PBM_ALPHA_NONE;
+}
+
+static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
+    return mesh_alpha_mode(map, mesh) != PBM_ALPHA_NONE;
 }
 
 static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* last_tex_id) {
@@ -428,6 +440,57 @@ static void get_patrol_sphere_pos(const PbmEntityPatrolSphere* ent, float time,
     }
 }
 
+/* ── Animated UV scroll (PBM 3.0) ─────────────────────────────────────────
+ * A mesh's uv_scroll_u/v carry the VELOCITY OF THE TEXTURE PATTERN across the
+ * surface, in texture repeats per second, along the surface's own UV axes:
+ * the waterfall on the courtyard wall falls downward, i.e. toward -V (V runs
+ * up a wall), so its speed_v is negative, while churn on the floor spreading
+ * away from the wall is positive (V runs toward +Z there).
+ *
+ * The implementation is one register: the GE's texture offset advances by
+ * speed * time, and what that does to the picture was measured rather than
+ * assumed. On hardware, an INCREASING offset slides the pattern toward +V —
+ * the sign is the opposite of what "offset is added to the texture coordinate"
+ * suggests, and getting it backwards is invisible in a static frame, which is
+ * exactly how it shipped once. Re-measure with `run_psp_headless.sh` (frames
+ * 60 and 80 of the benchmark share a frozen camera) plus a correlation over
+ * the scrolling mesh's pixels before changing this line.
+ *
+ * Cost: two register writes for a mesh whose offset moved this frame, nothing
+ * at all for a static one (the last offset is cached, so a scene with no
+ * animated meshes emits zero extra commands).
+ *
+ * Two hardware constraints shape this:
+ *   - The offset applies to the 3D T&L pipe only, which is the path every
+ *     mesh here already uses (GU_TRANSFORM_3D). The 2D HUD is unaffected.
+ *   - A tile-atlas mesh addresses absolute slot coordinates inside a 512x512
+ *     atlas, so an offset would drag the tile across its slot border. The
+ *     exporter never marks such a mesh as scrolling; skip it defensively
+ *     here as well rather than trusting the file.
+ */
+static void apply_uv_scroll(PbmMap* map, PbmMesh* mesh, float time_s,
+                            float* cur_u, float* cur_v) {
+    float su = 0.0f, sv = 0.0f;
+    if ((mesh->uv_scroll_u != 0.0f || mesh->uv_scroll_v != 0.0f) &&
+        mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures &&
+        !strstr(map->textures[mesh->texture_id].name, "TileAtlas")) {
+        su = mesh->uv_scroll_u;
+        sv = mesh->uv_scroll_v;
+    }
+    /* Wrap into one repeat before it reaches the register: the offset is a
+     * 12-bit fixed-point add, so an offset the size of the texture would just
+     * lose precision. Wrapping first keeps the visible shift exact. */
+    float u = time_s * su;
+    float v = time_s * sv;
+    u -= floorf(u);
+    v -= floorf(v);
+    if (u != *cur_u || v != *cur_v) {
+        sceGuTexOffset(u, v);
+        *cur_u = u;
+        *cur_v = v;
+    }
+}
+
 static void set_texture_filter(const RenderCfg* cfg) {
     if (cfg->use_mips) {
         /* A *mipmap* minification filter is what actually selects a level; the
@@ -453,7 +516,7 @@ static void set_texture_filter(const RenderCfg* cfg) {
 
 void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                       float cx, float cy, float cz, float yaw, float pitch,
-                      float ent_time, RenderStats* stats) {
+                      float time_s, RenderStats* stats) {
     if (stats) { stats->draw_calls = 0; stats->vertices = 0; stats->triangles = 0; }
 
     /* Clear */
@@ -495,6 +558,12 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     sceGuTexWrap(GU_REPEAT, GU_REPEAT);
 
     int last_tex_id = -999;
+    /* GE texture-offset register state, cached so static meshes emit nothing.
+     * The cache starts INVALID on purpose: a display list does not reset GE
+     * registers, so the offset left by the previous frame's last animated mesh
+     * is still live until something changes it. Starting at 0,0 would skip the
+     * first write and paint the whole static scene through that stale offset. */
+    float tex_off_u = -1.0f, tex_off_v = -1.0f;
     uint32_t verts = 0, calls = 0;
 
     /* ── Pass 1: opaque ── */
@@ -510,6 +579,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
 
         bind_texture(map, cfg, mesh, &last_tex_id);
+        if (cfg->uv_scroll) apply_uv_scroll(map, mesh, time_s, &tex_off_u, &tex_off_v);
         if (cfg->display_mode != 2) {
             if (cfg->cull) sceGuEnable(GU_CULL_FACE); else sceGuDisable(GU_CULL_FACE);
         }
@@ -526,7 +596,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     if (cfg->entity && map->has_patrol_sphere) {
         if (!s_sphere_initialized)
             init_sphere_mesh(map->patrol_sphere.radius, map->patrol_sphere.color);
-        get_patrol_sphere_pos(&map->patrol_sphere, ent_time, &ent_x, &ent_y, &ent_z);
+        get_patrol_sphere_pos(&map->patrol_sphere, time_s, &ent_x, &ent_y, &ent_z);
 
         sceGumMatrixMode(GU_MODEL);
         sceGumPushMatrix();
@@ -546,10 +616,15 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         sceGumUpdateMatrix();
     }
 
-    /* ── Pass 2: alpha billboards ── */
+    /* ── Pass 2: alpha (cutouts and blends) ──
+     * Alpha test stays on for both kinds: with GU_GREATER,0 it only discards
+     * fully transparent fragments, which keeps early-Z rejection working for
+     * the blended surfaces too. A CUTOUT raises the threshold, which is what
+     * gives foliage its hard silhouette instead of a haze of soft texels. */
     if (cfg->alpha_pass) {
         sceGuEnable(GU_ALPHA_TEST);
-        sceGuAlphaFunc(GU_GREATER, 0x10, 0xFF);
+        int cur_alpha_ref = 0x10;
+        sceGuAlphaFunc(GU_GREATER, cur_alpha_ref, 0xFF);
         sceGuEnable(GU_BLEND);
         sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
         sceGuDisable(GU_CULL_FACE);
@@ -560,7 +635,13 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
             if (!is_transparent_mesh(map, mesh)) continue;
             if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
 
+            int want_ref = (mesh_alpha_mode(map, mesh) == PBM_ALPHA_CUTOUT) ? 0x10 : 0x00;
+            if (want_ref != cur_alpha_ref) {
+                sceGuAlphaFunc(GU_GREATER, want_ref, 0xFF);
+                cur_alpha_ref = want_ref;
+            }
             bind_texture(map, cfg, mesh, &last_tex_id);
+            if (cfg->uv_scroll) apply_uv_scroll(map, mesh, time_s, &tex_off_u, &tex_off_v);
             int prim = (cfg->display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
             sceGuDrawArray(prim,
                 GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,

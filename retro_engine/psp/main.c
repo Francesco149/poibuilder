@@ -312,6 +312,13 @@ int main(int argc, char** argv) {
     RenderStats stats = { 0, 0, 0 };
 
     int is_benchmark = HEADLESS_BENCHMARK;
+    /* Benchmark: capture the orbit at SCROLL_PROOF_FRAME and again
+     * SCROLL_PROOF_FRAMES later with the camera frozen (see the render loop).
+     * 20 frames at 60 Hz is a third of a second: at the showcase waterfall's
+     * 0.75 repeats/second that is a quarter of the texture, far more than any
+     * interpolation or camera noise could explain. */
+    #define SCROLL_PROOF_FRAME   60
+    #define SCROLL_PROOF_FRAMES  20
     float orbit_angle = 0.5f;
 
     uint64_t last_tick = psp_now_us();
@@ -408,7 +415,11 @@ int main(int argc, char** argv) {
 
             if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
             if (cam_pitch < -1.45f) cam_pitch = -1.45f;
-        } else {
+        } else if (!(is_benchmark && frame_count >= SCROLL_PROOF_FRAME)) {
+            /* The benchmark freezes its orbit from SCROLL_PROOF_FRAME on, so
+             * the two captures taken after it are the SAME camera: the only
+             * thing left moving between them is the scene clock (animated UV
+             * scroll on the water, and the patrol sphere). */
             orbit_angle += 0.02f;
             cam_x = center_x + sinf(orbit_angle) * radius;
             cam_y = center_y + radius * 0.4f;
@@ -451,9 +462,19 @@ int main(int argc, char** argv) {
 
         if (is_benchmark) {
             if (frame_count == 60) {
-                printf("[PSP] frame 60: %u verts, %.1f fps, cpu %.2f gpu %.2f\n",
-                       (unsigned)stats.vertices, fps, last_cpu_ms, last_gpu_ms);
+                printf("[PSP] frame 60: %u verts, %.1f fps, cpu %.2f gpu %.2f | cam %.4f %.4f %.4f yaw %.5f pitch %.5f t %.3f\n",
+                       (unsigned)stats.vertices, fps, last_cpu_ms, last_gpu_ms,
+                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch, patrol_time);
                 save_tga("screenshot_psp.tga", (void*)(0x04000000), SCR_WIDTH, SCR_HEIGHT, BUF_WIDTH);
+            }
+            if (frame_count == SCROLL_PROOF_FRAME + SCROLL_PROOF_FRAMES) {
+                /* Second capture of the frozen camera: diffing it against
+                 * screenshot_psp.tga is what proves the animated UV scroll
+                 * actually moves on the GE (see run_psp_headless.sh). */
+                printf("[PSP] scroll proof frame %d cam %.4f %.4f %.4f yaw %.5f pitch %.5f t %.3f\n",
+                       SCROLL_PROOF_FRAME + SCROLL_PROOF_FRAMES,
+                       cam_x, cam_y, cam_z, cam_yaw, cam_pitch, patrol_time);
+                save_tga("screenshot_psp_scroll.tga", (void*)(0x04000000), SCR_WIDTH, SCR_HEIGHT, BUF_WIDTH);
             }
             if (frame_count >= 120) {
                 printf("[PSP] benchmark done: %d frames, ~%.1f fps\n", frame_count, fps);
