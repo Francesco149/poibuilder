@@ -326,7 +326,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	# Lit Bush
 	var bush := _create_billboard_node("Bush_Foliage",
 		"res://addons/poibuilder/materials/textures/bush_foliage.png",
-		Vector2(1.5, 1.5), Vector3(2.0, 0.75, 4.0), true)
+		Vector2(1.5, 1.5), Vector3(2.0, 0.75, 3.2), true)
 	root.add_child(bush)
 
 	# Unlit Wildflowers (Pure white unshaded emission)
