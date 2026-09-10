@@ -23,7 +23,11 @@ ensure_display() {
 
     command -v xwayland-satellite >/dev/null 2>&1 || return 1
 
-    if ! pgrep -x xwayland-satellite >/dev/null 2>&1; then
+    # /proc/<pid>/comm is truncated to 15 characters, so `pgrep -x
+    # xwayland-satellite` NEVER matches ("xwayland-satell"). Matching the short
+    # name instead of the full command line started a second satellite on every
+    # launch, each claiming the next display (:1, :2, ...).
+    if ! pgrep -x xwayland-satell >/dev/null 2>&1; then
         nohup xwayland-satellite >/tmp/xwayland-satellite.log 2>&1 &
         for _ in $(seq 1 50); do
             sleep 0.1
@@ -31,15 +35,7 @@ ensure_display() {
         done
     fi
 
-    # xwayland-satellite takes the lowest free display; niri sessions land on :0.
-    local n
-    for n in $(ls /tmp/.X11-unix/ 2>/dev/null | sed -n 's/^X\([0-9]\+\)$/\1/p' | sort -n); do
-        # A stale socket left by a dead server has no listener; xdpyinfo may not
-        # be installed, so treat only :0 as authoritative here.
-        if [ "$n" = "0" ]; then
-            export DISPLAY=":$n"
-            return 0
-        fi
-    done
-    return 1
+    [ -S /tmp/.X11-unix/X0 ] || return 1
+    export DISPLAY=:0
+    return 0
 }

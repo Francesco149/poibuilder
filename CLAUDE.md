@@ -23,6 +23,14 @@ godot-mono --editor project/project.godot
 # Then open: test_scenes/human_test_phase6.tscn
 ```
 
+Interactive launchers (`./test.sh raylib|psp`, `./run_raylib.sh`) need an X
+display. This workstation is pure Wayland (niri) with no Xwayland for the
+session, so `xdisplay.sh` resolves one: reuse `DISPLAY`, else start
+`xwayland-satellite` (compositor-integrated, `:0`), else fall back to
+`xvfb-run` and say so. Starting a private `Xwayland :99` does **not** work —
+it has no compositor behind it, so the program runs and renders perfectly into
+a window nobody can see. That was the entire "no window appears" bug.
+
 ## Key Documents
 
 - `SPECIFICATION.md` — Complete ProBuilder spec (201 sections, 711 citations)
