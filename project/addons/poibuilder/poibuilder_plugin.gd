@@ -64,7 +64,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.63"
+const VERSION := "0.9.64"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1325,8 +1325,11 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	# Arming is a PoiBuilder context change too: the engine grid hides and
 	# the elevated PB grid shows while drawing (engine-bridge a no-op).
 	_update_editing_context()
-	if PBShapeParams.height_drags_offset(shape_id):
+	if shape_id == &"sprite":
 		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
+			% String(shape_id).capitalize())
+	elif PBShapeParams.height_drags_offset(shape_id):
+		_set_creation_hint("%s — drag out a sheet on any surface, then move to offset it (Ctrl: lock direction, Esc cancels)"
 			% String(shape_id).capitalize())
 	else:
 		_set_creation_hint("%s — drag a base on any surface (Ctrl: lock direction, Esc cancels)" % String(shape_id).capitalize())
@@ -1500,9 +1503,11 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	if hit.is_empty():
 		return false
 	var view_z: Vector3 = camera.global_transform.basis.z
-	if PBShapeParams.height_drags_offset(shape_creator.shape_id):
+	if shape_creator.shape_id == &"sprite":
 		# Sprite flow: one click anchors the shape ON the surface; the mouse
 		# then pushes it along the surface normal until the confirming click.
+		# (The plane reaches the same OFFSET stage, but by dragging a base
+		# rect first — see PBShapeParams.height_drags_offset.)
 		shape_creator.begin_anchor(hit["point"], hit["normal"], view_z)
 		_clear_creation_hover()
 		_set_creation_hint("move off the surface to set the offset, then click to confirm")
@@ -1694,7 +1699,10 @@ func _creation_end_base() -> void:
 	# the surface (height 0) instead of popping in below it with a jump at
 	# the first mouse move.
 	_refresh_preview()
-	_set_creation_hint("move to size it, then click to confirm (Alt: height plane)")
+	if shape_creator.state == PBShapeCreator.State.OFFSET:
+		_set_creation_hint("move to lift it off the surface, then click to confirm")
+	else:
+		_set_creation_hint("move to size it, then click to confirm (Alt: height plane)")
 
 ## The confirming click (after the height drag): the shape exists from here
 ## on (its node-add undo is registered now). Parameterized shapes open the

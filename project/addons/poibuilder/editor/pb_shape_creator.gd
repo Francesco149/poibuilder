@@ -10,10 +10,12 @@
 ##   HEIGHT — LMB released: mouse motion adjusts the 3rd dimension along the
 ##            surface normal (the shape preview grows from its base); the
 ##            next LMB click confirms.
-##   OFFSET — the sprite flow only: a single CLICK anchors the shape ON the
-##            surface, mouse motion then displaces it along the surface
-##            normal, and the next click confirms (no base drag — a flat
-##            sprite is drawn by parameters, not by dragging a rect).
+##   OFFSET — the sprite and plane flows: the third dimension is a STAND-OFF
+##            from the surface rather than a size. The sprite reaches it by a
+##            single click that anchors it ON the surface; the plane drags a
+##            base rect out parallel to the surface first and then lifts clear
+##            of it. Either way mouse motion displaces the shape along the
+##            surface normal (clamped >= 0), and the next click confirms.
 ##   PARAMS — the overlay parameter modal is open (live preview, Apply /
 ##            Cancel). Cancel restores session_values (the state at modal
 ##            open); neither destroys the shape — only ESC before the
@@ -149,7 +151,7 @@ func build_data() -> PBMeshData:
 ## face (< 0, grows below — ProBuilder behavior) — EXCEPT for shapes that
 ## must stay pinned to the surface (PBShapeParams.stays_on_surface): round
 ## shapes SHRINK on a negative drag rather than flipping underground, and the
-## sprite rides the normal offset on top of its plane-aligned base.
+## sprite/plane ride the normal offset on top of their plane-aligned base.
 func placement_transform(data: PBMeshData) -> Transform3D:
 	var f := arrow_direction()
 	var x_axis := plane_normal.cross(f).normalized()
@@ -252,7 +254,10 @@ func end_base() -> bool:
 	if u_size < MIN_EXTENT and v_size < MIN_EXTENT:
 		reset()
 		return false
-	state = State.HEIGHT
+	# Stand-off shapes (sprite, plane) do not grow a third dimension: the next
+	# stage lifts the sheet off the surface instead, so the value the base drag
+	# sized stays the shape's final size.
+	state = State.OFFSET if PBShapeParams.height_drags_offset(shape_id) else State.HEIGHT
 	height = 0.0
 	# The values NOW are the baseline the height drag works against (round
 	# shapes resize relative to their base-release footprint).
@@ -272,13 +277,13 @@ func begin_anchor(surface_point: Vector3, surface_normal: Vector3, view_z: Vecto
 	values = PBShapeParams.get_default_values(shape_id)
 	base_values = values.duplicate()
 
-## Updates the height (or the sprite's normal offset) from a world point
-## (already projected onto the view-parallel plane by the caller). On walls
-## the normal extent maps to the shape's DEPTH (the shape grows along the
-## face normal); on floors it maps to the height. The facing arrow LOCKS at
-## the base release — height motion must not re-point it. The sprite's
-## offset never goes negative (a sprite rides ON the surface, not through
-## it); height-param shapes keep signed growth (negative = below).
+## Updates the height (or the sprite's / plane's normal offset) from a world
+## point (already projected onto the view-parallel plane by the caller). On
+## walls the normal extent maps to the shape's DEPTH (the shape grows along
+## the face normal); on floors it maps to the height. The facing arrow LOCKS
+## at the base release — height motion must not re-point it. The sprite/plane
+## offset never goes negative (they ride ON the surface, not through it);
+## height-param shapes keep signed growth (negative = below).
 func update_height_point(world_point: Vector3) -> void:
 	if state != State.HEIGHT and state != State.OFFSET:
 		return
@@ -440,7 +445,13 @@ func get_extents_readout() -> String:
 				var h: float = float(values.get("height", height))
 				return "W: %.2fm  D: %.2fm  H: %.2fm" % [w, d, h]
 		State.OFFSET:
-			return "Offset: %.2fm" % height
+			if shape_id == &"sprite":
+				return "Offset: %.2fm" % height
+			return "W: %.2fm  D: %.2fm  Offset: %.2fm" % [
+				float(values.get("width", u_size)),
+				float(values.get("depth", v_size)),
+				height
+			]
 		_:
 			return ""
 
@@ -453,7 +464,11 @@ func get_cursor_extents_text() -> String:
 		State.HEIGHT:
 			return "(%.2f, %.2f, %.2f)" % [u_size, v_size, absf(height)]
 		State.OFFSET:
-			return "(0.00, 0.00, %.2f)" % absf(height)
+			# The sprite has no base rect (it is sized by its parameters), the
+			# plane's footprint is what the base drag just drew.
+			if shape_id == &"sprite":
+				return "(0.00, 0.00, %.2f)" % absf(height)
+			return "(%.2f, %.2f, %.2f)" % [u_size, v_size, absf(height)]
 		_:
 			return ""
 ## parameters (width, depth, height, radius). One mapping fits every surface:

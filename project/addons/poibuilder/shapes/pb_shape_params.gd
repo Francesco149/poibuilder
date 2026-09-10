@@ -226,16 +226,22 @@ static func height_drag_param(shape_id: StringName) -> Dictionary:
 
 ## True when the shape must stay sitting ON the surface no matter which way
 ## the height drag goes (round shapes shrink instead of growing below; the
-## sprite rides the normal). Shapes with a real height param keep ProBuilder's
-## negative-height "grow below the surface" behavior.
+## sprite and the plane ride the normal). Shapes with a real height param keep
+## ProBuilder's negative-height "grow below the surface" behavior.
 static func stays_on_surface(shape_id: StringName) -> bool:
-	return shape_id == &"sprite" or not height_drag_param(shape_id).is_empty()
+	return height_drags_offset(shape_id) or not height_drag_param(shape_id).is_empty()
 
 ## True when the creation height drag displaces the shape along the surface
-## normal instead of resizing it (the sprite placement flow: click to anchor,
-## mouse to push off the surface, click to confirm).
+## normal instead of resizing it — i.e. the third dimension is a STAND-OFF, not
+## a size. Two shapes work this way:
+##   - sprite: click to anchor (no base drag), mouse to push off the surface.
+##   - plane:  drag the sheet out parallel to the surface, then mouse to lift
+##     it clear of that surface (a waterfall sheet hanging in front of a wall,
+##     a sign board, a floating decal plane).
+## For both, the drag/offset is clamped at >= 0: the plane never sinks into
+## the surface it was drawn on, and its size comes entirely from the base drag.
 static func height_drags_offset(shape_id: StringName) -> bool:
-	return shape_id == &"sprite"
+	return shape_id == &"sprite" or shape_id == &"plane"
 
 ## Maps a creation drag (base rect extents u/v in the surface plane + height
 ## along the normal) onto the shape's parameter values. The mapping is the
