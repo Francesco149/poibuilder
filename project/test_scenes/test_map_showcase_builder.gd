@@ -104,7 +104,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 
 	var splat_mat := PBSplat.create_splat_material()
 	splat_mat.resource_name = "FloorSplatMat"
-	splat_mat.set_shader_parameter("base_color", Color(0.9, 0.9, 0.9, 1.0))
+	splat_mat.set_shader_parameter("base_color", Color(1.0, 1.0, 1.0, 1.0))
 	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
 		splat_mat.set_shader_parameter("base_texture", load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"))
 	splat_mat.set_shader_parameter("layer_1_enabled", true)
@@ -414,7 +414,7 @@ static func _get_checker_material() -> StandardMaterial3D:
 static func _get_tiles_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = "TilesMaterial"
-	mat.albedo_color = Color(0.85, 0.85, 0.85, 1.0)
+	mat.albedo_color = Color(1.0, 1.0, 1.0, 1.0)
 	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png")
 	mat.roughness = 0.7

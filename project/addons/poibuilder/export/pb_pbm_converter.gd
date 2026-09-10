@@ -279,11 +279,23 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 
 		atlases[atlas_idx].blit_rect(t_img, Rect2i(0, 0, 128, 128), Vector2i(col * 128, row * 128))
 		tile_to_atlas_map[uid] = { "atlas_idx": atlas_idx, "col": col, "row": row }
+	# Collect baseColorFactor from materials for any tinted base textures
+	var img_base_colors: Dictionary = {}
+	var materials_gltf: Array = gltf.get("materials", [])
+	var textures_gltf: Array = gltf.get("textures", [])
+	for mat in materials_gltf:
+		var pbr: Dictionary = mat.get("pbrMetallicRoughness", {})
+		var col: Array = pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])
+		var base_tex: Dictionary = pbr.get("baseColorTexture", {})
+		var t_idx: int = base_tex.get("index", -1)
+		if t_idx >= 0 and t_idx < textures_gltf.size():
+			var s_idx: int = textures_gltf[t_idx].get("source", -1)
+			if s_idx >= 0 and (col[0] < 0.999 or col[1] < 0.999 or col[2] < 0.999):
+				img_base_colors[s_idx] = Color(col[0], col[1], col[2], col[3])
 
 	# 4. Assemble Textures Table
 	var textures: Array[Dictionary] = []
 	var img_to_tex_mapping: Dictionary = {} # raw_img_idx -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
-
 	# 4a. Base Textures
 	for base in base_images:
 		var img: Image = base["image"]
@@ -295,6 +307,13 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
 			w = pot_w
 			h = pot_h
+
+		if img_base_colors.has(base["index"]):
+			var bcol: Color = img_base_colors[base["index"]]
+			for py in range(h):
+				for px in range(w):
+					var p_col: Color = img.get_pixel(px, py)
+					img.set_pixel(px, py, Color(p_col.r * bcol.r, p_col.g * bcol.g, p_col.b * bcol.b, p_col.a))
 
 		var converted := convert_image_to_bytes(img, format_16bit)
 		var tex_id := textures.size()
@@ -329,8 +348,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		}
 
 	# 5. Map Materials to Texture Slots
-	var materials: Array = gltf.get("materials", [])
-	var textures_gltf: Array = gltf.get("textures", [])
+	var materials: Array = materials_gltf
 	var mat_to_tex_mapping: Dictionary = {}
 
 	for mat_idx in range(materials.size()):
@@ -477,6 +495,92 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		"tag": "map_name",
 		"type": PBM_META_STRING,
 		"data": map_name_bytes
+	})
+	# Metadata 2: player_spawn
+	var spawn_dict := {
+		"position": [spawn_pos.x, spawn_pos.y, spawn_pos.z],
+		"yaw": spawn_rot,
+		"camera_fov": 65.0
+	}
+	var spawn_bytes := JSON.stringify(spawn_dict).to_utf8_buffer()
+	spawn_bytes.append(0)
+	metadata_entries.append({
+		"tag": "player_spawn",
+		"type": PBM_META_JSON,
+		"data": spawn_bytes
+	})
+
+	# Metadata 3: walkable_mesh (2 triangles = 18 floats = 72 bytes)
+	var walkable_buf := PackedByteArray()
+	walkable_buf.resize(72)
+	var w_pts := [
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
+	]
+	for wi in range(6):
+		walkable_buf.encode_float(wi * 12, w_pts[wi].x)
+		walkable_buf.encode_float(wi * 12 + 4, w_pts[wi].y)
+		walkable_buf.encode_float(wi * 12 + 8, w_pts[wi].z)
+	metadata_entries.append({
+		"tag": "walkable_mesh",
+		"type": PBM_META_ENTITY,
+		"data": walkable_buf
+	})
+
+	# Metadata 4: triggers
+	var triggers_arr := [
+		{
+			"id": "cutscene_archway",
+			"event": "on_enter_archway",
+			"bounds_min": [-2.0, 0.0, -5.8],
+			"bounds_max": [2.0, 3.5, -4.8],
+			"oneshot": true
+		}
+	]
+	var triggers_bytes := JSON.stringify(triggers_arr).to_utf8_buffer()
+	triggers_bytes.append(0)
+	metadata_entries.append({
+		"tag": "triggers",
+		"type": PBM_META_JSON,
+		"data": triggers_bytes
+	})
+
+	# Metadata 5: particle_emitters
+	var particles_arr := [
+		{
+			"id": "torch_sparks",
+			"position": [2.5, 1.8, -4.5],
+			"rate": 30,
+			"lifetime": 1.2,
+			"velocity": [0.0, 1.5, 0.0],
+			"spread": 0.3,
+			"color": "0xFF33AAFF"
+		}
+	]
+	var particles_bytes := JSON.stringify(particles_arr).to_utf8_buffer()
+	particles_bytes.append(0)
+	metadata_entries.append({
+		"tag": "particle_emitters",
+		"type": PBM_META_JSON,
+		"data": particles_bytes
+	})
+
+	# Metadata 6: rigid_bodies (ball pit)
+	var rigid_dict := {
+		"type": "ball_pit",
+		"count": 16,
+		"radius": 0.22,
+		"mass": 1.0,
+		"restitution": 0.75,
+		"spawn_min": [-0.8, 2.0, -0.8],
+		"spawn_max": [0.8, 4.0, 0.8]
+	}
+	var rigid_bytes := JSON.stringify(rigid_dict).to_utf8_buffer()
+	rigid_bytes.append(0)
+	metadata_entries.append({
+		"tag": "rigid_bodies",
+		"type": PBM_META_JSON,
+		"data": rigid_bytes
 	})
 
 	# Metadata 2: PatrolSphere Entity

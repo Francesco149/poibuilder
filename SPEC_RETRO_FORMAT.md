@@ -205,37 +205,176 @@ Following each `PbmMetadataHeader`, exactly `data_size` bytes of binary data are
 
 ---
 
-## 8. Proof-of-Concept Entities Specification
+## 8. Custom Entities & Behaviors Specification
+
+Version 2.0 provides first-class support for game entities, navigation surfaces, physics simulations, and gameplay triggers. These are stored within the extensible Metadata Chunk.
 
 ### 8.1 Map Name (`tag = "map_name"`)
 - **Type**: `PBM_META_STRING` (`1`)
-- **Payload**: Null-terminated string identifying the level name displayed on the runtime HUD (e.g. `"PoiRetro Courtyard Showcase\0"`).
+- **Payload**: Null-terminated UTF-8 string identifying the map name for HUD display and save states.
+  ```text
+  "PoiRetro Courtyard Showcase\0"
+  ```
 
-### 8.2 Patrol Sphere Entity (`tag = "entities"`)
+### 8.2 Player Spawn Point (`tag = "player_spawn"`)
+- **Type**: `PBM_META_JSON` (`2`)
+- **Payload**: JSON descriptor defining the initial camera and player controller transform:
+  ```json
+  {
+    "position": [0.0, 1.6, 4.2],
+    "yaw": 0.0,
+    "camera_fov": 65.0
+  }
+  ```
+
+### 8.3 Walkable Mesh Navigation Surface (`tag = "walkable_mesh"`)
+Instead of performing expensive 3D collision against thousands of decorative visual triangles (stairs, cornices, balustrades), a level designer can author an invisible, low-poly navigation surface in Godot.
+- **Type**: `PBM_META_ENTITY` (`3`) or `PBM_META_RAW` (`0`)
+- **Payload**: Binary array of triangles: `num_triangles * 9 * sizeof(float)` $(X, Y, Z)$ per vertex.
+- **Custom Engine Implementation (Ground Raycast Snapping)**:
+  ```c
+  float get_walkable_ground_y(float x, float z, float default_y) {
+      for (int i = 0; i < num_walkable_tris; ++i) {
+          Vector3 a = walkable_tris[i].v0;
+          Vector3 b = walkable_tris[i].v1;
+          Vector3 c = walkable_tris[i].v2;
+          float det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+          if (fabsf(det) < 0.00001f) continue;
+          float u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+          float v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+          float w = 1.0f - u - v;
+          if (u >= -0.01f && v >= -0.01f && w >= -0.01f) {
+              return u * a.y + v * b.y + w * c.y;
+          }
+      }
+      return default_y;
+  }
+  ```
+
+### 8.4 Cutscene / Event Trigger Areas (`tag = "triggers"`)
+Triggers define spatial volumes that execute cutscenes, sound triggers, or door transitions when entered by the player.
+- **Type**: `PBM_META_JSON` (`2`)
+- **Payload**: Array of trigger descriptors:
+  ```json
+  [
+    {
+      "id": "cutscene_archway",
+      "event": "on_enter_archway",
+      "bounds_min": [-2.0, 0.0, -5.8],
+      "bounds_max": [2.0, 3.5, -4.8],
+      "oneshot": true
+    }
+  ]
+  ```
+- **Custom Engine Implementation**:
+  ```c
+  void check_triggers(Vector3 player_pos) {
+      for (int i = 0; i < num_triggers; ++i) {
+          Trigger* t = &triggers[i];
+          if (t->triggered) continue;
+          if (player_pos.x >= t->min.x && player_pos.x <= t->max.x &&
+              player_pos.y >= t->min.y && player_pos.y <= t->max.y &&
+              player_pos.z >= t->min.z && player_pos.z <= t->max.z) {
+              t->triggered = true;
+              execute_event(t->event);
+          }
+      }
+  }
+  ```
+
+### 8.5 Particle Emitters (`tag = "particle_emitters"`)
+Defines static or dynamic particle sources (torches, campfire sparks, fountain spray).
+- **Type**: `PBM_META_JSON` (`2`)
+- **Payload**:
+  ```json
+  [
+    {
+      "id": "torch_sparks",
+      "position": [2.5, 1.8, -4.5],
+      "rate": 30,
+      "lifetime": 1.2,
+      "velocity": [0.0, 1.5, 0.0],
+      "spread": 0.3,
+      "color": "0xFF33AAFF"
+    }
+  ]
+  ```
+- **Custom Engine Implementation**:
+  Spawn particles at the configured rate, integrate velocity and gravity per frame ($p_{new} = p + v \cdot dt + \frac{1}{2} g \cdot dt^2$), and recycle dead particles.
+
+### 8.6 Physics Rigid Bodies (e.g. Ball Pit) (`tag = "rigid_bodies"`)
+Enables real-time physics simulations on retro or custom hardware without external heavy physics middleware.
+- **Type**: `PBM_META_JSON` (`2`)
+- **Payload**:
+  ```json
+  {
+    "type": "ball_pit",
+    "count": 16,
+    "radius": 0.22,
+    "mass": 1.0,
+    "restitution": 0.75,
+    "spawn_min": [-0.8, 2.0, -0.8],
+    "spawn_max": [0.8, 4.0, 0.8]
+  }
+  ```
+- **Custom Engine Implementation**:
+  Simulate gravity ($a_y = -9.81\text{ m/s}^2$), floor and wall boundary restitution, and sphere-sphere elastic impulse resolution:
+  ```c
+  Vector3 diff = Vector3Subtract(b2->pos, b1->pos);
+  float dist = Vector3Length(diff);
+  float min_dist = b1->radius + b2->radius;
+  if (dist < min_dist && dist > 0.0001f) {
+      Vector3 normal = Vector3Scale(diff, 1.0f / dist);
+      float overlap = 0.5f * (min_dist - dist);
+      b1->pos = Vector3Subtract(b1->pos, Vector3Scale(normal, overlap));
+      b2->pos = Vector3Add(b2->pos, Vector3Scale(normal, overlap));
+      float k = Vector3DotProduct(Vector3Subtract(b1->vel, b2->vel), normal);
+      if (k > 0.0f) {
+          float impulse = (1.0f + b1->restitution) * k / (b1->mass + b2->mass);
+          b1->vel = Vector3Subtract(b1->vel, Vector3Scale(normal, impulse * b2->mass));
+          b2->vel = Vector3Add(b2->vel, Vector3Scale(normal, impulse * b1->mass));
+      }
+  }
+  ```
+
+### 8.7 Patrolling Animated Entities (`tag = "entities"`)
 - **Type**: `PBM_META_ENTITY` (`3`)
-- **Payload Structure**: `PbmEntityPatrolSphere` (84 bytes, packed)
+- **Payload Structure**: `PbmEntityPatrolSphere` (88 bytes, packed)
 
 | Offset | Type | Field Name | Description |
 |---|---|---|---|
 | `0x00` | `char[32]` | `name` | Entity name: `"PatrolSphere"`. |
-| `0x20` | `uint32_t` | `entity_type` | Entity class identifier: `1` = `PATROL_SPHERE`. |
-| `0x24` | `float` | `radius` | Sphere collision/visual radius in meters (e.g. `0.35f`). |
-| `0x28` | `uint32_t` | `color` | 32-bit color `0xAABBGGRR` (e.g. `0xFF00C8FF` bright amber gold). |
-| `0x2C` | `float` | `speed` | Traversal speed in meters per second (e.g. `2.5f`). |
-| `0x30` | `uint32_t` | `num_waypoints` | Number of 3D waypoints (e.g. `3`). |
-| `0x34` | `float[3][3]` | `waypoints` | Array of 3D points $(X, Y, Z)$ defining the cyclic patrol route. |
-
-**Cyclic Path Interpolation Algorithm**:
-```c
-// Runtime position evaluation along waypoints:
-float total_dist = dist(P0, P1) + dist(P1, P2) + dist(P2, P0);
-float current_t = fmodf(time * speed, total_dist);
-// Linear interpolation along active segment P_i -> P_{i+1}
-```
+| `0x20` | `uint32_t` | `entity_type` | Entity class: `1` = `PATROL_SPHERE`. |
+| `0x24` | `float` | `radius` | Sphere radius in meters (`0.35f`). |
+| `0x28` | `uint32_t` | `color` | 32-bit color `0xAABBGGRR` (`0xFF00C8FF` gold). |
+| `0x2C` | `float` | `speed` | Speed in meters per second (`2.5f`). |
+| `0x30` | `uint32_t` | `num_waypoints` | Number of waypoints (`3`). |
+| `0x34` | `float[3][3]` | `waypoints` | Array of 3D points $(X, Y, Z)$ defining cyclic patrol route. |
 
 ---
 
-## 9. Hardware Clipping & Performance Rules (PSP Guidelines)
+## 9. Godot Authoring Guide
+
+Level designers author custom entities and behaviors in Godot 4 using standard node patterns:
+
+1. **Walkable Mesh**:
+   - Add a `MeshInstance3D` or `PBMesh` named with prefix `Walkable_` (e.g. `Walkable_Floor`).
+   - Disable visibility in game (`visible = false`) or set transparent editor material.
+   - The PoiBuilder export pipeline extracts its world-space triangles into the `walkable_mesh` metadata lump.
+2. **Triggers**:
+   - Add an `Area3D` or box node named with prefix `Trigger_` (e.g. `Trigger_Archway`).
+   - In node metadata or script, assign:
+     - `event_name = "on_enter_archway"`
+     - `oneshot = true`
+3. **Particle Emitters**:
+   - Add a `GPUParticles3D` or `Marker3D` named `Emitter_Torch`.
+   - Set metadata `particle_rate = 30`, `particle_lifetime = 1.2`, `particle_color = Color(...)`.
+4. **Physics Rigid Bodies**:
+   - Add nodes under a `BallPit` container with `RigidBody3D` or metadata `is_rigid_body = true`.
+5. **Player Spawn Point**:
+   - Add a `Marker3D` named `PlayerSpawn`. Its position and rotation define the default spawn transform.
+
+## 10. Hardware Clipping & Performance Rules (PSP Guidelines)
 
 1. **Near-Plane Distance**:
    Perspective projection near plane MUST be set between `0.05f` and `0.10f` meters (`sceGumPerspective(fov, aspect, 0.08f, 200.0f)`). A near plane of `0.5m` causes geometry within arm's reach of floors and stairs to intersect the near clipping plane, inducing heavy hardware re-triangulation.
@@ -248,7 +387,7 @@ float current_t = fmodf(time * speed, total_dist);
 
 ---
 
-## 10. Compliance Verification
+## 11. Compliance Verification
 
 A compliant PBM exporter and loader MUST pass the following tests:
 1. `magic == 0x324D4250` and `version == 2`.

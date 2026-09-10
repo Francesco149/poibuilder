@@ -209,10 +209,23 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
 
     print(f"Packed tiles into {len(atlases)} 512x512 atlas textures.")
 
+    # Collect baseColorFactor from materials for any tinted base textures
+    img_base_colors = {}
+    materials_gltf = gltf.get("materials", [])
+    textures_gltf = gltf.get("textures", [])
+    for mat in materials_gltf:
+        pbr = mat.get("pbrMetallicRoughness", {})
+        col = pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])
+        base_tex = pbr.get("baseColorTexture", {})
+        t_idx = base_tex.get("index", -1)
+        if t_idx >= 0 and t_idx < len(textures_gltf):
+            s_idx = textures_gltf[t_idx].get("source", -1)
+            if s_idx >= 0 and (col[0] < 0.999 or col[1] < 0.999 or col[2] < 0.999):
+                img_base_colors[s_idx] = col
+
     # Assemble Final Textures Table
     textures = []
     img_to_tex_mapping = {} # raw_img_idx -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
-
     # 1. Base textures
     for img_idx, name, pil_img in base_images:
         w, h = pil_img.size
@@ -220,6 +233,13 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         if pot_w != w or pot_h != h:
             pil_img = pil_img.resize((pot_w, pot_h), Image.Resampling.BILINEAR)
             w, h = pot_w, pot_h
+        if img_idx in img_base_colors:
+            bcol = img_base_colors[img_idx]
+            r, g, b, a = pil_img.split()
+            r = r.point(lambda p: int(p * bcol[0]))
+            g = g.point(lambda p: int(p * bcol[1]))
+            b = b.point(lambda p: int(p * bcol[2]))
+            pil_img = Image.merge("RGBA", (r, g, b, a))
         tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit)
         tex_id = len(textures)
         textures.append({
@@ -411,7 +431,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     # Metadata Chunk (PBM v2.0):
     metadata_entries = []
 
-    # 1. Map Name
+    # 1. Map Name (String)
     map_name_str = "PoiRetro Courtyard Showcase\x00".encode("utf-8")
     metadata_entries.append({
         "tag": "map_name",
@@ -419,6 +439,80 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         "data": map_name_str
     })
 
+    # 2. Player Spawn Point (JSON)
+    spawn_json = json.dumps({
+        "position": spawn_pos,
+        "yaw": spawn_rot,
+        "camera_fov": 65.0
+    }).encode("utf-8") + b"\x00"
+    metadata_entries.append({
+        "tag": "player_spawn",
+        "type": PBM_META_JSON,
+        "data": spawn_json
+    })
+
+    # 3. Walkable Mesh Navigation Surface (Binary triangles: 2 triangles = 18 floats = 72 bytes)
+    # Quad floor from (-4.0, -5.5) to (4.0, 5.0) at Y=0.0
+    walkable_tris = [
+        -4.0, 0.0, -5.5,   4.0, 0.0, -5.5,   4.0, 0.0,  5.0,
+        -4.0, 0.0, -5.5,   4.0, 0.0,  5.0,  -4.0, 0.0,  5.0
+    ]
+    walkable_buf = struct.pack("<18f", *walkable_tris)
+    metadata_entries.append({
+        "tag": "walkable_mesh",
+        "type": PBM_META_ENTITY,
+        "data": walkable_buf
+    })
+
+    # 4. Cutscene / Event Trigger Areas (JSON)
+    triggers_json = json.dumps([
+        {
+            "id": "cutscene_archway",
+            "event": "on_enter_archway",
+            "bounds_min": [-2.0, 0.0, -5.8],
+            "bounds_max": [2.0, 3.5, -4.8],
+            "oneshot": True
+        }
+    ]).encode("utf-8") + b"\x00"
+    metadata_entries.append({
+        "tag": "triggers",
+        "type": PBM_META_JSON,
+        "data": triggers_json
+    })
+
+    # 5. Particle Emitters (JSON)
+    particles_json = json.dumps([
+        {
+            "id": "torch_sparks",
+            "position": [2.5, 1.8, -4.5],
+            "rate": 30,
+            "lifetime": 1.2,
+            "velocity": [0.0, 1.5, 0.0],
+            "spread": 0.3,
+            "color": "0xFF33AAFF"
+        }
+    ]).encode("utf-8") + b"\x00"
+    metadata_entries.append({
+        "tag": "particle_emitters",
+        "type": PBM_META_JSON,
+        "data": particles_json
+    })
+
+    # 6. Physics Rigid Bodies / Ball Pit (JSON)
+    rigid_bodies_json = json.dumps({
+        "type": "ball_pit",
+        "count": 16,
+        "radius": 0.22,
+        "mass": 1.0,
+        "restitution": 0.75,
+        "spawn_min": [-0.8, 2.0, -0.8],
+        "spawn_max": [0.8, 4.0, 0.8]
+    }).encode("utf-8") + b"\x00"
+    metadata_entries.append({
+        "tag": "rigid_bodies",
+        "type": PBM_META_JSON,
+        "data": rigid_bodies_json
+    })
     # 2. Scripted Entity: 3-Point Cyclic Patrol Sphere
     ent_name = b"PatrolSphere\x00".ljust(32, b"\x00")
     ent_type = PBM_ENTITY_PATROL_SPHERE
