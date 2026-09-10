@@ -28,6 +28,12 @@ godot-mono --editor project/project.godot
 - `SPECIFICATION.md` — Complete ProBuilder spec (201 sections, 711 citations)
 - `UNITY-GODOT-MAPPING.md` — Unity→Godot API mapping reference
 - `IMPLEMENTATION.md` — Phased implementation plan + mandatory verification gates
+- `retro_engine/psp/HARDWARE-TESTING.md` — **real PSP measurement and debugging**:
+  PSPLink over USB, the `./run_psp_hw.sh` loop, device diagnostics, and the
+  hard-won rules (always `reset` before loading a module, never `modstop` a live
+  one, recovery via psplink's `reset`). Read this BEFORE concluding anything
+  about PSP performance — PPSSPP cannot measure it, and a build that runs at 60
+  fps there can spend 27 ms of a 16.6 ms budget on the device.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
 
 ## Reference Repos
@@ -835,6 +841,23 @@ v0.9.63 round complete ✓ — PSP frame cost found and fixed on REAL HARDWARE
 - FINAL DEVICE NUMBERS: 59.9 fps locked in-game (cpu 1.81 ms, gpu 0.09 ms with
   the pre-quality settings; gpu ~3.1 ms with trilinear), worst of 11 camera poses
   3.04 ms/frame. Everything is now limited by the 60 Hz vsync, not by the GE.
+- ALSO IN THIS ROUND, from a second look at the device: the atlas half-texel
+  inset (above) fixed the regular seam grid, and the remaining grazing-angle
+  lines were identified as the GE's PER-PRIMITIVE LOD — the level comes from each
+  triangle's own UV derivatives, so adjacent tile quads land on different levels
+  and step in sharpness along their shared edge, flickering as the camera moves.
+  Not mipmapping (persists with mips off), not atlas bleeding, not coplanar
+  z-fighting with the base floor layer (`skip_mesh=FloorSplatMat` leaves them
+  unchanged). Structural to tiled textures on a GE with no anisotropic filtering;
+  the escape hatches are `bias=+N` (blurrier, compresses the steps) and
+  `level_mode=const` (one LOD everywhere, removes them, mild aliasing) — both
+  live in host0:/poi_render.txt.
+- HUD: the control hints were only drawn when the map had NO entity, so on any
+  map with one they were invisible and the controls looked missing. They are now
+  always shown, along with a live `in: x,y btn NNNN` input readout — which is how
+  the real cause was found: the PSP's HOLD switch sets PSP_CTRL_HOLD (0x20000)
+  and suppresses every button, so with Hold on the app legitimately receives no
+  input. Hold ON is for unattended runs; Hold OFF to interact.
 - Version bump convention applied (0.9.62 -> 0.9.63 in poibuilder_plugin.gd,
   pb_editor.gd, plugin.cfg).
 

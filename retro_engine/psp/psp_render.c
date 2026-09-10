@@ -55,6 +55,7 @@ void render_cfg_default(RenderCfg* c) {
      * compressed axis of a grazing surface. A small negative bias trades a
      * little of that softness back for detail. */
     c->tex_lod_bias = -1.0f;
+    c->tex_level_mode = PBLEVEL_AUTO;
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
     c->near_plane = 0.08f;
@@ -172,7 +173,8 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str) {
 }
 
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
-                  int display_mode, const char* extra, const char* extra2) {
+                  int display_mode, const char* extra, const char* extra2,
+                  const char* input) {
     char buf[128];
     uint32_t verts = stats ? stats->vertices : 0;
     uint32_t draws = stats ? stats->draw_calls : 0;
@@ -186,15 +188,24 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
     psp_draw_text(8.0f, 18.0f, 0xFFFFFF00, buf);
 
     if (map->has_patrol_sphere) {
-        snprintf(buf, sizeof(buf), "Entity: %s", map->patrol_sphere.name);
+        snprintf(buf, sizeof(buf), "Entity: %-14s | %s",
+                 map->patrol_sphere.name, input ? input : "");
         psp_draw_text(8.0f, 28.0f, 0xFF00C8FF, buf);
-    } else {
-        psp_draw_text(8.0f, 28.0f, 0xFFDDDDDD,
-                      "Stick: Fly | Tri+Stick: Tilt | Square: Fast | X/O: Up/Down");
+    } else if (input) {
+        psp_draw_text(8.0f, 28.0f, 0xFF00C8FF, input);
     }
 
-    if (extra && *extra) psp_draw_text(8.0f, 38.0f, 0xFF66E0FF, extra);
-    if (extra2 && *extra2) psp_draw_text(8.0f, 48.0f, 0xFF8888FF, extra2);
+    /* The control hints used to be shown only when the map had no entity, so
+     * on any map with one they were invisible and the controls looked missing. */
+    psp_draw_text(8.0f, 38.0f, 0xFFDDDDDD,
+                  "Stick: Fly/Strafe | Hold Tri+Stick: Look | Square: Boost");
+    snprintf(buf, sizeof(buf),
+             "X/O: Up/Down | L/R: Turn | Start: Reset | Select: Mode(%d)",
+             display_mode);
+    psp_draw_text(8.0f, 48.0f, 0xFFDDDDDD, buf);
+
+    if (extra && *extra) psp_draw_text(8.0f, 58.0f, 0xFF66E0FF, extra);
+    if (extra2 && *extra2) psp_draw_text(8.0f, 68.0f, 0xFF8888FF, extra2);
 }
 
 /* Runtime render overrides, read once at startup from a file on the host.
@@ -207,6 +218,18 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
  *       mips=0
  * lets the same binary be re-run with different settings and screenshotted.
  * Absent file: the compiled defaults apply. */
+/* Meshes whose name contains this substring are skipped. Coplanar surfaces are
+ * the reason: the exporter emits a base-material quad across the whole floor
+ * AND baked tile quads on top of it, both at y=0, and two coplanar surfaces
+ * fight in the depth buffer along their triangle edges -- which shows up as
+ * thin lines that flicker as the camera moves. Being able to drop one layer at
+ * runtime is what identifies it. */
+static char s_skip_mesh[64] = "";
+
+void psp_render_skip_mesh(const char* needle) {
+    snprintf(s_skip_mesh, sizeof(s_skip_mesh), "%s", needle ? needle : "");
+}
+
 void psp_render_overrides(RenderCfg* cfg) {
     FILE* f = fopen("host0:/poi_render.txt", "r");
     if (!f) f = fopen("ms0:/poi_render.txt", "r");
@@ -234,6 +257,9 @@ void psp_render_overrides(RenderCfg* cfg) {
             else                            cfg->tex_filter = PBFILT_MIP_LIN;
         } else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
         else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
+        else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
+        else if (!strcmp(k, "level_mode"))
+            cfg->tex_level_mode = strcmp(v, "const") ? PBLEVEL_AUTO : PBLEVEL_CONST;
     }
     fclose(f);
 }
@@ -405,7 +431,10 @@ static void set_texture_filter(const RenderCfg* cfg) {
             case PBFILT_ASYM:    sceGuTexFilter(GU_LINEAR_MIPMAP_NEAREST, GU_NEAREST); break;
             default:             sceGuTexFilter(GU_LINEAR_MIPMAP_NEAREST, GU_LINEAR); break;
         }
-        sceGuTexLevelMode(GU_TEXTURE_AUTO, cfg->tex_lod_bias);
+        if (cfg->tex_level_mode == PBLEVEL_CONST)
+            sceGuTexLevelMode(GU_TEXTURE_CONST, cfg->tex_lod_bias);
+        else
+            sceGuTexLevelMode(GU_TEXTURE_AUTO, cfg->tex_lod_bias);
         return;
     }
     switch (cfg->tex_filter) {
@@ -471,6 +500,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         PbmMesh* mesh = &map->meshes[mi];
         if (!mesh->vertices || mesh->num_vertices == 0) continue;
         if (is_transparent_mesh(map, mesh)) continue;
+        if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
 
         bind_texture(map, cfg, mesh, &last_tex_id);
         if (cfg->display_mode != 2) {
@@ -521,6 +551,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
             PbmMesh* mesh = &map->meshes[mi];
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (!is_transparent_mesh(map, mesh)) continue;
+            if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
 
             bind_texture(map, cfg, mesh, &last_tex_id);
             int prim = (cfg->display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
