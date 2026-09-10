@@ -9,6 +9,7 @@ typedef struct {
     uint16_t height;
     uint16_t format;
     uint16_t has_alpha;
+    uint16_t is_swizzled;
     uint32_t data_size;
     void* pixels;
 } PbmTexture;

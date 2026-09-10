@@ -33,9 +33,6 @@ typedef struct {
     uint32_t color;
     float x, y, z;
 } SpriteVertex;
-
-static SpriteVertex __attribute__((aligned(16))) text_verts[512];
-
 /* Exit callback thread for Home button */
 static int exit_callback(int arg1, int arg2, void *common) {
     sceKernelExitGame();
@@ -100,8 +97,9 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
 
     float cur_x = start_x;
     float cur_y = start_y;
+    SpriteVertex* text_verts = (SpriteVertex*)sceGuGetMemory(len * 2 * sizeof(SpriteVertex));
+    if (!text_verts) return;
     int vert_count = 0;
-
     for (int i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)str[i];
         if (c < 32 || c > 126) c = ' ';
@@ -135,9 +133,6 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
         cur_x += 8.0f;
     }
 
-    /* CRITICAL FOR REAL PSP HARDWARE:
-     * Flush CPU D-Cache lines to RAM so the Sony GE hardware DMA sees all text lines! */
-    sceKernelDcacheWritebackRange(text_verts, vert_count * sizeof(SpriteVertex));
 
     sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, vert_count, 0, text_verts);
 }
@@ -471,7 +466,8 @@ int main(int argc, char* argv[]) {
                         PbmTexture* tex = &map->textures[mesh->texture_id];
                         if (tex->pixels) {
                             int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
-                            sceGuTexMode(psm, 0, 0, 0);
+                            int swizzle = tex->is_swizzled ? 1 : 0;
+                            sceGuTexMode(psm, 0, 0, swizzle);
                             sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
                         }
                         last_tex_id = mesh->texture_id;
@@ -519,7 +515,8 @@ int main(int argc, char* argv[]) {
                         PbmTexture* tex = &map->textures[mesh->texture_id];
                         if (tex->pixels) {
                             int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
-                            sceGuTexMode(psm, 0, 0, 0);
+                            int swizzle = tex->is_swizzled ? 1 : 0;
+                            sceGuTexMode(psm, 0, 0, swizzle);
                             sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
                         }
                         last_tex_id = mesh->texture_id;
