@@ -166,7 +166,7 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str) {
 }
 
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
-                  int display_mode, const char* extra) {
+                  int display_mode, const char* extra, const char* extra2) {
     char buf[128];
     uint32_t verts = stats ? stats->vertices : 0;
     uint32_t draws = stats ? stats->draw_calls : 0;
@@ -188,6 +188,7 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
     }
 
     if (extra && *extra) psp_draw_text(8.0f, 38.0f, 0xFF66E0FF, extra);
+    if (extra2 && *extra2) psp_draw_text(8.0f, 48.0f, 0xFF8888FF, extra2);
 }
 
 /* ── Scene ──────────────────────────────────────────────────────────────── */

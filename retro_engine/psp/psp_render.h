@@ -58,7 +58,7 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str);
 /* The in-game HUD block (frame stats + map/mode line + optional extra line).
  * Shared by the game loop and the profiler so both measure the same pixels. */
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
-                  int display_mode, const char* extra);
+                  int display_mode, const char* extra, const char* extra2);
 
 /* A 64x64 swizzled RGBA5551 texture used by the profiler's cache-residency
  * ablation. */
