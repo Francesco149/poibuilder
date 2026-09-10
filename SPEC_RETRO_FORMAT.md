@@ -205,161 +205,14 @@ Following each `PbmMetadataHeader`, exactly `data_size` bytes of binary data are
 
 ---
 
-## 8. Custom Entities & Behaviors: Example Recipes
+## 8. End-to-End Walkthrough: Godot 4 Authoring to Custom Engine Implementation
 
 > **CRITICAL ARCHITECTURAL DISTINCTION — RECIPES VS. STANDARD**:  
 > The specific entity tags and structures detailed below (`"walkable_mesh"`, `"triggers"`, `"player_spawn"`, `"particle_emitters"`, `"rigid_bodies"`, `"entities"`) are **EXAMPLE IMPLEMENTATION RECIPES**, **NOT** fixed schema constraints of the PBMv2 specification.
 >
 > The PBMv2 specification defines **only the general binary lump transport container** (Section 7: 32-byte tag string, 32-bit type integer, 32-bit length integer, and raw payload bytes). The payload data can be **anything you want**: flat binary structs, UTF-8 JSON, byte-encoded bytecode, dialog trees, navmesh graphs, or audio cue tables. You are completely free to invent your own tags and payload formats for your custom game engine.
 >
-> The recipes below demonstrate tested, real-world patterns for authoring custom data in the Godot editor and consuming them in custom C/Raylib/PSP game engines.
-### 8.1 Map Name (`tag = "map_name"`)
-- **Type**: `PBM_META_STRING` (`1`)
-- **Payload**: Null-terminated UTF-8 string identifying the map name for HUD display and save states.
-  ```text
-  "PoiRetro Courtyard Showcase\0"
-  ```
-
-### 8.2 Player Spawn Point (`tag = "player_spawn"`)
-- **Type**: `PBM_META_JSON` (`2`)
-- **Payload**: JSON descriptor defining the initial camera and player controller transform:
-  ```json
-  {
-    "position": [0.0, 1.6, 4.2],
-    "yaw": 0.0,
-    "camera_fov": 65.0
-  }
-  ```
-
-### 8.3 Walkable Mesh Navigation Surface (`tag = "walkable_mesh"`)
-Instead of performing expensive 3D collision against thousands of decorative visual triangles (stairs, cornices, balustrades), a level designer can author an invisible, low-poly navigation surface in Godot.
-- **Type**: `PBM_META_ENTITY` (`3`) or `PBM_META_RAW` (`0`)
-- **Payload**: Binary array of triangles: `num_triangles * 9 * sizeof(float)` $(X, Y, Z)$ per vertex.
-- **Custom Engine Implementation (Ground Raycast Snapping)**:
-  ```c
-  float get_walkable_ground_y(float x, float z, float default_y) {
-      for (int i = 0; i < num_walkable_tris; ++i) {
-          Vector3 a = walkable_tris[i].v0;
-          Vector3 b = walkable_tris[i].v1;
-          Vector3 c = walkable_tris[i].v2;
-          float det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
-          if (fabsf(det) < 0.00001f) continue;
-          float u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
-          float v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
-          float w = 1.0f - u - v;
-          if (u >= -0.01f && v >= -0.01f && w >= -0.01f) {
-              return u * a.y + v * b.y + w * c.y;
-          }
-      }
-      return default_y;
-  }
-  ```
-
-### 8.4 Cutscene / Event Trigger Areas (`tag = "triggers"`)
-Triggers define spatial volumes that execute cutscenes, sound triggers, or door transitions when entered by the player.
-- **Type**: `PBM_META_JSON` (`2`)
-- **Payload**: Array of trigger descriptors:
-  ```json
-  [
-    {
-      "id": "cutscene_archway",
-      "event": "on_enter_archway",
-      "bounds_min": [-2.0, 0.0, -5.8],
-      "bounds_max": [2.0, 3.5, -4.8],
-      "oneshot": true
-    }
-  ]
-  ```
-- **Custom Engine Implementation**:
-  ```c
-  void check_triggers(Vector3 player_pos) {
-      for (int i = 0; i < num_triggers; ++i) {
-          Trigger* t = &triggers[i];
-          if (t->triggered) continue;
-          if (player_pos.x >= t->min.x && player_pos.x <= t->max.x &&
-              player_pos.y >= t->min.y && player_pos.y <= t->max.y &&
-              player_pos.z >= t->min.z && player_pos.z <= t->max.z) {
-              t->triggered = true;
-              execute_event(t->event);
-          }
-      }
-  }
-  ```
-
-### 8.5 Particle Emitters (`tag = "particle_emitters"`)
-Defines static or dynamic particle sources (torches, campfire sparks, fountain spray).
-- **Type**: `PBM_META_JSON` (`2`)
-- **Payload**:
-  ```json
-  [
-    {
-      "id": "torch_sparks",
-      "position": [2.5, 1.8, -4.5],
-      "rate": 30,
-      "lifetime": 1.2,
-      "velocity": [0.0, 1.5, 0.0],
-      "spread": 0.3,
-      "color": "0xFF33AAFF"
-    }
-  ]
-  ```
-- **Custom Engine Implementation**:
-  Spawn particles at the configured rate, integrate velocity and gravity per frame ($p_{new} = p + v \cdot dt + \frac{1}{2} g \cdot dt^2$), and recycle dead particles.
-
-### 8.6 Physics Rigid Bodies (e.g. Ball Pit) (`tag = "rigid_bodies"`)
-Enables real-time physics simulations on retro or custom hardware without external heavy physics middleware.
-- **Type**: `PBM_META_JSON` (`2`)
-- **Payload**:
-  ```json
-  {
-    "type": "ball_pit",
-    "count": 16,
-    "radius": 0.22,
-    "mass": 1.0,
-    "restitution": 0.75,
-    "spawn_min": [-0.8, 2.0, -0.8],
-    "spawn_max": [0.8, 4.0, 0.8]
-  }
-  ```
-- **Custom Engine Implementation**:
-  Simulate gravity ($a_y = -9.81\text{ m/s}^2$), floor and wall boundary restitution, and sphere-sphere elastic impulse resolution:
-  ```c
-  Vector3 diff = Vector3Subtract(b2->pos, b1->pos);
-  float dist = Vector3Length(diff);
-  float min_dist = b1->radius + b2->radius;
-  if (dist < min_dist && dist > 0.0001f) {
-      Vector3 normal = Vector3Scale(diff, 1.0f / dist);
-      float overlap = 0.5f * (min_dist - dist);
-      b1->pos = Vector3Subtract(b1->pos, Vector3Scale(normal, overlap));
-      b2->pos = Vector3Add(b2->pos, Vector3Scale(normal, overlap));
-      float k = Vector3DotProduct(Vector3Subtract(b1->vel, b2->vel), normal);
-      if (k > 0.0f) {
-          float impulse = (1.0f + b1->restitution) * k / (b1->mass + b2->mass);
-          b1->vel = Vector3Subtract(b1->vel, Vector3Scale(normal, impulse * b2->mass));
-          b2->vel = Vector3Add(b2->vel, Vector3Scale(normal, impulse * b1->mass));
-      }
-  }
-  ```
-
-### 8.7 Patrolling Animated Entities (`tag = "entities"`)
-- **Type**: `PBM_META_ENTITY` (`3`)
-- **Payload Structure**: `PbmEntityPatrolSphere` (88 bytes, packed)
-
-| Offset | Type | Field Name | Description |
-|---|---|---|---|
-| `0x00` | `char[32]` | `name` | Entity name: `"PatrolSphere"`. |
-| `0x20` | `uint32_t` | `entity_type` | Entity class: `1` = `PATROL_SPHERE`. |
-| `0x24` | `float` | `radius` | Sphere radius in meters (`0.35f`). |
-| `0x28` | `uint32_t` | `color` | 32-bit color `0xAABBGGRR` (`0xFF00C8FF` gold). |
-| `0x2C` | `float` | `speed` | Speed in meters per second (`2.5f`). |
-| `0x30` | `uint32_t` | `num_waypoints` | Number of waypoints (`3`). |
-| `0x34` | `float[3][3]` | `waypoints` | Array of 3D points $(X, Y, Z)$ defining cyclic patrol route. |
-
----
-
-## 9. Full End-to-End Walkthrough: Godot Authoring to Custom Engine Implementation
-
-This section provides a complete, tested walkthrough of authoring custom data in Godot 4, exporting via PoiBuilder, and implementing the runtime behavior in a custom C engine (verified via the Raylib runner).
+> The walkthrough below demonstrates tested, real-world patterns for authoring custom data in the Godot 3D editor, exporting via PoiBuilder, and consuming them in custom C / Raylib / PSP game engines.
 
 ```
   [ Godot 4 3D Editor ]           [ PoiBuilder Exporter ]            [ Custom Engine / Raylib / PSP ]
@@ -379,19 +232,19 @@ This section provides a complete, tested walkthrough of authoring custom data in
 
 In the Godot 3D Viewport and Scene Dock, authoring entities uses standard, intuitive node patterns:
 
-#### 1. Player Spawn Point
+#### 1. Player Spawn Point (`tag = "player_spawn"`, JSON)
 1. Add a `Marker3D` or `Node3D` anywhere in your level.
 2. Name the node `PlayerSpawn` (or any name starting with `Spawn`).
 3. Rotate and position it where the player should begin.
 4. *(Optional)* In the Inspector, scroll to **Metadata**, click **Add Metadata**, and set `camera_fov = 75.0`.
 
-#### 2. Walkable Mesh Navigation Surface
-1. When creating stepped terraced stairs, complex ruins, or decorative balustrades, computing exact physics collision against 4,000 detailed visual triangles is slow and prone to snagging.
+#### 2. Walkable Mesh Navigation Surface (`tag = "walkable_mesh"`, Binary Triangles)
+1. When creating stepped terraced stairs, complex ruins, or decorative balustrades, computing exact physics collision against thousands of detailed visual triangles is slow and prone to snagging.
 2. Add an invisible `MeshInstance3D` named `Walkable_Floor` spanning the walkable area.
-3. Assign it a simple quad or low-poly ramp surface.
-4. The exporter extracts its triangles into `"walkable_mesh"` and excludes it from opaque visual drawing so it does not render twice.
+3. Assign it a simple quad or low-poly ramp surface and set `visible = false`.
+4. The exporter extracts its triangles into `"walkable_mesh"` (`num_triangles * 9 * sizeof(float)`) and excludes it from opaque visual drawing so it does not render twice.
 
-#### 3. Event / Cutscene Trigger Area
+#### 3. Event / Cutscene Trigger Area (`tag = "triggers"`, JSON)
 1. Add an `Area3D` or simple box `MeshInstance3D` named `Trigger_VaultDoor`.
 2. Position and scale it over the doorway or entrance volume.
 3. In the Inspector, under **Metadata**, click **Add Metadata**:
@@ -399,7 +252,7 @@ In the Godot 3D Viewport and Scene Dock, authoring entities uses standard, intui
    - `dialogue_id` (String): `"vault_lore_01"`
    - `oneshot` (bool): `true`
 
-#### 4. Particle Emitter Marker
+#### 4. Particle Emitter Marker (`tag = "particle_emitters"`, JSON)
 1. Add a `Marker3D` or `GPUParticles3D` named `Emitter_Torch`.
 2. Position it on a wall bracket or campfire.
 3. In the Inspector, add metadata:
@@ -409,7 +262,7 @@ In the Godot 3D Viewport and Scene Dock, authoring entities uses standard, intui
    - `spread` (float): `0.4`
    - `color` (Color): `Color(1.0, 0.5, 0.1, 1.0)`
 
-#### 5. Physics Rigid Bodies (Ball Pit)
+#### 5. Physics Rigid Bodies / Ball Pit (`tag = "rigid_bodies"`, JSON)
 1. Add a container `Node3D` named `BallPit`.
 2. In the Inspector, add metadata:
    - `count` (int): `24`
@@ -447,10 +300,10 @@ In your custom engine, loading metadata is simple and decoupled:
 PbmHeader hdr;
 fread(&hdr, sizeof(PbmHeader), 1, file);
 
-// 2. Skip textures, meshes, and colliders to reach Metadata Chunk
-// (or jump directly using chunk offsets)
+// 2. Read GPU textures and visual mesh chunks
+// ...
 
-// 3. Read Metadata Lumps
+// 3. Read Extensible Metadata Lumps
 for (uint32_t i = 0; i < hdr.num_metadata; ++i) {
     PbmMetadataHeader mhdr;
     fread(&mhdr, sizeof(PbmMetadataHeader), 1, file);
@@ -467,10 +320,13 @@ for (uint32_t i = 0; i < hdr.num_metadata; ++i) {
     if (strcmp(mhdr.tag, "walkable_mesh") == 0) {
         load_walkable_triangles((float*)payload, mhdr.data_size / sizeof(float));
     } else if (strcmp(mhdr.tag, "triggers") == 0) {
-        // Parse JSON triggers using cJSON, parson, or jsmn:
         parse_triggers_json((const char*)payload);
     } else if (strcmp(mhdr.tag, "player_spawn") == 0) {
         parse_spawn_json((const char*)payload);
+    } else if (strcmp(mhdr.tag, "particle_emitters") == 0) {
+        parse_emitters_json((const char*)payload);
+    } else if (strcmp(mhdr.tag, "rigid_bodies") == 0) {
+        init_ball_pit_from_json((const char*)payload);
     } else if (strcmp(mhdr.tag, "dialogue_npc") == 0) {
         spawn_npc_from_json((const char*)payload);
     }
@@ -489,27 +345,47 @@ In your frame loop:
 2. **Trigger Evaluation**: Check if the player position is contained in any trigger's AABB:
    `if (is_in_bounds(player.pos, trigger.min, trigger.max)) fire_event(trigger.event);`
 3. **Physics Simulation (Ball Pit)**:
-   Integrate gravity, resolve floor bounces ($v_y = -v_y \times \text{restitution}$), boundary walls, and elastic sphere-sphere collisions.
+   Integrate gravity, resolve floor bounces ($v_y = -v_y \times \text{restitution}$), boundary walls, and elastic sphere-sphere collisions:
+   ```c
+   Vector3 diff = Vector3Subtract(b2->pos, b1->pos);
+   float dist = Vector3Length(diff);
+   float min_dist = b1->radius + b2->radius;
+   if (dist < min_dist && dist > 0.0001f) {
+       Vector3 normal = Vector3Scale(diff, 1.0f / dist);
+       float overlap = 0.5f * (min_dist - dist);
+       b1->pos = Vector3Subtract(b1->pos, Vector3Scale(normal, overlap));
+       b2->pos = Vector3Add(b2->pos, Vector3Scale(normal, overlap));
+       float k = Vector3DotProduct(Vector3Subtract(b1->vel, b2->vel), normal);
+       if (k > 0.0f) {
+           float impulse = (1.0f + b1->restitution) * k / (b1->mass + b2->mass);
+           b1->vel = Vector3Subtract(b1->vel, Vector3Scale(normal, impulse * b2->mass));
+           b2->vel = Vector3Add(b2->vel, Vector3Scale(normal, impulse * b1->mass));
+       }
+   }
+   ```
+4. **Particle Stepping**:
+   Spawn particles over time and integrate velocity and gravity ($p + v \cdot \Delta t + \frac{1}{2} g \cdot \Delta t^2$).
 
 ---
 
-### Step 5: Testing & Visual Verification
+### Step 5: Interactive Scratch Project & Re-Export Loop
 
-You can test your exported map interactively or headlessly:
+To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 
 ```bash
-# Launch interactive Raylib custom engine playground:
-./test.sh raylib
+# 1. Open Godot Editor on isolated scratch project with the showcase map:
+./scratch.sh
+# (or via unified runner: ./test.sh scratch)
 
-# Or launch interactive Sony PSP homebrew on PPSSPPSDL:
-./test.sh psp
+# 2. Edit geometry, move entities, adjust triggers or ball pit parameters in Godot
 
-# Run headless verification:
-./test.sh raylib -h
+# 3. Re-export and test directly:
+# In scratch project terminal, run:
+#   ./export_to_raylib.sh
+# Or launch Raylib runner directly:
+#   ./run_raylib.sh
 ```
-
-The Raylib test runner simulates the physics ball pit, navigates the walkable mesh, trips the cutscene trigger, steps particles, and captures visual verification to `raylib_proof_of_concept.png`.
-## 10. Hardware Clipping & Performance Rules (PSP Guidelines)
+## 9. Hardware Clipping & Performance Rules (PSP Guidelines)
 
 1. **Near-Plane Distance**:
    Perspective projection near plane MUST be set between `0.05f` and `0.10f` meters (`sceGumPerspective(fov, aspect, 0.08f, 200.0f)`). A near plane of `0.5m` causes geometry within arm's reach of floors and stairs to intersect the near clipping plane, inducing heavy hardware re-triangulation.
@@ -522,7 +398,7 @@ The Raylib test runner simulates the physics ball pit, navigates the walkable me
 
 ---
 
-## 11. Compliance Verification
+## 10. Compliance Verification
 
 A compliant PBM exporter and loader MUST pass the following tests:
 1. `magic == 0x324D4250` and `version == 2`.
