@@ -309,7 +309,88 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	ramp_stamps.add_child(prism_stamp)
 
 	# ==========================================================================
-	# 7. Billboards: Foliage & Trees (Lit and Unlit)
+	# 7. Waterfall: animated (scrolling) textures, retro-exportable
+	# ==========================================================================
+	# Every surface below scrolls because its MATERIAL carries a speed (see
+	# PBUv.set_scroll_speed): the retro exporters write that into each mesh's
+	# uv_scroll fields, so the engine animates it with a texture-coordinate
+	# offset — no shader, no per-frame vertex traffic.
+	#
+	# The speed is where the PATTERN TRAVELS, in the surface's own UV axes
+	# (V runs up a wall, and toward +Z on a floor), so falling water is a
+	# NEGATIVE V and churn spreading away from the wall is a POSITIVE V.
+	#
+	# Composition is what sells a waterfall at this polygon budget:
+	#   - a wall panel to fall down,
+	#   - a broad sheet + a narrower, faster inner core in front of it
+	#     (parallax => depth), the core drawn with SOFT ALPHA so the stone
+	#     reads through the water,
+	#   - a ripple pool hugging the wall with a foam ribbon spreading from the
+	#     impact point,
+	#   - one alpha-cutout spray billboard at the base.
+	var fall_wall := PBMesh.new()
+	fall_wall.name = "WaterfallWall"
+	fall_wall.pb_mesh_data = PBShapeGenerators.create_box(Vector3(4.0, 5.0, 0.6))
+	fall_wall.position = Vector3(4.5, 2.5, -5.3)
+	fall_wall.collider_type = PBMesh.ColliderType.ACCURATE
+	fall_wall.pb_mesh_data.materials = [_get_tiles_material()]
+	root.add_child(fall_wall)
+
+	# Standing water sheets: the plane's local +X/+Z span the sheet, and the
+	# basis points its normal (+Y) out of the wall.
+	var fall_x := 4.5
+	var wall_face_z := -5.0
+	# The sheet is BLENDED as well: its alpha is how much water stands in front
+	# of the wall at that texel, so the stone reads through the thin parts and
+	# the rope crests go almost opaque. It is emitted before the core, which is
+	# the order the engine needs to blend the two layers back to front.
+	var sheet := _make_water_sheet("Waterfall_Sheet", 2.0, 4.2,
+		Vector3(fall_x, 2.2, wall_face_z + 0.06),
+		"res://addons/poibuilder/materials/textures/waterfall_sheet.png",
+		Vector2(0.04, -0.75), Vector2(0.6, 0.35))
+	_water_material_props(sheet.pb_mesh_data.materials[0], true)
+	root.add_child(sheet)
+
+	# The core sheet is BLENDED (transparency = Alpha): the spray of water in
+	# front of the fall lets the wall through, which is what reads as "wet".
+	# It also sits in front of the opaque sheet, so it blends over finished
+	# pixels whatever order the engine draws the two in.
+	var core := _make_water_sheet("Waterfall_Core", 0.9, 4.0,
+		Vector3(fall_x - 0.25, 2.1, wall_face_z + 0.14),
+		"res://addons/poibuilder/materials/textures/waterfall_core.png",
+		Vector2(0.0, -1.15), Vector2(1.2, 0.5))
+	_water_material_props(core.pb_mesh_data.materials[0], true)
+	root.add_child(core)
+
+	# Pool: a flat ripple surface floating just above the courtyard floor, its
+	# far edge tucked against the wall so no dry floor shows through under the
+	# fall (the stand-off also keeps it clear of the floor's depth values).
+	var pool := _make_water_floor("Waterfall_Pool", 3.6, 3.2,
+		Vector3(fall_x, 0.04, wall_face_z + 1.6),
+		"res://addons/poibuilder/materials/textures/water_pool.png",
+		Vector2(0.02, 0.03), Vector2(0.55, 0.55))
+	root.add_child(pool)
+
+	# Foam ribbon: the churn pushed out of the impact point, its trailing edge
+	# at the wall so the churn starts where the water lands (+Z is +V on a
+	# floor, so spreading away from the wall is a POSITIVE v speed).
+	var foam := _make_water_floor("Waterfall_Foam", 2.8, 1.6,
+		Vector3(fall_x, 0.06, wall_face_z + 0.8),
+		"res://addons/poibuilder/materials/textures/water_foam.png",
+		Vector2(0.0, 0.30), Vector2(0.5, 0.9))
+	root.add_child(foam)
+
+	# Spray: a billboard whose texture scrolls upwards, so the mist appears to
+	# climb off the impact point. Billboard materials repeat their texture (the
+	# exporter only clamps tiling for decals), which is what lets it scroll.
+	var spray := _create_billboard_node("WaterfallSpray",
+		"res://addons/poibuilder/materials/textures/water_spray.png",
+		Vector2(2.2, 1.5), Vector3(fall_x, 0.62, wall_face_z + 0.35), false, true)
+	PBUv.set_scroll_speed(spray.material_override as Material, Vector2(0.0, 0.35))
+	root.add_child(spray)
+
+	# ==========================================================================
+	# 7b. Billboards: Foliage & Trees (Lit and Unlit)
 	# ==========================================================================
 	# Lit Pine Tree
 	var tree_pine := _create_billboard_node("Tree_Pine",
@@ -336,7 +417,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	root.add_child(flowers)
 
 	# ==========================================================================
-	# 7b. Custom Gameplay Entities (Spawn, Walkable, Trigger, Emitter, BallPit)
+	# 7c. Custom Gameplay Entities (Spawn, Walkable, Trigger, Emitter, BallPit)
 	# ==========================================================================
 	# 1. Player Spawn Point
 	var spawn_node := Marker3D.new()
@@ -438,8 +519,62 @@ static func _set_owner_recursive(node: Node, scene_owner: Node) -> void:
 		child.owner = scene_owner
 		_set_owner_recursive(child, scene_owner)
 
+## A standing water sheet: a 1-cell plane whose normal (+Y) is rotated out of
+## the wall it hangs on. `uv_scale` is the face's tiling (repeats per metre);
+## the scroll speed lives on the material (see PBUv.set_scroll_speed).
+static func _make_water_sheet(name_str: String, width: float, height: float,
+		pos: Vector3, tex_path: String, scroll: Vector2, uv_scale: Vector2) -> PBMesh:
+	var node := PBMesh.new()
+	node.name = name_str
+	node.pb_mesh_data = PBShapeGenerators.create_plane(width, height)
+	node.pb_mesh_data.materials = [_water_material(name_str + "_Mat", tex_path, scroll)]
+	node.pb_mesh_data.faces[0].uv_scale = uv_scale
+	# local +X -> world +X, +Y (the plane normal) -> +Z out of the wall,
+	# +Z -> -Y (down): a right-handed basis whose sheet faces the courtyard.
+	node.transform = Transform3D(Basis(Vector3.RIGHT, Vector3.BACK, Vector3.DOWN), pos)
+	node.collider_type = PBMesh.ColliderType.OFF
+	return node
+
+## A horizontal water surface (pool, foam ribbon) lying on the floor, normal up.
+static func _make_water_floor(name_str: String, width: float, depth: float,
+		pos: Vector3, tex_path: String, scroll: Vector2, uv_scale: Vector2) -> PBMesh:
+	var node := PBMesh.new()
+	node.name = name_str
+	node.pb_mesh_data = PBShapeGenerators.create_plane(width, depth)
+	node.pb_mesh_data.materials = [_water_material(name_str + "_Mat", tex_path, scroll)]
+	node.pb_mesh_data.faces[0].uv_scale = uv_scale
+	node.position = pos
+	node.collider_type = PBMesh.ColliderType.OFF
+	return node
+
+static func _water_material(name_str: String, tex_path: String, scroll: Vector2,
+		blended: bool = false) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.resource_name = name_str
+	mat.albedo_color = Color.WHITE
+	mat.roughness = 0.35
+	if ResourceLoader.exists(tex_path):
+		mat.albedo_texture = load(tex_path)
+	PBUv.set_scroll_speed(mat, scroll)
+	_water_material_props(mat, blended)
+	return mat
+
+## Sets the transparency a water surface needs. TRANSPARENCY_ALPHA is the
+## SOFT one: the retro exporters turn it into a blended texture with an 8-bit
+## alpha ramp (and keep its mip chain), where DISABLED keeps it opaque.
+static func _water_material_props(mat: Material, blended: bool) -> void:
+	var sm := mat as StandardMaterial3D
+	if sm == null:
+		return
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if blended else BaseMaterial3D.TRANSPARENCY_DISABLED
+	if blended:
+		# Water darkens what is under it; a white albedo keeps the tint in the
+		# texture's own alpha ramp rather than in the material color.
+		sm.albedo_color = Color(1.0, 1.0, 1.0, 0.85)
+		sm.cull_mode = BaseMaterial3D.CULL_DISABLED
+
 static func _create_billboard_node(name_str: String, tex_path: String,
-		size: Vector2, pos: Vector3, is_lit: bool) -> MeshInstance3D:
+		size: Vector2, pos: Vector3, is_lit: bool, soft_alpha: bool = false) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = name_str
 	mi.position = pos
@@ -452,7 +587,11 @@ static func _create_billboard_node(name_str: String, tex_path: String,
 
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = name_str + "_Mat"
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Foliage art is a CUTOUT: a hard silhouette that alpha-tests, so its
+	# texture keeps level 0 (mip levels of a 1-bit alpha eat the leaves). Mist
+	# and smoke are the opposite case and ask for a soft blend.
+	mat.transparency = (BaseMaterial3D.TRANSPARENCY_ALPHA if soft_alpha
+		else BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR)
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	if ResourceLoader.exists(tex_path):
@@ -463,20 +602,34 @@ static func _create_billboard_node(name_str: String, tex_path: String,
 	mi.material_override = mat
 
 	return mi
+## Shared instances, built once per process. Building a fresh material per call
+## makes each caller hold its own Texture2D reference, and the glTF writer then
+## embeds one image PER MATERIAL — which changes the exported texture count
+## depending on whether Godot's resource cache happened to hand back the same
+## texture, and makes the export fixtures non-reproducible.
+static var _cached_checker_material: StandardMaterial3D = null
+static var _cached_tiles_material: StandardMaterial3D = null
+
 static func _get_checker_material() -> StandardMaterial3D:
+	if _cached_checker_material != null:
+		return _cached_checker_material
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = "CheckerMaterial"
 	mat.albedo_color = Color(0.9, 0.9, 0.9, 1.0)
 	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/checkerboard_2x2.png"):
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/checkerboard_2x2.png")
 	mat.roughness = 0.8
+	_cached_checker_material = mat
 	return mat
 
 static func _get_tiles_material() -> StandardMaterial3D:
+	if _cached_tiles_material != null:
+		return _cached_tiles_material
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = "TilesMaterial"
 	mat.albedo_color = Color(1.0, 1.0, 1.0, 1.0)
 	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png")
 	mat.roughness = 0.7
+	_cached_tiles_material = mat
 	return mat

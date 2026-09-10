@@ -55,6 +55,19 @@ var total_surfaces: int = 0
 var loaded_mesh_instances: Array[MeshInstance3D] = []
 var original_materials: Dictionary = {} # MeshInstance3D -> Array[Material]
 
+## Animated (scrolling) surfaces of the loaded map, as
+## {mi, surface, speed, base_offset}: the exporter writes a material's
+## poi_uv_scroll into the GLB material `extras`, and the viewer replays the
+## same linear texture-coordinate shift the retro engines apply, so the Godot
+## preview shows what the PSP will show.
+var animated_surfaces: Array[Dictionary] = []
+var _scroll_time: float = 0.0
+## When >= 0 the animation is pinned to this scene time instead of advancing.
+## Two screenshots at different --scroll_time values with one fixed camera are
+## then a deterministic A/B of the animation alone (used to check the scroll
+## DIRECTION against the PSP build, which is easy to get backwards).
+var _scroll_freeze: float = -1.0
+
 @onready var camera: Camera3D = $Camera3D
 @onready var map_container: Node3D = $MapContainer
 @onready var hud: Control = $CanvasLayer/HUD
@@ -64,9 +77,15 @@ var original_materials: Dictionary = {} # MeshInstance3D -> Array[Material]
 @onready var btn_load: Button = $CanvasLayer/HUD/VBox/LoadBar/LoadButton
 
 func _ready() -> void:
+	# Options may be passed either way round: Godot keeps the arguments after a
+	# bare `--` out of get_cmdline_args() and puts them in get_cmdline_user_args()
+	# (which is how the documented invocations here are written), so parse both.
+	var cli_args := OS.get_cmdline_args()
+	cli_args.append_array(OS.get_cmdline_user_args())
+
 	# Parse command line args for --map=...
 	var map_to_load := default_map_path
-	for arg in OS.get_cmdline_args():
+	for arg in cli_args:
 		if arg.begins_with("--map="):
 			map_to_load = arg.trim_prefix("--map=")
 		elif arg.ends_with(".glb") or arg.ends_with(".gltf"):
@@ -100,12 +119,14 @@ func _ready() -> void:
 		lbl_stats.text = "Map file not found: %s\nUse 'Browse / Load' to select a .glb file." % map_to_load
 
 	var shot_mode := 1
-	for arg in OS.get_cmdline_args():
+	for arg in cli_args:
 		if arg.begins_with("--mode="):
 			shot_mode = int(arg.trim_prefix("--mode="))
 		elif arg.begins_with("--wire_style="):
 			var s_val := int(arg.trim_prefix("--wire_style="))
 			wireframe_style = (clampi(s_val, 0, 2)) as WireframeStyle
+		elif arg.begins_with("--scroll_time="):
+			_scroll_freeze = float(arg.trim_prefix("--scroll_time="))
 		elif arg.begins_with("--wire_color="):
 			var col_str := arg.trim_prefix("--wire_color=")
 			wireframe_color = Color.from_string(col_str, Color(0.2, 0.9, 1.0))
@@ -113,7 +134,7 @@ func _ready() -> void:
 				_wireframe_material.set_shader_parameter("line_color", wireframe_color)
 	var cam_pos := Vector3(2.5, 4.0, 5.0)
 	var cam_look := Vector3(-1.5, 1.5, -1.5)
-	for arg in OS.get_cmdline_args():
+	for arg in cli_args:
 		if arg.begins_with("--cam_pos="):
 			var parts := arg.trim_prefix("--cam_pos=").split(",")
 			if parts.size() == 3:
@@ -122,7 +143,7 @@ func _ready() -> void:
 			var parts := arg.trim_prefix("--cam_look=").split(",")
 			if parts.size() == 3:
 				cam_look = Vector3(float(parts[0]), float(parts[1]), float(parts[2]))
-	for arg in OS.get_cmdline_args():
+	for arg in cli_args:
 		if arg == "--play" or arg == "--play=1":
 			enter_play_mode()
 		elif arg.begins_with("--screenshot="):
@@ -190,7 +211,42 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	_handle_camera_movement(delta)
+	_update_animated_uvs(delta)
 	_update_hud()
+
+## Replays the map's UV-scroll animation. The offset is applied to whichever
+## material is currently assigned to the surface (the display modes swap in
+## override materials), from a pristine base so repeated frames never
+## accumulate error.
+func _update_animated_uvs(delta: float) -> void:
+	if animated_surfaces.is_empty():
+		return
+	if _scroll_freeze >= 0.0:
+		_scroll_time = _scroll_freeze
+	else:
+		_scroll_time += delta
+	for entry in animated_surfaces:
+		var mi: MeshInstance3D = entry["mi"]
+		if mi == null or not is_instance_valid(mi) or mi.mesh == null:
+			continue
+		var surface: int = entry["surface"]
+		var mat: Material = mi.get_surface_override_material(surface)
+		if mat == null:
+			mat = mi.mesh.surface_get_material(surface)
+		if not (mat is BaseMaterial3D):
+			continue
+		var speed: Vector2 = entry["speed"]
+		# The speed is where the PATTERN travels (PBM 3.0). Godot samples at
+		# uv + uv1_offset, so sliding the pattern toward +V means walking the
+		# offset the other way — the same relation the PSP's texture-offset
+		# register has (measured on hardware), which is what makes this viewer
+		# a preview of the device rather than a second interpretation.
+		# uv1_offset is a Vector3 (u, v, w); w is left alone.
+		var off: Vector3 = entry["base_offset"]
+		(mat as BaseMaterial3D).uv1_offset = Vector3(
+			off.x - speed.x * _scroll_time,
+			off.y - speed.y * _scroll_time,
+			off.z)
 
 func _capture_mouse(capture: bool) -> void:
 	mouse_captured = capture
@@ -236,6 +292,8 @@ func load_map(path: String) -> bool:
 	original_materials.clear()
 	wireframe_mesh_instances.clear()
 	collider_wireframe_instances.clear()
+	animated_surfaces.clear()
+	_scroll_time = 0.0
 	total_vertices = 0
 	total_triangles = 0
 	total_surfaces = 0
@@ -276,6 +334,15 @@ func _collect_mesh_instances(node: Node) -> void:
 				var mat: Material = mi.get_surface_override_material(s) if mi.get_surface_override_material(s) != null else mi.mesh.surface_get_material(s)
 				if mat is StandardMaterial3D and mat.resource_name.begins_with("BakedTile_"):
 					(mat as StandardMaterial3D).texture_repeat = false
+				# Scrolling surfaces carry their speed in the GLB material's
+				# `extras` (see PBUv.SCROLL_META).
+				if mat is StandardMaterial3D and mat.has_meta("extras"):
+					var speed := PBUv.scroll_from_extras(mat.get_meta("extras"))
+					if speed != Vector2.ZERO:
+						animated_surfaces.append({
+							"mi": mi, "surface": s, "speed": speed,
+							"base_offset": (mat as StandardMaterial3D).uv1_offset,
+						})
 				mats.append(mat)
 			original_materials[mi] = mats
 
