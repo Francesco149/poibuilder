@@ -120,17 +120,19 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_eq(total_verts, 4290, "Total vertex count must exactly match Oracle (4290 vertices)")
 
 	# The waterfall demo's five surfaces must come through as scrolling meshes,
-	# at the speeds authored in the Godot scene. The speed is where the PATTERN
-	# travels in the surface's own UV axes: V runs up a wall and toward +Z on a
-	# floor, so falling water is NEGATIVE and churn spreading away from the wall
-	# is POSITIVE. Compared as a set: the texture an exporter names an embedded
-	# image after is not stable across sessions, the physics is.
+	# at the speeds authored in the Godot scene. The sign is a direction, and
+	# with the reference implementation (§5.1 of the format spec) NEGATIVE V
+	# travels down a wall and away from a wall on the floor — which is why the
+	# falling sheet, the pool and the churn are all negative, and only the
+	# billboard spray (whose own V runs down its face) is positive.
+	# Compared as a set: the texture an exporter names an embedded image after
+	# is not stable across sessions, the physics is.
 	assert_eq(scrolling_meshes, 5, "The showcase waterfall must export 5 scrolling meshes")
 	var expected_speeds: Array[Vector2] = [
 		Vector2(0.04, -0.75),   # sheet: falls down the wall
 		Vector2(0.0, -1.15),    # core: falls faster (parallax)
-		Vector2(0.02, 0.03),    # pool: drifts away from the wall
-		Vector2(0.0, 0.3),      # foam: spreads away from the impact point
+		Vector2(0.02, -0.03),   # pool: drifts away from the wall
+		Vector2(0.0, -0.3),     # foam: spreads away from the impact point
 		Vector2(0.0, 0.35),     # spray: climbs off the impact point
 	]
 	assert_eq(scroll_speeds.size(), expected_speeds.size())

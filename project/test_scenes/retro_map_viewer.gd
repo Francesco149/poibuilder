@@ -236,16 +236,19 @@ func _update_animated_uvs(delta: float) -> void:
 		if not (mat is BaseMaterial3D):
 			continue
 		var speed: Vector2 = entry["speed"]
-		# The speed is where the PATTERN travels (PBM 3.0). Godot samples at
-		# uv + uv1_offset, so sliding the pattern toward +V means walking the
-		# offset the other way — the same relation the PSP's texture-offset
-		# register has (measured on hardware), which is what makes this viewer
-		# a preview of the device rather than a second interpretation.
+		# The speed is where the PATTERN travels (PBM 3.0), and the viewer has
+		# to realise it the SAME WAY THE DEVICE DOES or the preview lies about
+		# the direction. Both renderers add the offset to the texture
+		# coordinate, and in both an advancing offset walks the pattern toward
+		# -V — which is why the offset advances WITH the speed here, exactly as
+		# the PSP's offset register does. Subtracting (the "obvious" reading of
+		# what an offset does to a sampled image) made the waterfall climb its
+		# wall in this viewer while the device had it right.
 		# uv1_offset is a Vector3 (u, v, w); w is left alone.
 		var off: Vector3 = entry["base_offset"]
 		(mat as BaseMaterial3D).uv1_offset = Vector3(
-			off.x - speed.x * _scroll_time,
-			off.y - speed.y * _scroll_time,
+			off.x + speed.x * _scroll_time,
+			off.y + speed.y * _scroll_time,
 			off.z)
 
 func _capture_mouse(capture: bool) -> void:
