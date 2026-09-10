@@ -154,6 +154,7 @@ fi
 echo "=== [5/5] Waiting for host0:/poi_profile.txt (up to ${WAIT_SECS}s) ==="
 prev=-1
 stable=0
+link_lost=0
 for ((i = 0; i < WAIT_SECS; i++)); do
     cur=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
     if [ "$cur" != "0" ] && [ "$cur" = "$prev" ]; then
@@ -163,9 +164,27 @@ for ((i = 0; i < WAIT_SECS; i++)); do
         stable=0
     fi
     prev=$cur
+
+    # Unplugging the PSP mid-run means the results are never coming -- host0:
+    # IS the USB link. Say so instead of waiting out the timeout. Checked from
+    # the host only (lsusb), so it adds no traffic to the measurement.
+    if ! lsusb -d 054c:01c9 >/dev/null 2>&1; then
+        echo "PSP left USB at ${i}s (unplugged or suspended)"
+        link_lost=1
+        break
+    fi
     sleep 1
 done
-[ -s "$LOG" ] || { echo "--- usbhostfs_pc log ---"; tail -20 /tmp/usbhostfs_pc.log; die "no results arrived"; }
+[ -s "$LOG" ] || {
+    if [ "$link_lost" = 1 ]; then
+        die "the USB link dropped during the run.
+  The app keeps running on the PSP but its results go to host0: -- the link
+  itself -- so this run has nothing to report. Replug, re-run; the harness
+  reconnects by itself."
+    fi
+    echo "--- usbhostfs_pc log ---"; tail -20 /tmp/usbhostfs_pc.log
+    die "no results arrived"
+}
 
 if [ "$KEEP" = 0 ]; then
     pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true

@@ -83,6 +83,23 @@ the defaults in `psp_prof.c`: `frames`, `warmup`, `sweep`.
 6. **Verify the staged binary is current** before blaming a build:
    `strings hwrun/poiretro_psp_app.prx | grep "<new string>"`.
 
+## Unplugging / replugging is fine (and expected)
+
+Unplugging the PSP to go and look at the screen, then plugging it back in, is a
+normal part of using this. It is handled:
+
+- `usbhostfs_pc` reconnects on its own — it logs `Found Sony PSP device ...` for
+  each re-enumeration and resumes.
+- It is supervised with `restart: on-failure`, so if the device vanishes mid
+  transfer and the process dies, it comes back and reconnects.
+- `run_psp_hw.sh` detects the PSP leaving USB during a run (via `lsusb`, on the
+  host, so it perturbs nothing) and reports it instead of waiting out the
+  timeout.
+
+The one thing an unplug costs you is the *current* run: results are written to
+`host0:`, which **is** the USB link, so they are gone. The app keeps running on
+the device; replug and re-run.
+
 ## Diagnostics toolbox
 
 `pspsh -n -e "<cmd>"`, with `P=/tmp/psplinkusb/pspsh/pspsh`:
