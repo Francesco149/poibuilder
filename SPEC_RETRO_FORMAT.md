@@ -212,30 +212,24 @@ part of the format, not of any one engine:
 2. **The texture MUST wrap** (`GL_REPEAT` / `GU_REPEAT`), since the pattern
    legitimately samples outside `[0,1]` once it has moved.
 
-**Implementation note — the offset register is inverted.** On the Sony GE the
-natural implementation is `sceGuTexOffset(u, v)`, which is documented as an
-offset *added* to the texture coordinate. Measured on hardware, an increasing
-offset slides the pattern toward **+V**, i.e. the opposite of what "add to the
-coordinate" suggests. Keep the file's meaning (pattern velocity) and negate at
-the point of use if the API behaves that way, rather than reversing the field
-— a sign error here is invisible in any static frame and obvious the moment
-something moves.
+**Implementation rule — advance the offset with the speed.** Every renderer
+here realises the field the same way: each frame, `offset += speed * dt`, and the
+resulting offset is applied as that renderer's texture-coordinate offset for the
+mesh (on the GE, `sceGuTexOffset`). With that:
 
-### `PbmVertex` (24 bytes, 4-byte aligned)
+- `speed_v < 0` sends a waterfall **down** a wall,
+- `speed_v < 0` sends churn on the floor **away from the wall** (toward `+Z`),
 
-| Offset | Type | Field Name | Description |
-|---|---|---|---|
-| `0x00` | `float` | `u` | Horizontal texture coordinate ($U$). Normalized $0.0 \dots 1.0$, or atlas sub-slot. |
-| `0x04` | `float` | `v` | Vertical texture coordinate ($V$). Normalized $0.0 \dots 1.0$, or atlas sub-slot. |
-| `0x08` | `uint32_t` | `color` | Packed 32-bit vertex color: `0xAABBGGRR` (Direct hardware Gouraud / Ambient Occlusion lighting). |
-| `0x0C` | `float` | `x` | World-space X coordinate in meters. |
-| `0x10` | `float` | `y` | World-space Y coordinate in meters. |
-| `0x14` | `float` | `z` | World-space Z coordinate in meters. |
+which is exactly what the showcase map demonstrates.
 
-**Hardware Format Bitmask (Sony GU)**:
-```c
-GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D
-```
+A renderer that *subtracts* the offset, or negates the speed, animates
+everything backwards — the naive reading of "an offset added to the coordinate
+slides the sampled image the other way" is the trap, and it is worth stating the
+rule as "whatever the API's sign convention, both reference renderers were
+verified to produce the same picture for the same value". It is invisible in any
+static frame and looks entirely plausible in motion at a glance, so the
+direction MUST be verified by measurement (§9, step 6) rather than reasoned
+about.
 
 ---
 
@@ -501,13 +495,16 @@ In the Material & UV dock, **Scrolling Texture**:
 | Apply Scroll | writes the speed onto the selected faces' material |
 | Clear | removes it (the surface becomes static again) |
 
-The sign is a direction, and V runs *up* on a wall (and toward `+Z` on a
-floor), so:
+The sign is a direction, and with the reference implementation (§5.1) the rule
+that matters for this scene is simple — **negative V travels down a wall and
+away from a wall on the floor**:
 
 - a sheet falling down a wall: **Speed V negative** (e.g. `-0.75`),
 - a second, faster sheet in front of it: `-1.15` (the parallax reads as depth),
-- churn spreading away from the base of the fall: **Speed V positive**,
-- rising mist on a billboard: **positive** (a sprite's V runs down its own face).
+- churn spreading away from the base of the fall, and a pool drifting with it:
+  **also negative** (e.g. `-0.30`),
+- rising mist on a billboard: positive, because a sprite's V runs down its own
+  face — the one place the sign flips.
 
 Applying a speed duplicates the material when other faces share it, because the
 animation is a property of the *material* — that is the unit the exporters split

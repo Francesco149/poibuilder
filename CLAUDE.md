@@ -793,6 +793,31 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.65 round complete ✓ — scroll DIRECTION fixes from the first device/viewer
+pass (the human watched both renderers side by side):
+- THE GODOT VIEWER SUBTRACTED THE OFFSET and the PSP advanced it, so for the
+  same file value the two renderers animated in OPPOSITE directions: the human
+  saw the waterfall climb its wall in `run_viewer.sh` while the PSP had it
+  falling. The viewer now advances the offset with the speed, the same form the
+  GE's register uses (`uv1_offset = base + speed * t`). The general lesson is
+  written into the spec §5.1 as an implementation RULE ("advance the offset with
+  the speed") rather than a derivation: the naive reasoning about what an offset
+  does to a sampled image is exactly what produced the bug, and it is invisible
+  in any static frame.
+- THE BASE (pool + foam) SPED THE WRONG WAY ON THE PSP — both now negative
+  (`pool -0.03`, `foam -0.30`), matching the viewer's toward-the-viewer drift
+  the human called correct. With the sheet's `-0.75` this leaves ONE simple
+  rule for the whole composition: negative V falls down a wall and travels away
+  from a wall on the floor; the only positive value left is the spray
+  billboard, whose own V runs down its face.
+- Verification note worth keeping: on the device's spawn view the pool scrolls
+  almost straight INTO the screen (its V axis points at the camera), so its
+  motion is sub-pixel there and a screen-space correlation over device captures
+  cannot see it. The emulator's orbit camera looks down at the pool and shows
+  the flip cleanly (same-camera before/after montage). Correlating periodic
+  water textures is unreliable in general — the three-frame montage judged by
+  eye is the method that actually worked, for the human and for this round.
+
 v0.9.64 round complete ✓ — scrolling textures end to end (PBM 3.0), soft
 alpha through the whole pipeline, and the plane reshaped into a
 surface-decoration tool:

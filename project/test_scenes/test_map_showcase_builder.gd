@@ -316,9 +316,9 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	# uv_scroll fields, so the engine animates it with a texture-coordinate
 	# offset — no shader, no per-frame vertex traffic.
 	#
-	# The speed is where the PATTERN TRAVELS, in the surface's own UV axes
-	# (V runs up a wall, and toward +Z on a floor), so falling water is a
-	# NEGATIVE V and churn spreading away from the wall is a POSITIVE V.
+	# The speed is where the PATTERN travels, in the surface's own UV axes, and
+	# an advancing offset walks the pattern toward -V — so falling water down a
+	# wall and churn spreading away from the wall are BOTH negative in V.
 	#
 	# Composition is what sells a waterfall at this polygon budget:
 	#   - a wall panel to fall down,
@@ -365,19 +365,23 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	# Pool: a flat ripple surface floating just above the courtyard floor, its
 	# far edge tucked against the wall so no dry floor shows through under the
 	# fall (the stand-off also keeps it clear of the floor's depth values).
+	# It drifts TOWARD the viewer, i.e. away from the wall: on the floor +V runs
+	# toward +Z, and an advancing offset walks the pattern toward -V, so away
+	# from the wall is a NEGATIVE v speed.
 	var pool := _make_water_floor("Waterfall_Pool", 3.6, 3.2,
 		Vector3(fall_x, 0.04, wall_face_z + 1.6),
 		"res://addons/poibuilder/materials/textures/water_pool.png",
-		Vector2(0.02, 0.03), Vector2(0.55, 0.55))
+		Vector2(0.02, -0.03), Vector2(0.55, 0.55))
 	root.add_child(pool)
 
 	# Foam ribbon: the churn pushed out of the impact point, its trailing edge
-	# at the wall so the churn starts where the water lands (+Z is +V on a
-	# floor, so spreading away from the wall is a POSITIVE v speed).
+	# at the wall so the churn starts where the water lands. Like the pool it
+	# spreads away from the wall, which is a NEGATIVE v speed for the reason
+	# above.
 	var foam := _make_water_floor("Waterfall_Foam", 2.8, 1.6,
 		Vector3(fall_x, 0.06, wall_face_z + 0.8),
 		"res://addons/poibuilder/materials/textures/water_foam.png",
-		Vector2(0.0, 0.30), Vector2(0.5, 0.9))
+		Vector2(0.0, -0.30), Vector2(0.5, 0.9))
 	root.add_child(foam)
 
 	# Spray: a billboard whose texture scrolls upwards, so the mist appears to
