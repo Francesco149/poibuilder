@@ -34,13 +34,6 @@ typedef struct {
     float x, y, z;
 } SpriteVertex;
 
-/* Frustum culling planes */
-typedef struct {
-    float x, y, z, w;
-} FrustumPlane;
-
-static FrustumPlane frustum_planes[6];
-
 /* Exit callback thread for Home button */
 static int exit_callback(int arg1, int arg2, void *common) {
     sceKernelExitGame();
@@ -141,13 +134,11 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
         text_verts[vert_count].y = cur_y + 8.0f;
         text_verts[vert_count].z = 0.0f;
         vert_count++;
-
         cur_x += 8.0f;
     }
 
     sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, vert_count, 0, text_verts);
 }
-
 static void draw_text_shadow(float x, float y, uint32_t color, const char* str) {
     /* Crisp black drop shadow */
     draw_text_gu(x + 1.0f, y + 1.0f, 0xFF000000, str);
@@ -155,71 +146,6 @@ static void draw_text_shadow(float x, float y, uint32_t color, const char* str) 
     draw_text_gu(x, y, color, str);
 }
 
-/* Fast Gribb-Hartmann Frustum Plane Extraction from combined View-Projection matrix */
-static void extract_frustum_planes(const ScePspFMatrix4* m) {
-    /* Left: row4 + row1 */
-    frustum_planes[0].x = m->x.w + m->x.x;
-    frustum_planes[0].y = m->y.w + m->y.x;
-    frustum_planes[0].z = m->z.w + m->z.x;
-    frustum_planes[0].w = m->w.w + m->w.x;
-
-    /* Right: row4 - row1 */
-    frustum_planes[1].x = m->x.w - m->x.x;
-    frustum_planes[1].y = m->y.w - m->y.x;
-    frustum_planes[1].z = m->z.w - m->z.x;
-    frustum_planes[1].w = m->w.w - m->w.x;
-
-    /* Bottom: row4 + row2 */
-    frustum_planes[2].x = m->x.w + m->x.y;
-    frustum_planes[2].y = m->y.w + m->y.y;
-    frustum_planes[2].z = m->z.w + m->z.y;
-    frustum_planes[2].w = m->w.w + m->w.y;
-
-    /* Top: row4 - row2 */
-    frustum_planes[3].x = m->x.w - m->x.y;
-    frustum_planes[3].y = m->y.w - m->y.y;
-    frustum_planes[3].z = m->z.w - m->z.y;
-    frustum_planes[3].w = m->w.w - m->w.y;
-
-    /* Near: row3 */
-    frustum_planes[4].x = m->x.z;
-    frustum_planes[4].y = m->y.z;
-    frustum_planes[4].z = m->z.z;
-    frustum_planes[4].w = m->w.z;
-
-    /* Far: row4 - row3 */
-    frustum_planes[5].x = m->x.w - m->x.z;
-    frustum_planes[5].y = m->y.w - m->y.z;
-    frustum_planes[5].z = m->z.w - m->z.z;
-    frustum_planes[5].w = m->w.w - m->w.z;
-
-    for (int i = 0; i < 6; ++i) {
-        float len2 = frustum_planes[i].x * frustum_planes[i].x +
-                     frustum_planes[i].y * frustum_planes[i].y +
-                     frustum_planes[i].z * frustum_planes[i].z;
-        if (len2 > 0.000001f) {
-            float inv = 1.0f / sqrtf(len2);
-            frustum_planes[i].x *= inv;
-            frustum_planes[i].y *= inv;
-            frustum_planes[i].z *= inv;
-            frustum_planes[i].w *= inv;
-        }
-    }
-}
-
-/* Fast CPU-side AABB Frustum Culling test:
- * Tests the 6 planes in 0.05 microseconds; skips submitting off-screen meshes to the GE */
-static inline int is_box_in_frustum(const float bmin[3], const float bmax[3]) {
-    for (int i = 0; i < 6; ++i) {
-        float px = (frustum_planes[i].x > 0.0f) ? bmax[0] : bmin[0];
-        float py = (frustum_planes[i].y > 0.0f) ? bmax[1] : bmin[1];
-        float pz = (frustum_planes[i].z > 0.0f) ? bmax[2] : bmin[2];
-        if (frustum_planes[i].x * px + frustum_planes[i].y * py + frustum_planes[i].z * pz + frustum_planes[i].w < -0.05f) {
-            return 0; /* Box is completely outside this frustum plane -> CULL */
-        }
-    }
-    return 1; /* Box is inside or intersects frustum -> RENDER */
-}
 
 /* Screenshot utility (supports 16-bit RGBA5551 framebuffer) */
 static void save_tga(const char* filename, void* vram_buffer, int width, int height, int stride) {
@@ -306,9 +232,8 @@ int main(int argc, char* argv[]) {
     sceGuEnable(GU_DEPTH_TEST);
     sceGuDepthMask(GU_FALSE);
 
-    /* Hardware Guardband & Frustum Clipping */
-    sceGuEnable(GU_CLIP_PLANES);
-
+    /* Fast hardware 4096x4096 guardband clipping (no slow polygon re-triangulation) */
+    sceGuDisable(GU_CLIP_PLANES);
     /* Scissor */
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
     sceGuEnable(GU_SCISSOR_TEST);
@@ -321,7 +246,7 @@ int main(int argc, char* argv[]) {
     /* Texture settings */
     sceGuEnable(GU_TEXTURE_2D);
     sceGuTexWrap(GU_REPEAT, GU_REPEAT);
-    sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+    sceGuTexFilter(GU_LINEAR, GU_NEAREST);
     sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
 
     sceGuFinish();
@@ -538,8 +463,7 @@ int main(int argc, char* argv[]) {
         /* Projection Matrix */
         sceGumMatrixMode(GU_PROJECTION);
         sceGumLoadIdentity();
-        sceGumPerspective(65.0f, 16.0f / 9.0f, 0.2f, 2000.0f);
-
+        sceGumPerspective(65.0f, 16.0f / 9.0f, 0.5f, 500.0f);
         /* View Matrix */
         sceGumMatrixMode(GU_VIEW);
         sceGumLoadIdentity();
@@ -551,14 +475,6 @@ int main(int argc, char* argv[]) {
         ScePspFVector3 up     = { 0.0f, 1.0f, 0.0f };
         sceGumLookAt(&eye, &target, &up);
 
-        /* Compute combined View-Projection matrix for CPU Frustum Culling */
-        ScePspFMatrix4 proj_mat, view_mat, vp_mat;
-        sceGumMatrixMode(GU_PROJECTION);
-        sceGumStoreMatrix(&proj_mat);
-        sceGumMatrixMode(GU_VIEW);
-        sceGumStoreMatrix(&view_mat);
-        gumMultMatrix(&vp_mat, &view_mat, &proj_mat);
-        extract_frustum_planes(&vp_mat);
 
         /* ── TWO-PASS 3D RENDERING WITH CPU FRUSTUM CULLING & SWIZZLED TEXTURES ───
          * PASS 1: Solid Opaque Meshes (floors, walls, pillars, stairs, cylinder, prism)
@@ -569,7 +485,7 @@ int main(int argc, char* argv[]) {
 
         int last_tex_id = -999;
         uint32_t total_rendered_verts = 0;
-        uint32_t total_culled_meshes = 0;
+
 
         /* PASS 1: Solid Opaque Meshes */
         sceGuDisable(GU_BLEND);
@@ -581,11 +497,7 @@ int main(int argc, char* argv[]) {
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (is_transparent_mesh(map, mesh)) continue; /* Rendered in Pass 2 */
 
-            /* CPU Frustum Culling: skips off-screen meshes instantly */
-            if (!is_box_in_frustum(mesh->bounds_min, mesh->bounds_max)) {
-                total_culled_meshes++;
-                continue;
-            }
+
 
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
@@ -637,11 +549,7 @@ int main(int argc, char* argv[]) {
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (!is_transparent_mesh(map, mesh)) continue; /* Already rendered in Pass 1 */
 
-            /* CPU Frustum Culling */
-            if (!is_box_in_frustum(mesh->bounds_min, mesh->bounds_max)) {
-                total_culled_meshes++;
-                continue;
-            }
+
 
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
@@ -676,8 +584,9 @@ int main(int argc, char* argv[]) {
 
         /* ── PASS 3: Hardware 2D On-Screen HUD Overlay ─── */
         char buf[80];
-        snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Culled: %u",
-            fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_culled_meshes);
+
+        snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Verts: %u",
+            fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_rendered_verts);
         draw_text_shadow(8.0f, 8.0f, 0xFF00FF55, buf); /* Bright Green */
 
         snprintf(buf, sizeof(buf), "Pos: (%.1f, %.1f, %.1f) | %s",
