@@ -30,9 +30,10 @@ static unsigned int __attribute__((aligned(16))) s_dlist[262144];
 void* psp_dlist(void) { return s_dlist; }
 
 uint64_t psp_now_us(void) {
-    u64 t = 0;
-    sceRtcGetCurrentTick(&t);
-    return (uint64_t)t;
+    /* sceKernelGetSystemTimeWide is the kernel's microsecond counter: cheaper
+     * than the RTC path and with a guaranteed 1 us resolution, which is what a
+     * per-frame cpu/gpu split needs. */
+    return (uint64_t)sceKernelGetSystemTimeWide();
 }
 
 void render_cfg_default(RenderCfg* c) {
@@ -45,6 +46,7 @@ void render_cfg_default(RenderCfg* c) {
     c->entity = 1;
     c->tex_filter = PBFILT_ASYM;
     c->force_small_tex = 0;
+    c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
     c->near_plane = 0.08f;
 }
 
@@ -225,11 +227,21 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
     if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
         if (mesh->texture_id != *last_tex_id) {
             PbmTexture* tex = &map->textures[mesh->texture_id];
-            if (tex->pixels) {
+            if (tex->pixels && tex->num_levels > 0) {
                 int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
-                sceGuEnable(GU_TEXTURE_2D);
-                sceGuTexMode(psm, 0, 0, tex->is_swizzled ? 1 : 0);
-                sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
+                int swizzle = tex->is_swizzled ? 1 : 0;
+                if (cfg->use_mips && tex->num_levels > 1) {
+                    /* Every level's base/size lives in its own GE register set. */
+                    sceGuEnable(GU_TEXTURE_2D);
+                    sceGuTexMode(psm, tex->num_levels - 1, 0, swizzle);
+                    for (uint32_t k = 0; k < tex->num_levels; ++k)
+                        sceGuTexImage((int)k, tex->level_w[k], tex->level_h[k],
+                                      tex->level_w[k], tex->level_ptr[k]);
+                } else {
+                    sceGuEnable(GU_TEXTURE_2D);
+                    sceGuTexMode(psm, 0, 0, swizzle);
+                    sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
+                }
             }
             *last_tex_id = mesh->texture_id;
         }
@@ -325,8 +337,18 @@ static void get_patrol_sphere_pos(const PbmEntityPatrolSphere* ent, float time,
     }
 }
 
-static void set_texture_filter(int mode) {
-    switch (mode) {
+static void set_texture_filter(const RenderCfg* cfg) {
+    if (cfg->use_mips) {
+        /* A *mipmap* minification filter is what actually selects a level; the
+         * plain filters ignore the chain entirely. */
+        switch (cfg->tex_filter) {
+            case PBFILT_NEAREST: sceGuTexFilter(GU_NEAREST_MIPMAP_NEAREST, GU_NEAREST); break;
+            case PBFILT_LINEAR:  sceGuTexFilter(GU_LINEAR_MIPMAP_LINEAR, GU_LINEAR); break;
+            default:             sceGuTexFilter(GU_LINEAR_MIPMAP_NEAREST, GU_LINEAR); break;
+        }
+        return;
+    }
+    switch (cfg->tex_filter) {
         case PBFILT_LINEAR:  sceGuTexFilter(GU_LINEAR, GU_LINEAR); break;
         case PBFILT_NEAREST: sceGuTexFilter(GU_NEAREST, GU_NEAREST); break;
         default:             sceGuTexFilter(GU_LINEAR, GU_NEAREST); break;
@@ -372,7 +394,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     sceGumLoadIdentity();
     sceGumUpdateMatrix();
 
-    set_texture_filter(cfg->tex_filter);
+    set_texture_filter(cfg);
     sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
     sceGuTexWrap(GU_REPEAT, GU_REPEAT);
 

@@ -452,6 +452,11 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].cfg.use_textures = 0;
     add_scene_test(t, &n, "abi_tex64", "stairs", pc, &base);
     t[n - 1].cfg.force_small_tex = 1;
+    /* the candidate fix: load-time mip chain + mipmap minification filter */
+    add_scene_test(t, &n, "abi_nomip", "stairs", pc, &base);
+    t[n - 1].cfg.use_mips = 0;
+    add_scene_test(t, &n, "abi_mipmap_nearest", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_NEAREST;
     add_scene_test(t, &n, "abi_filt_nearest", "stairs", pc, &base);
     t[n - 1].cfg.tex_filter = PBFILT_NEAREST;
     add_scene_test(t, &n, "abi_filt_linear", "stairs", pc, &base);
@@ -480,6 +485,8 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].cfg.use_textures = 0;
     add_scene_test(t, &n, "abi2_tex64", "below_up", pc, &base);
     t[n - 1].cfg.force_small_tex = 1;
+    add_scene_test(t, &n, "abi2_nomip", "below_up", pc, &base);
+    t[n - 1].cfg.use_mips = 0;
     add_scene_test(t, &n, "abi2_filt_nearest", "below_up", pc, &base);
     t[n - 1].cfg.tex_filter = PBFILT_NEAREST;
     add_scene_test(t, &n, "abi2_noclip", "below_up", pc, &base);
@@ -556,9 +563,10 @@ void psp_prof_suite(PbmMap* map) {
                 (unsigned)map->header.num_textures, (unsigned)map->total_vertices,
                 (unsigned)map->total_vertices / 3);
         fprintf(f, "frames=%d warmup=%d near=%.3f\n", pc.frames, pc.warmup, pc.near_plane);
-        fprintf(f, "textures: ");
+        fprintf(f, "textures (WxH/levels): ");
         for (uint32_t i = 0; i < map->header.num_textures && i < 16; ++i)
-            fprintf(f, "%ux%u ", map->textures[i].width, map->textures[i].height);
+            fprintf(f, "%ux%u/%u ", map->textures[i].width, map->textures[i].height,
+                    (unsigned)map->textures[i].num_levels);
         fprintf(f, "\n\n");
     }
 

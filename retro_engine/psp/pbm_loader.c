@@ -34,6 +34,59 @@ static void swizzle_texture_16(uint8_t* out, const uint8_t* in, unsigned int wid
     }
 }
 
+/* ── Mip chain ────────────────────────────────────────────────────────────
+ * Every base material in an exported map tiles a 512x512 texture across a
+ * metre of surface, so almost every visible texel is minified: a floor seen at
+ * a grazing angle puts adjacent screen pixels tens of texels apart. With no
+ * mip chain and a 4-tap LINEAR minification filter the GE's ~8 KB texture
+ * cache misses on essentially every fragment, and each miss is a main-memory
+ * round trip. Downsampling the chain and sampling it with a mipmap filter
+ * keeps the fetch footprint at roughly one texel per pixel.
+ *
+ * The chain stops at 16x16: below that a 16-bit level is narrower than the
+ * GE's 16-byte swizzle block and the layout is no longer worth the risk, and
+ * 16x16 is already 1/32 of the base linear scale.
+ *
+ * Alpha textures are deliberately left alone. Their alpha is 1 bit, so box
+ * filtering turns any level where fewer than half the texels are opaque fully
+ * transparent — the classic cutout-foliage disappearance. Billboards cover
+ * little screen area, so they keep their crisp level 0. */
+static inline void unpack5551(uint16_t p, int* r, int* g, int* b, int* a) {
+    *r = p & 0x1F;
+    *g = (p >> 5) & 0x1F;
+    *b = (p >> 10) & 0x1F;
+    *a = (p >> 15) & 1;
+}
+
+static inline uint16_t pack5551(int r, int g, int b, int a) {
+    if (r > 31) r = 31;
+    if (g > 31) g = 31;
+    if (b > 31) b = 31;
+    return (uint16_t)(((a ? 1 : 0) << 15) | (b << 10) | (g << 5) | r);
+}
+
+/* 2x2 box filter. Weighting RGB by alpha keeps cutout edges from darkening. */
+static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, int has_alpha) {
+    int dw = sw >> 1, dh = sh >> 1;
+    for (int y = 0; y < dh; ++y) {
+        for (int x = 0; x < dw; ++x) {
+            int r = 0, g = 0, b = 0, a = 0, wsum = 0;
+            for (int k = 0; k < 4; ++k) {
+                int sx = 2 * x + (k & 1);
+                int sy = 2 * y + (k >> 1);
+                int sr, sg, sb, sa;
+                unpack5551(src[sy * sw + sx], &sr, &sg, &sb, &sa);
+                int w = has_alpha ? (sa + 1) : 1;
+                r += sr * w; g += sg * w; b += sb * w;
+                wsum += w;
+                a += sa;
+            }
+            if (wsum < 1) wsum = 1;
+            dst[y * dw + x] = pack5551(r / wsum, g / wsum, b / wsum, a * 2 / 4);
+        }
+    }
+}
+
 PbmMap* pbm_load(const char* filepath) {
     FILE* f = fopen(filepath, "rb");
     if (!f) {
@@ -170,27 +223,74 @@ PbmMap* pbm_load(const char* filepath) {
             map->textures[i].has_alpha = thdr.has_alpha;
             map->textures[i].data_size = thdr.data_size;
 
-            /* 16-byte aligned pixel buffer for PSP DMA / GE */
-            void* pixels = memalign(16, thdr.data_size);
-            if (!pixels) {
-                pixels = malloc(thdr.data_size);
-            }
-            if (pixels) {
-                fread(pixels, 1, thdr.data_size, f);
-                map->textures[i].pixels = pixels;
-                map->textures[i].is_swizzled = 0;
+            PbmTexture* tex = &map->textures[i];
+            tex->pixels = NULL;
+            tex->num_levels = 0;
+            tex->is_swizzled = 0;
 
-                /* Swizzle 16-bit power-of-two textures to eliminate texture cache thrashing and memory bus congestion! */
-                if (thdr.format == PBM_TEX_FMT_RGBA5551 && thdr.width >= 16 && thdr.height >= 8 && (thdr.width & (thdr.width - 1)) == 0) {
-                    void* swizzled = memalign(16, thdr.data_size);
-                    if (swizzled) {
-                        swizzle_texture_16((uint8_t*)swizzled, (const uint8_t*)pixels, thdr.width, thdr.height);
-                        free(pixels);
-                        map->textures[i].pixels = swizzled;
-                        map->textures[i].is_swizzled = 1;
+            uint8_t* linear = (uint8_t*)malloc(thdr.data_size);
+            if (!linear) continue;
+            if (fread(linear, 1, thdr.data_size, f) != thdr.data_size) {
+                printf("[PBM] Error reading texture %u data\n", (unsigned int)i);
+                free(linear);
+                break;
+            }
+
+            int pot16 = (thdr.format == PBM_TEX_FMT_RGBA5551) &&
+                        thdr.width >= 16 && thdr.height >= 8 &&
+                        (thdr.width & (thdr.width - 1)) == 0 &&
+                        (thdr.height & (thdr.height - 1)) == 0;
+
+            if (pot16) {
+                int lw[PBM_MAX_MIP_LEVELS], lh[PBM_MAX_MIP_LEVELS];
+                const uint16_t* src[PBM_MAX_MIP_LEVELS];
+                int built = 1;
+                lw[0] = thdr.width;
+                lh[0] = thdr.height;
+                src[0] = (const uint16_t*)linear;
+
+                if (!thdr.has_alpha) {
+                    while (built < PBM_MAX_MIP_LEVELS && lw[built - 1] >= 32 && lh[built - 1] >= 32) {
+                        int pw = lw[built - 1] >> 1, ph = lh[built - 1] >> 1;
+                        uint16_t* lvl = (uint16_t*)malloc((size_t)pw * ph * 2);
+                        if (!lvl) break;
+                        downsample_5551(lvl, src[built - 1], lw[built - 1], lh[built - 1], 0);
+                        src[built] = lvl;
+                        lw[built] = pw;
+                        lh[built] = ph;
+                        built++;
                     }
                 }
+
+                int done = 0;
+                for (; done < built; ++done) {
+                    uint32_t sz = (uint32_t)lw[done] * lh[done] * 2;
+                    void* dst = memalign(64, sz);
+                    if (!dst) break;
+                    swizzle_texture_16((uint8_t*)dst, (const uint8_t*)src[done], lw[done], lh[done]);
+                    tex->level_w[done] = (uint16_t)lw[done];
+                    tex->level_h[done] = (uint16_t)lh[done];
+                    tex->level_ptr[done] = dst;
+                }
+                for (int k = 1; k < built; ++k) free((void*)src[k]);
+                if (done > 0) {
+                    tex->num_levels = done;
+                    tex->pixels = tex->level_ptr[0];
+                    tex->is_swizzled = 1;
+                }
+            } else {
+                void* pixels = memalign(16, thdr.data_size);
+                if (!pixels) pixels = malloc(thdr.data_size);
+                if (pixels) {
+                    memcpy(pixels, linear, thdr.data_size);
+                    tex->pixels = pixels;
+                    tex->num_levels = 1;
+                    tex->level_w[0] = thdr.width;
+                    tex->level_h[0] = thdr.height;
+                    tex->level_ptr[0] = pixels;
+                }
             }
+            free(linear);
         }
     }
 
@@ -311,6 +411,10 @@ void pbm_free(PbmMap* map) {
     if (!map) return;
     if (map->textures) {
         for (uint32_t i = 0; i < map->header.num_textures; ++i) {
+            /* level 0 aliases pixels; the rest are separately allocated */
+            for (uint32_t k = 1; k < map->textures[i].num_levels; ++k) {
+                if (map->textures[i].level_ptr[k]) free(map->textures[i].level_ptr[k]);
+            }
             if (map->textures[i].pixels) {
                 free(map->textures[i].pixels);
             }
