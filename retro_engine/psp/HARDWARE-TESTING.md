@@ -156,6 +156,11 @@ camera moves, which reads as flickering. The PSP has no anisotropic filtering
 and no per-surface LOD smoothing, so this is structural to tiled textures on
 this hardware.
 
+**Status: known limitation of this hardware, not a bug with a known fix.** If you
+find a technique that removes it on a GE with per-primitive LOD and no
+anisotropic filtering, it belongs here — the investigations above list what has
+already been ruled out so the same ground is not re-covered.
+
 Two knobs, both one line in `poi_render.txt`:
 - `bias=+N` — blurrier, which compresses the differences between neighbouring
   levels (measured: bias +1 costs 1.40 ms vs 2.04 at bias -0.5).

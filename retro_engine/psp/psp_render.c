@@ -174,7 +174,7 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str) {
 
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
                   int display_mode, const char* extra, const char* extra2,
-                  const char* input) {
+                  const char* input, int hold_on) {
     char buf[128];
     uint32_t verts = stats ? stats->vertices : 0;
     uint32_t draws = stats ? stats->draw_calls : 0;
@@ -187,7 +187,14 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
              display_mode == 0 ? "Textured" : (display_mode == 1 ? "Lighting" : "Wireframe"));
     psp_draw_text(8.0f, 18.0f, 0xFFFFFF00, buf);
 
-    if (map->has_patrol_sphere) {
+    /* The Hold switch suppresses every button while leaving the analog stick
+     * readable, so an app with Hold on looks like "the stick works but no key
+     * does". Say so on screen rather than leaving it to be guessed at. */
+    if (hold_on) {
+        /* 480px / 8px per glyph = 60 characters; keep it inside that. */
+        snprintf(buf, sizeof(buf), "!! HOLD ON - buttons disabled (%s)", input ? input : "");
+        psp_draw_text(8.0f, 28.0f, 0xFF3F3FFF, buf);
+    } else if (map->has_patrol_sphere) {
         snprintf(buf, sizeof(buf), "Entity: %-14s | %s",
                  map->patrol_sphere.name, input ? input : "");
         psp_draw_text(8.0f, 28.0f, 0xFF00C8FF, buf);
