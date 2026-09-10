@@ -304,6 +304,7 @@ int main(int argc, char** argv) {
     int display_mode = 0;
     RenderCfg cfg;
     render_cfg_default(&cfg);
+    psp_render_overrides(&cfg);   /* host0:/poi_render.txt, if present */
     RenderStats stats = { 0, 0, 0 };
 
     int is_benchmark = HEADLESS_BENCHMARK;

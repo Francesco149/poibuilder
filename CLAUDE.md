@@ -775,6 +775,69 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.63 round complete ✓ — PSP frame cost found and fixed on REAL HARDWARE
+(not the emulator), plus the live-hardware debugging harness:
+- WHY THE EMULATOR COULD NOT FIND IT: PPSSPP rasterises on the host GPU with a
+  huge texture cache, no memory bus and no clipper, so it reports 60 fps for a
+  build that spends 27 ms of a 16.6 ms budget on the device. The v0.9.62
+  near-plane/chunking work targeted stages that this round shows were never
+  loaded — which is why it bought ~20% and then stopped. Emulator = correctness
+  and visuals only. See retro_engine/psp/HARDWARE-TESTING.md.
+- THE HARNESS (`setup_psplink.sh` once, then `run_psp_hw.sh`): PSPLink over USB
+  lets the host execute ELFs on the device and maps a host directory to host0:,
+  so builds, maps and RESULTS never touch the memory stick and no XMB
+  navigation is involved. HARD-TESTING.md documents the device commands, the
+  breadcrumb files, and the rules each learned the hard way: ALWAYS `reset`
+  before loading a module (a leftover module leaves the GE wedged such that the
+  next one loads, reports success and never executes — black screen); NEVER
+  `modstop` a LIVE module (wedges module startup; exit with Start+Select
+  instead); recovery is psplink's own `reset`, not a power cycle; suspend drops
+  the USB link so use the Hold switch; keep module BSS small (PSPLink's kernel
+  partition had a 512 KB max free block, and a 1.8 MB BSS would not load at
+  all). Diagnostics that mattered: `scrshot` (the real framebuffer as a BMP,
+  with `pixel_format`/`frame_addr` telling you whether OUR display is up),
+  `thinfo` RunClocks sampled twice (frozen = blocked, not looping), `exlist`,
+  and file breadcrumbs.
+- THE ROOT CAUSE, hardware-measured with the pixel count held fixed:
+  untextured full-screen fill runs at 487 Mfrag/s, the same fill from a
+  cache-resident 64x64 texture at 480 Mfrag/s, and from a 512x512 texture with
+  NO MIP CHAIN at 25 Mfrag/s — a 19x per-fragment penalty. The map tiles
+  512-texel textures across a metre (12x12 UV repeats), so nearly every fragment
+  was minified, and the code ran `sceGuTexFilter(GU_LINEAR, GU_NEAREST)` — note
+  the argument order: that is LINEAR *minification*. Four taps scattered tens of
+  texels apart, a texture-cache miss per tap, per pixel. Reproduced exactly:
+  stairs view 27.25 ms/frame = 34.9 fps (reported "35-40"), same view with a mip
+  chain 0.58 ms = 568 fps.
+- RULED OUT BY MEASUREMENT (do not re-litigate without new numbers): the
+  guardband clipper is free (big clipped quad 0.26 ms with clip planes on AND
+  off; only 12 of ~1300 triangles are near-plane split at those views);
+  fill rate is not close (165k fragments/frame at 1.2-1.6x overdraw); the CPU is
+  1.2-1.6 ms/frame of a 16.6 ms budget.
+- FIXES: (1) load-time MIP CHAINS for opaque 16-bit power-of-two textures, one
+  swizzled 64-byte-aligned buffer per level down to 16x16, sampled with a
+  *mipmap* min filter (the plain filters ignore the chain); alpha textures are
+  excluded because their 1-bit alpha makes any level fully transparent once half
+  its texels are. (2) pbm_load FAILS LOUDLY: every failure path used to break out
+  of its loop or skip a read, desyncing the file and producing a map that
+  reported success, rendered nothing and showed a zeroed HUD (the "0 tris 0
+  verts 0 draws" report); short reads and allocation failures are now fatal,
+  a post-load check rejects vertex-less meshes, and diagnostics + free-memory
+  figures go to host0:/pbm_load.log. (3) ATLAS SEAM FIX: the converter inset each
+  tile half a texel inside its 128x128 atlas slot, so neighbouring tiles never
+  met and the pattern shifted at every seam — visible as a grid of thin lines on
+  the floor at grazing angles, independent of mipmapping. Slots now map
+  edge-to-edge, and the renderer CLAMPs tile-atlas sampling (base materials still
+  REPEAT). (4) Filtering defaults: trilinear minification + LINEAR magnification
+  with a -1.0 LOD bias (blends adjacent mip levels, which is what removes the
+  level discontinuity between neighbouring tiles; the bias buys sharpness back).
+  Costs 4.36 ms worst-case versus 3.37 for mip-nearest and 1.40 for a blurrier
+  bias — all far inside budget, so quality was affordable.
+- FINAL DEVICE NUMBERS: 59.9 fps locked in-game (cpu 1.81 ms, gpu 0.09 ms with
+  the pre-quality settings; gpu ~3.1 ms with trilinear), worst of 11 camera poses
+  3.04 ms/frame. Everything is now limited by the 60 Hz vsync, not by the GE.
+- Version bump convention applied (0.9.62 -> 0.9.63 in poibuilder_plugin.gd,
+  pb_editor.gd, plugin.cfg).
+
 v0.9.62 round complete ✓ — PSP hardware clipping & near-plane optimization, formalized PBMv2 specification, breaking version signaling, arbitrary binary metadata & entity scripting, and native GDScript converter:
 - PSP CLIPPING & NEAR-PLANE OPTIMIZATION (`main.c`, `pbm_conv.py`, `PBPbmConverter.gd`):
   - Root cause of 24 FPS floor-clipping slowdown and 35-40 FPS stairs drops:

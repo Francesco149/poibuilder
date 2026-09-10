@@ -17,6 +17,7 @@ typedef struct {
     int   alpha_pass;      /* the billboard/foliage alpha+blend pass */
     int   entity;          /* the scripted patrol sphere */
     int   tex_filter;      /* PBFILT_* */
+    float tex_lod_bias;    /* negative = sharper (picks a smaller mip level) */
     int   force_small_tex; /* bind a cache-resident 64x64 texture to every mesh */
     int   use_mips;        /* sample the load-time mip chain (mipmap min filter) */
     float near_plane;
@@ -24,11 +25,16 @@ typedef struct {
 
 /* tex_filter values. Note sceGuTexFilter(min, mag): the first argument is the
  * MINIFICATION filter, the second the MAGNIFICATION filter. */
-#define PBFILT_ASYM    0   /* min LINEAR, mag NEAREST — what the shipping code sets */
-#define PBFILT_LINEAR  1   /* both LINEAR */
+#define PBFILT_MIP_LIN 0   /* min LINEAR_MIPMAP_NEAREST, mag LINEAR (default) */
+#define PBFILT_LINEAR  1   /* min LINEAR_MIPMAP_LINEAR (trilinear), mag LINEAR */
 #define PBFILT_NEAREST 2   /* both NEAREST: 1 tap per fragment, no filter work */
+#define PBFILT_ASYM    3   /* min LINEAR_MIPMAP_NEAREST, mag NEAREST (the old default) */
 
 void render_cfg_default(RenderCfg* cfg);
+
+/* Applies overrides from host0:/poi_render.txt (or ms0:) if the file exists.
+ * Lets filter/mip settings be re-tested without rebuilding the binary. */
+void psp_render_overrides(RenderCfg* cfg);
 
 typedef struct {
     uint32_t draw_calls;
