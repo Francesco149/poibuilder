@@ -475,14 +475,16 @@ int main(int argc, char* argv[]) {
         ScePspFVector3 up     = { 0.0f, 1.0f, 0.0f };
         sceGumLookAt(&eye, &target, &up);
 
+        /* Push Model-View-Projection matrix to GE hardware registers ONCE! */
+        sceGumMatrixMode(GU_MODEL);
+        sceGumLoadIdentity();
+        sceGumUpdateMatrix();
 
-        /* ── TWO-PASS 3D RENDERING WITH CPU FRUSTUM CULLING & SWIZZLED TEXTURES ───
+        /* ── TWO-PASS 3D RENDERING ARCHITECTURE ───
          * PASS 1: Solid Opaque Meshes (floors, walls, pillars, stairs, cylinder, prism)
-         *   - Frustum culling skips off-screen meshes entirely!
          *   - GU_BLEND is DISABLED! (Doubles fillrate, avoids eDRAM read-modify-write)
          *   - Swizzled textures eliminate cache misses and memory bus congestion
          * PASS 2: Alpha-tested Billboards (trees, bushes, flowers) */
-
         int last_tex_id = -999;
         uint32_t total_rendered_verts = 0;
 
@@ -526,11 +528,8 @@ int main(int argc, char* argv[]) {
                 sceGuEnable(GU_CULL_FACE);
             }
 
-            sceGumMatrixMode(GU_MODEL);
-            sceGumLoadIdentity();
-
             int prim_type = (display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
-            sceGumDrawArray(prim_type,
+            sceGuDrawArray(prim_type,
                 GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
                 mesh->num_vertices, 0, mesh->vertices);
 
@@ -569,11 +568,8 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            sceGumMatrixMode(GU_MODEL);
-            sceGumLoadIdentity();
-
             int prim_type = (display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
-            sceGumDrawArray(prim_type,
+            sceGuDrawArray(prim_type,
                 GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
                 mesh->num_vertices, 0, mesh->vertices);
 
