@@ -38,13 +38,14 @@ The executable will appear under: Game -> Memory Stick -> PoiRetro Map Renderer.
 
 CONTROLS:
 - Analog Stick: Fly forward / backward, strafe left / right
+- Hold Triangle + Analog Stick: Tilt in all directions (look around)
+- Square: Boost (move faster)
 - LT / RT: Turn camera left / right (Yaw)
 - Cross (X): Fly UP
 - Circle (O): Fly DOWN
-- Triangle / Square / D-Pad: Look up / down (Pitch)
 - Start: Reset camera to spawn point
 - Select: Toggle view mode (Textured + Baked Lighting / Vertex Lighting Only / Wireframe)
-- Hold Square while moving: Boost / Turbo flight speed
+- Start + Select: Quit game to PSP XMB
 EOF
 
 cd "${SCRIPT_DIR}/package"
