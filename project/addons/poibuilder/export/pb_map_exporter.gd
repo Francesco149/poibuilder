@@ -798,6 +798,92 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 		"type": PBM_META_STRING,
 		"data": map_name_bytes
 	})
+	# Metadata 2: player_spawn
+	var spawn_dict := {
+		"position": [spawn.x, spawn.y, spawn.z],
+		"yaw": 0.0,
+		"camera_fov": 65.0
+	}
+	var spawn_bytes := JSON.stringify(spawn_dict).to_utf8_buffer()
+	spawn_bytes.append(0)
+	metadata_entries.append({
+		"tag": "player_spawn",
+		"type": PBM_META_JSON,
+		"data": spawn_bytes
+	})
+
+	# Metadata 3: walkable_mesh (2 triangles = 18 floats = 72 bytes)
+	var walkable_buf := PackedByteArray()
+	walkable_buf.resize(72)
+	var w_pts := [
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
+	]
+	for wi in range(6):
+		walkable_buf.encode_float(wi * 12, w_pts[wi].x)
+		walkable_buf.encode_float(wi * 12 + 4, w_pts[wi].y)
+		walkable_buf.encode_float(wi * 12 + 8, w_pts[wi].z)
+	metadata_entries.append({
+		"tag": "walkable_mesh",
+		"type": PBM_META_ENTITY,
+		"data": walkable_buf
+	})
+
+	# Metadata 4: triggers
+	var triggers_arr := [
+		{
+			"id": "cutscene_archway",
+			"event": "on_enter_archway",
+			"bounds_min": [-2.0, 0.0, -5.8],
+			"bounds_max": [2.0, 3.5, -4.8],
+			"oneshot": true
+		}
+	]
+	var triggers_bytes := JSON.stringify(triggers_arr).to_utf8_buffer()
+	triggers_bytes.append(0)
+	metadata_entries.append({
+		"tag": "triggers",
+		"type": PBM_META_JSON,
+		"data": triggers_bytes
+	})
+
+	# Metadata 5: particle_emitters
+	var particles_arr := [
+		{
+			"id": "torch_sparks",
+			"position": [2.5, 1.8, -4.5],
+			"rate": 30,
+			"lifetime": 1.2,
+			"velocity": [0.0, 1.5, 0.0],
+			"spread": 0.3,
+			"color": "0xFF33AAFF"
+		}
+	]
+	var particles_bytes := JSON.stringify(particles_arr).to_utf8_buffer()
+	particles_bytes.append(0)
+	metadata_entries.append({
+		"tag": "particle_emitters",
+		"type": PBM_META_JSON,
+		"data": particles_bytes
+	})
+
+	# Metadata 6: rigid_bodies (ball pit)
+	var rigid_dict := {
+		"type": "ball_pit",
+		"count": 16,
+		"radius": 0.22,
+		"mass": 1.0,
+		"restitution": 0.75,
+		"spawn_min": [-0.8, 2.0, -0.8],
+		"spawn_max": [0.8, 4.0, 0.8]
+	}
+	var rigid_bytes := JSON.stringify(rigid_dict).to_utf8_buffer()
+	rigid_bytes.append(0)
+	metadata_entries.append({
+		"tag": "rigid_bodies",
+		"type": PBM_META_JSON,
+		"data": rigid_bytes
+	})
 
 	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
 	ent_name_bytes.resize(32)

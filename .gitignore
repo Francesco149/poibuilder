@@ -7,3 +7,7 @@ project/.godot/
 
 # Test results
 project/tests/results.xml
+
+# Untracked external Raylib runner (not vendored)
+retro_engine/raylib/
+tools/raylib_runner/
