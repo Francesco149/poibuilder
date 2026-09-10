@@ -4,6 +4,8 @@ A free, open-source **ProBuilder / UniBuilder-style mesh building plugin for
 Godot 4** — primitives, drag-to-create, and direct vertex/edge/face editing
 inside the editor, in the spirit of Unity's ProBuilder.
 
+**Pure GDScript**: PoiBuilder is written 100% in standard GDScript. It runs in the standard Godot 4 editor (no Godot Mono / .NET build required) and needs **no C/C++ compilation, no GDExtension, and no native binaries** — just drop the `addons/poibuilder/` folder into any standard Godot 4 project and enable it.
+
 > **This is an AI-assisted hobby project.** PoiBuilder was written mainly for
 > my own use, because I wanted a free and open source UniBuilder equivalent
 > for Godot. It is developed with the help of AI coding agents, and while it
@@ -44,6 +46,7 @@ installed engine it is developed against); older 4.x versions are untested.
 
 ### Install
 
+PoiBuilder is pure GDScript — it works on both standard Godot and Godot .NET without compiling any extensions:
 1. Copy `project/addons/poibuilder/` into your project (or open this
    repository's `project/` directly).
 2. Enable **PoiBuilder** in *Project Settings → Plugins*.
