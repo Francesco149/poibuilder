@@ -334,6 +334,66 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 		"res://addons/poibuilder/materials/textures/flower_patch.png",
 		Vector2(1.2, 1.2), Vector3(-2.0, 0.6, 2.0), false)
 	root.add_child(flowers)
+
+	# ==========================================================================
+	# 7b. Custom Gameplay Entities (Spawn, Walkable, Trigger, Emitter, BallPit)
+	# ==========================================================================
+	# 1. Player Spawn Point
+	var spawn_node := Marker3D.new()
+	spawn_node.name = "PlayerSpawn"
+	spawn_node.position = Vector3(0.0, 1.6, 4.2)
+	spawn_node.set_meta("camera_fov", 65.0)
+	root.add_child(spawn_node)
+
+	# 2. Walkable Mesh Navigation Surface
+	var walkable_node := MeshInstance3D.new()
+	walkable_node.name = "Walkable_Courtyard"
+	var w_am := ArrayMesh.new()
+	var w_arrs: Array = []
+	w_arrs.resize(Mesh.ARRAY_MAX)
+	w_arrs[Mesh.ARRAY_VERTEX] = PackedVector3Array([
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
+		Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
+	])
+	w_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, w_arrs)
+	walkable_node.mesh = w_am
+	walkable_node.visible = false # Navigation surface, hidden in visual game view
+	root.add_child(walkable_node)
+
+	# 3. Cutscene / Event Trigger Area
+	var trig_node := Area3D.new()
+	trig_node.name = "Trigger_Archway"
+	trig_node.position = Vector3(0.0, 1.75, -5.3)
+	trig_node.set_meta("event", "on_enter_archway")
+	trig_node.set_meta("oneshot", true)
+	var trig_col := CollisionShape3D.new()
+	trig_col.name = "TriggerBox"
+	var box_shape := BoxShape3D.new()
+	box_shape.size = Vector3(4.0, 3.5, 1.0)
+	trig_col.shape = box_shape
+	trig_node.add_child(trig_col)
+	root.add_child(trig_node)
+
+	# 4. Particle Emitter Marker
+	var emitter_node := Marker3D.new()
+	emitter_node.name = "Emitter_Torch"
+	emitter_node.position = Vector3(2.5, 1.8, -4.5)
+	emitter_node.set_meta("rate", 30)
+	emitter_node.set_meta("lifetime", 1.2)
+	emitter_node.set_meta("velocity", Vector3(0.0, 1.5, 0.0))
+	emitter_node.set_meta("spread", 0.3)
+	emitter_node.set_meta("color", Color(1.0, 0.55, 0.2, 1.0))
+	root.add_child(emitter_node)
+
+	# 5. Physics Rigid Bodies (Ball Pit Container)
+	var ball_pit_node := Node3D.new()
+	ball_pit_node.name = "BallPit"
+	ball_pit_node.position = Vector3(0.0, 0.0, 0.0)
+	ball_pit_node.set_meta("count", 16)
+	ball_pit_node.set_meta("radius", 0.22)
+	ball_pit_node.set_meta("mass", 1.0)
+	ball_pit_node.set_meta("restitution", 0.75)
+	root.add_child(ball_pit_node)
 	# ==========================================================================
 	# 8. Optional Player Character
 	# ==========================================================================

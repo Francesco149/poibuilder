@@ -32,6 +32,9 @@ case "$TARGET" in
     showcase|demo)
         exec "$REPO_DIR/run_showcase.sh" "$@"
         ;;
+    scratch|edit)
+        exec "$REPO_DIR/scratch.sh" "$@"
+        ;;
     gui)
         exec "$REPO_DIR/run_gui_tests.sh" --interactive "$@"
         ;;
