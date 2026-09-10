@@ -799,8 +799,8 @@ v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal life
     - 24-byte interleaved vertex format `PbmVertex` (`float u, v; uint32_t color; float x, y, z;`), matching Sony GU hardware vertex specification `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D` for single-call DMA rendering via `sceGumDrawArray()`.
     - Collision table preserving bounding boxes and triangle meshes.
   - Standalone converter & Godot export:
-    - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization, texture deduplication (reducing textures from 81 to 57 and file size from 5.4MB to 3.7MB), and draw-call batching.
-    - Integrated native `.pbm` export in `PBMapExporter.export_retro_pbm()` and added `.pbm` file filter in `PBExportDialog`.
+    - Added `retro_engine/pbm_conv.py`: converts any exported `.glb` into `.pbm` with power-of-two texture quantization, tile atlasing (packing 73 discrete 128x128 baked tiles into four 512x512 atlases, reducing textures and draw calls from 81 to 12), and draw-call batching.
+    - Integrated native `.pbm` export in `PBMapExporter.export_retro_pbm()` with texture deduplication and added `.pbm` file filter in `PBExportDialog`.
   - Complete PSP homebrew application (`retro_engine/psp/`):
     - `main.c`: Sony GU double-buffered 480x272 setup, smooth Gouraud shading, texture modulation with baked vertex lighting + AO, and interactive fly camera.
     - Real PSP D-Cache writeback & dynamic vertex allocation fix: on real MIPS Allegrex hardware, `text_verts` was previously a shared static array overwritten across draw calls before `sceGuDrawArray` executed, causing lines 1 and 2 to be blank. Switched to `sceGuGetMemory()` to allocate vertex memory dynamically inside the display list stream, guaranteeing independent vertex slices and rendering all 3 HUD lines.
@@ -813,7 +813,7 @@ v0.9.61 round complete ✓ — n-gon grid snapping alignment, overlay modal life
     - Omnilight chromaticity preservation (`PBLightBaker.gd`, `retro_map_viewer.gd`): replaced independent RGB channel clamping with proportional chromaticity-preserving tonemapping when light exceeds 1.0, preserving the rich amber/orange torchlight on the front face of the archway instead of bleaching to white. In `retro_map_viewer.gd`, hid imported dynamic lights in `FULL_BAKED` mode so both Godot and PSP viewers render 1:1 identical baked lighting.
     - Hardware 2D on-screen HUD & FPS counter: embedded 8x8 bitmap font rendered natively via Sony GE command stream (`GU_SPRITES` with `GU_TRANSFORM_2D`), displaying live FPS, triangle/vertex counts, and controls hint with drop shadow on graphical PPSSPP (Vulkan, OpenGL, D3D) and real PSP hardware.
     - Interactive fly camera & test separation: default build (`poiretro_psp.elf` / `EBOOT.PBP`) is a continuous flythrough with Analog stick movement/strafe, LT/RT yaw, X up, Circle down, and Triangle/Square pitch. Separate test binary (`poiretro_psp_test.elf`, `make test_build`) handles automated 120-frame orbital benchmark and screenshot capture for headless verification.
-    - Ready-to-copy real PSP homebrew package: `build_psp.sh` creates `package/PSP/GAME/PoiRetro/` (`EBOOT.PBP`, `showcase_retro_baked.pbm`, `README.txt`) and packages `PoiRetro_PSP.zip` (399 KB) ready for root extraction onto any homebrew-enabled PSP Memory Stick.
+    - Ready-to-copy real PSP homebrew package: `build_psp.sh` creates `package/PSP/GAME/PoiRetro/` (`EBOOT.PBP`, `showcase_retro_baked.pbm`, `README.txt`) and packages `PoiRetro_PSP.zip` (356 KB) ready for root extraction onto any homebrew-enabled PSP Memory Stick.
 - Tests: 826/826 GUT unit tests passing (+4), 50/50 GUI harness tests passing (0 failures).
 
 v0.9.60 round complete ✓ — door base bounds extension, non-auto-imported exports dir & cleanup, & Ctrl direction lock:

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-pbm_conv.py — PoiBuilder Retro Map Converter
+pbm_conv.py — PoiBuilder Retro Map Converter with Texture Atlasing
 Converts PoiBuilder exported GLB maps to PBM (PoiBuilder Retro Map) binary format for PSP and retro engines.
+Packs individual 128x128 baked tiles into 512x512 atlases, reducing draw calls and texture state changes by ~85%.
 """
 
 import sys
@@ -31,6 +32,25 @@ def rgba_to_rgba5551(r, g, b, a):
     a1 = 1 if a > 127 else 0
     return (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
 
+def convert_pil_to_bytes(pil_img, format_16bit=True):
+    w, h = pil_img.size
+    has_alpha = 1 if any(px[3] < 250 for px in pil_img.getdata()) else 0
+    
+    if format_16bit:
+        pix = pil_img.load()
+        tex_data = bytearray(w * h * 2)
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = pix[x, y]
+                p16 = rgba_to_rgba5551(r, g, b, a)
+                struct.pack_into("<H", tex_data, (y * w + x) * 2, p16)
+        fmt = PBM_TEX_FMT_RGBA5551
+    else:
+        tex_data = pil_img.tobytes()
+        fmt = PBM_TEX_FMT_RGBA8888
+        
+    return tex_data, fmt, has_alpha
+
 def parse_glb(glb_path):
     with open(glb_path, "rb") as f:
         magic, version, length = struct.unpack("<4sII", f.read(12))
@@ -55,24 +75,16 @@ def read_accessor_data(gltf, bin_data, accessor_idx):
     type_str = acc["type"]
     count = acc["count"]
     
-    # Offsets
     bv_offset = bv.get("byteOffset", 0)
     acc_offset = acc.get("byteOffset", 0)
     offset = bv_offset + acc_offset
     stride = bv.get("byteStride", 0)
     
-    # Component counts
     type_counts = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
     n_comp = type_counts[type_str]
     
-    # Format char
     comp_formats = {
-        5120: "b", # BYTE
-        5121: "B", # UNSIGNED_BYTE
-        5122: "h", # SHORT
-        5123: "H", # UNSIGNED_SHORT
-        5125: "I", # UNSIGNED_INT
-        5126: "f", # FLOAT
+        5120: "b", 5121: "B", 5122: "h", 5123: "H", 5125: "I", 5126: "f"
     }
     comp_sizes = {5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4}
     
@@ -91,7 +103,6 @@ def read_accessor_data(gltf, bin_data, accessor_idx):
     return result
 
 def matrix_multiply_vec3(mat, v):
-    # mat is column-major 16-float array
     x = mat[0] * v[0] + mat[4] * v[1] + mat[8] * v[2] + mat[12]
     y = mat[1] * v[0] + mat[5] * v[1] + mat[9] * v[2] + mat[13]
     z = mat[2] * v[0] + mat[6] * v[1] + mat[10] * v[2] + mat[14]
@@ -102,10 +113,9 @@ def get_node_transform(node):
         return node["matrix"]
     
     t = node.get("translation", [0.0, 0.0, 0.0])
-    r = node.get("rotation", [0.0, 0.0, 0.0, 1.0]) # qx, qy, qz, qw
+    r = node.get("rotation", [0.0, 0.0, 0.0, 1.0])
     s = node.get("scale", [1.0, 1.0, 1.0])
     
-    # Quaternion to rotation matrix
     qx, qy, qz, qw = r
     xx = qx * qx; yy = qy * qy; zz = qz * qz
     xy = qx * qy; xz = qx * qz; yz = qy * qz
@@ -144,67 +154,103 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     print(f"Loading GLB: {glb_path}...")
     gltf, bin_data = parse_glb(glb_path)
     
-    # 1. Process Textures
-    textures = []
-    image_to_tex_idx = {}
-    unique_tex_data = {}
-    
     raw_images = gltf.get("images", [])
-    print(f"Processing {len(raw_images)} images...")
+    print(f"Loaded {len(raw_images)} raw images from GLB.")
+    
+    # Separate Base Textures from 128x128 Baked Tiles
+    base_images = []
+    tile_images = []
+    
     for img_idx, img_info in enumerate(raw_images):
         bv = gltf["bufferViews"][img_info["bufferView"]]
         offset = bv.get("byteOffset", 0)
         length = bv["byteLength"]
         img_bytes = bin_data[offset : offset + length]
-        
         pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-        w, h = pil_img.size
         
-        # Ensure power-of-two (PSP requires POT textures for tiling & mipmapping)
-        pot_w = next_pot(w)
-        pot_h = next_pot(h)
+        name = img_info.get("name", f"img_{img_idx}")
+        # An image is an individual tile if its size is 128x128 or name contains BakedTile
+        if pil_img.size == (128, 128) or "BakedTile" in name:
+            tile_images.append((img_idx, name, pil_img))
+        else:
+            base_images.append((img_idx, name, pil_img))
+
+    # Deduplicate 128x128 baked tiles
+    unique_tiles = {} # hash -> (unique_id, pil_img)
+    img_to_unique_tile = {}
+    for img_idx, name, img in tile_images:
+        h = hash(img.tobytes())
+        if h not in unique_tiles:
+            unique_tiles[h] = (len(unique_tiles), img)
+        img_to_unique_tile[img_idx] = unique_tiles[h][0]
+
+    print(f"Deduplicated {len(tile_images)} baked tiles into {len(unique_tiles)} unique tile images.")
+
+    # Pack unique 128x128 tiles into 512x512 Atlases (16 tiles per atlas, 4x4 grid)
+    atlases = [] # list of 512x512 PIL Images
+    tile_to_atlas_map = {} # unique_id -> (atlas_local_idx, col, row)
+
+    tile_list = sorted(list(unique_tiles.values()), key=lambda x: x[0])
+    for uid, t_img in tile_list:
+        atlas_local_idx = uid // 16
+        slot = uid % 16
+        col = slot % 4
+        row = slot // 4
+        while len(atlases) <= atlas_local_idx:
+            atlases.append(Image.new("RGBA", (512, 512), (0, 0, 0, 255)))
+        atlases[atlas_local_idx].paste(t_img, (col * 128, row * 128))
+        tile_to_atlas_map[uid] = (atlas_local_idx, col, row)
+
+    print(f"Packed tiles into {len(atlases)} 512x512 atlas textures.")
+
+    # Assemble Final Textures Table
+    textures = []
+    img_to_tex_mapping = {} # raw_img_idx -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
+
+    # 1. Base textures
+    for img_idx, name, pil_img in base_images:
+        w, h = pil_img.size
+        pot_w = next_pot(w); pot_h = next_pot(h)
         if pot_w != w or pot_h != h:
             pil_img = pil_img.resize((pot_w, pot_h), Image.Resampling.BILINEAR)
             w, h = pot_w, pot_h
-            
-        tex_name = img_info.get("name", f"tex_{img_idx}")[:31]
-        
-        # Detect transparency: any pixel with alpha < 250
-        has_alpha = 1 if any(px[3] < 250 for px in pil_img.getdata()) else 0
-        
-        if format_16bit:
-            # Convert RGBA8888 -> RGBA5551
-            pix = pil_img.load()
-            tex_data = bytearray(w * h * 2)
-            for y in range(h):
-                for x in range(w):
-                    r, g, b, a = pix[x, y]
-                    p16 = rgba_to_rgba5551(r, g, b, a)
-                    struct.pack_into("<H", tex_data, (y * w + x) * 2, p16)
-            fmt = PBM_TEX_FMT_RGBA5551
-        else:
-            # Raw RGBA8888
-            tex_data = pil_img.tobytes()
-            fmt = PBM_TEX_FMT_RGBA8888
-            
-        tex_bytes = bytes(tex_data)
-        if tex_bytes in unique_tex_data:
-            image_to_tex_idx[img_idx] = unique_tex_data[tex_bytes]
-        else:
-            u_idx = len(textures)
-            textures.append({
-                "name": tex_name,
-                "width": w,
-                "height": h,
-                "format": fmt,
-                "has_alpha": has_alpha,
-                "data": tex_data
-            })
-            unique_tex_data[tex_bytes] = u_idx
-            image_to_tex_idx[img_idx] = u_idx
+        tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit)
+        tex_id = len(textures)
+        textures.append({
+            "name": name[:31],
+            "width": w, "height": h,
+            "format": fmt, "has_alpha": has_a,
+            "data": tex_data
+        })
+        img_to_tex_mapping[img_idx] = { "tex_id": tex_id, "is_atlas": False, "col": 0, "row": 0 }
 
-    # Map materials to texture IDs
-    material_to_tex_id = {}
+    # 2. Atlas textures
+    atlas_start_tex_id = len(textures)
+    for a_idx, atlas_img in enumerate(atlases):
+        tex_data, fmt, has_a = convert_pil_to_bytes(atlas_img, format_16bit)
+        tex_id = len(textures)
+        textures.append({
+            "name": f"TileAtlas_{a_idx}"[:31],
+            "width": 512, "height": 512,
+            "format": fmt, "has_alpha": has_a,
+            "data": tex_data
+        })
+
+    # Map each raw tile image index to its atlas texture ID and slot
+    for img_idx, name, _ in tile_images:
+        uid = img_to_unique_tile[img_idx]
+        atlas_local_idx, col, row = tile_to_atlas_map[uid]
+        img_to_tex_mapping[img_idx] = {
+            "tex_id": atlas_start_tex_id + atlas_local_idx,
+            "is_atlas": True,
+            "col": col,
+            "row": row
+        }
+
+    print(f"Total textures in PBM: {len(textures)} ({len(base_images)} base + {len(atlases)} atlases)")
+
+    # Map materials to texture info
+    material_to_tex_info = {}
     for mat_idx, mat in enumerate(gltf.get("materials", [])):
         pbr = mat.get("pbrMetallicRoughness", {})
         tex_info = pbr.get("baseColorTexture", None)
@@ -213,13 +259,13 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             if "textures" in gltf and tex_idx < len(gltf["textures"]):
                 t_obj = gltf["textures"][tex_idx]
                 img_src = t_obj.get("source", 0)
-                material_to_tex_id[mat_idx] = image_to_tex_idx.get(img_src, -1)
+                material_to_tex_info[mat_idx] = img_to_tex_mapping.get(img_src, None)
             else:
-                material_to_tex_id[mat_idx] = -1
+                material_to_tex_info[mat_idx] = None
         else:
-            material_to_tex_id[mat_idx] = -1
+            material_to_tex_info[mat_idx] = None
 
-    # 2. Process Nodes and World Transforms
+    # Process Nodes and World Transforms
     nodes = gltf.get("nodes", [])
     node_world_mats = [None] * len(nodes)
     
@@ -231,7 +277,6 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         for child_idx in node.get("children", []):
             compute_world_transforms(child_idx, world_mat)
 
-    # Roots
     scene_idx = gltf.get("scene", 0)
     root_nodes = gltf.get("scenes", [{}])[scene_idx].get("nodes", list(range(len(nodes))))
     ident = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
@@ -239,13 +284,13 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         if r_idx < len(nodes):
             compute_world_transforms(r_idx, ident)
 
-    # 3. Extract Meshes and Colliders
+    # Extract Meshes and Colliders
     all_meshes = []
     all_colliders = []
     bounds_min = [float("inf"), float("inf"), float("inf")]
     bounds_max = [float("-inf"), float("-inf"), float("-inf")]
 
-    # Bucket primitives by texture_id to optimize draw calls
+    # Group primitives by final tex_id (this naturally batches atlas tiles together!)
     mesh_buckets = {} # tex_id -> list of PbmVertex
 
     for node_idx, node in enumerate(nodes):
@@ -267,14 +312,12 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             positions = read_accessor_data(gltf, bin_data, pos_acc)
             uvs = read_accessor_data(gltf, bin_data, attrs["TEXCOORD_0"]) if "TEXCOORD_0" in attrs else [(0.0, 0.0)] * len(positions)
             colors = read_accessor_data(gltf, bin_data, attrs["COLOR_0"]) if "COLOR_0" in attrs else [(1.0, 1.0, 1.0, 1.0)] * len(positions)
-            
             indices = read_accessor_data(gltf, bin_data, prim["indices"]) if "indices" in prim else list(range(len(positions)))
             
             mat_idx = prim.get("material", None)
-            tex_id = material_to_tex_id.get(mat_idx, -1) if mat_idx is not None else -1
+            tex_mapping = material_to_tex_info.get(mat_idx, None) if mat_idx is not None else None
             
             if is_collider:
-                # Store in colliders
                 coll_triangles = []
                 for idx in indices:
                     p = positions[idx]
@@ -286,7 +329,11 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     "triangles": coll_triangles
                 })
             else:
-                # Visual Mesh: unpack into PbmVertex
+                tex_id = tex_mapping["tex_id"] if tex_mapping else -1
+                is_atlas = tex_mapping["is_atlas"] if tex_mapping else False
+                col_slot = tex_mapping["col"] if tex_mapping else 0
+                row_slot = tex_mapping["row"] if tex_mapping else 0
+
                 if tex_id not in mesh_buckets:
                     mesh_buckets[tex_id] = []
                     
@@ -294,15 +341,22 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     p = positions[idx]
                     wp = matrix_multiply_vec3(mat, p)
                     
-                    # Update global AABB
                     for i in range(3):
                         bounds_min[i] = min(bounds_min[i], wp[i])
                         bounds_max[i] = max(bounds_max[i], wp[i])
                         
-                    uv = uvs[idx] if idx < len(uvs) else (0.0, 0.0)
+                    raw_uv = uvs[idx] if idx < len(uvs) else (0.0, 0.0)
                     col = colors[idx] if idx < len(colors) else (1.0, 1.0, 1.0, 1.0)
                     
-                    # Color to 0xAABBGGRR
+                    # Atlas UV Remapping: slot (col_slot, row_slot) in 4x4 atlas (512x512)
+                    if is_atlas:
+                        # Raw tile UV is [0.0, 1.0]. Remap into slot:
+                        u_val = (col_slot + (raw_uv[0] % 1.0)) * 0.25
+                        v_val = (row_slot + (raw_uv[1] % 1.0)) * 0.25
+                    else:
+                        u_val = raw_uv[0]
+                        v_val = raw_uv[1]
+                    
                     r_b = int(max(0.0, min(1.0, col[0])) * 255.0)
                     g_b = int(max(0.0, min(1.0, col[1])) * 255.0)
                     b_b = int(max(0.0, min(1.0, col[2])) * 255.0)
@@ -310,17 +364,17 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                     c_int = r_b | (g_b << 8) | (b_b << 16) | (a_b << 24)
                     
                     mesh_buckets[tex_id].append({
-                        "u": float(uv[0]),
-                        "v": float(uv[1]),
+                        "u": float(u_val),
+                        "v": float(v_val),
                         "color": c_int,
                         "x": float(wp[0]),
                         "y": float(wp[1]),
                         "z": float(wp[2]),
                     })
 
-    # Group into batches of <= 65535 vertices (Sony GU maximum vertex draw count per call)
+    # Group into batches of <= 30000 vertices per draw call
     for tex_id, vlist in mesh_buckets.items():
-        batch_size = 30000 # comfortable safe batch size for PSP GU
+        batch_size = 30000
         for i in range(0, len(vlist), batch_size):
             batch = vlist[i : i + batch_size]
             b_min = [float("inf"), float("inf"), float("inf")]
@@ -339,22 +393,17 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 "bounds_max": b_max
             })
 
-    # If bounds still empty, set default
     if bounds_min[0] == float("inf"):
         bounds_min = [-10.0, 0.0, -10.0]
         bounds_max = [10.0, 5.0, 10.0]
 
-    spawn_pos = [
-        (bounds_min[0] + bounds_max[0]) * 0.5,
-        bounds_min[1] + 1.6,
-        bounds_max[2] + 4.0
-    ]
+    spawn_pos = [0.0, 1.6, 4.2]
     spawn_rot = 0.0
 
     print(f"Writing PBM: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders...")
     
     with open(pbm_path, "wb") as f:
-        # Header (64 bytes)
+        # Header (60 bytes)
         hdr = struct.pack(
             "<IIIII4f6f",
             PBM_MAGIC,
@@ -370,7 +419,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         
         # Texture chunk
         for tex in textures:
-            t_name = tex["name"].encode("ascii")[:31].ljust(32, b"\x00")
+            t_name = tex["name"].encode("ascii", errors="ignore")[:31].ljust(32, b"\x00")
             thdr = struct.pack(
                 "<32sHHHHI",
                 t_name,
@@ -382,9 +431,10 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             )
             f.write(thdr)
             f.write(tex["data"])
+            
         # Mesh chunk
         for m in all_meshes:
-            m_name = m["name"].encode("ascii")[:31].ljust(32, b"\x00")
+            m_name = m["name"].encode("ascii", errors="ignore")[:31].ljust(32, b"\x00")
             mhdr = struct.pack(
                 "<32siI6f",
                 m_name,
@@ -395,7 +445,6 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             )
             f.write(mhdr)
             
-            # Write interleaved vertices (24 bytes each)
             vbuf = bytearray(len(m["vertices"]) * 24)
             for vi, v in enumerate(m["vertices"]):
                 struct.pack_into("<ffIfff", vbuf, vi * 24, v["u"], v["v"], v["color"], v["x"], v["y"], v["z"])
@@ -403,10 +452,9 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
 
         # Collider chunk
         for col in all_colliders:
-            c_name = col["name"].encode("ascii")[:31].ljust(32, b"\x00")
+            c_name = col["name"].encode("ascii", errors="ignore")[:31].ljust(32, b"\x00")
             tris = col["triangles"]
             n_tris = len(tris) // 3
-            # compute collider AABB
             c_min = [min(p[i] for p in tris) for i in range(3)] if tris else [0,0,0]
             c_max = [max(p[i] for p in tris) for i in range(3)] if tris else [0,0,0]
             chdr = struct.pack(

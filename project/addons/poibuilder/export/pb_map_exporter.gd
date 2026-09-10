@@ -715,16 +715,22 @@ static func _write_pbm_from_tree(export_tree: Node, file_path: String, settings:
 								tex_data[px_idx * 2] = p16 & 0xFF
 								tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
 
-							tex_id = textures.size()
-							textures.append({
-								"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
-								"width": w,
-								"height": h,
-								"format": PBM_TEX_FMT_RGBA5551,
-								"has_alpha": has_alpha,
-								"data": tex_data
-							})
-							tex_map[tex_key] = tex_id
+							var data_hash: int = hash(tex_data)
+							if tex_map.has(data_hash):
+								tex_id = tex_map[data_hash]
+								tex_map[tex_key] = tex_id
+							else:
+								tex_id = textures.size()
+								textures.append({
+									"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
+									"width": w,
+									"height": h,
+									"format": PBM_TEX_FMT_RGBA5551,
+									"has_alpha": has_alpha,
+									"data": tex_data
+								})
+								tex_map[tex_key] = tex_id
+								tex_map[data_hash] = tex_id
 
 				var tri_verts: Array[Dictionary] = []
 				var idx_list: Array = []
