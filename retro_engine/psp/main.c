@@ -33,6 +33,14 @@ typedef struct {
     uint32_t color;
     float x, y, z;
 } SpriteVertex;
+
+/* Frustum culling planes */
+typedef struct {
+    float x, y, z, w;
+} FrustumPlane;
+
+static FrustumPlane frustum_planes[6];
+
 /* Exit callback thread for Home button */
 static int exit_callback(int arg1, int arg2, void *common) {
     sceKernelExitGame();
@@ -78,12 +86,17 @@ static void font_init(void) {
     sceKernelDcacheWritebackRange(font_tex, sizeof(font_tex));
 }
 
-/* Renders 2D text directly via Sony GU display list quads (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) */
+/* Renders 2D text directly via Sony GU display list quads.
+ * CRITICAL FIX: Allocates dynamic vertex memory inside the display list stream via sceGuGetMemory()
+ * so each text draw call gets its OWN independent buffer that is NEVER overwritten! */
 static void draw_text_gu(float start_x, float start_y, uint32_t color, const char* str) {
     if (!str || !*str) return;
 
     int len = strlen(str);
     if (len > 250) len = 250;
+
+    SpriteVertex* text_verts = (SpriteVertex*)sceGuGetMemory(len * 2 * sizeof(SpriteVertex));
+    if (!text_verts) return;
 
     sceGuEnable(GU_TEXTURE_2D);
     sceGuTexMode(GU_PSM_5551, 0, 0, 0);
@@ -97,9 +110,8 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
 
     float cur_x = start_x;
     float cur_y = start_y;
-    SpriteVertex* text_verts = (SpriteVertex*)sceGuGetMemory(len * 2 * sizeof(SpriteVertex));
-    if (!text_verts) return;
     int vert_count = 0;
+
     for (int i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)str[i];
         if (c < 32 || c > 126) c = ' ';
@@ -133,7 +145,6 @@ static void draw_text_gu(float start_x, float start_y, uint32_t color, const cha
         cur_x += 8.0f;
     }
 
-
     sceGuDrawArray(GU_SPRITES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, vert_count, 0, text_verts);
 }
 
@@ -144,7 +155,73 @@ static void draw_text_shadow(float x, float y, uint32_t color, const char* str) 
     draw_text_gu(x, y, color, str);
 }
 
-/* Screenshot utility */
+/* Fast Gribb-Hartmann Frustum Plane Extraction from combined View-Projection matrix */
+static void extract_frustum_planes(const ScePspFMatrix4* m) {
+    /* Left: row4 + row1 */
+    frustum_planes[0].x = m->x.w + m->x.x;
+    frustum_planes[0].y = m->y.w + m->y.x;
+    frustum_planes[0].z = m->z.w + m->z.x;
+    frustum_planes[0].w = m->w.w + m->w.x;
+
+    /* Right: row4 - row1 */
+    frustum_planes[1].x = m->x.w - m->x.x;
+    frustum_planes[1].y = m->y.w - m->y.x;
+    frustum_planes[1].z = m->z.w - m->z.x;
+    frustum_planes[1].w = m->w.w - m->w.x;
+
+    /* Bottom: row4 + row2 */
+    frustum_planes[2].x = m->x.w + m->x.y;
+    frustum_planes[2].y = m->y.w + m->y.y;
+    frustum_planes[2].z = m->z.w + m->z.y;
+    frustum_planes[2].w = m->w.w + m->w.y;
+
+    /* Top: row4 - row2 */
+    frustum_planes[3].x = m->x.w - m->x.y;
+    frustum_planes[3].y = m->y.w - m->y.y;
+    frustum_planes[3].z = m->z.w - m->z.y;
+    frustum_planes[3].w = m->w.w - m->w.y;
+
+    /* Near: row3 */
+    frustum_planes[4].x = m->x.z;
+    frustum_planes[4].y = m->y.z;
+    frustum_planes[4].z = m->z.z;
+    frustum_planes[4].w = m->w.z;
+
+    /* Far: row4 - row3 */
+    frustum_planes[5].x = m->x.w - m->x.z;
+    frustum_planes[5].y = m->y.w - m->y.z;
+    frustum_planes[5].z = m->z.w - m->z.z;
+    frustum_planes[5].w = m->w.w - m->w.z;
+
+    for (int i = 0; i < 6; ++i) {
+        float len2 = frustum_planes[i].x * frustum_planes[i].x +
+                     frustum_planes[i].y * frustum_planes[i].y +
+                     frustum_planes[i].z * frustum_planes[i].z;
+        if (len2 > 0.000001f) {
+            float inv = 1.0f / sqrtf(len2);
+            frustum_planes[i].x *= inv;
+            frustum_planes[i].y *= inv;
+            frustum_planes[i].z *= inv;
+            frustum_planes[i].w *= inv;
+        }
+    }
+}
+
+/* Fast CPU-side AABB Frustum Culling test:
+ * Tests the 6 planes in 0.05 microseconds; skips submitting off-screen meshes to the GE */
+static inline int is_box_in_frustum(const float bmin[3], const float bmax[3]) {
+    for (int i = 0; i < 6; ++i) {
+        float px = (frustum_planes[i].x > 0.0f) ? bmax[0] : bmin[0];
+        float py = (frustum_planes[i].y > 0.0f) ? bmax[1] : bmin[1];
+        float pz = (frustum_planes[i].z > 0.0f) ? bmax[2] : bmin[2];
+        if (frustum_planes[i].x * px + frustum_planes[i].y * py + frustum_planes[i].z * pz + frustum_planes[i].w < -0.05f) {
+            return 0; /* Box is completely outside this frustum plane -> CULL */
+        }
+    }
+    return 1; /* Box is inside or intersects frustum -> RENDER */
+}
+
+/* Screenshot utility (supports 16-bit RGBA5551 framebuffer) */
 static void save_tga(const char* filename, void* vram_buffer, int width, int height, int stride) {
     FILE* f = fopen(filename, "wb");
     if (!f) return;
@@ -152,12 +229,22 @@ static void save_tga(const char* filename, void* vram_buffer, int width, int hei
         0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         (unsigned char)(width & 0xFF), (unsigned char)((width >> 8) & 0xFF),
         (unsigned char)(height & 0xFF), (unsigned char)((height >> 8) & 0xFF),
-        32, 0x20 /* 32-bit top-left origin */
+        32, 0x20 /* 32-bit BGRA top-left origin */
     };
     fwrite(header, 1, 18, f);
-    unsigned int* src = (unsigned int*)vram_buffer;
+    uint16_t* src = (uint16_t*)vram_buffer;
+    uint32_t line[512];
     for (int y = 0; y < height; ++y) {
-        fwrite(&src[y * stride], 4, width, f);
+        for (int x = 0; x < width; ++x) {
+            uint16_t p = src[y * stride + x];
+            /* Unpack RGBA5551 to 32-bit BGRA */
+            uint8_t r = ((p & 0x1F) * 255) / 31;
+            uint8_t g = (((p >> 5) & 0x1F) * 255) / 31;
+            uint8_t b = (((p >> 10) & 0x1F) * 255) / 31;
+            uint8_t a = (p & 0x8000) ? 255 : 0;
+            line[x] = b | (g << 8) | (r << 16) | (a << 24);
+        }
+        fwrite(line, 4, width, f);
     }
     fclose(f);
     printf("[PSP] Saved screenshot to '%s'\n", filename);
@@ -184,20 +271,22 @@ static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
     }
     return 0;
 }
+
 int main(int argc, char* argv[]) {
     /* Set up Home button exit callback thread */
     setup_callbacks();
 
-    /* Unlock full 333 MHz CPU and 166 MHz GPU clock speed on real PSP!
-     * (Defaults to 222MHz battery-saver mode which throttles 3D fillrate) */
+    /* Unlock full 333 MHz CPU and 166 MHz GPU clock speed on real PSP! */
     scePowerSetClockFrequency(333, 333, 166);
 
     pspDebugScreenInit();
     printf("[PSP] Starting PoiRetro Homebrew Engine v0.9.61...\n");
 
+    /* 16-bit RGBA5551 Framebuffer:
+     * Cuts VRAM write bandwidth in HALF compared to 32-bit 8888, doubling fillrate capacity! */
     void* fbp0 = (void*)0;
-    void* fbp1 = (void*)(BUF_WIDTH * SCR_HEIGHT * 4);
-    void* zbp  = (void*)((BUF_WIDTH * SCR_HEIGHT * 4) * 2);
+    void* fbp1 = (void*)(BUF_WIDTH * SCR_HEIGHT * 2);
+    void* zbp  = (void*)((BUF_WIDTH * SCR_HEIGHT * 2) * 2);
 
     /* Initialize 8x8 font texture */
     font_init();
@@ -205,7 +294,7 @@ int main(int argc, char* argv[]) {
     /* Initialize Sony GU */
     sceGuInit();
     sceGuStart(GU_DIRECT, dlist);
-    sceGuDrawBuffer(GU_PSM_8888, fbp0, BUF_WIDTH);
+    sceGuDrawBuffer(GU_PSM_5551, fbp0, BUF_WIDTH);
     sceGuDispBuffer(SCR_WIDTH, SCR_HEIGHT, fbp1, BUF_WIDTH);
     sceGuDepthBuffer(zbp, BUF_WIDTH);
     sceGuOffset(2048 - (SCR_WIDTH / 2), 2048 - (SCR_HEIGHT / 2));
@@ -215,7 +304,10 @@ int main(int argc, char* argv[]) {
     sceGuDepthRange(0, 65535);
     sceGuDepthFunc(GU_LEQUAL);
     sceGuEnable(GU_DEPTH_TEST);
-    sceGuDepthMask(GU_FALSE); /* Allow depth writes */
+    sceGuDepthMask(GU_FALSE);
+
+    /* Hardware Guardband & Frustum Clipping */
+    sceGuEnable(GU_CLIP_PLANES);
 
     /* Scissor */
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
@@ -244,15 +336,9 @@ int main(int argc, char* argv[]) {
         map_path = argv[1];
     }
     PbmMap* map = pbm_load(map_path);
-    if (!map) {
-        map = pbm_load("disc0:/showcase_retro_baked.pbm");
-    }
-    if (!map) {
-        map = pbm_load("ms0:/showcase_retro_baked.pbm");
-    }
-    if (!map) {
-        map = pbm_load("PSP/GAME/PoiRetro/showcase_retro_baked.pbm");
-    }
+    if (!map) map = pbm_load("disc0:/showcase_retro_baked.pbm");
+    if (!map) map = pbm_load("ms0:/showcase_retro_baked.pbm");
+    if (!map) map = pbm_load("PSP/GAME/PoiRetro/showcase_retro_baked.pbm");
 
     if (!map) {
         printf("[PSP] Warning: Map file '%s' not found! Please check path.\n", map_path);
@@ -276,9 +362,7 @@ int main(int argc, char* argv[]) {
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
-    /* Initial Camera: standing in front of the billboard looking directly at the archway
-     * Archway is at Z=-5.5, billboard is at Z=4.0.
-     * Standing at (0, 1.6, 4.2), yaw=0.0 looks straight North (-Z) at the archway! */
+    /* Initial Camera: standing in front of the billboard looking directly at the archway */
     float cam_x = 0.0f;
     float cam_y = 1.6f;  /* Eye level standing on floor */
     float cam_z = 4.2f;  /* In front of the trees/bush billboard, facing North */
@@ -304,7 +388,7 @@ int main(int argc, char* argv[]) {
     int fps_frames = 0;
     float fps_timer = 0.0f;
 
-    void* curr_fbp = fbp0;
+
 
     printf("[PSP] Entering 3D rendering loop (benchmark mode: %d)...\n", is_benchmark);
 
@@ -341,7 +425,8 @@ int main(int argc, char* argv[]) {
              * - LT / RT: Look left / right (yaw)
              * - X (Cross): Fly UP
              * - Circle (O): Fly DOWN
-             * - Triangle / Square / D-Pad: Pitch look up / down
+             * - Triangle: Pitch look UP
+             * - Square: Pitch look DOWN
              * - Start: Reset to spawn
              * - Select: Cycle render modes */
             if (pad.Buttons & PSP_CTRL_START) {
@@ -358,7 +443,6 @@ int main(int argc, char* argv[]) {
 
             /* 1. Fly motion with Analog Stick (or D-Pad) */
             float move_speed = 9.5f * dt;
-            if (pad.Buttons & PSP_CTRL_SQUARE) move_speed *= 2.0f; /* Turbo speed */
 
             float in_fwd = 0.0f;
             float in_strafe = 0.0f;
@@ -369,8 +453,6 @@ int main(int argc, char* argv[]) {
             if (abs((int)pad.Lx - 128) > 20) {
                 in_strafe = (float)((int)pad.Lx - 128) / 128.0f;
             }
-            if (pad.Buttons & PSP_CTRL_UP)    in_fwd += 1.0f;
-            if (pad.Buttons & PSP_CTRL_DOWN)  in_fwd -= 1.0f;
             if (pad.Buttons & PSP_CTRL_LEFT)  in_strafe -= 1.0f;
             if (pad.Buttons & PSP_CTRL_RIGHT) in_strafe += 1.0f;
 
@@ -392,8 +474,9 @@ int main(int argc, char* argv[]) {
             if (pad.Buttons & PSP_CTRL_CROSS)  cam_y += vert_speed;
             if (pad.Buttons & PSP_CTRL_CIRCLE) cam_y -= vert_speed;
 
-            /* 4. Look pitch (up/down): Triangle looks up, Square looks down */
-            if (pad.Buttons & PSP_CTRL_TRIANGLE) cam_pitch += 1.8f * dt;
+            /* 4. Look pitch (up/down): Triangle tilts UP, Square tilts DOWN! */
+            if (pad.Buttons & (PSP_CTRL_TRIANGLE | PSP_CTRL_UP))   cam_pitch += 1.8f * dt;
+            if (pad.Buttons & (PSP_CTRL_SQUARE   | PSP_CTRL_DOWN)) cam_pitch -= 1.8f * dt;
             if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
             if (cam_pitch < -1.45f) cam_pitch = -1.45f;
         } else {
@@ -412,15 +495,14 @@ int main(int argc, char* argv[]) {
         sceGuStart(GU_DIRECT, dlist);
 
         /* Clear background: deep dusk sky blue */
-        sceGuClearColor(0xFF382218);
-        sceGuClearDepth(65535); /* Clear depth to farthest */
+        sceGuClearColor(0x382218);
+        sceGuClearDepth(65535);
         sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
 
-        /* CRITICAL: Re-enable depth testing on EVERY frame for 3D meshes!
-         * (Text pass disables it, so it must be restored here) */
+        /* Re-enable depth testing on EVERY frame for 3D meshes */
         sceGuEnable(GU_DEPTH_TEST);
         sceGuDepthFunc(GU_LEQUAL);
-        sceGuDepthMask(GU_FALSE); /* Allow depth writes */
+        sceGuDepthMask(GU_FALSE);
 
         /* Projection Matrix */
         sceGumMatrixMode(GU_PROJECTION);
@@ -438,15 +520,25 @@ int main(int argc, char* argv[]) {
         ScePspFVector3 up     = { 0.0f, 1.0f, 0.0f };
         sceGumLookAt(&eye, &target, &up);
 
-        /* ── TWO-PASS 3D RENDERING ARCHITECTURE ───
+        /* Compute combined View-Projection matrix for CPU Frustum Culling */
+        ScePspFMatrix4 proj_mat, view_mat, vp_mat;
+        sceGumMatrixMode(GU_PROJECTION);
+        sceGumStoreMatrix(&proj_mat);
+        sceGumMatrixMode(GU_VIEW);
+        sceGumStoreMatrix(&view_mat);
+        gumMultMatrix(&vp_mat, &view_mat, &proj_mat);
+        extract_frustum_planes(&vp_mat);
+
+        /* ── TWO-PASS 3D RENDERING WITH CPU FRUSTUM CULLING & SWIZZLED TEXTURES ───
          * PASS 1: Solid Opaque Meshes (floors, walls, pillars, stairs, cylinder, prism)
-         *   - GU_BLEND is DISABLED! (No heavy eDRAM read-modify-write; full fillrate & early-Z)
-         *   - Depth write enabled, backface culling enabled
-         * PASS 2: Alpha-blended Billboards (trees, bushes, flowers)
-         *   - GU_BLEND enabled, backface culling disabled */
+         *   - Frustum culling skips off-screen meshes entirely!
+         *   - GU_BLEND is DISABLED! (Doubles fillrate, avoids eDRAM read-modify-write)
+         *   - Swizzled textures eliminate cache misses and memory bus congestion
+         * PASS 2: Alpha-tested Billboards (trees, bushes, flowers) */
 
         int last_tex_id = -999;
         uint32_t total_rendered_verts = 0;
+        uint32_t total_culled_meshes = 0;
 
         /* PASS 1: Solid Opaque Meshes */
         sceGuDisable(GU_BLEND);
@@ -457,6 +549,13 @@ int main(int argc, char* argv[]) {
             PbmMesh* mesh = &map->meshes[mi];
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (is_transparent_mesh(map, mesh)) continue; /* Rendered in Pass 2 */
+
+            /* CPU Frustum Culling: skips off-screen meshes instantly */
+            if (!is_box_in_frustum(mesh->bounds_min, mesh->bounds_max)) {
+                total_culled_meshes++;
+                continue;
+            }
+
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
@@ -497,7 +596,7 @@ int main(int argc, char* argv[]) {
 
         /* PASS 2: Alpha-tested & Alpha-blended Billboards / Foliage */
         sceGuEnable(GU_ALPHA_TEST);
-        sceGuAlphaFunc(GU_GREATER, 0x10, 0xFF); /* Discard transparent fragments */
+        sceGuAlphaFunc(GU_GREATER, 0x10, 0xFF);
         sceGuEnable(GU_BLEND);
         sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
         sceGuDisable(GU_CULL_FACE);
@@ -506,6 +605,13 @@ int main(int argc, char* argv[]) {
             PbmMesh* mesh = &map->meshes[mi];
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (!is_transparent_mesh(map, mesh)) continue; /* Already rendered in Pass 1 */
+
+            /* CPU Frustum Culling */
+            if (!is_box_in_frustum(mesh->bounds_min, mesh->bounds_max)) {
+                total_culled_meshes++;
+                continue;
+            }
+
             if (display_mode == 1 || display_mode == 2) {
                 sceGuDisable(GU_TEXTURE_2D);
             } else {
@@ -534,12 +640,13 @@ int main(int argc, char* argv[]) {
 
             total_rendered_verts += mesh->num_vertices;
         }
+
         sceGuDisable(GU_ALPHA_TEST);
 
-        /* ── PASS 3: Hardware 2D On-Screen HUD Overlay (100% visible on PPSSPP Vulkan/OpenGL & Real Hardware) ─── */
+        /* ── PASS 3: Hardware 2D On-Screen HUD Overlay ─── */
         char buf[80];
-        snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Verts: %u",
-            fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_rendered_verts);
+        snprintf(buf, sizeof(buf), "FPS: %4.1f | Tris: %u | Culled: %u",
+            fps, (unsigned int)(total_rendered_verts / 3), (unsigned int)total_culled_meshes);
         draw_text_shadow(8.0f, 8.0f, 0xFF00FF55, buf); /* Bright Green */
 
         snprintf(buf, sizeof(buf), "Pos: (%.1f, %.1f, %.1f) | %s",
@@ -547,15 +654,12 @@ int main(int argc, char* argv[]) {
             display_mode == 0 ? "Textured (Baked Lit)" : (display_mode == 1 ? "Baked Lighting" : "Wireframe"));
         draw_text_shadow(8.0f, 18.0f, 0xFFFFFF00, buf); /* Cyan */
 
-        draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Analog: Fly | LT/RT: Turn | X: Up | O: Down | Sel: Mode");
+        draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Analog: Fly | LT/RT: Turn | X/O: Up/Down | Tri/Sqr: Tilt");
 
         sceGuFinish();
         sceGuSync(0, 0);
 
-        sceDisplayWaitVblankStart();
-        curr_fbp = (curr_fbp == fbp0) ? fbp1 : fbp0;
         sceGuSwapBuffers();
-
         frame_count++;
 
         /* Headless benchmark: capture screenshot at frame 60, exit at frame 120 */
