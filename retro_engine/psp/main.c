@@ -441,28 +441,61 @@ int main(int argc, char* argv[]) {
                 sceKernelDelayThread(150000);
             }
 
-            /* 1. Fly motion with Analog Stick (or D-Pad) */
+            /* 1. Fly Motion & Look Tilt:
+             * - Square = move faster (boost speed)
+             * - Hold Triangle = tilt in all directions with analog stick while holding
+             * - Release Triangle = fly forward/backward and strafe with analog stick */
             float move_speed = 9.5f * dt;
+            if (pad.Buttons & PSP_CTRL_SQUARE) move_speed *= 2.5f; /* Square = move faster */
 
-            float in_fwd = 0.0f;
-            float in_strafe = 0.0f;
+            if (pad.Buttons & PSP_CTRL_TRIANGLE) {
+                /* Tilt camera in all directions with analog stick while holding Triangle */
+                if (abs((int)pad.Lx - 128) > 20) {
+                    float stick_x = (float)((int)pad.Lx - 128) / 128.0f;
+                    cam_yaw += stick_x * 2.8f * dt;
+                }
+                if (abs((int)pad.Ly - 128) > 20) {
+                    float stick_y = -(float)((int)pad.Ly - 128) / 128.0f;
+                    cam_pitch += stick_y * 2.2f * dt;
+                }
+            } else {
+                /* Normal fly motion with analog stick */
+                float in_fwd = 0.0f;
+                float in_strafe = 0.0f;
 
-            if (abs((int)pad.Ly - 128) > 20) {
-                in_fwd = -(float)((int)pad.Ly - 128) / 128.0f;
+                if (abs((int)pad.Ly - 128) > 20) {
+                    in_fwd = -(float)((int)pad.Ly - 128) / 128.0f;
+                }
+                if (abs((int)pad.Lx - 128) > 20) {
+                    in_strafe = (float)((int)pad.Lx - 128) / 128.0f;
+                }
+
+                float fwd_x = sinf(cam_yaw);
+                float fwd_z = -cosf(cam_yaw);
+                float right_x = cosf(cam_yaw);
+                float right_z = sinf(cam_yaw);
+
+                cam_x += (fwd_x * in_fwd + right_x * in_strafe) * move_speed;
+                cam_z += (fwd_z * in_fwd + right_z * in_strafe) * move_speed;
             }
-            if (abs((int)pad.Lx - 128) > 20) {
-                in_strafe = (float)((int)pad.Lx - 128) / 128.0f;
+
+            /* D-Pad backup movement */
+            if (pad.Buttons & PSP_CTRL_UP) {
+                cam_x += sinf(cam_yaw) * move_speed;
+                cam_z += -cosf(cam_yaw) * move_speed;
             }
-            if (pad.Buttons & PSP_CTRL_LEFT)  in_strafe -= 1.0f;
-            if (pad.Buttons & PSP_CTRL_RIGHT) in_strafe += 1.0f;
-
-            float fwd_x = sinf(cam_yaw);
-            float fwd_z = -cosf(cam_yaw);
-            float right_x = cosf(cam_yaw);
-            float right_z = sinf(cam_yaw);
-
-            cam_x += (fwd_x * in_fwd + right_x * in_strafe) * move_speed;
-            cam_z += (fwd_z * in_fwd + right_z * in_strafe) * move_speed;
+            if (pad.Buttons & PSP_CTRL_DOWN) {
+                cam_x -= sinf(cam_yaw) * move_speed;
+                cam_z -= -cosf(cam_yaw) * move_speed;
+            }
+            if (pad.Buttons & PSP_CTRL_LEFT) {
+                cam_x -= cosf(cam_yaw) * move_speed;
+                cam_z -= sinf(cam_yaw) * move_speed;
+            }
+            if (pad.Buttons & PSP_CTRL_RIGHT) {
+                cam_x += cosf(cam_yaw) * move_speed;
+                cam_z += sinf(cam_yaw) * move_speed;
+            }
 
             /* 2. Look left / right via LT / RT */
             float turn_speed = 2.4f * dt;
@@ -474,9 +507,7 @@ int main(int argc, char* argv[]) {
             if (pad.Buttons & PSP_CTRL_CROSS)  cam_y += vert_speed;
             if (pad.Buttons & PSP_CTRL_CIRCLE) cam_y -= vert_speed;
 
-            /* 4. Look pitch (up/down): Triangle tilts UP, Square tilts DOWN! */
-            if (pad.Buttons & (PSP_CTRL_TRIANGLE | PSP_CTRL_UP))   cam_pitch += 1.8f * dt;
-            if (pad.Buttons & (PSP_CTRL_SQUARE   | PSP_CTRL_DOWN)) cam_pitch -= 1.8f * dt;
+            /* Pitch clamp */
             if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
             if (cam_pitch < -1.45f) cam_pitch = -1.45f;
         } else {
@@ -654,7 +685,7 @@ int main(int argc, char* argv[]) {
             display_mode == 0 ? "Textured (Baked Lit)" : (display_mode == 1 ? "Baked Lighting" : "Wireframe"));
         draw_text_shadow(8.0f, 18.0f, 0xFFFFFF00, buf); /* Cyan */
 
-        draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Analog: Fly | LT/RT: Turn | X/O: Up/Down | Tri/Sqr: Tilt");
+        draw_text_shadow(8.0f, 28.0f, 0xFFDDDDDD, "Stick: Fly | Tri+Stick: Tilt | Square: Fast | X/O: Up/Down");
 
         sceGuFinish();
         sceGuSync(0, 0);
