@@ -220,7 +220,7 @@ static void init_sphere_mesh(float radius, uint32_t color) {
             float x0 = cosf(lng0);
             float y0 = sinf(lng0);
 
-            float lng1 = 2.0f * M_PI * (float)(j + 1) * SPHERE_LONS;
+            float lng1 = 2.0f * M_PI * (float)(j + 1) / SPHERE_LONS;
             float x1 = cosf(lng1);
             float y1 = sinf(lng1);
 
