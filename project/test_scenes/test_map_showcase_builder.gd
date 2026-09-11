@@ -440,16 +440,33 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	trig_node.add_child(trig_col)
 	root.add_child(trig_node)
 
-	# 4. Particle Emitter Marker
-	var emitter_node := Marker3D.new()
-	emitter_node.name = "Emitter_Torch"
-	emitter_node.position = Vector3(2.5, 1.8, -4.5)
-	emitter_node.set_meta("rate", 30)
-	emitter_node.set_meta("lifetime", 1.2)
-	emitter_node.set_meta("velocity", Vector3(0.0, 1.5, 0.0))
-	emitter_node.set_meta("spread", 0.3)
-	emitter_node.set_meta("color", Color(1.0, 0.55, 0.2, 1.0))
-	root.add_child(emitter_node)
+	# 4. Particle Emitters (standard "emitters" lump — see PBMapExporter)
+	# Authored as ordinary GPUParticles3D nodes; the exporter maps their process
+	# material and draw-pass quad onto the format, so the editor preview and the
+	# PSP playback are the same effect.
+	var brazier := _create_emitter("Emitter_Brazier", Vector3(-3.2, 3.05, -4.0),
+		"res://addons/poibuilder/materials/textures/particle_flame.png",
+		20, 0.8, 0.9, true, true, 2, 2)
+	root.add_child(brazier)
+
+	# Embers: the same fire with the additive glimmer instead of the flipbook,
+	# thrown wider and higher so the two read as one brazier.
+	var embers := _create_emitter("Emitter_Embers", Vector3(-3.2, 3.05, -4.0),
+		"res://addons/poibuilder/materials/textures/particle_glow.png",
+		12, 1.3, 0.32, true, false)
+	var ember_pm := embers.process_material as ParticleProcessMaterial
+	ember_pm.initial_velocity_min = 1.1
+	ember_pm.initial_velocity_max = 2.0
+	ember_pm.spread = 26.0
+	root.add_child(embers)
+
+	# Mist: the blend path — a soft puff at the foot of the waterfall, rising
+	# and swelling. Its texture carries a real alpha gradient, so the exporter
+	# keeps it as RGBA8888 and the runtime sorts it back to front.
+	var mist := _create_emitter("Emitter_Mist", Vector3(4.5, 0.35, -4.7),
+		"res://addons/poibuilder/materials/textures/particle_smoke.png",
+		14, 1.7, 1.3, false, true)
+	root.add_child(mist)
 
 	# 5. Physics Rigid Bodies (Ball Pit Container)
 	var ball_pit_node := Node3D.new()
@@ -608,6 +625,86 @@ static func _water_material_props(mat: Material, blended: bool) -> void:
 		# texture's own alpha ramp rather than in the material color.
 		sm.albedo_color = Color(1.0, 1.0, 1.0, 0.85)
 		sm.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+## Authoring helper: a particle emitter is an ordinary GPUParticles3D whose
+## process material and draw-pass quad the retro exporter maps onto the PBM
+## "emitters" lump (PBMapExporter._emitter_from_node). Nothing about it is
+## retro-specific — the editor preview and the PSP playback are one effect —
+## and the alpha ramp's peak is what becomes the runtime's size/colour knee.
+static func _create_emitter(name_str: String, pos: Vector3, tex_path: String,
+		amount: int, lifetime: float, quad_h: float, additive: bool,
+		y_locked: bool = false, atlas_cols: int = 1, atlas_rows: int = 1) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.name = name_str
+	p.position = pos
+	p.amount = amount
+	p.lifetime = lifetime
+	p.one_shot = false
+	p.local_coords = false
+	p.preprocess = 1.0
+
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3(0.0, 1.0, 0.0)
+	pm.spread = 14.0
+	pm.initial_velocity_min = 0.5
+	pm.initial_velocity_max = 1.1
+	pm.gravity = Vector3(0.0, 0.35, 0.0)
+	pm.damping_min = 0.4
+	pm.damping_max = 0.9
+	pm.scale_min = 0.7
+	pm.scale_max = 1.25
+	pm.angle_min = -20.0
+	pm.angle_max = 20.0
+	pm.angular_velocity_min = -40.0
+	pm.angular_velocity_max = 40.0
+
+	# Fade in, hold, fade out: the alpha ramp peaks at 0.35, which is the knee
+	# the exporter writes, so the runtime's two-segment interpolation has the
+	# same shape as this gradient.
+	var ramp := Gradient.new()
+	ramp.set_color(0, Color(1, 1, 1, 0.0))
+	ramp.set_color(1, Color(1, 1, 1, 0.0))
+	ramp.add_point(0.35, Color(1, 1, 1, 1.0))
+	var gt := GradientTexture1D.new()
+	gt.gradient = ramp
+	pm.color_ramp = gt
+
+	# Rise and swell over the lifetime; sampled at 0 / knee / 1 by the exporter.
+	var sc := Curve.new()
+	sc.add_point(Vector2(0.0, 0.55))
+	sc.add_point(Vector2(0.35, 1.0))
+	sc.add_point(Vector2(1.0, 1.35))
+	var sct := CurveTexture.new()
+	sct.curve = sc
+	pm.scale_curve = sct
+	p.process_material = pm
+
+	var qm := QuadMesh.new()
+	qm.size = Vector2(quad_h, quad_h)
+	var sm := StandardMaterial3D.new()
+	if ResourceLoader.exists(tex_path):
+		sm.albedo_texture = load(tex_path)
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sm.blend_mode = (BaseMaterial3D.BLEND_MODE_ADD if additive
+		else BaseMaterial3D.BLEND_MODE_MIX)
+	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Editor-preview cosmetics: the retro runtime billboards from the camera
+	# basis, and takes the blend mode and texture from this same material. The
+	# sprite-sheet grid has to be declared HERE (Godot only honours
+	# particles_anim_* in the BILLBOARD_PARTICLES mode) and is what the exporter
+	# reads as the emitter's flipbook.
+	if atlas_cols > 1 or atlas_rows > 1:
+		sm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+		sm.particles_anim_h_frames = atlas_cols
+		sm.particles_anim_v_frames = atlas_rows
+		sm.particles_anim_loop = true
+	else:
+		sm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	sm.vertex_color_use_as_albedo = true
+	qm.material = sm
+	p.draw_pass_1 = qm
+	p.set_meta("poi_y_locked", y_locked)
+	return p
 
 static func _create_billboard_node(name_str: String, tex_path: String,
 		size: Vector2, pos: Vector3, is_lit: bool, soft_alpha: bool = false) -> MeshInstance3D:

@@ -17,6 +17,11 @@ typedef struct {
     int   alpha_pass;      /* the billboard/foliage alpha+blend pass */
     int   entity;          /* the scripted patrol sphere */
     int   uv_scroll;       /* animated UV scroll (PBM 3.0) on scrolling meshes */
+    int   particles;       /* particle emitters, as a bitmask: 1 = blended,
+                            * 2 = additive, 3 = both (the shipped default).
+                            * The two halves are separable because they differ in
+                            * what they cost a frame: additive needs no sorting
+                            * and no depth order, blended needs both. */
     int   tex_filter;      /* PBFILT_* */
     float tex_lod_bias;    /* negative = sharper (picks a smaller mip level) */
     int   tex_level_mode;  /* PBLEVEL_*: how the mip level is chosen */
@@ -73,6 +78,7 @@ typedef struct {
     uint32_t draw_calls;
     uint32_t vertices;
     uint32_t triangles;
+    uint32_t particles;   /* emitter particles actually drawn this frame */
 } RenderStats;
 
 /* Vertex layout shared by the 3D meshes and the 2D HUD sprites. */
@@ -111,5 +117,17 @@ const void* psp_small_texture(int* width, int* height);
 void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                       float cx, float cy, float cz, float yaw, float pitch,
                       float time_s, RenderStats* stats);
+
+/* Synthetic particle load for the profiler: draws `count` additive particles of
+ * `size` metres at the identity view, through the shipped emitter evaluator.
+ * It exists so the cost of N particles can be measured on the device without
+ * authoring a map for every data point. */
+void psp_render_particle_probe(int count, float size, uint32_t color, RenderStats* stats);
+
+/* Deterministic fill calibration through the emitter path: `count` stationary
+ * particles covering the frustum at 2 m, each `size` metres tall. `additive`
+ * selects the blend mode, so the two can be compared directly. */
+void psp_render_particle_fill_probe(PbmMap* map, int count, float size, int additive,
+                                    int texture_id, uint32_t color, RenderStats* stats);
 
 #endif /* PSP_RENDER_H */

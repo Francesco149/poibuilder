@@ -236,6 +236,77 @@ skip_mesh=Foo     # drop any mesh whose name contains this (isolate a draw)
 Edit the file, re-run, screenshot. This is how the tile-seam and blur issues
 were A/B'd without a build per data point.
 
+## Particles (standard lump "emitters", SPEC §8)
+
+The emitter feature is measured like everything else here — on the device, with
+40-frame averages after a warmup, and with an A/B on the same camera.
+
+### What each row is
+
+| row | what it draws |
+|---|---|
+| `scene_spawn` / `abi_noemit_spawn` | the showcase at the spawn view, with and without the map's emitters |
+| `abi_emit_add_spawn` | only the additive emitters (brazier flipbook + embers, 32 particles) |
+| `abi_emit_blend_spawn` | only the blended emitter (waterfall mist, 14 soft puffs) |
+| `particles_16_s` / `_64_s` / `_256_s` | 16/64/256 moving additive particles in an empty frame (the format's whole per-map budget is 256) |
+| `pfill_glow_add` / `pfill_glow_blend` / `pfill_smoke_blend` | four STATIONARY particles covering half the screen, the same coverage in all three: built-in 32x32 RGBA5551 glow, additive; the same, alpha-blended; the map's 64x64 RGBA8888 soft-alpha art |
+
+`poi_render.txt` takes `particles=<bitmask>`: `1` blended emitters, `2` additive,
+`3` both (the default), `0` off — the app then reproduces the ablation on the
+camera the player is actually looking at. `poi_render.txt` is read at startup.
+
+### Measured
+
+| what | gpu | cpu |
+|---|---|---|
+| clear + swap (the floor) | 0.29 ms | 0.02 ms |
+| 16 moving particles | 0.29 (nothing) | 0.15 |
+| 64 moving particles | 0.44 | 0.35 |
+| 256 moving particles (the whole budget) | **0.72** | **1.14** |
+| 4 stationary particles, half-screen coverage, glow, additive | 0.46 | 0.10 |
+| …same, alpha-blended | 0.46 | 0.11 |
+| …same, the 64x64 RGBA8888 soft-alpha art | 0.46 | 0.11 |
+
+**Particle fill costs what opaque fill costs**: ~430 Mfrag/s here versus 490
+Mfrag/s for the `fill2d` probes, and the blend mode and the texture format make
+no measurable difference at this size. Cost tracks the on-screen AREA of the
+particles, not their count.
+
+### The one expensive configuration
+
+At the spawn view the showcase's emitters cost **+1.7 ms gpu / +0.5 ms cpu**, and
+the split says it is entirely the *blended* emitter: the additive pair measures
+free (6.76 vs 6.84 with no emitters at all), while the 14 blended mist puffs cost
+8.61. The same delta appears in the interactive app's own HUD (+0.5 cpu, +1.7
+gpu), i.e. it is reproducible in two independent measurements.
+
+The mechanism is not yet identified: the coverage of those puffs (~tens of
+thousands of fragments) accounts for ~0.05 ms of fill at the measured rate, and
+neither the 8888 format nor blending is expensive per fragment (`pfill_*` above).
+Recorded so it is not re-investigated from scratch — and the practical guidance
+is unaffected: keep blended emitters small or distant, and prefer additive for
+anything close to the camera.
+
+### Two ways this measurement lied before it was right
+
+* The first fill probe mutated a *zeroed* `RenderCfg` (the guard read
+  `if (!cfg.particles)`, which a default config never satisfies). With
+  `use_textures = 0` and `use_mips = 0` it sampled a 512x512 atlas as a particle
+  texture with no mip chain and reported 16.6 ms for four small quads — the
+  documented 19x minification penalty, not the particle cost. A probe must own a
+  real `render_cfg_default()`.
+* The same probe reused the `tex` field as both "additive" flag and texture id,
+  so the "additive vs blend" comparison silently drew the same configuration
+  twice. Rows that differ by name must differ in fact.
+
+### Reading the particles on the device
+
+`scrshot` captures the real framebuffer; the showcase's brazier sits above the
+left pillar and the mist column stands in front of the waterfall. The HUD line
+is a single 60-character row (480 px / 8 px per glyph) — a longer format string
+silently loses its last digits (a full particle count read as "Parts: 4" that
+way).
+
 ## Grazing-angle seams on tiled surfaces (investigated, partly inherent)
 
 Thin lines at tile boundaries on a floor seen at a shallow angle. What was

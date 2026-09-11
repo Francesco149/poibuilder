@@ -53,15 +53,22 @@ func test_end_to_end_godot_entity_authoring_to_pbm() -> void:
 	trigger_node.set_meta("oneshot", true)
 	scene_root.add_child(trigger_node)
 
-	# 1e. Particle Emitter Marker (Marker3D)
-	var emitter_marker := Marker3D.new()
-	emitter_marker.name = "Emitter_CampfireSparks"
-	emitter_marker.position = Vector3(2.0, 0.5, -1.0)
-	emitter_marker.set_meta("rate", 45)
-	emitter_marker.set_meta("lifetime", 2.0)
-	emitter_marker.set_meta("velocity", Vector3(0.0, 3.0, 0.0))
-	emitter_marker.set_meta("spread", 0.4)
-	scene_root.add_child(emitter_marker)
+	# 1e. Particle Emitter (GPUParticles3D: the standard "emitters" lump)
+	var emitter_node := GPUParticles3D.new()
+	emitter_node.name = "Emitter_CampfireSparks"
+	emitter_node.position = Vector3(2.0, 0.5, -1.0)
+	emitter_node.amount = 45
+	emitter_node.lifetime = 2.0
+	var emitter_pm := ParticleProcessMaterial.new()
+	emitter_pm.direction = Vector3(0.0, 3.0, 0.0)
+	emitter_pm.spread = 25.0
+	emitter_pm.initial_velocity_min = 1.0
+	emitter_pm.initial_velocity_max = 2.0
+	emitter_node.process_material = emitter_pm
+	var emitter_quad := QuadMesh.new()
+	emitter_quad.size = Vector2(0.4, 0.4)
+	emitter_node.draw_pass_1 = emitter_quad
+	scene_root.add_child(emitter_node)
 
 	# 1f. Physics Rigid Bodies (Ball Pit container)
 	var ball_pit_node := Node3D.new()
@@ -168,15 +175,19 @@ func test_end_to_end_godot_entity_authoring_to_pbm() -> void:
 	assert_eq(trig_dict["dialogue_id"], "vault_lore_01")
 	assert_eq(trig_dict["oneshot"], true)
 
-	# 3e. Particle Emitter
-	assert_true(metadata_lumps.has("particle_emitters"))
-	var particles_arr = JSON.parse_string(metadata_lumps["particle_emitters"]["data"].get_string_from_utf8())
-	assert_true(particles_arr is Array and particles_arr.size() >= 1)
-	var part_dict: Dictionary = particles_arr[0]
-	assert_eq(part_dict["id"], "Emitter_CampfireSparks")
-	assert_eq(part_dict["rate"], 45)
-	assert_almost_eq(part_dict["lifetime"], 2.0, 0.01)
-	assert_almost_eq(part_dict["spread"], 0.4, 0.01)
+	# 3e. Particle Emitter: the standard binary lump, not a JSON recipe.
+	assert_true(metadata_lumps.has("emitters"))
+	assert_eq(metadata_lumps["emitters"]["type"], PBMapExporter.PBM_META_EMITTER)
+	var em_bytes: PackedByteArray = metadata_lumps["emitters"]["data"]
+	assert_eq(em_bytes.decode_u32(0), 0x54494D45, "The lump must start with the EMIT magic")
+	assert_eq(em_bytes.decode_u32(8), 1, "One authored emitter")
+	var em_base := 16
+	assert_eq(em_bytes.slice(em_base, em_base + 22).get_string_from_ascii(), "Emitter_CampfireSparks")
+	assert_almost_eq(em_bytes.decode_float(em_base + 0x18), 2.0, 0.01, "Position X comes from the node")
+	assert_almost_eq(em_bytes.decode_float(em_base + 0x40), 2.0, 0.01, "Lifetime maps to life_max")
+	assert_eq(em_bytes.decode_u16(em_base + 0x98), 45, "`amount` maps to the particle count")
+	assert_almost_eq(em_bytes.decode_float(em_base + 0x30), deg_to_rad(25.0), 0.001,
+		"Spread crosses over in radians")
 
 	# 3f. Rigid Bodies (Ball Pit)
 	assert_true(metadata_lumps.has("rigid_bodies"))

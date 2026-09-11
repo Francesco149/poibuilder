@@ -793,6 +793,69 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.73 round complete ✓ — particles become a standard part of the retro
+format: stateless looping emitters, authored as GPUParticles3D, measured on real
+hardware:
+- THE MODEL: an emitter is a LOOPING, STATELESS stream — particle i's state at
+  scene time t is a closed form of (t, i, seed). Its age cycles through its own
+  lifetime, its position is the analytic ballistic solution (or the analytic
+  damped one when the emitter drags), its size and colour are two-segment curves
+  through a knee, and its rotation and flipbook frame follow the age. There is no
+  per-particle state, no allocation and no integration anywhere; the per-particle
+  constants are derived ONCE at load. The field is deterministic — seed plus the
+  specified hash (`pbm_rand`, published with the format) reproduce it exactly —
+  which is what lets the viewer preview and the device agree.
+- THE FORMAT (SPEC_RETRO_FORMAT.md §8): a STANDARD LUMP — `"emitters"`, metadata
+  type 4, the first payload whose layout the specification itself defines — with
+  a 16-byte header (`EMIT` magic, its own version) and 176-byte records. No
+  version bump: the metadata chunk (v2) is extensible, and a loader that does not
+  know the tag skips it. Records carry position/direction/spread, speed and life
+  ranges, gravity, damping, size (birth range + knee/end multipliers + aspect),
+  initial rotation and spin, wobble, spawn radius, three colours, texture id and
+  flipbook grid, flags (additive / Y-locked / velocity-aligned / phase-aligned
+  burst) and a seed.
+- AUTHORING: emitters are ordinary GPUParticles3D nodes; the exporter maps the
+  process material and the draw-pass quad field by field (§8.6). The flipbook
+  grid comes from the MATERIAL's `particles_anim_h/v_frames` (Godot only honours
+  them in BILLBOARD_PARTICLES mode) and `anim_speed` counts complete cycles per
+  lifetime — the same unit as `anim_loops`. `poi_*` node metadata overrides the
+  fields Godot has no concept for (Y-locked, wobble, knee, seed, additive).
+- RENDERING: camera / Y-locked / velocity-aligned billboards, two triangles per
+  particle, ONE draw call per emitter; blended emitters sort back-to-front and
+  additive ones are never sorted (order independence is why additive is the cheap
+  default); emitters are unlit, depth-tested, never depth-writing, never culled.
+  Flipbook cells sample with a half-texel inset. A SINGLE-CELL emitter uses the
+  load-time mip chain, a multi-cell flipbook stays on level 0 (a mip level would
+  average neighbouring frames into one another) and leans on a size cull.
+- BOTH EXPORT ROUTES AGREE: the lump is byte-identical from the Python oracle and
+  the GDScript converter (diffed on the showcase's two PBMs). The GLB route
+  carries the record in node `extras` on a zero-size holder quad whose material
+  puts the particle texture in the file; the converters and the PBM writer skip
+  that holder as geometry.
+- MEASURED ON DEVICE (40-frame averages; HARDWARE-TESTING.md has the tables):
+  256 moving particles — the whole per-map budget — cost 0.72 ms gpu / 1.14 ms
+  cpu. Particle fill runs at ~430 Mfrag/s, i.e. the same as opaque fill, and
+  neither the blend mode nor RGBA8888-vs-5551 changes that at particle sizes. At
+  the spawn view the showcase's additive emitters measure FREE (6.76 ms versus
+  6.84 ms with every emitter disabled) while the 14 blended mist puffs cost
+  +1.7 ms — reproduced independently in the app's own HUD. The mechanism is
+  unidentified (their coverage accounts for ~0.05 ms at the measured rate) and is
+  recorded as such so it is not re-investigated from scratch; the practical
+  guidance stands: keep blended emitters small or distant, prefer additive near
+  the camera.
+- VERIFICATION BUGS WORTH KEEPING: the emitter-level cull negated the forward
+  distance, so EVERY emitter was skipped — found by reading the emulator
+  screenshot's "Parts: 0", not by reading the code. The HUD line ran past the
+  480 px screen, so a full "Parts: 46" displayed as "Parts: 4" (one line, 60
+  glyphs, or the last digits are lost). And a fill probe that mutated a zeroed
+  RenderCfg measured the 19x minification penalty while claiming to measure
+  particles: a probe must own a real `render_cfg_default()`.
+- Tests: 834/834 GUT — the export parity test asserts the lump layout, the flags,
+  the flipbook grid and the texture formats. Device battery gained
+  `particles_16/64/256`, `pfill_glow_add/blend`, `pfill_smoke_blend`,
+  `abi_noemit_*` and `abi_emit_*_spawn`; `poi_render.txt` gained
+  `particles=<bitmask>` (1 blended, 2 additive, 3 both, 0 off).
+
 v0.9.72 round complete ✓ — bright courtyard tiles vs dark wet wall restored, seamless water textures with soft alpha, in-editor live scrolling textures, standard specification & 60 FPS showcase video:
 - DEMO MAP BRIGHT TILES VS DARK WET WALL RESTORED:
   * Root cause of courtyard geometry appearing dark gray on PSP: `WetTilesMaterial` shared `tiles_light_4x4.png` with courtyard geometry while applying a `baseColorFactor` dark slate tint; both `pbm_conv.py` and `PBPbmConverter.gd` stored a single texture per source image, and seeing a tint on `WetTilesMaterial` permanently multiplied the shared `tiles_light_4x4` pixels by `(0.55, 0.62, 0.70)`, turning the entire geometry (pillars, stairs, balcony, ramp, doorway) dark gray on PSP while the floor splatting (baked into `TileAtlas`) stayed white.

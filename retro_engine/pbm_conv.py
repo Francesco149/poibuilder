@@ -20,7 +20,14 @@ PBM_META_RAW    = 0
 PBM_META_STRING = 1
 PBM_META_JSON   = 2
 PBM_META_ENTITY = 3
+PBM_META_EMITTER = 4
 PBM_ENTITY_PATROL_SPHERE = 1
+
+# PbmEmitter.flags (§8 of the format specification).
+PBM_EMIT_ADDITIVE = 1
+PBM_EMIT_Y_LOCKED = 2
+PBM_EMIT_VEL_ALIGN = 4
+PBM_EMIT_PHASE_ALIGN = 8
 
 PBM_ALPHA_NONE = 0      # opaque: opaque pass, mip chain
 PBM_ALPHA_CUTOUT = 1    # hard-edged cutout: alpha-tested, no mip chain
@@ -30,6 +37,21 @@ PBM_TEX_FMT_RGBA8888 = 0
 PBM_TEX_FMT_RGBA5551 = 1
 PBM_TEX_FMT_RGBA4444 = 2
 PBM_TEX_FMT_RGB565   = 3
+
+def has_soft_alpha(pil_img):
+    """True when any texel carries a partial (non 0/255) alpha.
+
+    That is the difference between art a 16-bit format can hold and art it
+    cannot: one alpha bit can cut a texel out, never fade it.
+    """
+    alpha = pil_img.getchannel("A")
+    lo, hi = alpha.getextrema()
+    if lo == hi:
+        return False
+    hist = alpha.histogram()
+    partial = sum(hist[5:250])
+    return partial > 0
+
 
 def next_pot(x):
     return 1 << (x - 1).bit_length()
@@ -160,6 +182,68 @@ def multiply_matrices(a, b):
             res[c * 4 + r] = s
     return res
 
+PBM_EMITTER_SIZE = 176
+
+
+def pack_emitter_lump(emitters):
+    """Pack the standard "emitters" lump (see SPEC_RETRO_FORMAT.md §8).
+
+    The record layout is normative and mirrored byte for byte by the GDScript
+    converter and by PBPbmConverter; a mismatch between the two is a parity
+    failure, which is why every field is written at an explicit offset here
+    rather than through a struct that could get padded.
+    """
+    buf = bytearray(struct.pack("<IIII", 0x54494D45, 1, len(emitters), 0))
+    for e in emitters:
+        rec = bytearray(PBM_EMITTER_SIZE)
+        name = str(e.get("name", ""))[:23].encode("ascii", errors="ignore")
+        rec[0:len(name)] = name
+
+        def f32(off, key, default=0.0):
+            struct.pack_into("<f", rec, off, float(e.get(key, default)))
+
+        def vec(off, key, size=3):
+            v = e.get(key) or [0.0] * size
+            for i in range(size):
+                struct.pack_into("<f", rec, off + i * 4, float(v[i]))
+
+        vec(0x18, "pos")
+        vec(0x24, "dir")
+        f32(0x30, "spread")
+        f32(0x34, "speed_min")
+        f32(0x38, "speed_max")
+        f32(0x3C, "life_min")
+        f32(0x40, "life_max")
+        vec(0x44, "gravity")
+        f32(0x50, "damping")
+        f32(0x54, "size_min")
+        f32(0x58, "size_max")
+        f32(0x5C, "size_mid", 1.0)
+        f32(0x60, "size_end", 1.0)
+        f32(0x64, "aspect", 1.0)
+        f32(0x68, "angle_min")
+        f32(0x6C, "angle_max")
+        f32(0x70, "spin_min")
+        f32(0x74, "spin_max")
+        f32(0x78, "wobble_amp")
+        f32(0x7C, "wobble_freq")
+        f32(0x80, "spawn_radius")
+        f32(0x84, "knee", 0.5)
+        struct.pack_into("<I", rec, 0x88, int(e.get("color_start", 0xFFFFFFFF)) & 0xFFFFFFFF)
+        struct.pack_into("<I", rec, 0x8C, int(e.get("color_mid", 0xFFFFFFFF)) & 0xFFFFFFFF)
+        struct.pack_into("<I", rec, 0x90, int(e.get("color_end", 0xFFFFFFFF)) & 0xFFFFFFFF)
+        struct.pack_into("<i", rec, 0x94, int(e.get("texture_id", -1)))
+        struct.pack_into("<H", rec, 0x98, int(e.get("count", 1)) & 0xFFFF)
+        struct.pack_into("<H", rec, 0x9A, int(e.get("flags", 0)) & 0xFFFF)
+        rec[0x9C] = int(e.get("atlas_cols", 1)) & 0xFF
+        rec[0x9D] = int(e.get("atlas_rows", 1)) & 0xFF
+        rec[0x9E] = int(e.get("anim_loops", 1)) & 0xFF
+        rec[0x9F] = 0
+        struct.pack_into("<I", rec, 0xA0, int(e.get("seed", 0)) & 0xFFFFFFFF)
+        buf += rec
+    return bytes(buf)
+
+
 def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     print(f"Loading GLB: {glb_path}...")
     gltf, bin_data = parse_glb(glb_path)
@@ -279,6 +363,24 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             if s_idx >= 0:
                 img_tints.setdefault(s_idx, set()).add(tint)
 
+    # Additive emitters (standard lump "emitters", §8) may keep their particle
+    # art in the 16-bit format when its alpha is genuinely 1-bit: the emitters
+    # are the only users that need transparency, and additive blending takes its
+    # falloff from the RGB channels, not from alpha. Without this the two export
+    # routes would disagree about a texture's format (the direct PBM writer
+    # applies the same rule), which the parity requirement forbids.
+    additive_emitter_mats = set()
+    for node in gltf.get("nodes", []):
+        rec = (node.get("extras") or {}).get("poi_emitter")
+        if not isinstance(rec, dict) or not (int(rec.get("flags", 0)) & PBM_EMIT_ADDITIVE):
+            continue
+        m_idx = node.get("mesh")
+        if m_idx is None or m_idx >= len(gltf.get("meshes", [])):
+            continue
+        for prim in gltf["meshes"][m_idx].get("primitives", []):
+            if "material" in prim:
+                additive_emitter_mats.add(prim["material"])
+
     # Assemble Final Textures Table
     textures = []
     img_to_tex_mapping = {} # (raw_img_idx, tint) -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
@@ -306,14 +408,22 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 pil_img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
                 tex_name = f"{name}_tint"
 
-            # The image's alpha mode is the strongest any material using this (img_idx, tint) needs.
+            # The image's alpha mode is the strongest any material using this (img_idx, tint) needs,
+            # and a soft alpha from anyone but an additive emitter pins it to BLEND.
             mode = PBM_ALPHA_NONE
+            blend_needs_8bit = False
             for mat_idx, m_alpha in material_alpha.items():
                 if mat_tint.get(mat_idx) == tint:
                     bct_m = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
                     t_m = bct_m.get("index", -1)
                     if t_m >= 0 and t_m < len(textures_gltf) and textures_gltf[t_m].get("source", -1) == img_idx:
                         mode = max(mode, m_alpha)
+                        if m_alpha == PBM_ALPHA_BLEND and mat_idx not in additive_emitter_mats:
+                            blend_needs_8bit = True
+            if mode == PBM_ALPHA_BLEND and not blend_needs_8bit and not has_soft_alpha(pil_img):
+                # Only additive emitters draw this art, and its alpha is 1-bit:
+                # a cutout is what it actually is.
+                mode = PBM_ALPHA_CUTOUT
             # Soft alpha needs the 8 bits per channel that 5551 cannot carry.
             tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit and mode != PBM_ALPHA_BLEND)
             if mode == PBM_ALPHA_NONE and has_a:
@@ -413,6 +523,12 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         is_collider = node_name.startswith("Collider_") or node_name.startswith("collider_")
         mesh_idx = node.get("mesh", None)
         if mesh_idx is None:
+            continue
+
+        # An emitter's texture carrier (PBMapExporter._export_emitter_holder) is
+        # a zero-size quad that exists only to put the particle texture in the
+        # file: it is read as an emitter below, never as geometry.
+        if isinstance((node.get("extras") or {}).get("poi_emitter"), dict):
             continue
             
         mesh_obj = gltf["meshes"][mesh_idx]
@@ -527,6 +643,28 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     spawn_pos = [0.0, 1.6, 4.2]
     spawn_rot = 0.0
 
+    # ── Particle emitters (standard lump "emitters") ─────────────────────────
+    # The record rides in the holder node's `extras` (Godot serializes node
+    # metadata there verbatim); the holder's material is what ties the emitter
+    # to its texture in this file's texture table.
+    emitter_records = []
+    for node in nodes:
+        rec = (node.get("extras") or {}).get("poi_emitter")
+        if not isinstance(rec, dict):
+            continue
+        rec = dict(rec)
+        tex_id = -1
+        mesh_idx = node.get("mesh")
+        if mesh_idx is not None and mesh_idx < len(gltf.get("meshes", [])):
+            for prim in gltf["meshes"][mesh_idx].get("primitives", []):
+                mat_idx = prim.get("material")
+                info = material_to_tex_info.get(mat_idx) if mat_idx is not None else None
+                if info is not None:
+                    tex_id = info["tex_id"]
+                    break
+        rec["texture_id"] = tex_id
+        emitter_records.append(rec)
+
     # Metadata Chunk (PBM v2.0):
     metadata_entries = []
 
@@ -592,23 +730,13 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         "data": triggers_json
     })
 
-    # 5. Particle Emitters (JSON)
-    particles_json = json.dumps([
-        {
-            "id": "torch_sparks",
-            "position": [2.5, 1.8, -4.5],
-            "rate": 30,
-            "lifetime": 1.2,
-            "velocity": [0.0, 1.5, 0.0],
-            "spread": 0.3,
-            "color": "0xFF33AAFF"
-        }
-    ]).encode("utf-8") + b"\x00"
-    metadata_entries.append({
-        "tag": "particle_emitters",
-        "type": PBM_META_JSON,
-        "data": particles_json
-    })
+    # 5. Particle Emitters (standard lump "emitters")
+    if emitter_records:
+        metadata_entries.append({
+            "tag": "emitters",
+            "type": PBM_META_EMITTER,
+            "data": pack_emitter_lump(emitter_records)
+        })
 
     # 6. Physics Rigid Bodies / Ball Pit (JSON)
     rigid_bodies_json = json.dumps({
