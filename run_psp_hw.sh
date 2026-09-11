@@ -109,8 +109,8 @@ echo "link OK"
 # with nothing running — which is exactly what happened. So: only reset when
 # there is something to clear.
 stale=$("${PSPSH[@]}" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}' | tr '\n' ' ')
-if [ -n "$stale" ]; then
-    echo "=== [3c/5] stale module(s) present ($stale) -- resetting psplink ==="
+if [ -n "$stale" ] || [ "$MODE" = app ]; then
+    echo "=== [3c/5] resetting psplink for clean display state ==="
     "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
     for i in $(seq 1 40); do
         sleep 1
