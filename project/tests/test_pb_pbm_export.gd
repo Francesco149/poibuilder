@@ -147,8 +147,8 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 
 	# Alpha modes are a per-texture contract: every BLEND texture must carry the
 	# 8-bit alpha RGBA8888 provides (asserted in the texture loop above), and the
-	# scene must contain the three blended water surfaces and the hard-edged
-	# cutouts — counted, not named, for the reason given with num_textures.
+	# scene contains the five blended water surfaces (sheet, core, spray, pool, foam)
+	# and the hard-edged cutouts — counted, not named, for the reason given with num_textures.
 	var blend_count := 0
 	var cutout_count := 0
 	for name in tex_alpha_modes:
@@ -156,7 +156,7 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 			blend_count += 1
 		elif tex_alpha_modes[name] == PBPbmConverter.PBM_ALPHA_CUTOUT:
 			cutout_count += 1
-	assert_eq(blend_count, 3, "Sheet, core and spray must export as soft-alpha blends")
+	assert_eq(blend_count, 5, "Water surfaces (sheet, core, spray, pool, foam) must export as soft-alpha blends")
 	assert_gte(cutout_count, 3, "The foliage billboards must export as cutouts")
 
 	# 3. Skip colliders

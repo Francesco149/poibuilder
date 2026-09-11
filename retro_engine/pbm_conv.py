@@ -260,58 +260,76 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     print(f"Packed tiles into {len(atlases)} 512x512 atlas textures.")
 
     # Collect baseColorFactor from materials for any tinted base textures
-    img_base_colors = {}
+    img_tints = {}       # img_idx -> set of (r, g, b) tuples
+    mat_tint = {}        # mat_idx -> (r, g, b) tuple
     materials_gltf = gltf.get("materials", [])
     textures_gltf = gltf.get("textures", [])
-    for mat in materials_gltf:
+    for mat_idx, mat in enumerate(materials_gltf):
         pbr = mat.get("pbrMetallicRoughness", {})
         col = pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])
+        r = round(float(col[0]), 3)
+        g = round(float(col[1]), 3)
+        b = round(float(col[2]), 3)
+        tint = (r, g, b) if (r < 0.999 or g < 0.999 or b < 0.999) else (1.0, 1.0, 1.0)
+        mat_tint[mat_idx] = tint
         base_tex = pbr.get("baseColorTexture", {})
         t_idx = base_tex.get("index", -1)
         if t_idx >= 0 and t_idx < len(textures_gltf):
             s_idx = textures_gltf[t_idx].get("source", -1)
-            if s_idx >= 0 and (col[0] < 0.999 or col[1] < 0.999 or col[2] < 0.999):
-                img_base_colors[s_idx] = col
+            if s_idx >= 0:
+                img_tints.setdefault(s_idx, set()).add(tint)
 
     # Assemble Final Textures Table
     textures = []
-    img_to_tex_mapping = {} # raw_img_idx -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
+    img_to_tex_mapping = {} # (raw_img_idx, tint) -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
     # 1. Base textures
-    for img_idx, name, pil_img in base_images:
-        w, h = pil_img.size
+    for img_idx, name, orig_pil in base_images:
+        w, h = orig_pil.size
         pot_w = next_pot(w); pot_h = next_pot(h)
         if pot_w != w or pot_h != h:
-            pil_img = pil_img.resize((pot_w, pot_h), Image.Resampling.BILINEAR)
+            orig_pil = orig_pil.resize((pot_w, pot_h), Image.Resampling.BILINEAR)
             w, h = pot_w, pot_h
-        if img_idx in img_base_colors:
-            bcol = img_base_colors[img_idx]
-            r, g, b, a = pil_img.split()
-            r = r.point(lambda p: int(p * bcol[0]))
-            g = g.point(lambda p: int(p * bcol[1]))
-            b = b.point(lambda p: int(p * bcol[2]))
-            pil_img = Image.merge("RGBA", (r, g, b, a))
-        # The image's alpha mode is the strongest any material using it needs.
-        mode = PBM_ALPHA_NONE
-        for mat_idx, m_alpha in material_alpha.items():
-            bct_m = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
-            t_m = bct_m.get("index", -1)
-            if t_m >= 0 and t_m < len(textures_gltf) and textures_gltf[t_m].get("source", -1) == img_idx:
-                mode = max(mode, m_alpha)
-        # Soft alpha needs the 8 bits per channel that 5551 cannot carry.
-        tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit and mode != PBM_ALPHA_BLEND)
-        if mode == PBM_ALPHA_NONE and has_a:
-            # Opaque material, transparent art: the pixels still need the alpha
-            # pass, as a cutout.
-            mode = PBM_ALPHA_CUTOUT
-        tex_id = len(textures)
-        textures.append({
-            "name": name[:31],
-            "width": w, "height": h,
-            "format": fmt, "alpha_mode": mode,
-            "data": tex_data
-        })
-        img_to_tex_mapping[img_idx] = { "tex_id": tex_id, "is_atlas": False, "col": 0, "row": 0 }
 
+        tints = img_tints.get(img_idx, {(1.0, 1.0, 1.0)})
+        if not tints:
+            tints = {(1.0, 1.0, 1.0)}
+        sorted_tints = sorted(list(tints), key=lambda t: (0 if t == (1.0, 1.0, 1.0) else 1, t))
+
+        for tint in sorted_tints:
+            pil_img = orig_pil.copy()
+            tex_name = name
+            if tint != (1.0, 1.0, 1.0):
+                r_ch, g_ch, b_ch, a_ch = pil_img.split()
+                r_ch = r_ch.point(lambda p: int(p * tint[0]))
+                g_ch = g_ch.point(lambda p: int(p * tint[1]))
+                b_ch = b_ch.point(lambda p: int(p * tint[2]))
+                pil_img = Image.merge("RGBA", (r_ch, g_ch, b_ch, a_ch))
+                tex_name = f"{name}_tint"
+
+            # The image's alpha mode is the strongest any material using this (img_idx, tint) needs.
+            mode = PBM_ALPHA_NONE
+            for mat_idx, m_alpha in material_alpha.items():
+                if mat_tint.get(mat_idx) == tint:
+                    bct_m = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+                    t_m = bct_m.get("index", -1)
+                    if t_m >= 0 and t_m < len(textures_gltf) and textures_gltf[t_m].get("source", -1) == img_idx:
+                        mode = max(mode, m_alpha)
+            # Soft alpha needs the 8 bits per channel that 5551 cannot carry.
+            tex_data, fmt, has_a = convert_pil_to_bytes(pil_img, format_16bit and mode != PBM_ALPHA_BLEND)
+            if mode == PBM_ALPHA_NONE and has_a:
+                # Opaque material, transparent art: the pixels still need the alpha pass, as a cutout.
+                mode = PBM_ALPHA_CUTOUT
+            tex_id = len(textures)
+            textures.append({
+                "name": tex_name[:31],
+                "width": w, "height": h,
+                "format": fmt, "alpha_mode": mode,
+                "data": tex_data
+            })
+            img_to_tex_mapping[(img_idx, tint)] = { "tex_id": tex_id, "is_atlas": False, "col": 0, "row": 0 }
+            # Also provide fallback without tint key
+            if (img_idx, None) not in img_to_tex_mapping or tint == (1.0, 1.0, 1.0):
+                img_to_tex_mapping[(img_idx, None)] = img_to_tex_mapping[(img_idx, tint)]
     # 2. Atlas textures
     atlas_start_tex_id = len(textures)
     for a_idx, atlas_img in enumerate(atlases):
@@ -330,12 +348,14 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     for img_idx, name, _ in tile_images:
         uid = img_to_unique_tile[img_idx]
         atlas_local_idx, col, row = tile_to_atlas_map[uid]
-        img_to_tex_mapping[img_idx] = {
+        mapping_info = {
             "tex_id": atlas_start_tex_id + atlas_local_idx,
             "is_atlas": True,
             "col": col,
             "row": row
         }
+        img_to_tex_mapping[(img_idx, (1.0, 1.0, 1.0))] = mapping_info
+        img_to_tex_mapping[(img_idx, None)] = mapping_info
 
     print(f"Total textures in PBM: {len(textures)} ({len(base_images)} base + {len(atlases)} atlases)")
 
@@ -349,7 +369,11 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
             if "textures" in gltf and tex_idx < len(gltf["textures"]):
                 t_obj = gltf["textures"][tex_idx]
                 img_src = t_obj.get("source", 0)
-                material_to_tex_info[mat_idx] = img_to_tex_mapping.get(img_src, None)
+                tint = mat_tint.get(mat_idx, (1.0, 1.0, 1.0))
+                info = img_to_tex_mapping.get((img_src, tint))
+                if info is None:
+                    info = img_to_tex_mapping.get((img_src, None))
+                material_to_tex_info[mat_idx] = info
             else:
                 material_to_tex_info[mat_idx] = None
         else:

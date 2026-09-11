@@ -526,3 +526,26 @@ func test_material_dock_initialization_and_sync():
 
 	assert_not_null(dock.get_default_material(), "Dock can retrieve default material")
 	assert_true(dock._material_grid != null, "Dock has material grid")
+	assert_true(dock._chk_animate_in_editor != null, "Dock has in-editor animation checkbox")
+
+func test_scrolling_texture_material_and_plugin_animation():
+	var mat := StandardMaterial3D.new()
+	mat.uv1_offset = Vector3(0.0, 0.0, 0.0)
+	assert_false(PBUv.has_scroll(mat))
+	assert_eq(PBUv.get_scroll_speed(mat), Vector2.ZERO)
+
+	PBUv.set_scroll_speed(mat, Vector2(0.5, -1.0))
+	assert_true(PBUv.has_scroll(mat))
+	assert_eq(PBUv.get_scroll_speed(mat), Vector2(0.5, -1.0))
+
+	# Verify glTF extras synchronization
+	assert_true(mat.has_meta("extras"))
+	var extras: Dictionary = mat.get_meta("extras")
+	assert_true(extras.has("poi_uv_scroll"))
+	var read_speed := PBUv.scroll_from_extras(extras)
+	assert_eq(read_speed, Vector2(0.5, -1.0))
+
+	# Test clearing
+	PBUv.set_scroll_speed(mat, Vector2.ZERO)
+	assert_false(PBUv.has_scroll(mat))
+	assert_eq(PBUv.get_scroll_speed(mat), Vector2.ZERO)

@@ -13,8 +13,7 @@ func test_build_and_export_showcase_map() -> void:
 	# Save showcase scene with player for editor inspection and interactive play
 	var save_err := TestMapShowcaseBuilder.save_showcase_scene("user://test_map_showcase.tscn", true)
 	assert_eq(save_err, OK, "Saving showcase scene with player must succeed")
-	if not FileAccess.file_exists(SHOWCASE_TSCN_PATH):
-		TestMapShowcaseBuilder.save_showcase_scene(SHOWCASE_TSCN_PATH, true)
+	TestMapShowcaseBuilder.save_showcase_scene(SHOWCASE_TSCN_PATH, true)
 
 	# 1. Export Retro Baked GLB
 	var retro_settings := PBMapExporter.ExportSettings.new()
@@ -38,6 +37,8 @@ func test_build_and_export_showcase_map() -> void:
 	var retro_size := fa_retro.get_length()
 	fa_retro.close()
 	assert_gt(retro_size, 1000, "Retro GLB must contain valid baked geometry and textures")
+	var pbm_err := PBPbmConverter.convert_glb_to_pbm(RETRO_GLB_PATH, "res://../retro_engine/psp/showcase_retro_baked.pbm", true)
+	assert_eq(pbm_err, OK, "Converting showcase retro GLB to PBM must succeed")
 
 	# 2. Export Modern GLB
 	var modern_settings := PBMapExporter.ExportSettings.new()
@@ -55,6 +56,15 @@ func test_build_and_export_showcase_map() -> void:
 	var modern_size := fa_modern.get_length()
 	fa_modern.close()
 	assert_gt(modern_size, 1000, "Modern GLB must contain valid geometry and metadata")
+
+func test_export_environment_presets() -> void:
+	for p_name in ["dawn", "dusk", "night"]:
+		var err := TestMapShowcaseBuilder.export_showcase_preset(p_name)
+		assert_eq(err, OK, "Exporting preset %s must succeed" % p_name)
+		var glb_path := "res://exports/showcase_retro_baked_%s.glb" % p_name
+		assert_true(FileAccess.file_exists(glb_path), "GLB for preset %s must exist" % p_name)
+		var pbm_path := "res://../retro_engine/psp/showcase_retro_baked_%s.pbm" % p_name
+		assert_true(FileAccess.file_exists(pbm_path), "PBM for preset %s must exist" % p_name)
 
 func test_retro_map_viewer_loads_and_inspects_showcase() -> void:
 	# Verify retro GLB exists (built by test above)

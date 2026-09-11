@@ -344,8 +344,8 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 		Vector3(fall_x, 0.04, wall_face_z + 1.6),
 		"res://addons/poibuilder/materials/textures/water_pool.png",
 		Vector2(0.02, -0.03), Vector2(0.55, 0.55))
+	_water_material_props(pool.pb_mesh_data.materials[0], true)
 	root.add_child(pool)
-
 	# Foam ribbon: the churn pushed out of the impact point, its trailing edge
 	# at the wall so the churn starts where the water lands. Like the pool it
 	# spreads away from the wall, which is a NEGATIVE v speed for the reason
@@ -354,8 +354,8 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 		Vector3(fall_x, 0.06, wall_face_z + 0.8),
 		"res://addons/poibuilder/materials/textures/water_foam.png",
 		Vector2(0.0, -0.30), Vector2(0.5, 0.9))
+	_water_material_props(foam.pb_mesh_data.materials[0], true)
 	root.add_child(foam)
-
 	# Spray: a billboard whose texture scrolls upwards, so the mist appears to
 	# climb off the impact point. Billboard materials repeat their texture (the
 	# exporter only clamps tiling for decals), which is what lets it scroll.
@@ -677,9 +677,12 @@ static func _get_wet_tiles_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = "WetTilesMaterial"
 	# Darkened by water saturation with rich aquatic slate tint for contrast
-	mat.albedo_color = Color(0.55, 0.62, 0.70, 1.0)
-	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
+	mat.albedo_color = Color(1.0, 1.0, 1.0, 1.0)
+	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_wet_4x4.png"):
+		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_wet_4x4.png")
+	elif ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png")
+		mat.albedo_color = Color(0.55, 0.62, 0.70, 1.0)
 	mat.roughness = 0.35 # Wet stone sheen
 	_cached_wet_tiles_material = mat
 	return mat
