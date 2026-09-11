@@ -22,6 +22,15 @@
 #   ./run_psp_hw.sh --keep       leave usbhostfs_pc running afterwards
 #   ./run_psp_hw.sh --no-reset   skip the pre-load reset (debugging only: a device
 #                                that is already clean loads fine, but see below)
+#   ./run_psp_hw.sh --preset N   run the time-of-day preset N (dawn|day|dusk|night)
+#                                instead of the shipping map; also accepted as a
+#                                bare word: `./run_psp_hw.sh night`.
+#
+# DEPLOYING A PRESET TO THE DEVICE is `--app --preset N`: the preset's .pbm is
+# staged on host0: next to a poi_preset.txt naming it, and the app picks it up
+# at startup (main.c reads a .pbm argument, --preset=, or poi_preset.txt from
+# the working dir, host0: or ms0:). A standalone Memory Stick install wants the
+# same two files next to EBOOT.PBP.
 #
 # How it works: usbhostfs_pc serves ./retro_engine/psp/hwrun/ to the PSP as
 # host0:. The test binary (built with -DHWTEST=1, target poiretro_psp_hwtest.prx)
@@ -50,6 +59,11 @@ PSPSH_BIN="$PSPLINK_SRC/pspsh/pspsh"
 PSPSH=("$PSPSH_BIN" -h 127.0.0.1)
 PRX_NAME="poiretro_psp_hwtest.prx"
 LOG="$HOSTDIR/poi_profile.txt"
+# What proves "the module is running": the profiler's result file for a profiling
+# run, the app's own log for the interactive one. The app never writes
+# poi_profile.txt, so app mode used to spin through all three retry attempts and
+# report a wedge that had not happened.
+START_LOG="$LOG"
 WAIT_SECS="${WAIT_SECS:-240}"     # total wait for the result file to stop growing
 LOAD_GRACE="${LOAD_GRACE:-25}"    # seconds allowed for the profiler's FIRST output
 LINK_GRACE="${LINK_GRACE:-40}"    # seconds allowed for PSPLink to answer after a reset
@@ -57,15 +71,42 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
 KEEP=0
 MODE=prof
 NO_RESET=0
-for arg in "$@"; do
+PRESET=""
+PRESETS=(dawn day dusk night)
+
+_args=("$@")
+_i=0
+while [ "$_i" -lt "${#_args[@]}" ]; do
+    arg="${_args[$_i]}"
     case "$arg" in
         --keep) KEEP=1 ;;
         --app)  MODE=app; KEEP=1 ;;   # interactive build needs host0: to stay alive!
         --no-reset) NO_RESET=1 ;;
+        --preset)
+            _i=$((_i + 1))
+            PRESET="${_args[$_i]:-}"
+            [ -n "$PRESET" ] || { echo "ERROR: --preset needs a name (${PRESETS[*]})" >&2; exit 2; } ;;
+        --preset=*) PRESET="${arg#--preset=}" ;;
+        dawn|day|dusk|night) PRESET="$arg" ;;
+        -h|--help)
+            sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *) echo "ERROR: unknown argument '$arg' (try --help)" >&2; exit 2 ;;
     esac
+    _i=$((_i + 1))
 done
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+if [ -n "$PRESET" ]; then
+    preset_ok=0
+    for p in "${PRESETS[@]}"; do [ "$p" = "$PRESET" ] && preset_ok=1; done
+    [ "$preset_ok" = 1 ] || die "unknown preset '$PRESET' (known: ${PRESETS[*]})"
+    PRESET_MAP="$PSP_DIR/showcase_retro_baked_${PRESET}.pbm"
+    [ -f "$PRESET_MAP" ] || die "no map for preset '$PRESET' (looked for $PRESET_MAP).
+  Re-export the presets with ./run_presets.sh, or pick one of:
+    $(ls "$PSP_DIR"/showcase_retro_baked*.pbm 2>/dev/null | xargs -r -n1 basename | tr '\n' ' ')"
+fi
 
 # All PSP compilation happens in the pinned pspdev container.
 psp_make() {
@@ -116,7 +157,7 @@ load_module() {
 
 # The profiler writes its header within a few seconds of starting (the map load
 # comes first). No bytes at all after LOAD_GRACE means the wedge above.
-log_started() { [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" != "0" ]; }
+log_started() { [ "$(stat -c %s "$START_LOG" 2>/dev/null || echo 0)" != "0" ]; }
 
 # Load `PRX_NAME`, resetting first (unless --no-reset) and retrying the whole
 # attempt if the module loads but never runs.
@@ -150,6 +191,7 @@ start_module_with_retries() {
 
 if [ "$MODE" = app ]; then
     echo "=== [1/5] Building the interactive PRX ==="
+    START_LOG="$HOSTDIR/poi_app.log"
     psp_make hwapp >/tmp/psp_hwtest_build.log 2>&1 \
         || { tail -30 /tmp/psp_hwtest_build.log; die "build failed (full log: /tmp/psp_hwtest_build.log)"; }
     PRX_NAME="poiretro_psp_app.prx"
@@ -163,9 +205,18 @@ fi
 
 echo "=== [2/5] Staging host0: ($HOSTDIR) ==="
 mkdir -p "$HOSTDIR"
-rm -f "$LOG"
+rm -f "$LOG" "$HOSTDIR/poi_app.log"
 cp "$PSP_DIR/$PRX_NAME" "$HOSTDIR/$PRX_NAME"
 cp "$PSP_DIR/showcase_retro_baked.pbm" "$HOSTDIR/showcase_retro_baked.pbm"
+if [ -n "$PRESET" ]; then
+    # The app resolves showcase_retro_baked_<preset>.pbm beside the shipping map
+    # when poi_preset.txt (or an argument) names the preset.
+    cp "$PRESET_MAP" "$HOSTDIR/$(basename "$PRESET_MAP")"
+    printf '%s\n' "$PRESET" > "$HOSTDIR/poi_preset.txt"
+    echo "    preset: $PRESET  (poi_preset.txt + $(basename "$PRESET_MAP") staged)"
+else
+    rm -f "$HOSTDIR/poi_preset.txt"    # a previous run's preset must not leak
+fi
 rm -f "$HOSTDIR/poi_render.txt"     # runtime overrides must not leak between runs
 ls -la "$HOSTDIR" | head -12
 

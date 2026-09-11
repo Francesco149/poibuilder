@@ -395,11 +395,30 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 		Vector2(1.5, 1.5), Vector3(2.0, 0.75, 3.2), true)
 	root.add_child(bush)
 
-	# Unlit Wildflowers (Pure white unshaded emission)
-	var flowers := _create_billboard_node("Wildflowers_Unlit",
+	# Wildflowers. These used to be UNSHADED, which in the retro pipeline means
+	# "pure white, ignore the baked lighting" — in a night or dusk preset they
+	# stayed at full brightness while everything around them went dark, and at
+	# a distance they read as flat white cards. A lit billboard samples the
+	# baked vertex lighting like the trees do.
+	var flowers := _create_billboard_node("Wildflowers",
 		"res://addons/poibuilder/materials/textures/flower_patch.png",
-		Vector2(1.2, 1.2), Vector3(-2.0, 0.6, 2.0), false)
+		Vector2(1.2, 1.2), Vector3(-2.0, 0.6, 2.0), true)
 	root.add_child(flowers)
+
+	# Foliage fill: a billboard is a flat quad whose normal faces +Z, so the
+	# baked vertex lighting only ever sees its FRONT. Without a light on the
+	# viewer's side the foliage goes black in the presets that have no strong
+	# sun (dusk/night) — the trees were already lit and suffered the same way.
+	# This is a soft, shadowless fill placed in front of the cluster.
+	var foliage_fill := OmniLight3D.new()
+	foliage_fill.name = "FoliageFill"
+	foliage_fill.position = Vector3(-0.5, 2.4, 6.4)
+	foliage_fill.light_color = Color(1.0, 0.94, 0.84)
+	foliage_fill.light_energy = 0.6
+	foliage_fill.omni_range = 12.0
+	foliage_fill.omni_attenuation = 1.0
+	foliage_fill.shadow_enabled = false   # a fill, not a key light
+	root.add_child(foliage_fill)
 
 	# ==========================================================================
 	# 7c. Custom Gameplay Entities (Spawn, Walkable, Trigger, Emitter, BallPit)

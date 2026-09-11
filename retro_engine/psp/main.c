@@ -381,6 +381,8 @@ int main(int argc, char** argv) {
     char hud_extra[128];
     char hud_input[64];
     int pad_hold = 0;
+    int hud_compact = 0;      /* Select toggles: frame rate + profiler only */
+    uint32_t prev_buttons = 0;
     hud_input[0] = '\0';
 
     printf("[PSP] Entering render loop (benchmark=%d)\n", is_benchmark);
@@ -423,10 +425,19 @@ int main(int argc, char** argv) {
                 cam_x = home_x; cam_y = home_y; cam_z = home_z;
                 cam_yaw = home_yaw; cam_pitch = 0.05f;
             }
-            if (pad.Buttons & PSP_CTRL_SELECT) {
-                display_mode = (display_mode + 1) % 3;
-                cfg.display_mode = display_mode;
-                sceKernelDelayThread(150000);
+            /* Edge-detected: acting on the held state made every one of these
+             * repeat while the button was down. */
+            uint32_t pressed = pad.Buttons & ~prev_buttons;
+            prev_buttons = pad.Buttons;
+            if (pressed & PSP_CTRL_SELECT) {
+                if (pad.Buttons & PSP_CTRL_LTRIGGER) {
+                    display_mode = (display_mode + 1) % 3;
+                    cfg.display_mode = display_mode;
+                } else {
+                    /* Select alone: hide everything but the frame rate and the
+                     * profiler readout, so a capture shows the scene. */
+                    hud_compact = !hud_compact;
+                }
             }
 
             float move_speed = 9.5f * dt;
@@ -497,7 +508,7 @@ int main(int argc, char** argv) {
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
         psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
-                     "Home: exit | L+R: dump trace", hud_input, pad_hold);
+                     "Home: exit | L+R: dump trace", hud_input, pad_hold, hud_compact);
 
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();
