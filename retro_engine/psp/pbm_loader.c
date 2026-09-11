@@ -68,8 +68,17 @@ static inline uint16_t pack5551(int r, int g, int b, int a) {
     return (uint16_t)(((a ? 1 : 0) << 15) | (b << 10) | (g << 5) | r);
 }
 
-/* 2x2 box filter. Weighting RGB by alpha keeps cutout edges from darkening. */
-static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, int has_alpha) {
+/* 2x2 box filter. Weighting RGB by alpha keeps cutout edges from darkening.
+ * `alpha_max` picks how the 1-bit alpha combines: 0 == majority (a soft edge
+ * stays soft), 1 == ANY opaque sample keeps the texel opaque. The second mode
+ * is what lets a CUTOUT keep a mip chain at all: averaging a 1-bit alpha
+ * erodes the silhouette away by the fourth level, which is why cutout textures
+ * used to ship with no chain — and therefore paid a texture-cache miss per
+ * fragment on art that is 256x512 to 512x512. Max-alpha dilates the silhouette
+ * by half a texel per level instead, which is what the eye expects as foliage
+ * recedes, and it lets the chain collapse the fetch footprint like every other
+ * texture. */
+static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, int alpha_max) {
     int dw = sw >> 1, dh = sh >> 1;
     for (int y = 0; y < dh; ++y) {
         for (int x = 0; x < dw; ++x) {
@@ -79,13 +88,14 @@ static void downsample_5551(uint16_t* dst, const uint16_t* src, int sw, int sh, 
                 int sy = 2 * y + (k >> 1);
                 int sr, sg, sb, sa;
                 unpack5551(src[sy * sw + sx], &sr, &sg, &sb, &sa);
-                int w = has_alpha ? (sa + 1) : 1;
+                int w = sa + 1;
                 r += sr * w; g += sg * w; b += sb * w;
                 wsum += w;
                 a += sa;
             }
             if (wsum < 1) wsum = 1;
-            dst[y * dw + x] = pack5551(r / wsum, g / wsum, b / wsum, a * 2 / 4);
+            int out_a = alpha_max ? (a > 0) : (a >= 2);
+            dst[y * dw + x] = pack5551(r / wsum, g / wsum, b / wsum, out_a);
         }
     }
 }
@@ -529,17 +539,21 @@ PbmMap* pbm_load(const char* filepath) {
                 lh[0] = thdr.height;
                 src[0] = (const uint16_t*)linear;
 
-                /* Mip chains for everything except hard-edged cutouts: halving
-                 * a 1-bit alpha turns a level fully transparent long before
-                 * the texels are small, which eats the silhouette. Soft alpha
-                 * (PBM_ALPHA_BLEND) averages exactly the way a blended surface
-                 * wants, and opaque textures have nothing to lose. */
-                if (thdr.alpha_mode != PBM_ALPHA_CUTOUT) {
+                /* Mip chains for every 16-bit texture, cutouts included. Only
+                 * the alpha combine differs (see downsample_5551): averaging
+                 * erodes a 1-bit silhouette, so cutouts take ANY-opaque-wins
+                 * instead. The footprint argument is identical — foliage
+                 * sprites are 256x512 to 512x512 and sampled minified, so
+                 * without a chain they pay a texture-cache miss per fragment
+                 * and shimmer at distance. `mips=0` in poi_render.txt is the
+                 * A/B against the old level-0-only behaviour. */
+                {
+                    int alpha_max = (thdr.alpha_mode == PBM_ALPHA_CUTOUT) ? 1 : 0;
                     while (built < PBM_MAX_MIP_LEVELS && lw[built - 1] >= 32 && lh[built - 1] >= 32) {
                         int pw = lw[built - 1] >> 1, ph = lh[built - 1] >> 1;
                         uint16_t* lvl = (uint16_t*)malloc((size_t)pw * ph * 2);
                         if (!lvl) break;
-                        downsample_5551(lvl, src[built - 1], lw[built - 1], lh[built - 1], 0);
+                        downsample_5551(lvl, src[built - 1], lw[built - 1], lh[built - 1], alpha_max);
                         src[built] = lvl;
                         lw[built] = pw;
                         lh[built] = ph;

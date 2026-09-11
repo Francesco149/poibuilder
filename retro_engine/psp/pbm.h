@@ -44,9 +44,11 @@ typedef struct __attribute__((packed)) {
  * only 0/1 here (the field was named has_alpha); 2 is new in v3. */
 #define PBM_ALPHA_NONE   0  /* fully opaque: opaque pass, mip chain */
 #define PBM_ALPHA_CUTOUT 1  /* hard-edged cutout (foliage, decals): alpha-tested
-                             * in the alpha pass, NO mip chain (halving a 1-bit
-                             * alpha makes every level further transparent,
-                             * eating the silhouette) */
+                             * in the alpha pass, mip chain built with an
+                             * alpha-preserving combine (ANY opaque texel keeps
+                             * the level opaque, so the silhouette dilates
+                             * instead of eroding — a plain box filter on a
+                             * 1-bit alpha would eat the silhouette away) */
 #define PBM_ALPHA_BLEND  2  /* soft alpha (water, glass, smoke): blended in the
                              * alpha pass, mip chain kept (averaged alpha is
                              * exactly what a blended surface wants) */

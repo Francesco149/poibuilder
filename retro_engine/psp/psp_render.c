@@ -118,9 +118,17 @@ void render_cfg_default(RenderCfg* c) {
      * at the worst view), bias=2 is what a weaker machine would want. */
     c->tex_filter = PBFILT_MIP_LIN;
     c->tex_lod_bias = 1.0f;
+    /* Painted detail is one level sharper than the rest of the scene: the baked
+     * tile/splat meshes are where the hardware's per-primitive level step shows,
+     * and they cover far less screen than the surfaces the global bias exists
+     * for. `detail_const` >= 0 pins them to ONE level instead, which removes the
+     * step entirely (measured budget in HARDWARE-TESTING.md). */
+    c->detail_bias = -1.0f;
+    c->detail_const = -1;
     c->tex_level_mode = PBLEVEL_AUTO;
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
+    c->cutout_mips = 1; /* cutouts carry an alpha-preserving chain (max-alpha combine) */
     c->near_plane = 0.08f;
     render_cfg_set_env(c, "day");
 }
@@ -307,6 +315,17 @@ void psp_render_skip_mesh(const char* needle) {
     snprintf(s_skip_mesh, sizeof(s_skip_mesh), "%s", needle ? needle : "");
 }
 
+/* Which meshes the per-mesh LOD policy applies to. The baked splat/stamp tiles
+ * are the surfaces where a mip-level step between neighbouring primitives reads
+ * as a seam (a floor at a grazing angle crosses several levels across a few
+ * metres), so they default to "keep me sharp". Matched against the mesh name
+ * and its texture's name, both of which the exporter controls. */
+static char s_detail_match[64] = "TileAtlas";
+
+void psp_render_detail_match(const char* needle) {
+    snprintf(s_detail_match, sizeof(s_detail_match), "%s", needle ? needle : "");
+}
+
 void psp_render_overrides(RenderCfg* cfg) {
     FILE* f = fopen("host0:/poi_render.txt", "r");
     if (!f) f = fopen("ms0:/poi_render.txt", "r");
@@ -338,7 +357,11 @@ void psp_render_overrides(RenderCfg* cfg) {
         else if (!strcmp(k, "preset")) render_cfg_set_env(cfg, v);
         else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
         else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
+        else if (!strcmp(k, "cutout_mips")) cfg->cutout_mips = atoi(v);
         else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
+        else if (!strcmp(k, "detail_mesh")) psp_render_detail_match(v);
+        else if (!strcmp(k, "detail_bias")) cfg->detail_bias = (float)atof(v);
+        else if (!strcmp(k, "detail_const")) cfg->detail_const = atoi(v);
         else if (!strcmp(k, "level_mode"))
             cfg->tex_level_mode = strcmp(v, "const") ? PBLEVEL_AUTO : PBLEVEL_CONST;
     }
@@ -404,7 +427,12 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
             if (tex->pixels && tex->num_levels > 0) {
                 int psm = (tex->format == PBM_TEX_FMT_RGBA5551) ? GU_PSM_5551 : GU_PSM_8888;
                 int swizzle = tex->is_swizzled ? 1 : 0;
-                if (cfg->use_mips && tex->num_levels > 1) {
+                /* Cutout chains are alpha-preserving (see the loader); the
+                 * switch exists so the old level-0-only behaviour can be
+                 * compared on the device without a rebuild. */
+                int use_chain = cfg->use_mips && tex->num_levels > 1 &&
+                                (cfg->cutout_mips || mesh_alpha_mode(map, mesh) != PBM_ALPHA_CUTOUT);
+                if (use_chain) {
                     /* Every level's base/size lives in its own GE register set. */
                     sceGuEnable(GU_TEXTURE_2D);
                     sceGuTexMode(psm, tex->num_levels - 1, 0, swizzle);
@@ -423,6 +451,48 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
         sceGuDisable(GU_TEXTURE_2D);
         *last_tex_id = -1;
     }
+}
+
+/* ── Per-mesh LOD policy ──────────────────────────────────────────────────
+ * The GE picks ONE mip level per primitive from that primitive's own UV
+ * derivatives, and the level-mode/bias registers are per draw call. Two things
+ * follow that matter on a big smooth floor:
+ *   - neighbouring quads (baked tiles, floor chunks) land on different integer
+ *     levels, so the surface shows a sharpness step wherever the level changes
+ *     — invisible at level 0-1, a visible band once the level is coarse;
+ *   - spending texture cache on a surface that is already ~1 texel/pixel is
+ *     what the global bias exists to avoid.
+ * So the meshes that carry painted detail get their own policy (a sharper bias,
+ * or a single constant level — the only way to remove the step entirely) while
+ * the bulk of the scene keeps the global one. Which meshes match is
+ * psp_render_detail_match(), "TileAtlas" by default. `mesh == NULL` applies the
+ * global policy, which is what the emitter path needs: a particle texture must
+ * not inherit whatever the last mesh drew with. */
+#define LOD_STATE_INVALID (-999.0f)
+static int   s_lod_mode = -1;
+static float s_lod_bias = LOD_STATE_INVALID;
+
+static int is_detail_mesh(const PbmMap* map, const PbmMesh* mesh) {
+    if (!s_detail_match[0] || !mesh) return 0;
+    if (strstr(mesh->name, s_detail_match)) return 1;
+    if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures &&
+        strstr(map->textures[mesh->texture_id].name, s_detail_match)) return 1;
+    return 0;
+}
+
+static void apply_mesh_lod(const RenderCfg* cfg, const PbmMap* map, const PbmMesh* mesh) {
+    int mode = cfg->tex_level_mode;
+    float bias = cfg->tex_lod_bias;
+    if (is_detail_mesh(map, mesh)) {
+        if (cfg->detail_const >= 0) { mode = PBLEVEL_CONST; bias = (float)cfg->detail_const; }
+        else bias += cfg->detail_bias;
+    }
+    if (bias < -4.0f) bias = -4.0f;
+    else if (bias > 6.0f) bias = 6.0f;
+    if (mode == s_lod_mode && bias == s_lod_bias) return;
+    sceGuTexLevelMode(mode == PBLEVEL_CONST ? GU_TEXTURE_CONST : GU_TEXTURE_AUTO, bias);
+    s_lod_mode = mode;
+    s_lod_bias = bias;
 }
 
 /* Scripted patrol-sphere entity (procedural, CPU-generated once). */
@@ -926,6 +996,9 @@ static void emitter_draw_one(PbmMap* map, const RenderCfg* cfg, const EmitView* 
 
     int alpha_mode = PBM_ALPHA_NONE;
     emitter_bind(map, cfg, e, &alpha_mode);
+    /* A particle texture always takes the GLOBAL policy: inheriting the previous
+     * mesh's detail policy would sample it at whatever level that mesh wanted. */
+    apply_mesh_lod(cfg, map, NULL);
     sceGuDisable(GU_CULL_FACE);
     sceGuDepthMask(GU_FALSE);
     if (additive) {
@@ -1178,8 +1251,14 @@ static void set_texture_filter(const RenderCfg* cfg) {
             sceGuTexLevelMode(GU_TEXTURE_CONST, cfg->tex_lod_bias);
         else
             sceGuTexLevelMode(GU_TEXTURE_AUTO, cfg->tex_lod_bias);
+        s_lod_mode = cfg->tex_level_mode;
+        s_lod_bias = cfg->tex_lod_bias;
         return;
     }
+    /* No chain: the level registers keep whatever the last frame left in them,
+     * so the cached level state is not the truth any more. */
+    s_lod_mode = -1;
+    s_lod_bias = LOD_STATE_INVALID;
     switch (cfg->tex_filter) {
         case PBFILT_LINEAR:  sceGuTexFilter(GU_LINEAR, GU_LINEAR); break;
         case PBFILT_NEAREST: sceGuTexFilter(GU_NEAREST, GU_NEAREST); break;
@@ -1259,6 +1338,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
 
         bind_texture(map, cfg, mesh, &last_tex_id);
+        apply_mesh_lod(cfg, map, mesh);
         if (cfg->uv_scroll) apply_uv_scroll(map, mesh, time_s, &tex_off_u, &tex_off_v);
         if (cfg->display_mode != 2) {
             if (cfg->cull) sceGuEnable(GU_CULL_FACE); else sceGuDisable(GU_CULL_FACE);
@@ -1321,6 +1401,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                 cur_alpha_ref = want_ref;
             }
             bind_texture(map, cfg, mesh, &last_tex_id);
+            apply_mesh_lod(cfg, map, mesh);
             if (cfg->uv_scroll) apply_uv_scroll(map, mesh, time_s, &tex_off_u, &tex_off_v);
             int prim = (cfg->display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
             sceGuDrawArray(prim,

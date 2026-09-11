@@ -793,6 +793,48 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.75 round complete ✓ — cutout textures get alpha-preserving mip chains, and
+painted-detail meshes get their own LOD policy (both from the same follow-up:
+"are the sharp billboards not taking a significant part of the texture cache
+budget? they seem unaffected by lod bias" + "is it possible to micromanage lod
+bias so the decals and texture splats stay sharper at a distance? right now the
+splatted parts have visible seams"):
+- CUTOUT TEXTURES HAD NO MIP CHAIN AT ALL — the whole answer to the first
+  question. Halving a 1-bit alpha erodes a silhouette, so the loader built no
+  chain for CUTOUT, so foliage sprites (tree/bush/flower, 256x512 to 512x512)
+  and the 1-bit particle art sampled LEVEL 0 forever: minified, a texture-cache
+  miss per fragment — and no LOD bias can reach them, because there is no level
+  to select. Fix: build the chain with an alpha-preserving ANY-opaque-wins
+  combine (the silhouette dilates by half a texel per level instead of
+  eroding). Measured at a foliage view with the sprites 2-6 m out:
+  `fol_cutoutnomip` 6.09 ms -> `fol_base` 0.46 ms, and visually identical at
+  that range (captures compared); costs ~1/3 more texture memory for those
+  textures (~345 KB here, load still fails loudly on OOM). `cutout_mips=0`
+  restores the old behaviour at runtime for an A/B.
+- THE SPLAT SEAMS ARE PER-PRIMITIVE LOD STEPS, pinned by ablation rather than
+  argued: at a grazing floor view with `mips=0` (every fragment samples level 0)
+  the painted path is perfectly continuous — NO bands — and a constant level
+  removes them too. The GE picks one level per triangle from that triangle's own
+  UV derivatives, and a floor crosses several levels across a few metres, so
+  neighbouring baked tiles differ by a step; invisible at level 0-1, a visible
+  band once the level is coarse.
+- PER-MESH LOD POLICY, the "micromanage" mechanism asked for: meshes matching
+  `detail_mesh=` (default `TileAtlas` — the baked splat/stamp tiles) take
+  `detail_bias` (default -1, one level sharper than the scene) or, when
+  `detail_const` >= 0, ONE constant level for the whole mesh, which is the only
+  setting that removes the step between neighbouring primitives. Applied per
+  draw call in both mesh passes (the level-mode registers are per draw), and the
+  emitter path explicitly resets to the global policy so a particle texture can
+  never inherit a mesh's. Measured at the grazing floor view: `fg_base` 0.12 /
+  `fg_detailoff` 0.12 / `fg_detail_const1` 0.50 ms (3.15 ms frame) — sharpness
+  there is nearly free because the detail meshes cover little screen; `fg_nomips`
+  26.2 ms for scale. Sign-off on the device: the shipped policy reads sharper
+  than the un-special-cased one at no measurable cost.
+- New live knobs (no rebuild): `cutout_mips=`, `detail_mesh=`, `detail_bias=`,
+  `detail_const=` in poi_render.txt. New battery camera presets `foliage` and
+  `floorgraz` with `fol_*` / `fg_*` rows guard both findings; the report tool and
+  HARDWARE-TESTING.md carry the tables.
+
 v0.9.74 round complete ✓ — the waterfall-foot slowdown: the LOD bias was over
 the GE's texture-cache cliff (reported from the device, found with the battery,
 fixed, guarded):
