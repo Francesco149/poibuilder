@@ -66,6 +66,7 @@ typedef struct {
     char map_name[64];
     PbmEntityPatrolSphere patrol_sphere;
     int has_patrol_sphere;
+    char env_preset[32];
 } PbmMap;
 
 PbmMap* pbm_load(const char* filepath);

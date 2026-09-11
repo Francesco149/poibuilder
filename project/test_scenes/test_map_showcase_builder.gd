@@ -4,41 +4,15 @@
 class_name TestMapShowcaseBuilder
 extends RefCounted
 
-static func build_showcase_scene(include_player: bool = false) -> Node3D:
+static func build_showcase_scene(include_player: bool = false, preset_name: String = "day") -> Node3D:
 	var root := Node3D.new()
 	root.name = "ShowcaseMap"
 
 	# ==========================================================================
-	# 0. World Environment & Sky
+	# 0. World Environment & Sun Lighting (PBEnvironment preset: dawn, day, dusk, night)
 	# ==========================================================================
-	var env_node := WorldEnvironment.new()
-	env_node.name = "WorldEnvironment"
-	var env := Environment.new()
-	var sky := Sky.new()
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.38, 0.45, 0.55, 1.0)
-	sky_mat.sky_horizon_color = Color(0.65, 0.70, 0.75, 1.0)
-	sky_mat.ground_bottom_color = Color(0.15, 0.15, 0.18, 1.0)
-	sky_mat.ground_horizon_color = Color(0.65, 0.70, 0.75, 1.0)
-	sky.sky_material = sky_mat
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_color = Color(0.3, 0.3, 0.35, 1.0)
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env_node.environment = env
-	root.add_child(env_node)
-
-	# ==========================================================================
-	# 1. Lighting
-	# ==========================================================================
-	var sun := DirectionalLight3D.new()
-	sun.name = "Sun"
-	sun.transform = Transform3D(Basis.looking_at(Vector3(0.4, -1.0, -0.6).normalized(), Vector3.UP), Vector3(0, 15, 0))
-	sun.light_color = Color(1.0, 0.96, 0.9)
-	sun.light_energy = 1.2
-	sun.shadow_enabled = true
-	root.add_child(sun)
+	PBEnvironment.apply_preset(root, preset_name)
+	root.set_meta("poi_env_preset", preset_name.to_lower())
 	var torch := OmniLight3D.new()
 	torch.name = "TorchLight"
 	torch.position = Vector3(0, 2.5, -4.5)
@@ -513,8 +487,8 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 		root.add_child(player)
 	return root
 
-static func save_showcase_scene(file_path: String, include_player: bool = false) -> Error:
-	var root := build_showcase_scene(include_player)
+static func save_showcase_scene(file_path: String, include_player: bool = false, preset_name: String = "day") -> Error:
+	var root := build_showcase_scene(include_player, preset_name)
 	_set_owner_recursive(root, root)
 	var packed := PackedScene.new()
 	var err := packed.pack(root)
@@ -524,6 +498,57 @@ static func save_showcase_scene(file_path: String, include_player: bool = false)
 	err = ResourceSaver.save(packed, file_path)
 	root.free()
 	return err
+
+static func export_showcase_preset(preset_name: String, retro_glb_path: String = "", pbm_path: String = "") -> Error:
+	var norm_name := preset_name.to_lower().strip_edges()
+	if retro_glb_path.is_empty():
+		retro_glb_path = "res://exports/showcase_retro_baked_%s.glb" % norm_name
+	if pbm_path.is_empty():
+		pbm_path = "res://../retro_engine/psp/showcase_retro_baked_%s.pbm" % norm_name
+	var showcase_root := build_showcase_scene(false, norm_name)
+	_set_owner_recursive(showcase_root, showcase_root)
+
+	var retro_settings := PBMapExporter.ExportSettings.new()
+	retro_settings.export_mode = PBMapExporter.ExportMode.RETRO
+	retro_settings.subdivide_quads = true
+	retro_settings.grid_size = 1.0
+	retro_settings.bake_lighting = true
+	retro_settings.bake_shadows = true
+	retro_settings.bake_ao = true
+	retro_settings.bake_textures = true
+	retro_settings.tile_resolution = 128
+	retro_settings.export_colliders = true
+	retro_settings.export_billboards = true
+	var p := PBEnvironment.get_preset(norm_name)
+	retro_settings.ambient_color = p["ambient_color"]
+
+	var err := PBMapExporter.export_map(showcase_root, retro_glb_path, retro_settings)
+	if err != OK:
+		showcase_root.free()
+		return err
+
+	# Also convert GLB to PBM
+	var pbm_err := PBPbmConverter.convert_glb_to_pbm(retro_glb_path, pbm_path, true)
+	if pbm_err != OK:
+		print("Warning: PBM conversion returned error code %d" % pbm_err)
+
+	# If this is "day", also copy to default showcase_retro_baked.glb and .pbm
+	if norm_name == "day":
+		var default_glb := "res://exports/showcase_retro_baked.glb"
+		var default_pbm := "res://../retro_engine/psp/showcase_retro_baked.pbm"
+		if retro_glb_path != default_glb:
+			DirAccess.copy_absolute(ProjectSettings.globalize_path(retro_glb_path), ProjectSettings.globalize_path(default_glb))
+		if pbm_path != default_pbm:
+			DirAccess.copy_absolute(ProjectSettings.globalize_path(pbm_path), ProjectSettings.globalize_path(default_pbm))
+	showcase_root.free()
+	return OK
+
+static func export_all_presets() -> Dictionary:
+	var results := {}
+	for p_name in PBEnvironment.get_preset_names():
+		var err := export_showcase_preset(p_name)
+		results[p_name] = err
+	return results
 
 static func _set_owner_recursive(node: Node, scene_owner: Node) -> void:
 	for child in node.get_children():

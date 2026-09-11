@@ -23,6 +23,12 @@ typedef struct {
     int   force_small_tex; /* bind a cache-resident 64x64 texture to every mesh */
     int   use_mips;        /* sample the load-time mip chain (mipmap min filter) */
     float near_plane;
+    int   env_preset;      /* PB_ENV_* */
+    uint32_t clear_color;  /* 0xBBGGRR framebuffer clear color */
+    int   fog_enabled;
+    float fog_near;
+    float fog_far;
+    uint32_t fog_color;
 } RenderCfg;
 
 /* tex_filter values. Note sceGuTexFilter(min, mag): the first argument is the
@@ -39,6 +45,24 @@ typedef struct {
 #define PBFILT_NEAREST 2   /* both NEAREST: 1 tap per fragment, no filter work */
 #define PBFILT_ASYM    3   /* min LINEAR_MIPMAP_NEAREST, mag NEAREST (the old default) */
 
+/* Environment Presets (Dawn, Day, Dusk, Night) matching dioramap / PoiBuilder */
+#define PB_ENV_DAY   0
+#define PB_ENV_DAWN  1
+#define PB_ENV_DUSK  2
+#define PB_ENV_NIGHT 3
+
+typedef struct {
+    const char* name;
+    uint32_t clear_color;
+    int fog_enabled;
+    float fog_near;
+    float fog_far;
+    uint32_t fog_color;
+} PbEnvDef;
+
+const PbEnvDef* pb_env_get(int preset_id);
+const PbEnvDef* pb_env_find(const char* name);
+void render_cfg_set_env(RenderCfg* cfg, const char* name);
 void render_cfg_default(RenderCfg* cfg);
 
 /* Applies overrides from host0:/poi_render.txt (or ms0:) if the file exists.

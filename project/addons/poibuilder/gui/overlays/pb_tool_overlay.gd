@@ -84,6 +84,8 @@ var _display_controls: Dictionary = {}
 signal display_setting_changed(setting_name: StringName, value: float)
 signal display_reset_pressed
 signal edit_params_requested()
+signal env_preset_requested(preset_name: String)
+var _env_buttons: Dictionary = {}
 
 ## param name -> SpinBox (rebuilt per params session)
 var _param_spinboxes: Dictionary = {}
@@ -829,6 +831,32 @@ func _build_settings_section() -> void:
 	rows.add_child(hover_spin)
 	_display_controls["hover_opacity"] = hover_spin
 
+	# Time of Day (Environment) Presets
+	var env_sep := HSeparator.new()
+	_settings_section.add_child(env_sep)
+
+	var env_title := Label.new()
+	env_title.text = "TIME OF DAY (ENVIRONMENT)"
+	env_title.add_theme_font_size_override("font_size", 10)
+	env_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_settings_section.add_child(env_title)
+
+	var tod_row := HBoxContainer.new()
+	tod_row.name = "TimeOfDayRow"
+	tod_row.add_theme_constant_override("separation", 4)
+	_settings_section.add_child(tod_row)
+
+	for p_name in ["dawn", "day", "dusk", "night"]:
+		var p: Dictionary = PBEnvironment.get_preset(p_name)
+		var btn := Button.new()
+		btn.name = "BtnEnv_" + p_name.capitalize()
+		btn.text = p.get("label", p_name.capitalize())
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.tooltip_text = "Apply %s environment preset" % p.get("name", p_name)
+		btn.pressed.connect(func(): env_preset_requested.emit(p_name))
+		tod_row.add_child(btn)
+		_env_buttons[p_name] = btn
 	# Reset footer
 	var footer := HBoxContainer.new()
 	_settings_section.add_child(footer)
@@ -845,6 +873,15 @@ func _build_settings_section() -> void:
 
 	_settings_section.visible = false
 
+func set_active_env_preset(preset_name: String) -> void:
+	for p_name in _env_buttons:
+		var btn: Button = _env_buttons[p_name]
+		if btn != null:
+			var active: bool = (p_name == preset_name.to_lower())
+			if active:
+				btn.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0))
+			else:
+				btn.remove_theme_color_override("font_color")
 func open_settings() -> void:
 	settings_panel_open = true
 	panel_enabled = true

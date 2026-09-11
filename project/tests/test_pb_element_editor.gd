@@ -1132,3 +1132,32 @@ func test_element_drag_absolute_grid_snapping():
 
 	logic.commit_subgizmos(mesh, ids, false)
 
+func test_extrude_and_move_sloped_face_snapping():
+	var s := _make_setup(PBEditor.SelectMode.FACE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+
+	var grid := PBGrid.new()
+	grid.unit = 1.0
+	grid.subdivisions = 5 # 0.2m snap step
+	grid.enabled = true
+	logic.grid = grid
+
+	# Test 1: Extrude motion snapping on sloped normal
+	var sloped_n := Vector3(0.0, 0.707107, 0.707107).normalized()
+	logic._extrude_normal_world = sloped_n
+	# Raw motion has both normal distance (0.35) and tangential noise/jitter (0.15 on X)
+	var raw_motion := sloped_n * 0.35 + Vector3(0.15, 0.0, 0.0)
+	var snapped_extrude := logic._snap_extrude_motion(mesh, raw_motion)
+	# 0.35 snaps to 0.40 along normal, and tangential noise on X must be stripped to 0.0!
+	assert_almost_eq(snapped_extrude.x, 0.0, 0.001, "Extrude must have zero tangential drift on X")
+	assert_almost_eq(snapped_extrude.dot(sloped_n), 0.40, 0.001, "Extrude distance must snap cleanly to 0.40 along normal")
+
+	# Test 2: Sloped element space move motion
+	logic.editor.orientation_space = PBEditor.OrientationSpace.ELEMENT
+	logic._drag_start_xf[0] = Transform3D.IDENTITY
+	logic._drag_latest_id = 0
+	var motion := sloped_n * 0.28
+	var snapped_move := logic._snap_move_motion(mesh, motion)
+	assert_almost_eq(snapped_move.normalized().dot(sloped_n), 1.0, 0.001, "Snapped move must stay aligned with slope")
+

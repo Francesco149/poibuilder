@@ -16,6 +16,13 @@ class Tri:
 	var v1: Vector3
 	var v2: Vector3
 	var aabb: AABB
+	var uv0: Vector2 = Vector2.ZERO
+	var uv1: Vector2 = Vector2.ZERO
+	var uv2: Vector2 = Vector2.ZERO
+	var alpha_image: Image = null
+	var alpha_scissor: float = 0.5
+	var has_alpha: bool = false
+	var is_water: bool = false
 
 	func _init(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
 		v0 = p0
@@ -38,15 +45,24 @@ class SpatialGrid:
 		cell_size = p_cell_size
 		inv_cell = 1.0 / p_cell_size
 
-	func add_triangle(p0: Vector3, p1: Vector3, p2: Vector3) -> void:
+	func add_triangle(p0: Vector3, p1: Vector3, p2: Vector3,
+			uv0: Vector2 = Vector2.ZERO, uv1: Vector2 = Vector2.ZERO, uv2: Vector2 = Vector2.ZERO,
+			alpha_image: Image = null, alpha_scissor: float = 0.5, is_water: bool = false) -> void:
 		var tri := Tri.new(p0, p1, p2)
+		tri.is_water = is_water
+		if alpha_image != null:
+			tri.has_alpha = true
+			tri.uv0 = uv0
+			tri.uv1 = uv1
+			tri.uv2 = uv2
+			tri.alpha_image = alpha_image
+			tri.alpha_scissor = alpha_scissor
 		all_triangles.append(tri)
 		if not has_aabb:
 			scene_aabb = tri.aabb
 			has_aabb = true
 		else:
 			scene_aabb = scene_aabb.merge(tri.aabb)
-
 		var min_c := Vector3i(int(floor(tri.aabb.position.x * inv_cell)), int(floor(tri.aabb.position.y * inv_cell)), int(floor(tri.aabb.position.z * inv_cell)))
 		var max_c := Vector3i(int(floor((tri.aabb.position.x + tri.aabb.size.x) * inv_cell)), int(floor((tri.aabb.position.y + tri.aabb.size.y) * inv_cell)), int(floor((tri.aabb.position.z + tri.aabb.size.z) * inv_cell)))
 
@@ -107,10 +123,21 @@ class SpatialGrid:
 					if hit.get("hit", false):
 						var d: float = hit.get("distance", INF)
 						if d > 0.001 and d < closest_d:
+							if tri.has_alpha and tri.alpha_image != null:
+								var u: float = hit.get("u", 0.0)
+								var v: float = hit.get("v", 0.0)
+								var w: float = 1.0 - (u + v)
+								var hit_uv: Vector2 = w * tri.uv0 + u * tri.uv1 + v * tri.uv2
+								var iw: int = tri.alpha_image.get_width()
+								var ih: int = tri.alpha_image.get_height()
+								var px: int = clampi(int(hit_uv.x * float(iw)), 0, iw - 1)
+								var py: int = clampi(int(hit_uv.y * float(ih)), 0, ih - 1)
+								var alpha: float = tri.alpha_image.get_pixel(px, py).a
+								if alpha < tri.alpha_scissor:
+									continue
 							if early_exit:
 								return d
 							closest_d = d
-
 			var t_next := minf(t_max_x, minf(t_max_y, t_max_z))
 			if closest_d <= t_next or t_next > ray_len:
 				break
@@ -150,6 +177,94 @@ class SpatialGrid:
 			if tz > 0.0001:
 				t_exit = minf(t_exit, tz)
 		return t_exit
+
+	func get_shadow_transmission(origin: Vector3, dir: Vector3, max_dist: float) -> float:
+		if all_triangles.is_empty():
+			return 1.0
+
+		var dir_norm := dir.normalized()
+		var ray_len := max_dist
+
+		if has_aabb:
+			var exp_aabb := scene_aabb.grow(0.1)
+			if not exp_aabb.has_point(origin):
+				var enter_pt = exp_aabb.intersects_segment(origin, origin + dir_norm * ray_len)
+				if enter_pt == null:
+					return 1.0
+			else:
+				var exit_d := _ray_box_exit(origin, dir_norm, exp_aabb, ray_len)
+				ray_len = minf(ray_len, exit_d)
+
+		var cur_cell := Vector3i(int(floor(origin.x * inv_cell)), int(floor(origin.y * inv_cell)), int(floor(origin.z * inv_cell)))
+		var step_x := 1 if dir_norm.x >= 0.0 else -1
+		var step_y := 1 if dir_norm.y >= 0.0 else -1
+		var step_z := 1 if dir_norm.z >= 0.0 else -1
+
+		var t_delta_x := absf(cell_size / dir_norm.x) if absf(dir_norm.x) > 0.000001 else INF
+		var t_delta_y := absf(cell_size / dir_norm.y) if absf(dir_norm.y) > 0.000001 else INF
+		var t_delta_z := absf(cell_size / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
+
+		var next_bx := float(cur_cell.x + (1 if step_x > 0 else 0)) * cell_size
+		var next_by := float(cur_cell.y + (1 if step_y > 0 else 0)) * cell_size
+		var next_bz := float(cur_cell.z + (1 if step_z > 0 else 0)) * cell_size
+
+		var t_max_x := absf((next_bx - origin.x) / dir_norm.x) if absf(dir_norm.x) > 0.000001 else INF
+		var t_max_y := absf((next_by - origin.y) / dir_norm.y) if absf(dir_norm.y) > 0.000001 else INF
+		var t_max_z := absf((next_bz - origin.z) / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
+		var transmission := 1.0
+		var seen := {}
+
+		while true:
+			if cells.has(cur_cell):
+				var tri_list: Array = cells[cur_cell]
+				for tri: Tri in tri_list:
+					if seen.has(tri):
+						continue
+					seen[tri] = true
+
+					var hit: Dictionary = PBMath.ray_intersects_triangle(origin, dir_norm, tri.v0, tri.v1, tri.v2)
+					if hit.get("hit", false):
+						var d: float = hit.get("distance", INF)
+						if d > 0.01 and d < ray_len:
+							if tri.has_alpha and tri.alpha_image != null:
+								var u: float = hit.get("u", 0.0)
+								var v: float = hit.get("v", 0.0)
+								var w: float = 1.0 - (u + v)
+								var hit_uv: Vector2 = w * tri.uv0 + u * tri.uv1 + v * tri.uv2
+								var iw: int = tri.alpha_image.get_width()
+								var ih: int = tri.alpha_image.get_height()
+								var px: int = clampi(int(hit_uv.x * float(iw)), 0, iw - 1)
+								var py: int = clampi(int(hit_uv.y * float(ih)), 0, ih - 1)
+								var alpha: float = tri.alpha_image.get_pixel(px, py).a
+								if alpha < tri.alpha_scissor:
+									continue
+							if tri.is_water:
+								transmission *= 0.5
+								if transmission < 0.05:
+									return 0.0
+							else:
+								return 0.0
+
+			var t_next := minf(t_max_x, minf(t_max_y, t_max_z))
+			if t_next > ray_len:
+				break
+
+			if t_max_x < t_max_y:
+				if t_max_x < t_max_z:
+					cur_cell.x += step_x
+					t_max_x += t_delta_x
+				else:
+					cur_cell.z += step_z
+					t_max_z += t_delta_z
+			else:
+				if t_max_y < t_max_z:
+					cur_cell.y += step_y
+					t_max_y += t_delta_y
+				else:
+					cur_cell.z += step_z
+					t_max_z += t_delta_z
+
+		return transmission
 # Public API
 # ==============================================================================
 
@@ -162,7 +277,8 @@ static func collect_scene_lights(root: Node) -> Array[Light3D]:
 ## Builds a SpatialGrid containing all solid triangles in the scene.
 static func build_spatial_grid(root: Node) -> SpatialGrid:
 	var grid := SpatialGrid.new(2.0)
-	_collect_triangles_recursive(root, grid)
+	var image_cache: Dictionary = {}
+	_collect_triangles_recursive(root, grid, image_cache)
 	return grid
 
 ## Bakes vertex colors for a set of vertices given their positions, normals, and world transform.
@@ -261,9 +377,10 @@ static func _evaluate_light(p: Vector3, n: Vector3, light: Light3D, grid: Spatia
 			return Color.BLACK
 
 		if bake_shadows and grid != null:
-			var hit_dist := grid.cast_ray(p + n * 0.05, to_light, 100.0, true)
-			if hit_dist < 99.0:
+			var trans := grid.get_shadow_transmission(p + n * 0.05, to_light, 100.0)
+			if trans <= 0.001:
 				return Color.BLACK # Occluded
+			l_color *= trans
 
 		return l_color * n_dot_l
 
@@ -299,9 +416,10 @@ static func _evaluate_light(p: Vector3, n: Vector3, light: Light3D, grid: Spatia
 
 		# Shadow test
 		if bake_shadows and grid != null:
-			var hit_dist := grid.cast_ray(p + n * 0.02, l_dir, dist - 0.03, true)
-			if hit_dist < dist - 0.04:
+			var trans := grid.get_shadow_transmission(p + n * 0.02, l_dir, dist - 0.03)
+			if trans <= 0.001:
 				return Color.BLACK # Occluded
+			l_color *= trans
 
 		return l_color * (att * n_dot_l)
 
@@ -348,21 +466,50 @@ static func _find_lights_recursive(node: Node, out: Array[Light3D]) -> void:
 	for child in node.get_children():
 		_find_lights_recursive(child, out)
 
-static func _collect_triangles_recursive(node: Node, grid: SpatialGrid) -> void:
+static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_cache: Dictionary = {}) -> void:
 	if node == null:
 		return
 
-	# Skip collision shapes, stamps container, billboards, transparent sprites, and hidden nodes
+	# Skip collision shapes, stamps container, and hidden nodes
 	if node.name == "PBStamps" or node.name.begins_with("Collider") or node is CollisionShape3D:
 		return
-	if node.has_meta("is_billboard") or node.name.begins_with("Sprite") or node.name.begins_with("Tree") or node.name.begins_with("Bush") or node.name.begins_with("Wildflower"):
+	if node is Node3D and not (node as Node3D).visible:
 		return
-	if node is MeshInstance3D and (node as MeshInstance3D).material_override is StandardMaterial3D:
+
+	# Handle billboards / alpha-scissor foliage meshes (cast silhouette shadows)
+	var is_bb := node.has_meta("is_billboard") or node.name.begins_with("Sprite") or node.name.begins_with("Tree") or node.name.begins_with("Bush") or node.name.begins_with("Wildflower")
+	if is_bb:
+		if node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			if mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				return
+			var sm := mi.material_override as StandardMaterial3D
+			if sm != null:
+				# Soft alpha (mist, water spray) does not cast hard shadows
+				if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
+					return
+				var img: Image = null
+				if sm.albedo_texture != null:
+					var tex_path := sm.albedo_texture.resource_path
+					if not tex_path.is_empty() and image_cache.has(tex_path):
+						img = image_cache[tex_path]
+					else:
+						img = sm.albedo_texture.get_image()
+						if img != null:
+							if img.is_compressed():
+								img.decompress()
+							if not tex_path.is_empty():
+								image_cache[tex_path] = img
+				if img != null:
+					var scissor: float = sm.alpha_scissor_threshold if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR else 0.5
+					_add_mesh_instance_triangles(mi, grid, img, scissor)
+		return
+
+	var is_water := node.name.begins_with("Waterfall") or node.has_meta("is_water")
+	if not is_water and node is MeshInstance3D and (node as MeshInstance3D).material_override is StandardMaterial3D:
 		var sm := (node as MeshInstance3D).material_override as StandardMaterial3D
 		if sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
 			return
-	if node is Node3D and not (node as Node3D).visible:
-		return
 
 	if node is PBMesh and (node as PBMesh).pb_mesh_data != null:
 		var pb := node as PBMesh
@@ -375,34 +522,47 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid) -> void:
 					var p0: Vector3 = xf * md.positions[fi[i]]
 					var p1: Vector3 = xf * md.positions[fi[i + 1]]
 					var p2: Vector3 = xf * md.positions[fi[i + 2]]
-					grid.add_triangle(p0, p1, p2)
+					grid.add_triangle(p0, p1, p2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, null, 0.5, is_water)
 	elif node is MeshInstance3D:
-		var mi := node as MeshInstance3D
-		var m := mi.mesh
-		if m != null:
-			var xf := _get_world_transform(mi)
-			for s in range(m.get_surface_count()):
-				var arrays := m.surface_get_arrays(s)
-				if arrays.size() > Mesh.ARRAY_VERTEX:
-					var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if (arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] != null) else PackedInt32Array()
-
-					if not indices.is_empty():
-						for i in range(0, indices.size() - 2, 3):
-							var p0: Vector3 = xf * verts[indices[i]]
-							var p1: Vector3 = xf * verts[indices[i + 1]]
-							var p2: Vector3 = xf * verts[indices[i + 2]]
-							grid.add_triangle(p0, p1, p2)
-					elif not verts.is_empty():
-						for i in range(0, verts.size() - 2, 3):
-							var p0: Vector3 = xf * verts[i]
-							var p1: Vector3 = xf * verts[i + 1]
-							var p2: Vector3 = xf * verts[i + 2]
-							grid.add_triangle(p0, p1, p2)
-
+		_add_mesh_instance_triangles(node as MeshInstance3D, grid, null, 0.5, is_water)
 	for child in node.get_children():
-		_collect_triangles_recursive(child, grid)
+		_collect_triangles_recursive(child, grid, image_cache)
 
+static func _add_mesh_instance_triangles(mi: MeshInstance3D, grid: SpatialGrid,
+		alpha_image: Image = null, alpha_scissor: float = 0.5, is_water: bool = false) -> void:
+	var m := mi.mesh
+	if m == null:
+		return
+	var xf := _get_world_transform(mi)
+	for s in range(m.get_surface_count()):
+		var arrays := m.surface_get_arrays(s)
+		if arrays.size() > Mesh.ARRAY_VERTEX:
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays.size() > Mesh.ARRAY_TEX_UV and arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if (arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] != null) else PackedInt32Array()
+
+			var has_uvs := (uvs.size() == verts.size())
+			if not indices.is_empty():
+				for i in range(0, indices.size() - 2, 3):
+					var i0 := indices[i]
+					var i1 := indices[i + 1]
+					var i2 := indices[i + 2]
+					var p0: Vector3 = xf * verts[i0]
+					var p1: Vector3 = xf * verts[i1]
+					var p2: Vector3 = xf * verts[i2]
+					var uv0 := uvs[i0] if has_uvs else Vector2.ZERO
+					var uv1 := uvs[i1] if has_uvs else Vector2.ZERO
+					var uv2 := uvs[i2] if has_uvs else Vector2.ZERO
+					grid.add_triangle(p0, p1, p2, uv0, uv1, uv2, alpha_image, alpha_scissor, is_water)
+			elif not verts.is_empty():
+				for i in range(0, verts.size() - 2, 3):
+					var p0: Vector3 = xf * verts[i]
+					var p1: Vector3 = xf * verts[i + 1]
+					var p2: Vector3 = xf * verts[i + 2]
+					var uv0 := uvs[i] if has_uvs else Vector2.ZERO
+					var uv1 := uvs[i + 1] if has_uvs else Vector2.ZERO
+					var uv2 := uvs[i + 2] if has_uvs else Vector2.ZERO
+					grid.add_triangle(p0, p1, p2, uv0, uv1, uv2, alpha_image, alpha_scissor, is_water)
 static func _get_world_transform(node: Node3D) -> Transform3D:
 	if node == null:
 		return Transform3D.IDENTITY

@@ -184,7 +184,6 @@ static int wait_any_button(int ms) {
 }
 
 int main(int argc, char** argv) {
-    (void)argc; (void)argv;
     setup_callbacks();
 
     /* Full 333 MHz CPU / 166 MHz GPU clock. */
@@ -236,11 +235,58 @@ int main(int argc, char** argv) {
     sceGuDisplay(GU_TRUE);
 
     const char* map_path = "showcase_retro_baked.pbm";
-    PbmMap* map = pbm_load("host0:/showcase_retro_baked.pbm");   /* PSPLink USB host fs */
+    const char* preset_arg = NULL;
+    char preset_map_buf[64] = "";
+
+    for (int i = 1; i < argc; ++i) {
+        if (!argv[i] || !argv[i][0]) continue;
+        if (strstr(argv[i], ".pbm")) {
+            map_path = argv[i];
+        } else if (!strncmp(argv[i], "--preset=", 9)) {
+            preset_arg = argv[i] + 9;
+        } else if (!strcasecmp(argv[i], "dawn") || !strcasecmp(argv[i], "day") ||
+                   !strcasecmp(argv[i], "dusk") || !strcasecmp(argv[i], "night")) {
+            preset_arg = argv[i];
+        }
+    }
+    if (!preset_arg) {
+        FILE* fp = fopen("poi_preset.txt", "r");
+        if (!fp) fp = fopen("host0:/poi_preset.txt", "r");
+        if (!fp) fp = fopen("ms0:/poi_preset.txt", "r");
+        if (fp) {
+            static char s_preset_file_buf[32];
+            if (fgets(s_preset_file_buf, sizeof(s_preset_file_buf), fp)) {
+                char* nl = strchr(s_preset_file_buf, '\n'); if (nl) *nl = 0;
+                char* cr = strchr(s_preset_file_buf, '\r'); if (cr) *cr = 0;
+                if (s_preset_file_buf[0]) preset_arg = s_preset_file_buf;
+            }
+            fclose(fp);
+        }
+    }
+
+    if (preset_arg && !strcmp(map_path, "showcase_retro_baked.pbm")) {
+        snprintf(preset_map_buf, sizeof(preset_map_buf), "showcase_retro_baked_%s.pbm", preset_arg);
+        if (file_exists(preset_map_buf)) {
+            map_path = preset_map_buf;
+        }
+    }
+
+    char host0_map[128];
+    snprintf(host0_map, sizeof(host0_map), "host0:/%s", map_path);
+    char disc0_map[128];
+    snprintf(disc0_map, sizeof(disc0_map), "disc0:/%s", map_path);
+    char ms0_map[128];
+    snprintf(ms0_map, sizeof(ms0_map), "ms0:/%s", map_path);
+
+    PbmMap* map = pbm_load(host0_map);   /* PSPLink USB host fs */
     if (!map) map = pbm_load(map_path);
-    if (!map) map = pbm_load("disc0:/showcase_retro_baked.pbm");
-    if (!map) map = pbm_load("ms0:/showcase_retro_baked.pbm");
-    if (!map) map = pbm_load("PSP/GAME/PoiRetro/showcase_retro_baked.pbm");
+    if (!map) map = pbm_load(disc0_map);
+    if (!map) map = pbm_load(ms0_map);
+    if (!map && preset_map_buf[0] != '\0') {
+        /* Fallback to default showcase map if preset-specific file is absent */
+        map = pbm_load("host0:/showcase_retro_baked.pbm");
+        if (!map) map = pbm_load("showcase_retro_baked.pbm");
+    }
     if (!map) {
         printf("[PSP] Map '%s' not found. Place showcase_retro_baked.pbm next to the EBOOT.\n", map_path);
         sceKernelDelayThread(1000000);
@@ -308,6 +354,11 @@ int main(int argc, char** argv) {
     int display_mode = 0;
     RenderCfg cfg;
     render_cfg_default(&cfg);
+    if (preset_arg) {
+        render_cfg_set_env(&cfg, preset_arg);
+    } else if (map->env_preset[0] != '\0') {
+        render_cfg_set_env(&cfg, map->env_preset);
+    }
     psp_render_overrides(&cfg);   /* host0:/poi_render.txt, if present */
     RenderStats stats = { 0, 0, 0 };
 
@@ -382,6 +433,15 @@ int main(int argc, char** argv) {
             if (pad.Buttons & PSP_CTRL_SQUARE) move_speed *= 2.5f;
 
             if (pad.Buttons & PSP_CTRL_TRIANGLE) {
+                if (pad.Buttons & PSP_CTRL_LEFT) {
+                    cfg.env_preset = (cfg.env_preset + 3) % 4;
+                    render_cfg_set_env(&cfg, pb_env_get(cfg.env_preset)->name);
+                    sceKernelDelayThread(200000);
+                } else if (pad.Buttons & PSP_CTRL_RIGHT) {
+                    cfg.env_preset = (cfg.env_preset + 1) % 4;
+                    render_cfg_set_env(&cfg, pb_env_get(cfg.env_preset)->name);
+                    sceKernelDelayThread(200000);
+                }
                 if (abs((int)pad.Lx - 128) > 20) {
                     float stick_x = (float)((int)pad.Lx - 128) / 128.0f;
                     cam_yaw += stick_x * 2.8f * dt;

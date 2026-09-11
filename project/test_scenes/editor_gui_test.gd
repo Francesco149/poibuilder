@@ -1380,6 +1380,20 @@ func _run() -> void:
 						_fail("TOOLBAR-SPLIT: failed to restore two-row layout")
 				else:
 					_fail("TOOLBAR-SPLIT: split rows button not found")
+				# ── Environment Presets Test ───────────────────────────────────
+				if plugin.toolbar != null and plugin.toolbar.env_button() != null:
+					_pass("ENV: toolbar environment presets button exists")
+					var env_btn: MenuButton = plugin.toolbar.env_button()
+					var popup: PopupMenu = env_btn.get_popup()
+					if popup != null and popup.item_count == 4:
+						_pass("ENV: environment popup has 4 presets (Dawn, Day, Dusk, Night)")
+						popup.id_pressed.emit(2) # Dusk
+						await _frames(5)
+						_pass("ENV: dusk preset selected via toolbar")
+					else:
+						_fail("ENV: environment popup missing preset items")
+				else:
+					_fail("ENV: toolbar environment button not found")
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────

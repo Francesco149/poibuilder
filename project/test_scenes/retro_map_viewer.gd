@@ -23,6 +23,8 @@ enum WireframeStyle {
 }
 
 @export var default_map_path: String = "res://exports/showcase_retro_baked.glb"
+var current_preset: String = "day"
+var _env_buttons: Dictionary = {}
 
 var current_mode: DisplayMode = DisplayMode.FULL_BAKED
 var wireframe_style: WireframeStyle = WireframeStyle.DARK_SLATE
@@ -84,6 +86,14 @@ func _ready() -> void:
 	cli_args.append_array(OS.get_cmdline_user_args())
 
 	# Parse command line args for --map=...
+	var target_preset := ""
+	for arg in cli_args:
+		if arg.begins_with("--preset="):
+			target_preset = arg.trim_prefix("--preset=").to_lower()
+		elif arg.to_lower() in ["dawn", "day", "dusk", "night"]:
+			target_preset = arg.to_lower()
+	if target_preset != "":
+		current_preset = target_preset
 	var map_to_load := default_map_path
 	for arg in cli_args:
 		if arg.begins_with("--map="):
@@ -108,6 +118,17 @@ func _ready() -> void:
 	# Auto-capture mouse on click in viewport
 	_capture_mouse(true)
 	get_viewport().msaa_3d = Viewport.MSAA_4X
+	# Look for preset-specific baked map if target_preset was specified
+	if target_preset != "" and map_to_load == default_map_path:
+		var preset_candidates := [
+			"res://exports/showcase_retro_baked_%s.glb" % target_preset,
+			"res://test_scenes/showcase_retro_baked_%s.glb" % target_preset,
+		]
+		for c in preset_candidates:
+			if FileAccess.file_exists(c):
+				map_to_load = c
+				break
+
 	if not FileAccess.file_exists(map_to_load):
 		for candidate in ["res://exports/showcase_retro_baked.glb", "res://exports/exported_map.glb", "res://test_scenes/showcase_retro_baked.glb"]:
 			if FileAccess.file_exists(candidate):
@@ -117,6 +138,31 @@ func _ready() -> void:
 		load_map(map_to_load)
 	else:
 		lbl_stats.text = "Map file not found: %s\nUse 'Browse / Load' to select a .glb file." % map_to_load
+
+	# Time of Day buttons in HUD
+	var env_bar := HBoxContainer.new()
+	env_bar.name = "EnvBar"
+	env_bar.add_theme_constant_override("separation", 6)
+	var env_lbl := Label.new()
+	env_lbl.text = "Time of Day (6):"
+	env_lbl.add_theme_font_size_override("font_size", 13)
+	env_lbl.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	env_bar.add_child(env_lbl)
+
+	for p_name in PBEnvironment.get_preset_names():
+		var p: Dictionary = PBEnvironment.get_preset(p_name)
+		var btn := Button.new()
+		btn.name = "BtnEnv_" + p_name.capitalize()
+		btn.text = p.get("label", p_name.capitalize())
+		btn.tooltip_text = "Apply %s environment preset" % p.get("name", p_name)
+		btn.pressed.connect(func(): set_environment_preset(p_name))
+		env_bar.add_child(btn)
+		_env_buttons[p_name] = btn
+	var vbox: VBoxContainer = get_node_or_null("CanvasLayer/HUD/VBox")
+	if vbox != null:
+		vbox.add_child(env_bar)
+
+	set_environment_preset(current_preset, false)
 
 	var shot_mode := 1
 	for arg in cli_args:
@@ -202,6 +248,8 @@ func _input(event: InputEvent) -> void:
 					set_display_mode(DisplayMode.WIREFRAME)
 			elif ke.keycode == KEY_5:
 				set_display_mode(DisplayMode.COLLIDERS_ONLY)
+			elif ke.keycode == KEY_6:
+				cycle_environment_preset()
 			elif ke.keycode == KEY_P:
 				toggle_play_mode()
 			elif ke.keycode == KEY_R and is_play_mode:
@@ -730,7 +778,7 @@ func _update_hud() -> void:
 			player.global_position.z if player else 0.0,
 		]
 	else:
-		lbl_mode.text = "Mode: %s — (Press P for Play Mode)" % mode_name
+		lbl_mode.text = "Mode: %s | Env: %s (Press 6 to cycle) — (Press P for Play Mode)" % [mode_name, current_preset.capitalize()]
 		lbl_mode.modulate = Color(1.0, 0.9, 0.3)
 		lbl_stats.text = "FPS: %d | Meshes: %d | Surfaces: %d | Vertices: %d | Triangles: %d\nMove Speed: %.1f m/s (Wheel to adjust, Shift for turbo)" % [
 			Engine.get_frames_per_second(),
@@ -926,3 +974,25 @@ func _physics_process(delta: float) -> void:
 
 	if player.global_position.y < -40.0:
 		respawn_player()
+func set_environment_preset(preset_name: String, reload_map: bool = true) -> void:
+	current_preset = preset_name.to_lower().strip_edges()
+	var env_node := get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if env_node != null and env_node.environment != null:
+		PBEnvironment.apply_to_environment(env_node.environment, current_preset)
+	for p_name in _env_buttons:
+		var btn: Button = _env_buttons[p_name]
+		if btn != null:
+			if p_name == current_preset:
+				btn.add_theme_color_override("font_color", Color(0.2, 0.9, 1.0))
+			else:
+				btn.remove_theme_color_override("font_color")
+	if reload_map:
+		var preset_glb := "res://exports/showcase_retro_baked_%s.glb" % current_preset
+		if FileAccess.file_exists(preset_glb):
+			load_map(preset_glb)
+
+func cycle_environment_preset() -> void:
+	var names := PBEnvironment.get_preset_names()
+	var idx := names.find(current_preset)
+	var next_idx := (idx + 1) % names.size()
+	set_environment_preset(names[next_idx])

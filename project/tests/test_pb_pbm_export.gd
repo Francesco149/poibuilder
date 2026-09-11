@@ -49,7 +49,7 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_eq(num_colliders, 9, "Collider count must match Oracle (9 colliders)")
 
 	var num_metadata := f.get_32()
-	assert_eq(num_metadata, 7, "Metadata count must be 7 (map_name, spawn, walkable, triggers, particles, rigid_bodies, entities)")
+	assert_eq(num_metadata, 8, "Metadata count must be 8 (map_name, env_preset, spawn, walkable, triggers, particles, rigid_bodies, entities)")
 	var spawn_x := f.get_float()
 	var spawn_y := f.get_float()
 	var spawn_z := f.get_float()
@@ -183,6 +183,9 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_true(meta_tags.has("map_name"))
 	assert_eq(meta_tags["map_name"]["type"], PBPbmConverter.PBM_META_STRING)
 	assert_true(meta_tags["map_name"]["data"].get_string_from_utf8().contains("PoiRetro Courtyard Showcase"))
+	# Verify env_preset
+	assert_true(meta_tags.has("env_preset"))
+	assert_eq(meta_tags["env_preset"]["type"], PBPbmConverter.PBM_META_STRING)
 
 	# Verify player_spawn
 	assert_true(meta_tags.has("player_spawn"))

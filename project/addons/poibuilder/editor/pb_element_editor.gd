@@ -1258,8 +1258,11 @@ func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
 		return grid.snap_local_delta(basis, motion)  # fallback: plain delta snap
 	var dist := world.dot(world_normal)
 	var snapped := grid.snap_val(dist)
-	return basis.inverse() * (world + world_normal * (snapped - dist))
-
+	# Normal-directed extrude: constrain strictly to normal, stripping tangential drift on sloped faces
+	if absf(dist) >= world.length() * 0.5:
+		return basis.inverse() * (world_normal * snapped)
+	# Sideways / tangential cap sweep: snap local delta preserving tangential motion
+	return grid.snap_local_delta(basis, motion)
 
 ## Snaps element translation to absolute world grid lines along active axes.
 ## Even if an element starts with an off-grid position (fractional dimensions or
@@ -1272,12 +1275,69 @@ func _snap_move_motion(node: PBMesh, motion: Vector3) -> Vector3:
 
 	var basis := node.global_transform.basis
 	var world_motion := basis * motion
+
+	# If in ELEMENT space: snap along the element's local gizmo axes (face normal, tangent, bitangent)
+	if editor != null and editor.orientation_space == PBEditor.OrientationSpace.ELEMENT:
+		var elem_b := element_basis(node.pb_mesh_data, node, _drag_latest_id)
+		var d_x: float = motion.dot(elem_b.x)
+		var d_y: float = motion.dot(elem_b.y)
+		var d_z: float = motion.dot(elem_b.z)
+
+		var applied_local := Vector3.ZERO
+		var world_x := (basis * elem_b.x).normalized()
+		var world_y := (basis * elem_b.y).normalized()
+		var world_z := (basis * elem_b.z).normalized()
+		var start_pivot_world: Vector3 = node.global_transform * _drag_start_xf[_drag_latest_id].origin
+
+		if absf(d_x) > 0.0001:
+			if PBGrid.is_cardinal(world_x):
+				var target_pt := start_pivot_world + world_x * d_x
+				var snapped_pt := grid.snap_point(target_pt)
+				applied_local += elem_b.x * (snapped_pt - start_pivot_world).dot(world_x)
+			else:
+				applied_local += elem_b.x * grid.snap_val(d_x)
+
+		if absf(d_y) > 0.0001:
+			if PBGrid.is_cardinal(world_y):
+				var target_pt := start_pivot_world + world_y * d_y
+				var snapped_pt := grid.snap_point(target_pt)
+				applied_local += elem_b.y * (snapped_pt - start_pivot_world).dot(world_y)
+			else:
+				applied_local += elem_b.y * grid.snap_val(d_y)
+
+		if absf(d_z) > 0.0001:
+			if PBGrid.is_cardinal(world_z):
+				var target_pt := start_pivot_world + world_z * d_z
+				var snapped_pt := grid.snap_point(target_pt)
+				applied_local += elem_b.z * (snapped_pt - start_pivot_world).dot(world_z)
+			else:
+				applied_local += elem_b.z * grid.snap_val(d_z)
+
+		return applied_local
+
+	elif editor != null and editor.orientation_space == PBEditor.OrientationSpace.OBJECT:
+		var applied_local := Vector3.ZERO
+		var start_pivot_world: Vector3 = node.global_transform * _drag_start_xf[_drag_latest_id].origin
+		for i in range(3):
+			var local_axis := Vector3.ZERO
+			local_axis[i] = 1.0
+			var world_axis := (basis * local_axis).normalized()
+			var val: float = motion[i]
+			if absf(val) > 0.0001:
+				if PBGrid.is_cardinal(world_axis):
+					var target_pt := start_pivot_world + world_axis * val
+					var snapped_pt := grid.snap_point(target_pt)
+					applied_local[i] = (snapped_pt - start_pivot_world).dot(world_axis)
+				else:
+					applied_local[i] = grid.snap_val(val)
+		return applied_local
+
+	# Default WORLD space: absolute world grid snapping
 	var start_pivot_world: Vector3 = node.global_transform * _drag_start_xf[_drag_latest_id].origin
 	var target_pivot_world := start_pivot_world + world_motion
 	var snapped_target := grid.snap_point(target_pivot_world)
 
 	var applied_world := Vector3.ZERO
-	# Snap only axes with active motion; un-dragged axes stay at 0
 	if absf(world_motion.x) > 0.0001:
 		applied_world.x = snapped_target.x - start_pivot_world.x
 	if absf(world_motion.y) > 0.0001:

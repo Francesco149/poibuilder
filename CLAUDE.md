@@ -793,6 +793,20 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.71 round complete ✓ — pre-particle performance restored on real PSP, shadow casting, orientation snapping & clean scratch playground:
+- CLEAN HARDWARE BASELINE RESTORED (psp_render.c, pbm_loader.h/c):
+  * Completely removed dynamic particle simulation loops, emitter structures, and allocations from the PSP engine.
+  * Verified on real Sony PSP hardware via `./run_psp_hw.sh`: GPU time locked at ~2.5ms across the scene (below_up = 4.82ms,
+    ramp = 1.63ms, balcony = 0.59ms, corner/sky_up = 0.10ms; all camera poses well within the 16.67ms 60 FPS budget).
+  * Removed all extraneous emitters from the archway point light.
+- REAPPLIED RESTORED FEATURES:
+  * `scratch.sh`: creates a clean, empty playground with a 60mx60m floor using the project default dark 2x2 checkerboard (`pb_default_material.tres`) and player.
+  * Shadow-casting billboards: implemented silhouette alpha shadow casting for billboards in `pb_light_baker.gd` and `pb_math.gd`.
+  * Gizmo orientation-aware snapping: implemented element gizmo axis snapping in `pb_element_editor.gd` with unit test `test_extrude_and_move_sloped_face_snapping`.
+  * Time of day environment presets: restored `PBEnvironment` presets (Dawn, Day, Dusk, Night), toolbar `Env` button, overlay display settings selector, and multi-preset runners (`run_presets.sh`).
+  * Water textures: kept the high-fidelity water textures (`water_pool.png` caustic web, `water_foam.png`, `waterfall_sheet.png`, `waterfall_core.png`) and `WetTilesMaterial` on `WaterfallWall`, with bright ceramic tiles (`tiles_light_4x4.png`) on courtyard geometry.
+- Tests: 832/832 GUT unit tests passing, 53/53 GUI harness tests, all 4 environment presets smoke-tested on both engines.
+
 v0.9.65 round complete ✓ — scroll DIRECTION fixes from the first device/viewer
 pass (the human watched both renderers side by side):
 - THE GODOT VIEWER SUBTRACTED THE OFFSET and the PSP advanced it, so for the
