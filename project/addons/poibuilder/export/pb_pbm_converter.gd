@@ -23,8 +23,77 @@ const PBM_META_RAW    := 0
 const PBM_META_STRING := 1
 const PBM_META_JSON   := 2
 const PBM_META_ENTITY := 3
+const PBM_META_EMITTER := 4
+const PBM_EMITTER_SIZE := 176
 
 const PBM_ENTITY_PATROL_SPHERE := 1
+
+## Packs the standard "emitters" lump (SPEC_RETRO_FORMAT.md §8). The record
+## layout is normative and mirrored byte for byte by the Python oracle
+## (retro_engine/pbm_conv.py) — the two converters are expected to agree on the
+## whole file, so every field is written at an explicit offset.
+static func pack_emitter_lump(records: Array) -> PackedByteArray:
+	var buf := PackedByteArray()
+	buf.resize(16 + records.size() * PBM_EMITTER_SIZE)
+	buf.encode_u32(0, 0x54494D45)
+	buf.encode_u32(4, 1)
+	buf.encode_u32(8, records.size())
+	buf.encode_u32(12, 0)
+	var off := 16
+	for e in records:
+		var name_bytes: PackedByteArray = str(e.get("name", "")).substr(0, 23).to_ascii_buffer()
+		for bi in range(name_bytes.size()):
+			buf[off + bi] = name_bytes[bi]
+
+		var pos: Array = e.get("pos", [0.0, 0.0, 0.0])
+		var dir: Array = e.get("dir", [0.0, 1.0, 0.0])
+		var grav: Array = e.get("gravity", [0.0, 0.0, 0.0])
+		buf.encode_float(off + 0x18, float(pos[0])); buf.encode_float(off + 0x1C, float(pos[1])); buf.encode_float(off + 0x20, float(pos[2]))
+		buf.encode_float(off + 0x24, float(dir[0])); buf.encode_float(off + 0x28, float(dir[1])); buf.encode_float(off + 0x2C, float(dir[2]))
+		buf.encode_float(off + 0x30, float(e.get("spread", 0.0)))
+		buf.encode_float(off + 0x34, float(e.get("speed_min", 0.0)))
+		buf.encode_float(off + 0x38, float(e.get("speed_max", 0.0)))
+		buf.encode_float(off + 0x3C, float(e.get("life_min", 0.0)))
+		buf.encode_float(off + 0x40, float(e.get("life_max", 0.0)))
+		buf.encode_float(off + 0x44, float(grav[0])); buf.encode_float(off + 0x48, float(grav[1])); buf.encode_float(off + 0x4C, float(grav[2]))
+		buf.encode_float(off + 0x50, float(e.get("damping", 0.0)))
+		buf.encode_float(off + 0x54, float(e.get("size_min", 0.0)))
+		buf.encode_float(off + 0x58, float(e.get("size_max", 0.0)))
+		buf.encode_float(off + 0x5C, float(e.get("size_mid", 1.0)))
+		buf.encode_float(off + 0x60, float(e.get("size_end", 1.0)))
+		buf.encode_float(off + 0x64, float(e.get("aspect", 1.0)))
+		buf.encode_float(off + 0x68, float(e.get("angle_min", 0.0)))
+		buf.encode_float(off + 0x6C, float(e.get("angle_max", 0.0)))
+		buf.encode_float(off + 0x70, float(e.get("spin_min", 0.0)))
+		buf.encode_float(off + 0x74, float(e.get("spin_max", 0.0)))
+		buf.encode_float(off + 0x78, float(e.get("wobble_amp", 0.0)))
+		buf.encode_float(off + 0x7C, float(e.get("wobble_freq", 0.0)))
+		buf.encode_float(off + 0x80, float(e.get("spawn_radius", 0.0)))
+		buf.encode_float(off + 0x84, float(e.get("knee", 0.5)))
+		buf.encode_u32(off + 0x88, int(e.get("color_start", 0xFFFFFFFF)))
+		buf.encode_u32(off + 0x8C, int(e.get("color_mid", 0xFFFFFFFF)))
+		buf.encode_u32(off + 0x90, int(e.get("color_end", 0xFFFFFFFF)))
+		buf.encode_u32(off + 0x94, int(e.get("texture_id", -1)))
+		buf.encode_u16(off + 0x98, int(e.get("count", 1)))
+		buf.encode_u16(off + 0x9A, int(e.get("flags", 0)))
+		buf[off + 0x9C] = int(e.get("atlas_cols", 1))
+		buf[off + 0x9D] = int(e.get("atlas_rows", 1))
+		buf[off + 0x9E] = int(e.get("anim_loops", 1))
+		buf[off + 0x9F] = 0
+		buf.encode_u32(off + 0xA0, int(e.get("seed", 0)))
+		off += PBM_EMITTER_SIZE
+	return buf
+
+## True when any texel carries a partial (non 0/255) alpha — the difference
+## between art a 16-bit format can hold (one alpha bit cuts a texel out) and art
+## that needs the 8-bit alpha of RGBA8888 to fade.
+static func has_soft_alpha(img: Image) -> bool:
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var a := int(img.get_pixel(x, y).a * 255.0)
+			if a > 4 and a < 250:
+				return true
+	return false
 
 static func next_pot(x: int) -> int:
 	if x <= 0: return 1
@@ -349,6 +418,25 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 				if not found:
 					list.append(tint)
 
+	# Additive emitters (standard lump "emitters", §8) may keep their particle art
+	# in the 16-bit format when its alpha is genuinely 1-bit: they are the only
+	# users needing transparency, and additive blending takes its falloff from the
+	# RGB channels rather than from alpha. The direct PBM writer applies the same
+	# rule — the two export routes have to agree byte for byte.
+	var additive_emitter_mats: Dictionary = {}
+	var gltf_nodes_for_emit: Array = gltf.get("nodes", [])
+	var gltf_meshes_for_emit: Array = gltf.get("meshes", [])
+	for em_node in gltf_nodes_for_emit:
+		var rec = (em_node.get("extras", {}) as Dictionary).get("poi_emitter", null)
+		if not (rec is Dictionary) or (int((rec as Dictionary).get("flags", 0)) & 1) == 0:
+			continue
+		var em_mesh: int = em_node.get("mesh", -1)
+		if em_mesh < 0 or em_mesh >= gltf_meshes_for_emit.size():
+			continue
+		for prim_em in gltf_meshes_for_emit[em_mesh].get("primitives", []):
+			if prim_em.has("material"):
+				additive_emitter_mats[int(prim_em["material"])] = true
+
 	# 4. Assemble Textures Table
 	var textures: Array[Dictionary] = []
 	var img_to_tex_mapping: Dictionary = {} # "img_idx|r|g|b" -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
@@ -382,6 +470,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 
 			# The image's alpha mode is the strongest any material using it needs.
 			var mode := PBM_ALPHA_NONE
+			var blend_needs_8bit := false
 			for mat_idx in material_alpha:
 				var m_tint: Vector3 = mat_tint.get(mat_idx, Vector3.ONE)
 				if m_tint.distance_to(tint) < 0.002:
@@ -389,6 +478,12 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 					var t_idx: int = bct.get("index", -1)
 					if t_idx >= 0 and t_idx < textures_gltf.size() and int(textures_gltf[t_idx].get("source", -1)) == b_idx:
 						mode = maxi(mode, int(material_alpha[mat_idx]))
+						if int(material_alpha[mat_idx]) == PBM_ALPHA_BLEND and not additive_emitter_mats.has(mat_idx):
+							blend_needs_8bit = true
+			if mode == PBM_ALPHA_BLEND and not blend_needs_8bit and not has_soft_alpha(img):
+				# Only additive emitters draw this art, and its alpha is 1-bit: a
+				# cutout is what it actually is.
+				mode = PBM_ALPHA_CUTOUT
 
 			var converted := convert_image_to_bytes(img, format_16bit and mode != PBM_ALPHA_BLEND)
 			if mode == PBM_ALPHA_NONE and int(converted["has_alpha"]) != 0:
@@ -463,6 +558,12 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		var xf := get_node_transform(node)
 		var mesh_idx: int = node.get("mesh", -1)
 		if mesh_idx < 0 or mesh_idx >= meshes_gltf.size():
+			continue
+
+		# An emitter's texture carrier (PBMapExporter._export_emitter_holder) is
+		# a zero-size quad whose only job is to put the particle texture in the
+		# file: it is read as an emitter below, never as geometry.
+		if (node.get("extras", {}) as Dictionary).has("poi_emitter"):
 			continue
 
 		var mesh_obj: Dictionary = meshes_gltf[mesh_idx]
@@ -588,6 +689,28 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	var spawn_rot := 0.0
 
 	# 8. Metadata Chunk (v2.0+)
+	# ── Particle emitters (standard lump "emitters") ────────────────────────
+	# The record rides in the holder node's glTF `extras`; the holder's material
+	# is what ties the emitter to its texture in this file's texture table.
+	var emitter_records: Array = []
+	for node_idx2 in range(nodes.size()):
+		var node2: Dictionary = nodes[node_idx2]
+		var rec = (node2.get("extras", {}) as Dictionary).get("poi_emitter", null)
+		if not (rec is Dictionary):
+			continue
+		var rec2: Dictionary = (rec as Dictionary).duplicate()
+		var tex_id2 := -1
+		var mesh_idx2: int = node2.get("mesh", -1)
+		if mesh_idx2 >= 0 and mesh_idx2 < meshes_gltf.size():
+			for prim2 in meshes_gltf[mesh_idx2].get("primitives", []):
+				var mat_idx2: int = prim2.get("material", -1)
+				var mapping2: Dictionary = mat_to_tex_mapping.get(mat_idx2, {})
+				if mapping2.has("tex_id"):
+					tex_id2 = int(mapping2["tex_id"])
+					break
+		rec2["texture_id"] = tex_id2
+		emitter_records.append(rec2)
+
 	var metadata_entries: Array[Dictionary] = []
 
 	# Metadata 1: map_name
@@ -662,25 +785,13 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		"data": triggers_bytes
 	})
 
-	# Metadata 5: particle_emitters
-	var particles_arr := [
-		{
-			"id": "torch_sparks",
-			"position": [2.5, 1.8, -4.5],
-			"rate": 30,
-			"lifetime": 1.2,
-			"velocity": [0.0, 1.5, 0.0],
-			"spread": 0.3,
-			"color": "0xFF33AAFF"
-		}
-	]
-	var particles_bytes := JSON.stringify(particles_arr).to_utf8_buffer()
-	particles_bytes.append(0)
-	metadata_entries.append({
-		"tag": "particle_emitters",
-		"type": PBM_META_JSON,
-		"data": particles_bytes
-	})
+	# Metadata 5: emitters (standard binary lump)
+	if not emitter_records.is_empty():
+		metadata_entries.append({
+			"tag": "emitters",
+			"type": PBM_META_EMITTER,
+			"data": pack_emitter_lump(emitter_records)
+		})
 
 	# Metadata 6: rigid_bodies (ball pit)
 	var rigid_dict := {

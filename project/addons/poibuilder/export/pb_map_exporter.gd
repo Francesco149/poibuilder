@@ -28,7 +28,23 @@ const PBM_META_RAW    := 0
 const PBM_META_STRING := 1
 const PBM_META_JSON   := 2
 const PBM_META_ENTITY := 3
+## Standard lump: particle emitters (SPEC_RETRO_FORMAT.md §8).
+const PBM_META_EMITTER := 4
 const PBM_ENTITY_PATROL_SPHERE := 1
+
+## Particle emitter flags (PbmEmitter.flags).
+const PBM_EMIT_ADDITIVE := 1
+const PBM_EMIT_Y_LOCKED := 2
+const PBM_EMIT_VEL_ALIGN := 4
+const PBM_EMIT_PHASE_ALIGN := 8
+## Binary layout of one PbmEmitter record (pbm.h / the specification).
+const PBM_EMITTER_SIZE_BYTES := 176
+## The runtime's per-emitter particle budget; a larger Godot `amount` is clamped
+## at export so the file describes what will actually be drawn.
+const PBM_EMIT_MAX_PER_EMITTER := 64
+## The built-in emitter texture: a radial glow, RGB falloff with a solid alpha.
+## Used when an emitter carries no texture (additive particles only).
+const PBM_EMITTER_GLOW_TEXTURE := -1
 
 const PBM_TEX_FMT_RGBA8888 := 0
 const PBM_TEX_FMT_RGBA5551 := 1
@@ -315,6 +331,8 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 			out.append(source_node)
 	elif source_node is Light3D:
 		out.append(source_node)
+	elif source_node is GPUParticles3D:
+		out.append(source_node)
 
 	for child in source_node.get_children():
 		_collect_export_nodes_recursive(child, out)
@@ -336,6 +354,33 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
+	elif source_node is GPUParticles3D:
+		_export_emitter_holder(source_node as GPUParticles3D, parent_export_node)
+
+## The GLB is a transport for the converters, and glTF has no particle-emitter
+## concept: the record rides in the node's `extras` (which Godot serializes
+## verbatim) and the particle's texture rides on a zero-size holder quad, because
+## an image only reaches a glTF file through a material that some primitive
+## references. The holder is named `EmitterTex_*` and carries a
+## `poi_emitter_holder` meta: both the direct PBM writer and the converters skip
+## it, so it never becomes visible geometry — in the retro map or anywhere else.
+static func _export_emitter_holder(node: GPUParticles3D, parent: Node) -> void:
+	var holder := MeshInstance3D.new()
+	holder.name = "EmitterTex_%s" % node.name
+	holder.transform = node.transform
+	var qm := QuadMesh.new()
+	qm.size = Vector2(0.001, 0.001)
+	holder.mesh = qm
+
+	var src_mat: Material = node.material_override
+	if src_mat == null and node.draw_pass_1 != null and node.draw_pass_1.get_surface_count() > 0:
+		src_mat = node.draw_pass_1.surface_get_material(0)
+	if src_mat != null:
+		holder.mesh.surface_set_material(0, src_mat.duplicate())
+	holder.set_meta("poi_emitter_holder", true)
+	holder.set_meta("extras", make_emitter_extras(node))
+	parent.add_child(holder)
+
 static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
 		base_material_cache: Dictionary, settings: ExportSettings) -> void:
@@ -642,6 +687,92 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit: bool = true) -> Error:
 	return PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, format_16bit)
 
+## Registers one authored texture in the PBM texture table and returns its index.
+## Shared by the mesh path and the particle path: a particle atlas is an ordinary
+## texture entry and obeys exactly the same rules (power-of-two, 5551 unless the
+## alpha has to be soft, deduplicated by resource and by pixels).
+## `prefer_binary_5551` is the additive-emitter case: it keeps the 16-bit format
+## when the art's alpha is genuinely 1-bit, and falls back to 8888 when it is not
+## (a soft gradient quantised to one alpha bit would become a hard cutout).
+static func _register_texture(textures: Array, tex_map: Dictionary, albedo_tex: Texture2D,
+		alpha_mode: int, prefer_binary_5551: bool = false) -> int:
+	if albedo_tex == null:
+		return PBM_EMITTER_GLOW_TEXTURE
+	var tex_key = albedo_tex.get_rid()
+	if tex_map.has(tex_key):
+		return tex_map[tex_key]
+	var img := albedo_tex.get_image()
+	if img == null:
+		return PBM_EMITTER_GLOW_TEXTURE
+	if img.is_compressed():
+		img.decompress()
+	var w := img.get_width()
+	var h := img.get_height()
+	var pot_w := _next_pot(w)
+	var pot_h := _next_pot(h)
+	if pot_w != w or pot_h != h:
+		img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
+		w = pot_w
+		h = pot_h
+
+	img.convert(Image.FORMAT_RGBA8)
+	var raw_bytes := img.get_data()
+	var tex_data := PackedByteArray()
+	var tex_format := PBM_TEX_FMT_RGBA5551
+	if alpha_mode == PBM_ALPHA_BLEND and not prefer_binary_5551:
+		# A soft alpha needs the full 8 bits: 5551 carries one, which can only
+		# cut a pixel out, not fade it.
+		tex_data = raw_bytes.duplicate()
+		tex_format = PBM_TEX_FMT_RGBA8888
+	else:
+		tex_data.resize(w * h * 2)
+		var any_alpha := false
+		var binary_alpha := true
+		for px_idx in range(w * h):
+			var r: int = raw_bytes[px_idx * 4]
+			var g: int = raw_bytes[px_idx * 4 + 1]
+			var b: int = raw_bytes[px_idx * 4 + 2]
+			var a: int = raw_bytes[px_idx * 4 + 3]
+			if a < 250:
+				any_alpha = true
+			if a > 4 and a < 250:
+				binary_alpha = false
+			var r5: int = (r >> 3) & 0x1F
+			var g5: int = (g >> 3) & 0x1F
+			var b5: int = (b >> 3) & 0x1F
+			var a1: int = 1 if a > 127 else 0
+			var p16: int = (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
+			tex_data[px_idx * 2] = p16 & 0xFF
+			tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
+		if any_alpha and alpha_mode == PBM_ALPHA_NONE:
+			# Opaque material, transparent art: the pixels still need the alpha
+			# pass, as a cutout.
+			alpha_mode = PBM_ALPHA_CUTOUT
+		elif prefer_binary_5551:
+			alpha_mode = PBM_ALPHA_CUTOUT if binary_alpha else PBM_ALPHA_BLEND
+	if alpha_mode == PBM_ALPHA_BLEND and tex_format != PBM_TEX_FMT_RGBA8888:
+		# 5551 was declined after all (soft alpha art): rebuild as RGBA8888.
+		tex_data = raw_bytes.duplicate()
+		tex_format = PBM_TEX_FMT_RGBA8888
+
+	var data_hash: int = hash(tex_data)
+	if tex_map.has(data_hash):
+		var existing: int = tex_map[data_hash]
+		tex_map[tex_key] = existing
+		return existing
+	var tex_id: int = textures.size()
+	textures.append({
+		"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
+		"width": w,
+		"height": h,
+		"format": tex_format,
+		"alpha_mode": alpha_mode,
+		"data": tex_data
+	})
+	tex_map[tex_key] = tex_id
+	tex_map[data_hash] = tex_id
+	return tex_id
+
 ## The alpha handling a material's surface needs, from how the author set its
 ## transparency. Scissor/hash are hard-edged cutouts (foliage, decals); plain
 ## Alpha is a soft blend (water, glass, smoke).
@@ -672,6 +803,10 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	_collect_mesh_instances_recursive(export_tree, mesh_nodes)
 
 	for mi in mesh_nodes:
+		if mi.has_meta("poi_emitter_holder"):
+			# A particle emitter's texture carrier, not geometry (see
+			# _export_emitter_holder): it exists for the GLB converters.
+			continue
 		var name_str := mi.name
 		var xf := _get_world_transform(mi)
 		var mesh := mi.mesh
@@ -712,72 +847,8 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 				var mat_alpha := material_alpha_mode(mat)
 				var tex_id := -1
 				if mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null:
-					var albedo_tex: Texture2D = (mat as StandardMaterial3D).albedo_texture
-					var tex_key = albedo_tex.get_rid()
-					if tex_map.has(tex_key):
-						tex_id = tex_map[tex_key]
-					else:
-						var img := albedo_tex.get_image()
-						if img != null:
-							if img.is_compressed():
-								img.decompress()
-							var w := img.get_width()
-							var h := img.get_height()
-							var pot_w := _next_pot(w)
-							var pot_h := _next_pot(h)
-							if pot_w != w or pot_h != h:
-								img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
-								w = pot_w
-								h = pot_h
-
-							img.convert(Image.FORMAT_RGBA8)
-							var raw_bytes := img.get_data()
-							var alpha_mode := mat_alpha
-							var tex_data := PackedByteArray()
-							var tex_format := PBM_TEX_FMT_RGBA5551
-							if alpha_mode == PBM_ALPHA_BLEND:
-								# A soft alpha needs the full 8 bits: 5551 carries
-								# one, which can only cut a pixel out, not fade it.
-								tex_data = raw_bytes.duplicate()
-								tex_format = PBM_TEX_FMT_RGBA8888
-							else:
-								tex_data.resize(w * h * 2)
-								var any_alpha := false
-								for px_idx in range(w * h):
-									var r: int = raw_bytes[px_idx * 4]
-									var g: int = raw_bytes[px_idx * 4 + 1]
-									var b: int = raw_bytes[px_idx * 4 + 2]
-									var a: int = raw_bytes[px_idx * 4 + 3]
-									if a < 250:
-										any_alpha = true
-									var r5: int = (r >> 3) & 0x1F
-									var g5: int = (g >> 3) & 0x1F
-									var b5: int = (b >> 3) & 0x1F
-									var a1: int = 1 if a > 127 else 0
-									var p16: int = (a1 << 15) | (b5 << 10) | (g5 << 5) | r5
-									tex_data[px_idx * 2] = p16 & 0xFF
-									tex_data[px_idx * 2 + 1] = (p16 >> 8) & 0xFF
-								if any_alpha and alpha_mode == PBM_ALPHA_NONE:
-									# Opaque material, transparent art: the pixels
-									# still need the alpha pass, as a cutout.
-									alpha_mode = PBM_ALPHA_CUTOUT
-
-							var data_hash: int = hash(tex_data)
-							if tex_map.has(data_hash):
-								tex_id = tex_map[data_hash]
-								tex_map[tex_key] = tex_id
-							else:
-								tex_id = textures.size()
-								textures.append({
-									"name": albedo_tex.resource_name.substr(0, 31) if not albedo_tex.resource_name.is_empty() else "tex_%d" % tex_id,
-									"width": w,
-									"height": h,
-									"format": tex_format,
-									"alpha_mode": alpha_mode,
-									"data": tex_data
-								})
-								tex_map[tex_key] = tex_id
-								tex_map[data_hash] = tex_id
+					tex_id = _register_texture(textures, tex_map,
+						(mat as StandardMaterial3D).albedo_texture, mat_alpha)
 
 				var tri_verts: Array[Dictionary] = []
 				var idx_list: Array = []
@@ -829,6 +900,14 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 
 	# Dynamic Scene Entity & Metadata Discovery (PBM v2.0+)
 	var metadata_entries := _collect_metadata_from_scene(root, export_tree, settings, bounds_min, bounds_max, spawn)
+
+	# Particle emitters (standard lump "emitters"). Collected here rather than in
+	# the metadata pass because each emitter's texture has to be registered in
+	# the table above — a particle atlas is an ordinary texture entry.
+	var emitter_nodes: Array[GPUParticles3D] = []
+	_collect_emitters_recursive(root, emitter_nodes)
+	if not emitter_nodes.is_empty():
+		metadata_entries.append(_emitters_metadata_entry(emitter_nodes, textures, tex_map))
 
 
 	# Header (64 bytes)
@@ -953,7 +1032,6 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	var spawn_found := false
 
 	var triggers_list: Array[Dictionary] = []
-	var particles_list: Array[Dictionary] = []
 	var ball_pit_dict: Dictionary = {}
 	var walkable_triangles: PackedVector3Array = PackedVector3Array()
 	var custom_metadata_nodes: Array[Node] = []
@@ -1010,24 +1088,6 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 				if not mkey.begins_with("poi_") and not t_entry.has(mkey):
 					t_entry[mkey] = node.get_meta(mkey)
 			triggers_list.append(t_entry)
-
-		# Particle Emitter Discovery
-		if n_lower.begins_with("emitter") or n_lower.begins_with("particles") or node.has_meta("poi_particles"):
-			if node is Node3D:
-				var xf := _get_world_transform(node as Node3D)
-				var p_entry := {
-					"id": n_name,
-					"position": [xf.origin.x, xf.origin.y, xf.origin.z],
-					"rate": int(node.get_meta("rate")) if node.has_meta("rate") else 30,
-					"lifetime": float(node.get_meta("lifetime")) if node.has_meta("lifetime") else 1.2,
-					"velocity": [0.0, 1.5, 0.0],
-					"spread": float(node.get_meta("spread")) if node.has_meta("spread") else 0.3,
-					"color": "0xFF33AAFF"
-				}
-				if node.has_meta("velocity") and node.get_meta("velocity") is Vector3:
-					var v: Vector3 = node.get_meta("velocity")
-					p_entry["velocity"] = [v.x, v.y, v.z]
-				particles_list.append(p_entry)
 
 		# Ball Pit / Rigid Bodies Discovery
 		if n_lower.contains("ballpit") or node.has_meta("poi_rigid_body") or node.has_meta("ball_pit"):
@@ -1087,22 +1147,7 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	triggers_json_bytes.append(0)
 	entries.append({ "tag": "triggers", "type": PBM_META_JSON, "data": triggers_json_bytes })
 
-	# 5. Particle Emitters
-	if particles_list.is_empty():
-		particles_list.append({
-			"id": "torch_sparks",
-			"position": [2.5, 1.8, -4.5],
-			"rate": 30,
-			"lifetime": 1.2,
-			"velocity": [0.0, 1.5, 0.0],
-			"spread": 0.3,
-			"color": "0xFF33AAFF"
-		})
-	var particles_json_bytes := JSON.stringify(particles_list).to_utf8_buffer()
-	particles_json_bytes.append(0)
-	entries.append({ "tag": "particle_emitters", "type": PBM_META_JSON, "data": particles_json_bytes })
-
-	# 6. Rigid Bodies
+	# 5. Rigid Bodies
 	if ball_pit_dict.is_empty():
 		ball_pit_dict = {
 			"type": "ball_pit",
@@ -1117,7 +1162,7 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	rigid_json_bytes.append(0)
 	entries.append({ "tag": "rigid_bodies", "type": PBM_META_JSON, "data": rigid_json_bytes })
 
-	# 7. Arbitrary Custom Node Metadata Lumps
+	# 6. Arbitrary Custom Node Metadata Lumps
 	for node in custom_metadata_nodes:
 		var tag_name: String = str(node.get_meta("poi_metadata_tag"))
 		var payload_bytes := PackedByteArray()
@@ -1148,7 +1193,7 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 			ptype = PBM_META_JSON
 		entries.append({ "tag": tag_name.substr(0, 31), "type": ptype, "data": payload_bytes })
 
-	# 8. Patrol Sphere Entity
+	# 7. Patrol Sphere Entity
 	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
 	ent_name_bytes.resize(32)
 	var ent_buf := PackedByteArray()
@@ -1165,6 +1210,273 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	entries.append({ "tag": "entities", "type": PBM_META_ENTITY, "data": ent_buf })
 
 	return entries
+
+## ── Particle emitters (standard lump "emitters") ────────────────────────────
+##
+## An emitter is authored as an ordinary GPUParticles3D node. The exporter maps
+## the ParticleProcessMaterial and the draw-pass quad onto the format's fields,
+## so what the author previews in the editor is what the retro runtime plays
+## back. Fields Godot has no concept for (a cylinder-locked billboard, the
+## lateral wobble, the phase-aligned burst) are reachable as explicit `poi_*`
+## node metadata — an override list, not a second authoring path:
+##   poi_additive (bool)  force additive blending
+##   poi_y_locked (bool)  cylinder billboard instead of camera-facing
+##   poi_wobble_amp (float, m) / poi_wobble_freq (float, Hz)
+##   poi_knee (float, 0..1)  where the size/colour mid key sits
+##   poi_seed (int)          fixes the particle field
+## Everything else comes from the node itself.
+static func _collect_emitters_recursive(node: Node, out: Array[GPUParticles3D]) -> void:
+	if node == null:
+		return
+	if node is GPUParticles3D:
+		out.append(node as GPUParticles3D)
+	for child in node.get_children():
+		_collect_emitters_recursive(child, out)
+
+## Samples a ParticleProcessMaterial curve texture (Godot 4 stores curves as
+## CurveTexture/Curve) at t, falling back when the author set no curve.
+static func _curve_at(tex: Texture2D, t: float, fallback: float) -> float:
+	if tex is CurveTexture and (tex as CurveTexture).curve != null:
+		return (tex as CurveTexture).curve.sample(clampf(t, 0.0, 1.0))
+	return fallback
+
+## Samples a colour ramp (GradientTexture1D) at t.
+static func _ramp_at(tex: Texture2D, t: float, fallback: Color) -> Color:
+	if tex is GradientTexture1D and (tex as GradientTexture1D).gradient != null:
+		return (tex as GradientTexture1D).gradient.sample(clampf(t, 0.0, 1.0))
+	return fallback
+
+## Packs a Godot colour into the format's 0xAABBGGRR vertex-colour word.
+static func _pack_rgba(c: Color) -> int:
+	var r: int = int(clampf(c.r, 0.0, 1.0) * 255.0 + 0.5)
+	var g: int = int(clampf(c.g, 0.0, 1.0) * 255.0 + 0.5)
+	var b: int = int(clampf(c.b, 0.0, 1.0) * 255.0 + 0.5)
+	var a: int = int(clampf(c.a, 0.0, 1.0) * 255.0 + 0.5)
+	return r | (g << 8) | (b << 16) | (a << 24)
+
+## Where the size/colour mid key sits: the alpha ramp's peak when there is one,
+## otherwise the scale curve's peak, otherwise the middle. A particle that fades
+## in and out peaks somewhere, and that is exactly the knee the two-segment
+## interpolation wants.
+static func _emitter_knee(mat: ParticleProcessMaterial) -> float:
+	var ramp: Texture2D = mat.color_ramp if mat != null else null
+	var best_t := 0.5
+	var best_v := -1.0
+	if ramp is GradientTexture1D and (ramp as GradientTexture1D).gradient != null:
+		for i in range(33):
+			var t := float(i) / 32.0
+			var v := (ramp as GradientTexture1D).gradient.sample(t).a
+			if v > best_v:
+				best_v = v
+				best_t = t
+	else:
+		var sc: Texture2D = mat.scale_curve if mat != null else null
+		if sc is CurveTexture and (sc as CurveTexture).curve != null:
+			for i in range(33):
+				var t := float(i) / 32.0
+				var v := (sc as CurveTexture).curve.sample(t)
+				if v > best_v:
+					best_v = v
+					best_t = t
+	return clampf(best_t, 0.05, 0.95)
+
+## Maps one authored GPUParticles3D onto the format's emitter fields.
+static func _emitter_from_node(node: GPUParticles3D) -> Dictionary:
+	var mat := node.process_material as ParticleProcessMaterial
+	var draw_mesh: Mesh = node.draw_pass_1
+	var draw_mat: Material = node.material_override
+	if draw_mat == null and draw_mesh != null and draw_mesh.get_surface_count() > 0:
+		draw_mat = draw_mesh.surface_get_material(0)
+
+	var albedo: Texture2D = null
+	var alpha_mode := PBM_ALPHA_NONE
+	var additive := false
+	if draw_mat is StandardMaterial3D:
+		var sm := draw_mat as StandardMaterial3D
+		albedo = sm.albedo_texture
+		alpha_mode = material_alpha_mode(sm)
+		additive = sm.blend_mode == BaseMaterial3D.BLEND_MODE_ADD
+
+	# Atlas: Godot animates a particle sprite sheet from the MATERIAL's frame
+	# grid (`particles_anim_h_frames`/`_v_frames`, only honoured in the
+	# BILLBOARD_PARTICLES mode), and `anim_speed` counts complete cycles over
+	# one particle lifetime — which is the same unit the format's `anim_loops`
+	# uses. A fractional speed below one cycle cannot be expressed (the runtime
+	# walks a whole number of loops over the lifetime) and is rounded up to one.
+	var cols := 1
+	var rows := 1
+	var anim_loops := 1
+	if draw_mat is StandardMaterial3D:
+		var sm := draw_mat as StandardMaterial3D
+		if sm.billboard_mode == BaseMaterial3D.BILLBOARD_PARTICLES:
+			cols = maxi(1, sm.particles_anim_h_frames)
+			rows = maxi(1, sm.particles_anim_v_frames)
+	if mat != null:
+		var cycles := (mat.anim_speed_min + mat.anim_speed_max) * 0.5
+		anim_loops = maxi(1, int(round(cycles)))
+
+	# Quad geometry: the format describes the particle as a height plus an
+	# aspect ratio, both in metres of world space.
+	var quad_h := 0.5
+	var aspect := 1.0
+	if draw_mesh is QuadMesh:
+		var qs: Vector2 = (draw_mesh as QuadMesh).size
+		quad_h = maxf(qs.y, 0.0001)
+		aspect = maxf(qs.x, 0.0001) / quad_h
+
+	var knee := _emitter_knee(mat)
+	var tint: Color = mat.color if mat != null else Color.WHITE
+	var ramp: Texture2D = mat.color_ramp if mat != null else null
+	var c_start := _ramp_at(ramp, 0.0, Color.WHITE) * tint
+	var c_mid := _ramp_at(ramp, knee, Color.WHITE) * tint
+	var c_end := _ramp_at(ramp, 1.0, Color.WHITE) * tint
+
+	var scale_curve: Texture2D = mat.scale_curve if mat != null else null
+	var s0 := _curve_at(scale_curve, 0.0, 1.0)
+	var mid_scale := _curve_at(scale_curve, knee, s0)
+	var end_scale := _curve_at(scale_curve, 1.0, s0)
+	var base_scale: float = maxf(s0, 0.0001)
+
+	var lifetime: float = maxf(node.lifetime, 0.01)
+	var life_rand: float = clampf(mat.lifetime_randomness, 0.0, 0.95) if mat != null else 0.0
+	var spread_deg: float = mat.spread if mat != null else 0.0
+	var dir_local: Vector3 = mat.direction if mat != null else Vector3.RIGHT
+
+	var xf := _get_world_transform(node)
+	var dir_world := (xf.basis * dir_local)
+	if dir_world.length_squared() < 0.000001:
+		dir_world = Vector3.UP
+	dir_world = dir_world.normalized()
+
+	var flags := 0
+	if additive:
+		flags |= PBM_EMIT_ADDITIVE
+	if node.has_meta("poi_additive") and bool(node.get_meta("poi_additive")):
+		flags |= PBM_EMIT_ADDITIVE
+	if mat != null and mat.particle_flag_align_y:
+		flags |= PBM_EMIT_VEL_ALIGN
+	if node.has_meta("poi_y_locked") and bool(node.get_meta("poi_y_locked")):
+		flags |= PBM_EMIT_Y_LOCKED
+	if node.one_shot:
+		flags |= PBM_EMIT_PHASE_ALIGN
+
+	var count: int = clampi(node.amount, 1, PBM_EMIT_MAX_PER_EMITTER)
+	var seed_value: int = node.seed if node.use_fixed_seed else absi(hash(str(node.name)) & 0x7FFFFFFF)
+
+	return {
+		"name": str(node.name).substr(0, 23),
+		"pos": xf.origin,
+		"dir": dir_world,
+		"spread": deg_to_rad(clampf(spread_deg, 0.0, 180.0)),
+		"speed_min": mat.initial_velocity_min if mat != null else 0.0,
+		"speed_max": mat.initial_velocity_max if mat != null else 0.0,
+		"life_min": lifetime * (1.0 - life_rand),
+		"life_max": lifetime,
+		"gravity": mat.gravity if mat != null else Vector3.ZERO,
+		"damping": ((mat.damping_min + mat.damping_max) * 0.5) if mat != null else 0.0,
+		"size_min": quad_h * (mat.scale_min if mat != null else 1.0) * s0,
+		"size_max": quad_h * (mat.scale_max if mat != null else 1.0) * s0,
+		"size_mid": mid_scale / base_scale,
+		"size_end": end_scale / base_scale,
+		"aspect": aspect,
+		"angle_min": deg_to_rad(mat.angle_min) if mat != null else 0.0,
+		"angle_max": deg_to_rad(mat.angle_max) if mat != null else 0.0,
+		"spin_min": deg_to_rad(mat.angular_velocity_min) if mat != null else 0.0,
+		"spin_max": deg_to_rad(mat.angular_velocity_max) if mat != null else 0.0,
+		"wobble_amp": float(node.get_meta("poi_wobble_amp")) if node.has_meta("poi_wobble_amp") else 0.0,
+		"wobble_freq": float(node.get_meta("poi_wobble_freq")) if node.has_meta("poi_wobble_freq") else 0.0,
+		"spawn_radius": mat.emission_sphere_radius if (mat != null and mat.emission_shape == ParticleProcessMaterial.EMISSION_SHAPE_SPHERE) else 0.0,
+		"knee": float(node.get_meta("poi_knee")) if node.has_meta("poi_knee") else knee,
+		"color_start": _pack_rgba(c_start),
+		"color_mid": _pack_rgba(c_mid),
+		"color_end": _pack_rgba(c_end),
+		"count": count,
+		"flags": flags,
+		"atlas_cols": cols,
+		"atlas_rows": rows,
+		"anim_loops": anim_loops,
+		"seed": (int(node.get_meta("poi_seed")) if node.has_meta("poi_seed") else seed_value) & 0xFFFFFFFF,
+		"texture": PBM_EMITTER_GLOW_TEXTURE,
+		"albedo": albedo,
+		"alpha_mode": alpha_mode,
+	}
+
+## Packs the collected emitters into the standard "emitters" lump, registering
+## each emitter's texture as it goes.
+static func _emitters_metadata_entry(emitter_nodes: Array[GPUParticles3D], textures: Array,
+		tex_map: Dictionary) -> Dictionary:
+	var records: Array[Dictionary] = []
+	for node in emitter_nodes:
+		records.append(_emitter_from_node(node))
+
+	var buf := PackedByteArray()
+	buf.resize(16 + records.size() * PBM_EMITTER_SIZE_BYTES)
+	buf.encode_u32(0, 0x54494D45)          # "EMIT"
+	buf.encode_u32(4, 1)                   # lump version
+	buf.encode_u32(8, records.size())
+	buf.encode_u32(12, 0)
+
+	var off := 16
+	for rec in records:
+		var tex_id := PBM_EMITTER_GLOW_TEXTURE
+		if rec.get("albedo") != null:
+			tex_id = _register_texture(textures, tex_map, rec["albedo"],
+				int(rec.get("alpha_mode", PBM_ALPHA_NONE)), true)
+		var name_bytes: PackedByteArray = (rec["name"] as String).to_ascii_buffer()
+		name_bytes.resize(24)
+		for bi in range(24):
+			buf[off + bi] = name_bytes[bi]
+		var pos: Vector3 = rec["pos"]
+		buf.encode_float(off + 0x18, pos.x); buf.encode_float(off + 0x1C, pos.y); buf.encode_float(off + 0x20, pos.z)
+		var dir: Vector3 = rec["dir"]
+		buf.encode_float(off + 0x24, dir.x); buf.encode_float(off + 0x28, dir.y); buf.encode_float(off + 0x2C, dir.z)
+		buf.encode_float(off + 0x30, rec["spread"])
+		buf.encode_float(off + 0x34, rec["speed_min"])
+		buf.encode_float(off + 0x38, rec["speed_max"])
+		buf.encode_float(off + 0x3C, rec["life_min"])
+		buf.encode_float(off + 0x40, rec["life_max"])
+		var grav: Vector3 = rec["gravity"]
+		buf.encode_float(off + 0x44, grav.x); buf.encode_float(off + 0x48, grav.y); buf.encode_float(off + 0x4C, grav.z)
+		buf.encode_float(off + 0x50, rec["damping"])
+		buf.encode_float(off + 0x54, rec["size_min"])
+		buf.encode_float(off + 0x58, rec["size_max"])
+		buf.encode_float(off + 0x5C, rec["size_mid"])
+		buf.encode_float(off + 0x60, rec["size_end"])
+		buf.encode_float(off + 0x64, rec["aspect"])
+		buf.encode_float(off + 0x68, rec["angle_min"])
+		buf.encode_float(off + 0x6C, rec["angle_max"])
+		buf.encode_float(off + 0x70, rec["spin_min"])
+		buf.encode_float(off + 0x74, rec["spin_max"])
+		buf.encode_float(off + 0x78, rec["wobble_amp"])
+		buf.encode_float(off + 0x7C, rec["wobble_freq"])
+		buf.encode_float(off + 0x80, rec["spawn_radius"])
+		buf.encode_float(off + 0x84, rec["knee"])
+		buf.encode_u32(off + 0x88, int(rec["color_start"]))
+		buf.encode_u32(off + 0x8C, int(rec["color_mid"]))
+		buf.encode_u32(off + 0x90, int(rec["color_end"]))
+		buf.encode_u32(off + 0x94, tex_id)
+		buf.encode_u16(off + 0x98, int(rec["count"]))
+		buf.encode_u16(off + 0x9A, int(rec["flags"]))
+		buf[off + 0x9C] = int(rec["atlas_cols"])
+		buf[off + 0x9D] = int(rec["atlas_rows"])
+		buf[off + 0x9E] = int(rec["anim_loops"])
+		buf[off + 0x9F] = 0
+		buf.encode_u32(off + 0xA0, int(rec["seed"]))
+		off += PBM_EMITTER_SIZE_BYTES
+
+	return { "tag": "emitters", "type": PBM_META_EMITTER, "data": buf }
+
+## Concrete materialise for the GLB path, which reaches the converters through
+## glTF `extras`: one holder node per emitter carrying the full record.
+static func make_emitter_extras(node: GPUParticles3D) -> Dictionary:
+	var rec := _emitter_from_node(node)
+	var extras := rec.duplicate()
+	extras.erase("albedo")
+	extras.erase("alpha_mode")
+	extras["pos"] = [rec["pos"].x, rec["pos"].y, rec["pos"].z]
+	extras["dir"] = [rec["dir"].x, rec["dir"].y, rec["dir"].z]
+	extras["gravity"] = [rec["gravity"].x, rec["gravity"].y, rec["gravity"].z]
+	return { "poi_emitter": extras }
 
 static func _next_pot(x: int) -> int:
 	if x <= 0: return 1

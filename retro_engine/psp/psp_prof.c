@@ -46,7 +46,9 @@ enum {
     TK_FILL3D_FIT,   /* one camera-facing world quad exactly filling the screen */
     TK_FILL3D_BIG,   /* the same quad 16x oversized: crosses the guardband */
     TK_DRAWCALLS,    /* N separate tiny draw calls */
-    TK_TRIS          /* N triangles in one draw call */
+    TK_TRIS,         /* N triangles in one draw call */
+    TK_PARTICLES,    /* N additive emitter particles (shipped evaluator) */
+    TK_PFILL         /* N stationary particles covering the frustum */
 };
 
 typedef struct {
@@ -56,8 +58,9 @@ typedef struct {
     RenderCfg cfg;
     float cam[3];
     float yaw, pitch;
-    int   count;       /* quads / draw calls / triangle quads */
+    int   count;       /* quads / draw calls / triangle quads / particles */
     int   tex;         /* 0 none, 1 = biggest map texture, 2 = cache-resident 64x64 */
+    float psize;       /* TK_PARTICLES: particle edge length in metres */
     float rect[4];     /* x0,y0,x1,y1 screen px (TK_FILL2D) */
     int   depth;
     int   blend;
@@ -394,6 +397,31 @@ static void test_emit(PbmMap* map, const ProfTest* t, RenderStats* stats, float 
             tiny_emit(t->count, 0);
             if (stats) { stats->draw_calls = 1; stats->vertices = t->count * 6; }
             break;
+
+        case TK_PFILL:
+            identity_camera(t->cfg.near_plane);
+            /* tex: 0 = built-in glow (5551), -1 = the map's first blended
+             * texture (the soft-alpha smoke: RGBA8888), a positive id = that
+             * texture. The point of the row is that the formats do NOT cost the
+             * same to fetch. */
+            /* tex: 1 = the built-in radial glow (32x32 RGBA5551, no chain),
+             *      2 = the map's soft-alpha particle texture (64x64 RGBA8888
+             *          with a mip chain): the two formats the format's particle
+             *          rules are about, measured over identical coverage. */
+            int pfill_tex = -1;
+            if (t->tex == 2) {
+                for (uint32_t k = 0; k < map->header.num_textures; ++k)
+                    if (map->textures[k].alpha_mode == PBM_ALPHA_BLEND) { pfill_tex = (int)k; break; }
+            }
+            psp_render_particle_fill_probe(map, t->count, t->psize > 0.0f ? t->psize : 0.64f,
+                                           t->depth, pfill_tex, 0xFF288CFFu, stats);
+            break;
+
+        case TK_PARTICLES:
+            identity_camera(t->cfg.near_plane);
+            psp_render_particle_probe(t->count, t->psize > 0.0f ? t->psize : 0.5f,
+                                      0xFF288CFFu /* 0xAABBGGRR warm orange */, stats);
+            break;
     }
 }
 
@@ -516,6 +544,21 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].cfg.alpha_pass = 0;
     add_scene_test(t, &n, "abi_noentity", "stairs", pc, &base);
     t[n - 1].cfg.entity = 0;
+    add_scene_test(t, &n, "abi_noemit", "stairs", pc, &base);
+    t[n - 1].cfg.particles = 0;
+    /* The spawn view is where the brazier is closest, i.e. where the emitters
+     * cover the most pixels: the worst case for the feature, and the view the
+     * interactive app opens on. */
+    add_scene_test(t, &n, "abi_noemit_spawn", "spawn", pc, &base);
+    t[n - 1].cfg.particles = 0;
+    /* Which half of the emitter cost is which: at the spawn view the brazier is
+     * closest, and the two blend modes have different requirements. */
+    add_scene_test(t, &n, "abi_emit_add_spawn", "spawn", pc, &base);
+    t[n - 1].cfg.particles = 2;
+    add_scene_test(t, &n, "abi_emit_blend_spawn", "spawn", pc, &base);
+    t[n - 1].cfg.particles = 1;
+    add_scene_test(t, &n, "abi_noemit_arch", "arch", pc, &base);
+    t[n - 1].cfg.particles = 0;
     add_scene_test(t, &n, "abi_nohud", "stairs", pc, &base);
     t[n - 1].hud = 0;
     add_scene_test(t, &n, "abi_vertcol", "stairs", pc, &base);
@@ -571,6 +614,31 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     x = new_test(t, &n, "tris_4096", TK_TRIS, pc, &base);
     x->count = 4096;
 
+    /* Particle load, through the shipped emitter evaluator: the cost of N
+     * particles of a given world size, at the frame's own fill depth. The
+     * particle budget is 256 (PBM_EMIT_MAX_TOTAL_PARTICLES), so the sweep
+     * brackets it. */
+    x = new_test(t, &n, "particles_16_s", TK_PARTICLES, pc, &base);
+    x->count = 16; x->psize = 0.35f;
+    x = new_test(t, &n, "particles_64_s", TK_PARTICLES, pc, &base);
+    x->count = 64; x->psize = 0.35f;
+    x = new_test(t, &n, "particles_256_s", TK_PARTICLES, pc, &base);
+    x->count = 256; x->psize = 0.35f;
+    x = new_test(t, &n, "particles_256_l", TK_PARTICLES, pc, &base);
+    x->count = 256; x->psize = 1.0f;
+    /* Fill calibration through the emitter path: one and four particles of a
+     * size that covers the whole screen, so the fragment rate of blended
+     * particles can be compared with the opaque fill probes (fill2d_*) instead
+     * of guessed at. The particles rise out of the frustum over their lifetime,
+     * so the delivered work is an upper bound on, not a multiple of, the
+     * coverage. */
+    x = new_test(t, &n, "pfill_glow_add", TK_PFILL, pc, &base);
+    x->count = 4; x->psize = 2.0f * 0.63707f; x->depth = 1; x->tex = 1;
+    x = new_test(t, &n, "pfill_glow_blend", TK_PFILL, pc, &base);
+    x->count = 4; x->psize = 2.0f * 0.63707f; x->depth = 0; x->tex = 1;
+    x = new_test(t, &n, "pfill_smoke_blend", TK_PFILL, pc, &base);
+    x->count = 4; x->psize = 2.0f * 0.63707f; x->depth = 0; x->tex = 2;
+
     return n;
 }
 
@@ -618,6 +686,10 @@ void psp_prof_suite(PbmMap* map) {
 
     s_result_count = 0;
     for (int i = 0; i < n; ++i) {
+        /* Announce the row BEFORE running it: if the battery ever dies inside a
+         * test, the log says which one. A run that produces no file at all then
+         * means the crash is before the suite, which is a different bug. */
+        if (f) { fprintf(f, "run %d/%d: %s\n", i + 1, n, tests[i].name); fflush(f); }
         run_test(map, &tests[i], &pc, &s_results[s_result_count]);
         report_row(f, &s_results[s_result_count]);
         if (f) fflush(f);

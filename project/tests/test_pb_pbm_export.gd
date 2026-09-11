@@ -49,7 +49,7 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_eq(num_colliders, 9, "Collider count must match Oracle (9 colliders)")
 
 	var num_metadata := f.get_32()
-	assert_eq(num_metadata, 8, "Metadata count must be 8 (map_name, env_preset, spawn, walkable, triggers, particles, rigid_bodies, entities)")
+	assert_eq(num_metadata, 8, "Metadata count must be 8 (map_name, env_preset, spawn, walkable, triggers, rigid_bodies, entities, emitters)")
 	var spawn_x := f.get_float()
 	var spawn_y := f.get_float()
 	var spawn_z := f.get_float()
@@ -71,6 +71,8 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	var tex_names: Dictionary = {}
 	var tex_alpha_modes: Dictionary = {}
 	var tex_formats: Dictionary = {}
+	var tex_alpha_by_id: Dictionary = {}
+	var tex_fmt_by_id: Dictionary = {}
 	for ti in range(num_textures):
 		var tex_name_bytes := f.get_buffer(32)
 		var tex_name := tex_name_bytes.get_string_from_ascii().split("\u0000")[0]
@@ -84,6 +86,8 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 		var data_size := f.get_32()
 		tex_alpha_modes[tex_name] = alpha_mode
 		tex_formats[tex_name] = fmt
+		tex_alpha_by_id[ti] = alpha_mode
+		tex_fmt_by_id[ti] = fmt
 		assert_gt(w, 0)
 		assert_gt(h, 0)
 		var bytes_per_pixel := 4 if fmt == PBPbmConverter.PBM_TEX_FMT_RGBA8888 else 2
@@ -156,8 +160,9 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 			blend_count += 1
 		elif tex_alpha_modes[name] == PBPbmConverter.PBM_ALPHA_CUTOUT:
 			cutout_count += 1
-	assert_eq(blend_count, 5, "Water surfaces (sheet, core, spray, pool, foam) must export as soft-alpha blends")
-	assert_gte(cutout_count, 3, "The foliage billboards must export as cutouts")
+	# The five water surfaces plus the mist emitter's soft puff.
+	assert_eq(blend_count, 6, "Water surfaces (sheet, core, spray, pool, foam) and the mist emitter must export as soft-alpha blends")
+	assert_gte(cutout_count, 5, "The foliage billboards and the 1-bit-alpha particle art must export as cutouts")
 
 	# 3. Skip colliders
 	for ci in range(num_colliders):
@@ -202,10 +207,43 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	var triggers_json = JSON.parse_string(meta_tags["triggers"]["data"].get_string_from_utf8())
 	assert_true(triggers_json is Array and triggers_json.size() >= 1)
 
-	# Verify particle_emitters
-	assert_true(meta_tags.has("particle_emitters"))
-	var particles_json = JSON.parse_string(meta_tags["particle_emitters"]["data"].get_string_from_utf8())
-	assert_true(particles_json is Array and particles_json.size() >= 1)
+	# Verify emitters (standard lump: a 16-byte header + N 176-byte records).
+	# The offsets below are the format's normative layout, so this doubles as a
+	# guard against a struct edit drifting away from the specification.
+	assert_true(meta_tags.has("emitters"))
+	assert_eq(meta_tags["emitters"]["type"], PBPbmConverter.PBM_META_EMITTER)
+	var em_data: PackedByteArray = meta_tags["emitters"]["data"]
+	assert_eq(em_data.decode_u32(0), 0x54494D45, "Emitter lump magic must be EMIT")
+	assert_eq(em_data.decode_u32(4), 1, "Emitter lump version must be 1")
+	var em_count := em_data.decode_u32(8)
+	assert_eq(em_count, 3, "The showcase authors three emitters (brazier, embers, mist)")
+	assert_eq(em_data.size(), 16 + em_count * 176, "Lump size must be its header plus 176 bytes per emitter")
+
+	var brazier_off := 16
+	assert_eq(em_data.slice(brazier_off, brazier_off + 15).get_string_from_ascii(), "Emitter_Brazier")
+	var brazier_flags := em_data.decode_u16(brazier_off + 0x9A)
+	assert_ne(brazier_flags & 1, 0, "The brazier burns additively")
+	assert_ne(brazier_flags & 2, 0, "The brazier is Y-locked (a flame stays upright)")
+	assert_eq(em_data[brazier_off + 0x9C], 2, "Flame flipbook: 2 columns")
+	assert_eq(em_data[brazier_off + 0x9D], 2, "Flame flipbook: 2 rows")
+	assert_gt(em_data.decode_u16(brazier_off + 0x98), 0, "The particle count must be set")
+	assert_almost_eq(em_data.decode_float(brazier_off + 0x18), -3.2, 0.01,
+		"The emitter position comes from the authored node")
+	assert_eq(em_data.decode_float(brazier_off + 0x80), 0.0, "A point emitter (no spawn radius)")
+	var brazier_tex := int(em_data.decode_u32(brazier_off + 0x94))
+	assert_gte(brazier_tex, 0, "The flame flipbook must be a real texture entry")
+	assert_eq(tex_alpha_by_id[brazier_tex], PBPbmConverter.PBM_ALPHA_CUTOUT,
+		"Additive art whose alpha is 1-bit stays a cutout")
+	assert_eq(tex_fmt_by_id[brazier_tex], PBPbmConverter.PBM_TEX_FMT_RGBA5551,
+		"...and therefore keeps the 16-bit format")
+
+	var mist_off := 16 + 2 * 176
+	assert_eq(em_data.slice(mist_off, mist_off + 12).get_string_from_ascii(), "Emitter_Mist")
+	assert_eq(em_data.decode_u16(mist_off + 0x9A) & 1, 0, "The mist blends rather than adding")
+	var mist_tex := int(em_data.decode_u32(mist_off + 0x94))
+	assert_eq(tex_alpha_by_id[mist_tex], PBPbmConverter.PBM_ALPHA_BLEND,
+		"A soft puff needs the 8-bit alpha of a blend texture")
+	assert_eq(tex_fmt_by_id[mist_tex], PBPbmConverter.PBM_TEX_FMT_RGBA8888)
 
 	# Verify rigid_bodies (ball pit)
 	assert_true(meta_tags.has("rigid_bodies"))

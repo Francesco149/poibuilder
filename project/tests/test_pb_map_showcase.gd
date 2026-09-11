@@ -131,7 +131,8 @@ func test_showcase_vertex_colors_and_surfaces() -> void:
 	for child in scene.get_children():
 		if child is MeshInstance3D and (child as MeshInstance3D).mesh != null:
 			var mi := child as MeshInstance3D
-			if mi.name.begins_with("Collider_"):
+			if mi.name.begins_with("Collider_") or mi.name.begins_with("EmitterTex_"):
+				# Colliders and emitter texture carriers are not visual geometry.
 				continue
 			if mi.name == "CourtyardFloor":
 				print("DEBUG CourtyardFloor total surface count: ", mi.mesh.get_surface_count())

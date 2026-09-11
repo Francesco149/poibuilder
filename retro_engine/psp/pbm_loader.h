@@ -62,6 +62,16 @@ typedef struct {
     PbmCollider* colliders;
     PbmMetadata* metadata;
     uint32_t total_vertices;
+    /* Particle emitters (standard lump "emitters"). `emitters` is the file's
+     * record list (sanitized + clamped at load); `particles` holds the
+     * per-particle constants derived once from each emitter's seed, indexed by
+     * emitter_first_particle[i] .. emitter_first_particle[i + 1]. */
+    PbmEmitter* emitters;
+    uint32_t num_emitters;
+    PbmParticle* particles;
+    uint32_t num_particles;
+    uint32_t* emitter_first_particle;
+    float* emitter_cull_radius;
     /* Parsed proof-of-concept convenience fields */
     char map_name[64];
     PbmEntityPatrolSphere patrol_sphere;
@@ -71,5 +81,10 @@ typedef struct {
 
 PbmMap* pbm_load(const char* filepath);
 void pbm_free(PbmMap* map);
+
+/* Derives the per-particle constants for one emitter (PbmParticle). The loader
+ * calls this for every emitter it parses; the profiler's particle probe calls
+ * it too, so a measurement runs the shipped derivation. */
+void pbm_derive_particles(const PbmEmitter* e, PbmParticle* out, uint32_t n);
 
 #endif /* PBM_LOADER_H */

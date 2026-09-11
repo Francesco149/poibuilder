@@ -4,6 +4,10 @@
 **Author: PoiBuilder Project**  
 **Date: 2026-09-10**
 
+> **What v3 added on top of that:** the standard lumps in §8 — payload layouts
+> the specification defines, carried by the extensible metadata table (§7). They
+> need no version change: a loader that does not know a lump's tag skips it.
+>
 > **What v3 changed (breaking):** the mesh header grew from 64 to 72 bytes by
 > appending the animated-UV-scroll words `uv_scroll_u` / `uv_scroll_v`, and the
 > texture header's `has_alpha` became a three-valued `alpha_mode`
@@ -279,10 +283,313 @@ Following each `PbmMetadataHeader`, exactly `data_size` bytes of binary data are
 
 ---
 
-## 8. End-to-End Walkthrough: Godot 4 Authoring to Custom Engine Implementation
+## 8. Standard Lump: Particle Emitters (`tag = "emitters"`)
+
+A **standard lump** is a metadata entry (§7) whose payload layout this
+specification defines, rather than the author's engine. `"emitters"` is the first
+one: the metadata table is the transport, and the payload is normative. It is a
+compatible addition *within* v3 — the chunk is already extensible, and a loader
+that does not know the tag skips it — so the major version does not move.
+
+### 8.1 The model: a looping, stateless particle stream
+
+An emitter does **not** own a particle array. At any scene time `t`, particle `i`
+of an emitter is a **pure function of `t`, `i`, and the emitter's `seed`**:
+
+```
+age_i(t)  = frac(t / life_i + phase_i)        # 0 at birth, → 1 at death
+tau       = age_i(t) * life_i                 # the particle's age in seconds
+position  = origin + spawn_i + closed_form(tau)
+size      = size_i * curve(tau / life_i)
+colour    = colour_curve(tau / life_i)
+rotation  = angle0_i + spin_i * tau
+frame     = atlas cell at frac(age * anim_loops + anim_offset_i)
+```
+
+Every particle is therefore always alive and always at a different point of its
+own loop, which is what makes a fixed budget of them read as a continuous
+emission. Two consequences are worth stating, because they are the reason this
+model is in the format at all:
+
+* A runtime needs **no per-particle state, no allocation, and no integration**:
+  the per-particle constants (`life`, `speed`, `size`, `spin`, `angle0`, `dir`,
+  `spawn`, `phase`, `anim_offset`, `wobble_phase`) are derived **once** from the
+  seed, and the per-frame cost is the closed form plus two triangles per particle.
+* The look is **deterministic**: an implementation that derives the constants as
+  §8.3 specifies shows the same particle field as the reference, so a preview in
+  an authoring tool and the device output can be compared directly.
+
+The cost profile that shaped it, measured on PSP hardware (see §11): fill rate is
+the only real budget — a full screen of cache-resident textured fill is ≈0.3 ms,
+one draw call is ≈0.94 µs, and a few hundred transformed vertices are noise. The
+design goal is therefore "as few fragments as the effect needs", not "as few
+vertices". Particles may be large, but not many.
+
+### 8.2 Lump layout (normative)
+
+```
+"emitters" payload =
+  PbmEmitterLumpHeader        (16 bytes)
+  PbmEmitter records[N]       (176 bytes each)
+```
+
+#### `PbmEmitterLumpHeader`
+
+| Offset | Type | Field | Meaning |
+|---|---|---|---|
+| `0x00` | `uint32` | `magic` | `0x54494D45` (`"EMIT"`, little-endian) |
+| `0x04` | `uint32` | `version` | `1`. A loader MUST reject a **higher** version by skipping the lump |
+| `0x08` | `uint32` | `count` | Number of `PbmEmitter` records |
+| `0x0C` | `uint32` | `reserved` | MUST be 0 |
+
+#### `PbmEmitter` (176 bytes, packed, little-endian)
+
+| Offset | Type | Field | Meaning |
+|---|---|---|---|
+| `0x00` | `char[24]` | `name` | Label (debug only) |
+| `0x18` | `float[3]` | `pos` | Emitter origin, world space |
+| `0x24` | `float[3]` | `dir` | Emission axis, unit length |
+| `0x30` | `float` | `spread` | Cone half-angle, **radians**; `PI` = sphere |
+| `0x34` | `float` | `speed_min` | Initial speed along the particle's own direction, m/s |
+| `0x38` | `float` | `speed_max` | |
+| `0x3C` | `float` | `life_min` | Particle lifetime, seconds (> 0) |
+| `0x40` | `float` | `life_max` | |
+| `0x44` | `float[3]` | `gravity` | Constant acceleration, m/s² |
+| `0x50` | `float` | `damping` | Exponential drag λ, per second; `0` = none |
+| `0x54` | `float` | `size_min` | Quad **height** at birth, metres |
+| `0x58` | `float` | `size_max` | |
+| `0x5C` | `float` | `size_mid` | Height multiplier at the knee (`1` = unchanged) |
+| `0x60` | `float` | `size_end` | Height multiplier at death |
+| `0x64` | `float` | `aspect` | Width ÷ height of the quad (`1` = square) |
+| `0x68` | `float` | `angle_min` | Initial screen-plane rotation, radians |
+| `0x6C` | `float` | `angle_max` | |
+| `0x70` | `float` | `spin_min` | Rotation speed over life, rad/s |
+| `0x74` | `float` | `spin_max` | |
+| `0x78` | `float` | `wobble_amp` | Lateral sinusoidal displacement, metres (`0` = none) |
+| `0x7C` | `float` | `wobble_freq` | Wobble frequency, Hz |
+| `0x80` | `float` | `spawn_radius` | Spawn sphere radius, metres (`0` = point) |
+| `0x84` | `float` | `knee` | Life fraction of the mid key, `0.05…0.95` (`0.5` typical) |
+| `0x88` | `uint32` | `color_start` | `0xAABBGGRR` at birth |
+| `0x8C` | `uint32` | `color_mid` | …at the knee |
+| `0x90` | `uint32` | `color_end` | …at death |
+| `0x94` | `int32` | `texture_id` | Texture chunk index, or `-1` for the built-in radial glow |
+| `0x98` | `uint16` | `count` | Simultaneous particles (≥ 1) |
+| `0x9A` | `uint16` | `flags` | `PBM_EMIT_*` |
+| `0x9C` | `uint8` | `atlas_cols` | Flipbook columns (≥ 1) |
+| `0x9D` | `uint8` | `atlas_rows` | Flipbook rows (≥ 1) |
+| `0x9E` | `uint8` | `anim_loops` | Whole animation loops per particle lifetime (≥ 1) |
+| `0x9F` | `uint8` | `reserved0` | MUST be 0 |
+| `0xA0` | `uint32` | `seed` | Per-emitter random seed |
+| `0xA4` | `float[3]` | `reserved` | MUST be 0 (minor extensions only) |
+
+#### Flags
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `PBM_EMIT_ADDITIVE` | `1` | Additive blending (`dst = src·srcA + dst`). **Order-independent, so no sorting is needed** — this is the cheap default |
+| `PBM_EMIT_Y_LOCKED` | `2` | Cylinder billboard: the quad's up axis stays world up |
+| `PBM_EMIT_VEL_ALIGN` | `4` | The quad's up axis follows the particle's own velocity (overrides `Y_LOCKED`) |
+| `PBM_EMIT_PHASE_ALIGN` | `8` | Every particle shares phase 0: a burst repeating once per lifetime, instead of a continuous stream |
+
+### 8.3 Particle derivation (normative)
+
+`pbm_rand(seed, index, channel)` is this 32-bit avalanche hash — it is part of the
+format, because it is what makes the particle field reproducible:
+
+```c
+static inline uint32_t pbm_hash32(uint32_t x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+static inline float pbm_rand(uint32_t seed, uint32_t idx, uint32_t chan) {
+    return (float)(pbm_hash32(seed ^ (idx * 0x9E3779B9u) ^ (chan * 0x85EBCA6Bu)) >> 8)
+           * (1.0f / 16777216.0f);          /* uniform in [0,1) */
+}
+```
+
+With `u_c = pbm_rand(seed, i, c)` for particle `i`:
+
+| `c` | Quantity |
+|---|---|
+| 0 | `life_i    = lerp(life_min, life_max, u_0)` |
+| 1 | phase jitter (`phase_i`, below) |
+| 2 | `speed_i   = lerp(speed_min, speed_max, u_2)` |
+| 3 | `size_i    = lerp(size_min, size_max, u_3)` |
+| 4 | `spin_i    = lerp(spin_min, spin_max, u_4)` |
+| 12 | `angle0_i  = lerp(angle_min, angle_max, u_12)` |
+| 5 | `wobble_phase_i = u_5 · 2π` |
+| 6 | `anim_offset_i  = u_6` |
+| 7 | cone polar angle `θ = spread · √u_7` |
+| 8 | cone azimuth `φ = u_8 · 2π` |
+| 9, 10, 11 | spawn point in the sphere: radius `spawn_radius · u_9^(1/3)`, `cos θ_s = 2u_10 − 1`, azimuth `u_11 · 2π` |
+
+**Direction.** With `t1` any unit vector perpendicular to `dir` and `t2 = dir × t1`:
+
+```
+dir_i = dir·cos θ + (t1·cos φ + t2·sin φ)·sin θ
+```
+
+**Phase.** A continuous emitter spreads its particles evenly through the loop and
+jitters each one inside its own slot, so no two share a phase:
+
+```
+phase_i = frac(i / count + u_1 / count)        (PBM_EMIT_PHASE_ALIGN: phase_i = 0)
+```
+
+**Position** (closed form; `λ = damping`). With `τ` the particle's age:
+
+```
+λ = 0 :  p = pos + spawn_i + dir_i·speed_i·τ + ½·gravity·τ²
+λ > 0 :  k1 = (1 − e^(−λτ)) / λ
+         k2 = (τ − k1) / λ
+         p  = pos + spawn_i + dir_i·speed_i·k1 + gravity·k2
+```
+
+The damped form is the analytic solution of `v′ = −λv + g`, so a damped emitter
+never needs integration either; as `λ → 0` it converges to the ballistic form.
+
+**Wobble** (`wobble_amp > 0`): with `(w1, w2)` a right-handed orthonormal basis
+perpendicular to `dir`:
+
+```
+p += wobble_amp · (w1·sin(2π·wobble_freq·τ + wobble_phase_i)
+                 + w2·cos(2π·wobble_freq·τ + wobble_phase_i))
+```
+
+**Size** (two segments, meeting at `age = knee`):
+
+```
+age < knee :  size = size_i · lerp(1, size_mid, age / knee)
+age ≥ knee :  size = size_i · lerp(size_mid, size_end, (age − knee) / (1 − knee))
+```
+
+**Colour**: the same two-segment interpolation over `color_start → color_mid →
+color_end`, per channel including alpha. Alpha is the fade: an emitter whose art
+spans its whole loop should start and end at `α = 0`, so the loop restart is
+invisible.
+
+**Rotation**: `angle = angle0_i + spin_i · τ`, applied in the quad's plane.
+
+**Flipbook**: `frames = atlas_cols · atlas_rows`;
+
+```
+frame = min(frames − 1, floor(frac(age · anim_loops + anim_offset_i) · frames))
+cell  = (frame mod atlas_cols, frame / atlas_cols)          # row-major
+```
+
+The cell's UV rectangle is **inset by half a texel** on every side
+(`0.5 / texture_width` in U, `0.5 / texture_height` in V) so a filter tap at the
+cell edge cannot reach the neighbouring frame.
+
+### 8.4 Rendering (normative intent)
+
+Each particle is two triangles in the billboard plane:
+
+* the **billboard basis** is the camera's right/up (`Y_LOCKED`: world up, and
+  right perpendicular to it; `VEL_ALIGN`: the particle's velocity and a right
+  vector perpendicular to both);
+* the quad spans `size · aspect` in width and `size` in height, rotated by
+  `angle` in that plane;
+* the vertex colour is the particle's colour, and the texture is sampled with
+  `MODULATE` (colour × texel) — so a texture's RGB **is** the particle's shading
+  and its alpha (together with the colour's alpha) is the opacity;
+* emitters are **unlit**: no baked lighting, no shadows. A particle is its own
+  light source; that is also why additive emitters look right on a dark scene;
+* depth **test** on, depth **write** off, backface culling off;
+* additive emitters use `dst = src·srcA + dst` and need **no sorting**; blended
+  emitters use `dst = src·srcA + dst·(1 − srcA)` and MUST be drawn
+  back-to-front. Within one emitter the particles sort by view depth; between
+  emitters, scene order is the intended order.
+
+A runtime MAY drop a particle whose projected edge is below ≈3 px: it covers a
+handful of fragments while its texture fetch is fully minified, which on the GE
+is the difference between a cache hit and a main-memory round trip (see §11).
+
+### 8.5 Textures
+
+A particle texture obeys the same rules as any other texture, plus three specific
+to emitters:
+
+1. **Standalone.** An emitter texture is never packed into a tile atlas: the cell
+   addressing assumes the whole texture is the flipbook.
+2. **Small.** A texture that fits the hardware's texture cache is sampled at full
+   speed even when minified. 64×64 is the sweet spot on the PSP (8 KB in 5551)
+   and is enough for four 32×32 flipbook cells or one soft 64×64 puff.
+3. **No mip chain for emitters.** A mip level of a flipbook averages neighbouring
+   frames together; the reference implementation samples level 0 only and relies
+   on the size cull above for the fetch footprint.
+
+For **additive** emitters, put the falloff in the texture's **RGB**, not in its
+alpha: one alpha bit (all the 16-bit formats have) can only cut a texel out,
+while additive blending multiplies by RGB anyway. An emitter with
+`texture_id = -1` gets a runtime-generated radial glow (white centre → black
+edge, alpha 1) and is intended for additive use only.
+
+Soft-edged particle art (smoke, mist) needs real alpha and therefore travels as
+`RGBA8888` with `alpha_mode = BLEND`, exactly like a soft-alpha surface. Hard
+art (glows, sparks, flame cells) stays `RGBA5551` + `CUTOUT`: half the memory,
+and it is the difference between fitting the cache and not.
+
+Every flipbook cell SHOULD keep a fully transparent border ring, so a stray
+filter tap can only find more transparency.
+
+### 8.6 Authoring in Godot
+
+Emitters are authored as ordinary `GPUParticles3D` nodes — the editor preview and
+the device playback are then the same effect. The exporter maps:
+
+| PBM field | Godot source |
+|---|---|
+| `pos` | node global position |
+| `dir` | node basis × `ParticleProcessMaterial.direction`, normalized |
+| `spread` | `spread` (degrees → radians) |
+| `speed_min/max` | `initial_velocity_min/max` |
+| `life_min/max` | `lifetime × (1 − lifetime_randomness)`, `lifetime` |
+| `gravity` | `gravity` |
+| `damping` | mean of `damping_min/max` |
+| `size_min/max` | draw-pass quad height × `scale_min/max` × `scale_curve(0)` |
+| `size_mid/end` | `scale_curve(knee) / scale_curve(0)`, `scale_curve(1) / scale_curve(0)` |
+| `aspect` | draw-pass quad width ÷ height |
+| `angle_min/max` | `angle_min/max` (degrees → radians) |
+| `spin_min/max` | `angular_velocity_min/max` (degrees/s → rad/s) |
+| `knee` | t of the peak of `color_ramp`'s alpha (else of `scale_curve`, else 0.5) |
+| `color_start/mid/end` | `color_ramp` sampled at 0 / knee / 1, × `color` |
+| `count` | `amount` |
+| `atlas_cols/rows` | material `particles_anim_h_frames/v_frames` (in `BILLBOARD_PARTICLES` mode) |
+| `anim_loops` | `anim_speed` (Godot counts complete cycles per lifetime too) |
+| `flags` | `BLEND_MODE_ADD` → additive; `one_shot` → phase-aligned burst; `particle_flag_align_y` → velocity-aligned |
+| `seed` | node `seed` when `use_fixed_seed`, else derived from the node name |
+| `texture_id` | the draw-pass material's albedo texture, registered as a standalone texture |
+
+Fields Godot has no concept for are reachable as explicit `poi_*` metadata on the
+node — an override list, not a second authoring path: `poi_additive`,
+`poi_y_locked`, `poi_wobble_amp`, `poi_wobble_freq`, `poi_knee`, `poi_seed`.
+
+### 8.7 Recipes
+
+**A looping animation on one quad (the cheapest emitter there is).** Set
+`count = 1`, `size_min = size_max = the quad's size`, `anim_loops = 1`, an atlas
+whose cells are the animation frames, `life_min = life_max = the loop period`,
+`color_start = color_end = transparent`, `color_mid` opaque, and no motion at all
+(`speed = 0`, `gravity = 0`, `spread = 0`). One quad, one draw call, one texture:
+a torch flame, a magic portal, a fountain plume. `size_mid/end` can still expand
+the quad over the loop if the animation breathes.
+
+**A campfire.** Three emitters at one point: a `count = 1` flame quad as above; a
+small additive glimmer with `spread ≈ 25°`, `speed ≈ 1…2 m/s`, `gravity ≈ +0.5`,
+`life ≈ 1 s` for the sparks; and — if the scene allows transparency — a blended
+soft puff with `damping` for the smoke column.
+
+**Testability note**: a looping emitter that is *wrong* looks exactly like one
+that is right, in a single frame. Verify motion with two captures at different
+scene times (see §10).
+
+## 9. End-to-End Walkthrough: Godot 4 Authoring to Custom Engine Implementation
 
 > **CRITICAL ARCHITECTURAL DISTINCTION — RECIPES VS. STANDARD**:  
-> The specific entity tags and structures detailed below (`"walkable_mesh"`, `"triggers"`, `"player_spawn"`, `"particle_emitters"`, `"rigid_bodies"`, `"entities"`) are **EXAMPLE IMPLEMENTATION RECIPES**, **NOT** fixed schema constraints of the PBMv2 specification.
+> The specific entity tags and structures detailed below (`"walkable_mesh"`, `"triggers"`, `"player_spawn"`, `"rigid_bodies"`, `"entities"`) are **EXAMPLE IMPLEMENTATION RECIPES**, **NOT** fixed schema constraints of the specification. Particle emitters are the exception: they graduated from a recipe to a **standard lump** with a normative payload, defined in §8.
 >
 > The PBMv2 specification defines **only the general binary lump transport container** (Section 7: 32-byte tag string, 32-bit type integer, 32-bit length integer, and raw payload bytes). The payload data can be **anything you want**: flat binary structs, UTF-8 JSON, byte-encoded bytecode, dialog trees, navmesh graphs, or audio cue tables. You are completely free to invent your own tags and payload formats for your custom game engine.
 >
@@ -326,15 +633,21 @@ In the Godot 3D Viewport and Scene Dock, authoring entities uses standard, intui
    - `dialogue_id` (String): `"vault_lore_01"`
    - `oneshot` (bool): `true`
 
-#### 4. Particle Emitter Marker (`tag = "particle_emitters"`, JSON)
-1. Add a `Marker3D` or `GPUParticles3D` named `Emitter_Torch`.
-2. Position it on a wall bracket or campfire.
-3. In the Inspector, add metadata:
-   - `rate` (int): `45`
-   - `lifetime` (float): `2.0`
-   - `velocity` (Vector3): `(0.0, 3.0, 0.0)`
-   - `spread` (float): `0.4`
-   - `color` (Color): `Color(1.0, 0.5, 0.1, 1.0)`
+#### 4. Particle Emitters (`tag = "emitters"`, standard binary lump)
+
+1. Add a `GPUParticles3D` node named `Emitter_*` and style it with a
+   `ParticleProcessMaterial` exactly as for a real-time effect; the editor
+   preview is the effect the device will play.
+2. Give it a draw pass: a `QuadMesh` with a `StandardMaterial3D`. That material
+   supplies the particle texture and the blend mode (choose `Add` for fire,
+   sparks and glows; leave it on `Mix` for smoke and mist). For a flipbook, set
+   the material's billboard mode to **Particles** and its `particles_anim_h/v
+   frames` to the sheet's grid.
+3. Export. The exporter writes the standard `"emitters"` lump (§8) and registers
+   the particle texture as a standalone texture entry.
+
+The mapping table, the fields Godot cannot express, and the runtime semantics are
+all in §8; this recipe is the authoring workflow, §8 is the contract.
 
 #### 5. Physics Rigid Bodies / Ball Pit (`tag = "rigid_bodies"`, JSON)
 1. Add a container `Node3D` named `BallPit`.
@@ -359,7 +672,7 @@ In the PoiBuilder Toolbar, click **Export** $\rightarrow$ select **PoiRetro (.pb
 Under the hood, `PBMapExporter`:
 1. Iterates the authored Godot scene tree (`root`).
 2. Resolves world-space transforms (`_get_world_transform`).
-3. Dynamically extracts `player_spawn`, `walkable_mesh`, `triggers`, `particle_emitters`, `rigid_bodies`, and custom metadata lumps.
+3. Dynamically extracts `player_spawn`, `walkable_mesh`, `triggers`, `rigid_bodies` and custom metadata lumps, and packs every `GPUParticles3D` into the standard `emitters` lump (§8).
 4. Subdivides large surfaces into $\le 384$-vertex spatial chunks and packs textures into $512 \times 512$ atlases.
 5. Writes the `.pbm` v2 binary file with the 64-byte header and lump table.
 
@@ -397,8 +710,8 @@ for (uint32_t i = 0; i < hdr.num_metadata; ++i) {
         parse_triggers_json((const char*)payload);
     } else if (strcmp(mhdr.tag, "player_spawn") == 0) {
         parse_spawn_json((const char*)payload);
-    } else if (strcmp(mhdr.tag, "particle_emitters") == 0) {
-        parse_emitters_json((const char*)payload);
+    } else if (strcmp(mhdr.tag, "emitters") == 0) {
+        parse_emitters_lump(payload, mhdr.data_size);   /* standard lump, §8 */
     } else if (strcmp(mhdr.tag, "rigid_bodies") == 0) {
         init_ball_pit_from_json((const char*)payload);
     } else if (strcmp(mhdr.tag, "dialogue_npc") == 0) {
@@ -462,7 +775,7 @@ To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 
 ---
 
-## 9. Recipe: A Scrolling Texture (Waterfall), Godot → Retro Engine
+## 10. Recipe: A Scrolling Texture (Waterfall), Godot → Retro Engine
 
 A worked example of the pattern above, end to end. It is the recipe behind the
 courtyard waterfall in the showcase map
@@ -591,7 +904,7 @@ If the pattern moves the wrong way, the sign flipped somewhere: the file's
 meaning is "where the pattern travels", and hardware offset registers are
 commonly the opposite of it (see the implementation note in §5.1).
 
-## 10. Hardware Clipping & Performance Rules (PSP Guidelines)
+## 11. Hardware Clipping & Performance Rules (PSP Guidelines)
 
 1. **Near-Plane Distance**:
    Perspective projection near plane MUST be set between `0.05f` and `0.10f` meters (`sceGumPerspective(fov, aspect, 0.08f, 200.0f)`). A near plane of `0.5m` causes geometry within arm's reach of floors and stairs to intersect the near clipping plane, inducing heavy hardware re-triangulation.
@@ -604,7 +917,7 @@ commonly the opposite of it (see the implementation note in §5.1).
 
 ---
 
-## 11. Compliance Verification
+## 12. Compliance Verification
 
 A compliant PBM exporter and loader MUST pass the following tests:
 1. `magic == 0x334D4250` and `version == 3`.
@@ -616,5 +929,13 @@ A compliant PBM exporter and loader MUST pass the following tests:
    store a `CUTOUT` texture without a mip chain.
 6. Never apply a UV scroll to a tile-atlas texture, and keep every scrolling
    mesh's texture standalone.
-7. 100% binary validation against the reference Python oracle (`pbm_conv.py`)
-   and the GDScript converter (`project/addons/poibuilder/export/pb_pbm_converter.gd`).
+7. Load the standard `emitters` lump (§8): skip a lump whose own version is newer
+   than the loader supports, clamp an over-budget `count` instead of failing
+   (stating the clamp in the log), and derive the per-particle constants with the
+   specified `pbm_rand` so two implementations show the same particle field.
+8. Never sample an emitter texture with a mip chain, and never let an emitter
+   reference a tile-atlas texture.
+9. Draw additive emitters without sorting them and blended emitters
+   back-to-front; leave the emitters unlit.
+10. 100% binary validation against the reference Python oracle (`pbm_conv.py`)
+    and the GDScript converter (`project/addons/poibuilder/export/pb_pbm_converter.gd`).

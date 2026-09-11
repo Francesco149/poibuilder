@@ -7,6 +7,7 @@
 #include <pspkernel.h>
 #endif
 #include <string.h>
+#include <math.h>
 #include <stdarg.h>
 /* Swizzles a 16-bit texture into 16-byte wide x 8-line high blocks for Sony GE texture cache */
 static void swizzle_texture_16(uint8_t* out, const uint8_t* in, unsigned int width, unsigned int height) {
@@ -140,6 +141,223 @@ static void pbm_log_mem(const char* tag) {
 #else
 static void pbm_log_mem(const char* tag) { (void)tag; }
 #endif
+
+/* ── Particle emitters (standard lump "emitters") ─────────────────────────
+ * The lump carries only the emitters. The PER-PARTICLE constants are derived
+ * here, once, because they never change for the life of the map: an emitter is
+ * a looping, stateless stream, so particle i's state at time t is a closed
+ * form of (t, i, seed) and nothing has to be stored per frame. Two runtimes
+ * that implement pbm_rand() (pbm.h) identically produce the same particle
+ * field, which is what lets the format promise a reproducible look. */
+static inline float pbm_lerpf(float a, float b, float t) { return a + (b - a) * t; }
+
+/* Clamp that also swallows NaN (a NaN would otherwise reach the GE as a
+ * degenerate vertex, which is much harder to diagnose than a clamped value). */
+static inline float pbm_clampf(float v, float lo, float hi) {
+    if (!(v > lo)) return lo;
+    return v > hi ? hi : v;
+}
+
+static void pbm_emitters_release(PbmMap* map) {
+    free(map->emitters);              map->emitters = NULL;
+    free(map->particles);             map->particles = NULL;
+    free(map->emitter_first_particle);map->emitter_first_particle = NULL;
+    free(map->emitter_cull_radius);   map->emitter_cull_radius = NULL;
+    map->num_emitters = 0;
+    map->num_particles = 0;
+}
+
+/* Derives `n` per-particle constants for one emitter into `out`. Public: the
+ * profiler's synthetic particle probe drives the SAME derivation the loader
+ * does, so what it measures is the shipped code path and not a copy of it. */
+void pbm_derive_particles(const PbmEmitter* e, PbmParticle* out, uint32_t n) {
+    const float ax = e->dir[0], ay = e->dir[1], az = e->dir[2];
+    float t1x, t1y, t1z, t2x, t2y, t2z;
+    /* An arbitrary basis perpendicular to the emission axis. */
+    if (fabsf(ay) < 0.9f) { t1x = -az; t1y = 0.0f; t1z = ax; }
+    else                  { t1x = 0.0f; t1y = az;  t1z = -ay; }
+    {
+        float l = sqrtf(t1x * t1x + t1y * t1y + t1z * t1z);
+        if (!(l > 0.0001f)) { t1x = 1.0f; t1y = 0.0f; t1z = 0.0f; l = 1.0f; }
+        t1x /= l; t1y /= l; t1z /= l;
+    }
+    t2x = ay * t1z - az * t1y;
+    t2y = az * t1x - ax * t1z;
+    t2z = ax * t1y - ay * t1x;
+
+    const float inv_n = 1.0f / (float)n;
+    for (uint32_t k = 0; k < n; ++k) {
+        PbmParticle* p = &out[k];
+        p->life = pbm_lerpf(e->life_min, e->life_max, pbm_rand(e->seed, k, 0));
+        if (!(p->life > 0.0001f)) p->life = 0.0001f;
+        p->inv_life = 1.0f / p->life;
+        /* Even phase slots + in-slot jitter: a continuous stream that never
+         * looks like the same handful of particles on a metronome, and never
+         * has them all in lockstep either. A PHASE_ALIGN emitter skips the
+         * spread entirely and becomes a repeating burst. */
+        if (e->flags & PBM_EMIT_PHASE_ALIGN) {
+            p->phase = 0.0f;
+        } else {
+            float ph = (float)k * inv_n + pbm_rand(e->seed, k, 1) * inv_n;
+            p->phase = ph - floorf(ph);
+        }
+        p->speed = pbm_lerpf(e->speed_min, e->speed_max, pbm_rand(e->seed, k, 2));
+        p->size = pbm_lerpf(e->size_min, e->size_max, pbm_rand(e->seed, k, 3));
+        p->spin = pbm_lerpf(e->spin_min, e->spin_max, pbm_rand(e->seed, k, 4));
+        p->angle0 = pbm_lerpf(e->angle_min, e->angle_max, pbm_rand(e->seed, k, 12));
+        p->wobble_phase = pbm_rand(e->seed, k, 5) * 6.28318530718f;
+        p->anim_offset = pbm_rand(e->seed, k, 6);
+        /* Direction: uniform in the emission cone. The polar sample is linear in
+         * the angle (not in solid angle) because that is what reads as an even
+         * spread to the eye at the angles particle cones use. */
+        {
+            float theta = e->spread * sqrtf(pbm_rand(e->seed, k, 7));
+            float phi = pbm_rand(e->seed, k, 8) * 6.28318530718f;
+            float st = sinf(theta), ct = cosf(theta);
+            float cp = cosf(phi), sp = sinf(phi);
+            p->dir[0] = ax * ct + (t1x * cp + t2x * sp) * st;
+            p->dir[1] = ay * ct + (t1y * cp + t2y * sp) * st;
+            p->dir[2] = az * ct + (t1z * cp + t2z * sp) * st;
+        }
+        if (e->spawn_radius > 0.0f) {
+            float u = pbm_rand(e->seed, k, 9);
+            float v = pbm_rand(e->seed, k, 10);
+            float rad = e->spawn_radius * cbrtf(u);   /* cbrt: uniform inside the ball */
+            float cz = 2.0f * v - 1.0f;
+            float sz = sqrtf(fmaxf(0.0f, 1.0f - cz * cz));
+            float ang = pbm_rand(e->seed, k, 11) * 6.28318530718f;
+            p->spawn[0] = rad * sz * cosf(ang);
+            p->spawn[1] = rad * sz * sinf(ang);
+            p->spawn[2] = rad * cz;
+        } else {
+            p->spawn[0] = p->spawn[1] = p->spawn[2] = 0.0f;
+        }
+    }
+}
+
+static void pbm_build_emitters(PbmMap* map, const void* data, uint32_t size) {
+    if (size < PBM_EMITTER_LUMP_HDR) {
+        pbm_log("[PBM] WARN: 'emitters' lump is %u bytes, shorter than its %u-byte header; ignored\n",
+                (unsigned)size, (unsigned)PBM_EMITTER_LUMP_HDR);
+        return;
+    }
+    const PbmEmitterLumpHeader* hdr = (const PbmEmitterLumpHeader*)data;
+    if (hdr->magic != PBM_EMITTER_MAGIC) {
+        pbm_log("[PBM] WARN: 'emitters' lump magic 0x%08X is not EMIT; ignored\n", (unsigned)hdr->magic);
+        return;
+    }
+    if (hdr->version > PBM_EMITTER_VERSION) {
+        pbm_log("[PBM] WARN: 'emitters' lump version %u is newer than %u; ignored\n",
+                (unsigned)hdr->version, (unsigned)PBM_EMITTER_VERSION);
+        return;
+    }
+    uint32_t count = hdr->count;
+    if (count == 0) return;
+    if ((uint64_t)PBM_EMITTER_LUMP_HDR + (uint64_t)count * PBM_EMITTER_SIZE > (uint64_t)size) {
+        pbm_log("[PBM] WARN: 'emitters' lump claims %u records but carries only %u bytes; ignored\n",
+                (unsigned)count, (unsigned)size);
+        return;
+    }
+    if (count > PBM_EMIT_MAX_EMITTERS) {
+        pbm_log("[PBM] WARN: %u emitters in file, runtime supports %u; the rest are skipped\n",
+                (unsigned)count, (unsigned)PBM_EMIT_MAX_EMITTERS);
+        count = PBM_EMIT_MAX_EMITTERS;
+    }
+
+    map->emitters = (PbmEmitter*)calloc(count, sizeof(PbmEmitter));
+    map->emitter_first_particle = (uint32_t*)calloc(count + 1, sizeof(uint32_t));
+    map->emitter_cull_radius = (float*)calloc(count, sizeof(float));
+    map->particles = (PbmParticle*)calloc(PBM_EMIT_MAX_TOTAL_PARTICLES, sizeof(PbmParticle));
+    if (!map->emitters || !map->emitter_first_particle || !map->emitter_cull_radius || !map->particles) {
+        pbm_log("[PBM] WARN: out of memory for the emitter records; particles disabled\n");
+        pbm_emitters_release(map);
+        return;
+    }
+
+    const uint8_t* base = (const uint8_t*)data + PBM_EMITTER_LUMP_HDR;
+    uint32_t total = 0;
+    uint32_t live = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const PbmEmitter* src = (const PbmEmitter*)(base + (size_t)i * PBM_EMITTER_SIZE);
+        PbmEmitter* e = &map->emitters[live];
+        memcpy(e, src, sizeof(PbmEmitter));
+        e->name[sizeof(e->name) - 1] = '\0';
+        e->name[23] = '\0';
+
+        /* ── Sanitize. A malformed record must degrade, not print NaNs. ── */
+        e->life_min = pbm_clampf(e->life_min, 0.01f, 600.0f);
+        e->life_max = pbm_clampf(e->life_max, e->life_min, 600.0f);
+        e->speed_min = pbm_clampf(e->speed_min, -200.0f, 200.0f);
+        e->speed_max = pbm_clampf(e->speed_max, e->speed_min, 200.0f);
+        e->size_min = pbm_clampf(e->size_min, 0.0005f, 200.0f);
+        e->size_mid = pbm_clampf(e->size_mid, 0.0f, 64.0f);
+        e->size_end = pbm_clampf(e->size_end, 0.0f, 64.0f);
+        e->spin_min = pbm_clampf(e->spin_min, -64.0f, 64.0f);
+        e->spin_max = pbm_clampf(e->spin_max, e->spin_min, 64.0f);
+        e->wobble_amp = pbm_clampf(e->wobble_amp, 0.0f, 100.0f);
+        e->wobble_freq = pbm_clampf(e->wobble_freq, 0.0f, 64.0f);
+        e->spawn_radius = pbm_clampf(e->spawn_radius, 0.0f, 200.0f);
+        e->damping = pbm_clampf(e->damping, 0.0f, 32.0f);
+        e->aspect = pbm_clampf(e->aspect, 0.01f, 64.0f);
+        e->angle_min = pbm_clampf(e->angle_min, -6.2831853f, 6.2831853f);
+        e->angle_max = pbm_clampf(e->angle_max, e->angle_min, 6.2831853f);
+        e->knee = pbm_clampf(e->knee, 0.05f, 0.95f);
+        e->spread = pbm_clampf(e->spread, 0.0f, 3.14159265f);
+        if (e->atlas_cols < 1) e->atlas_cols = 1;
+        if (e->atlas_cols > 16) e->atlas_cols = 16;
+        if (e->atlas_rows < 1) e->atlas_rows = 1;
+        if (e->atlas_rows > 16) e->atlas_rows = 16;
+        if (e->anim_loops < 1) e->anim_loops = 1;
+        if (e->anim_loops > 16) e->anim_loops = 16;
+        if (e->texture_id >= (int32_t)map->header.num_textures) {
+            pbm_log("[PBM] WARN: emitter '%s' references texture %d of %u; using the built-in glow\n",
+                    e->name, (int)e->texture_id, (unsigned)map->header.num_textures);
+            e->texture_id = -1;
+        }
+        {
+            float dl = sqrtf(e->dir[0] * e->dir[0] + e->dir[1] * e->dir[1] + e->dir[2] * e->dir[2]);
+            if (!(dl > 0.0001f)) { e->dir[0] = 0.0f; e->dir[1] = 1.0f; e->dir[2] = 0.0f; dl = 1.0f; }
+            e->dir[0] /= dl; e->dir[1] /= dl; e->dir[2] /= dl;
+        }
+
+        /* ── Particle budget: per emitter, and across the whole map. ── */
+        uint32_t n = e->count;
+        if (n > PBM_EMIT_MAX_PER_EMITTER) {
+            pbm_log("[PBM] WARN: emitter '%s' asks for %u particles, the runtime caps one emitter at %u\n",
+                    e->name, (unsigned)n, (unsigned)PBM_EMIT_MAX_PER_EMITTER);
+            n = PBM_EMIT_MAX_PER_EMITTER;
+        }
+        if (n > PBM_EMIT_MAX_TOTAL_PARTICLES - total) n = PBM_EMIT_MAX_TOTAL_PARTICLES - total;
+        e->count = (uint16_t)n;
+
+        map->emitter_first_particle[live] = total;
+        map->emitter_first_particle[live + 1] = total + n;
+
+        /* ── Derive the per-particle constants. ── */
+        pbm_derive_particles(e, &map->particles[total], n);
+        total += n;
+
+        /* Bounding sphere for the per-frame cull. Conservative: it ignores
+         * damping (which only ever pulls particles back in) and assumes the
+         * whole size range can be reached. */
+        {
+            float g = sqrtf(e->gravity[0] * e->gravity[0] + e->gravity[1] * e->gravity[1] +
+                            e->gravity[2] * e->gravity[2]);
+            float big = fmaxf(1.0f, fmaxf(e->size_mid, e->size_end));
+            float reach = e->spawn_radius + e->wobble_amp + e->size_max * 0.5f * big * 1.45f +
+                          fabsf(e->speed_max) * e->life_max * 1.05f +
+                          0.5f * g * e->life_max * e->life_max * 1.05f;
+            map->emitter_cull_radius[live] = reach * 1.1f + 0.05f;
+        }
+        live++;
+    }
+
+    map->num_emitters = live;
+    map->num_particles = total;
+    map->emitter_first_particle[live] = total;
+    pbm_log("[PBM] Emitters: %u emitters, %u particles (lump v%u)\n",
+            (unsigned)live, (unsigned)total, (unsigned)hdr->version);
+}
 
 PbmMap* pbm_load(const char* filepath) {
     FILE* f = fopen(filepath, "rb");
@@ -526,6 +744,9 @@ PbmMap* pbm_load(const char* filepath) {
                                 map->patrol_sphere.speed,
                                 (unsigned int)map->patrol_sphere.num_waypoints);
                         }
+                    } else if (strcmp(map->metadata[i].tag, "emitters") == 0) {
+                        /* Standard lump: particle emitters (see pbm.h). */
+                        pbm_build_emitters(map, mdata, mdhdr.data_size);
                     } else if (strcmp(map->metadata[i].tag, "env_preset") == 0) {
                         strncpy(map->env_preset, (const char*)mdata, sizeof(map->env_preset) - 1);
                         map->env_preset[sizeof(map->env_preset) - 1] = '\0';
@@ -604,5 +825,6 @@ void pbm_free(PbmMap* map) {
         }
         free(map->metadata);
     }
+    pbm_emitters_release(map);
     free(map);
 }
