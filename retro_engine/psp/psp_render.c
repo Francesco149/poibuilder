@@ -252,7 +252,7 @@ void psp_draw_text(float x, float y, uint32_t color, const char* str) {
 
 void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
                   int display_mode, const char* extra, const char* extra2,
-                  const char* input, int hold_on) {
+                  const char* input, int hold_on, int compact) {
     char buf[128];
     uint32_t verts = stats ? stats->vertices : 0;
     uint32_t draws = stats ? stats->draw_calls : 0;
@@ -266,6 +266,15 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
              fps, (unsigned)(verts / 3), (unsigned)draws,
              (unsigned)(stats ? stats->particles : 0));
     psp_draw_text(8.0f, 8.0f, 0xFF00FF55, buf);
+
+    /* COMPACT: everything except the frame-rate line and the profiler readout
+     * is hidden, so a capture shows the scene rather than the documentation.
+     * Select toggles it (see main.c). */
+    if (compact) {
+        if (extra && *extra) psp_draw_text(8.0f, 18.0f, 0xFF66E0FF, extra);
+        if (extra2 && *extra2) psp_draw_text(8.0f, 28.0f, 0xFF8888FF, extra2);
+        return;
+    }
 
     snprintf(buf, sizeof(buf), "Map: %s | %s | Env: %s", map->map_name,
              display_mode == 0 ? "Textured" : (display_mode == 1 ? "Lighting" : "Wireframe"),
@@ -288,15 +297,18 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
     }
 
     /* The control hints used to be shown only when the map had no entity, so
-     * on any map with one they were invisible and the controls looked missing. */
+     * on any map with one they were invisible and the controls looked missing.
+     * Every line stays inside 60 glyphs (480 px / 8 px): a line that runs past
+     * the edge silently loses its tail. */
     psp_draw_text(8.0f, 38.0f, 0xFFDDDDDD,
                   "Stick: Fly/Strafe | Hold Tri+Stick: Look | Square: Boost");
-    snprintf(buf, sizeof(buf),
-             "X/O: Up/Down | L/R: Turn | Start: Reset | Select: Mode | Tri+L/R: Env");
-    psp_draw_text(8.0f, 48.0f, 0xFFDDDDDD, buf);
+    psp_draw_text(8.0f, 48.0f, 0xFFDDDDDD,
+                  "X/O: Up/Down | L/R: Turn | Start: Reset");
+    psp_draw_text(8.0f, 58.0f, 0xFFDDDDDD,
+                  "Select: HUD | L+Select: Mode | Tri+L/R: Env");
 
-    if (extra && *extra) psp_draw_text(8.0f, 58.0f, 0xFF66E0FF, extra);
-    if (extra2 && *extra2) psp_draw_text(8.0f, 68.0f, 0xFF8888FF, extra2);
+    if (extra && *extra) psp_draw_text(8.0f, 68.0f, 0xFF66E0FF, extra);
+    if (extra2 && *extra2) psp_draw_text(8.0f, 78.0f, 0xFF8888FF, extra2);
 }
 
 /* Runtime render overrides, read once at startup from a file on the host.

@@ -82,6 +82,18 @@ else counts as evidence:
   performance rules that actually bite, the knob tables (export dialog, node
   metadata, `poi_render.txt`) and the pitfalls. Read it before authoring or
   reviewing level content.
+- `showcase_video/` — **the showcase video pipeline** (the README's video, built
+  from data, not edited by hand):
+  - `render.sh <session>` boots a real editor under Xvfb and records one
+    *session* frame by frame; `project/showcase/sessions/*.gd` are the shot
+    programs (the beats), `project/showcase/showcase_director.gd` is the
+    recorder/driver API they are written against.
+  - `edl.toml` is the timeline (crop, trim, speed, captions, transitions);
+    `build.sh` bakes a segment per clip, concatenates the master, encodes the
+    README cut and verifies the result.
+  - `bake/` is scratch (frames, overlays, segments), `out/` is the deliverable.
+  - Everything downstream of the capture is Pillow + ffmpeg: restyle a caption
+    or re-time a cut without re-rendering the editor.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
 
 ## Reference Repos
@@ -2317,13 +2329,89 @@ physics-reproduced headlessly — "stuck the moment I touch them"):
 - Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
   plugin.cfg).
 
-Backlog lives in the README's roadmap (human-facing). The next scheduled piece
-of work is a **proper showcase video**: the existing one barely shows anything,
-and it should demonstrate the courtyard at 60 fps on hardware, the water and
-particle effects, the authoring workflow, and the retro export — recorded from
-the device where performance claims are visible. `showcase_movie_generator.gd`
-and the PSP capture path in `retro_engine/psp/HARDWARE-TESTING.md` are the
-starting points.
+v0.9.77 round complete ✓ — the README video is built from data instead of
+screen-recorded, plus two PSP-side fixes that fell out of watching it:
+- THE PIPELINE (`showcase_video/`): a frame-stepped recorder drives a REAL
+  editor under Xvfb and writes one PNG per rendered frame plus cursor/event
+  sidecars; everything downstream (crop, captions, cursor, transitions,
+  encoding) is Pillow + ffmpeg. Consequence: no dropped frames, and a beat can
+  be re-cut or re-captioned without re-rendering the editor.
+  * `./showcase_video/render.sh <session>` records the shot programs in
+    `project/showcase/sessions/*.gd` through the API in
+    `project/showcase/showcase_director.gd`. Each shot owns its directory
+    (`bake/<session>/shots/<shot>/`), so re-recording one beat leaves the others
+    alone; `PB_SHOWCASE_ONLY=a,b` re-records a subset in one editor boot (the
+    earlier beats still run, unrecorded, so the state is identical).
+  * `edl.toml` is the timeline; `./showcase_video/build.sh` bakes one segment
+    per clip, concatenates the master, encodes the 960x540 README cut and
+    verifies it (duration, black frames, frame size). `--list`, `--only`,
+    `--clips-only`, `--preview`, `--verify`.
+  * Self-contained toolchain: a `uv` venv, Inter (OFL) vendored under
+    `showcase_video/fonts/`, ffmpeg resolved vendored -> `$SHOWCASE_FFMPEG` ->
+    PATH. New footage is dropped into `showcase_video/source/` (the newest file
+    there is used if the name does not match), so swapping the PSP clip needs no
+    EDL edit — only the in/out points, which `sheet_clip.sh` helps pick.
+- WHAT IT COST TO DRIVE THE EDITOR (each is written up where it lives):
+  * `can_instantiate()` is false for a non-@tool script under
+    `Engine.is_editor_hint()` — session scripts MUST be `@tool`.
+  * A NEW `class_name` script is only resolvable after the editor's filesystem
+    scan; `render.sh` warms the class cache with one headless boot first.
+  * `@tool` + `:=` do not mix: a `:=` whose right side reaches into an untyped
+    (`Object`/Variant) access is a parse error, not a warning.
+  * A synthesized click on a toolbar button can be swallowed, and the plugin
+    re-mirrors the ENGINE's subgizmo selection on every gizmo redraw — so an
+    element selection written only into the plugin's mirror is wiped within a
+    frame (every op then fails with "invalid selection" while the toolbar looks
+    perfectly selected). `op()` snapshots the selection, VERIFIES the mesh
+    changed, restores the snapshot in the SAME frame and drives the plugin's own
+    entry point; `select_points()` likewise asserts a selection through the
+    plugin's picker instead of assuming the clicks landed. Reproduction:
+    `showcase/sessions/probe_ops.gd`.
+  * Keyboard events go to the FOCUSED control: after a toolbar click, Enter went
+    to the button and the knife's cut never completed. `key()` grabs focus back.
+  * Wall-clock logic and a frame-stepped recorder disagree: the editor's 400 ms
+    double-click test cannot be synthesized when a frame takes ~0.5 s, so the
+    beats use alt+click for edge loops.
+  * Framing is computed, never hand-placed: `framing()` projects the subject's
+    AABB onto the camera's right/up axes and solves for the distance that fills
+    a given fraction of the frame (`fill_scale` is the per-session taste knob).
+    The AABB is taken through the node's GLOBAL transform, and objects are
+    dropped onto the ground from their own bounds, because the shape generators
+    disagree about whether their origin is the base or the centre.
+- FIVE RECORDED SESSIONS (create / edit / shapes / paint / map, ~20 beats
+  total) drive the real UI — toolbar buttons, the New Shape menu, drag-creation,
+  the params modal including the arched toggle, the material dock, the paint
+  controller, the export dialog. Every beat ends in a `check()`: a beat that
+  silently does nothing fails the render instead of shipping.
+- TWO PSP FIXES THE VIDEO FOUND (both real bugs):
+  * HUD: `Select` now toggles a COMPACT hud (frame rate + the cpu/gpu profiler
+    only — what a capture wants), and the Textured/Lighting/Wireframe cycle
+    moved to `L+Select`. Input is edge-detected now; the old code acted on the
+    held state, so every button repeated while held. The hint lines were
+    rewritten to fit the 60-glyph budget (a longer line silently loses its tail
+    on the 480 px screen).
+  * The courtyard's wildflowers were authored UNSHADED, which in this pipeline
+    means "pure white, ignore the baked lighting" — at dusk/night they stayed
+    bright while everything around them went dark. They are lit now, and the map
+    carries a soft shadowless `FoliageFill` in front of the billboard cluster: a
+    billboard is a flat quad whose normal faces +Z, so the bake only ever sees
+    its front, and with no light on the viewer's side the foliage goes black in
+    the presets that have no strong sun.
+- `run_psp_hw.sh --preset <dawn|day|dusk|night>` (bare word also accepted) runs
+  or DEPLOYS a preset: the .pbm plus a `poi_preset.txt` are staged on host0:,
+  which is exactly what a Memory Stick install needs. App mode used to wait for
+  the profiler's output file, which the interactive app never writes — it
+  reported a wedge that had not happened, three times, and gave up.
+- Version bump 0.9.76 -> 0.9.77.
+
+Backlog lives in the README's roadmap (human-facing). The showcase video now
+budgets for a fresh capture: the editor acts are recorded from source
+(`showcase_video/render.sh`), the handheld footage is dropped into
+`showcase_video/source/` and re-cut in `edl.toml`, and `./showcase_video/
+build.sh` rebuilds the master, the README cut and the poster in a few minutes.
+The next scheduled piece of work is a **courtyard walkthrough with the real
+device in frame** (the current handheld clip was shot before the lit-foliage and
+compact-HUD changes).
 
 ## Key Conventions
 
