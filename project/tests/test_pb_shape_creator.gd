@@ -227,6 +227,30 @@ func test_negative_height_anchors_the_top_face():
 	assert_almost_eq(world_y, 0.0, 0.001,
 		"Growing downward anchors the TOP face to the plane")
 
+## A slab dragged DOWN out of the plane is as thick as the drag. The parameter
+## used to be the raw signed height clamped to the 0.1 m minimum, so a floor
+## dragged 0.5 m downward came out 0.1 m thick — which is how the showcase's
+## courtyard floor became a wafer z-fighting the grid.
+func test_negative_height_keeps_the_dragged_magnitude():
+	var creator := _armed_creator()
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(6, 0, 6))
+	creator.end_base()
+	creator.update_height_point(Vector3(6, -0.5, 6))
+	assert_almost_eq(creator.height, -0.5, 0.0001, "The drag itself stays signed")
+	assert_almost_eq(creator.values["height"], 0.5, 0.0001,
+		"The parameter is the MAGNITUDE of the drag, not a clamped 0.1")
+	var data := creator.build_data()
+	var lo := INF
+	var hi := -INF
+	for p in data.positions:
+		lo = minf(lo, p.y)
+		hi = maxf(hi, p.y)
+	assert_almost_eq(hi - lo, 0.5, 0.001, "The slab is 0.5 m thick")
+	var xf := creator.placement_transform(data)
+	assert_almost_eq((xf * Vector3(0, hi, 0)).y, 0.0, 0.001,
+		"And its top face lands in the drag plane")
+
 func test_placement_basis_aligns_with_the_surface():
 	var creator := _armed_creator()
 	var wall := Vector3(0, 0, -1)

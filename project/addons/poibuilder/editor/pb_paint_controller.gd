@@ -310,8 +310,17 @@ func _update_preview_material() -> void:
 			mat.albedo_color = Color(0.2, 0.85, 1.0, 0.9) # Cyan for paint
 
 	if stamp_mesh_instance != null and stamp_mesh_instance.material_override != null:
-		var mat := stamp_mesh_instance.material_override as StandardMaterial3D
-		mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
+		var tint := Color(1.0, 1.0, 1.0, stamp_opacity)
+		# The stamp preview wears the decal shader (it clips itself to the face),
+		# so the tint is a shader parameter. Casting to StandardMaterial3D here
+		# produced null and the assignment threw on every opacity change.
+		var smat := stamp_mesh_instance.material_override as ShaderMaterial
+		if smat != null:
+			smat.set_shader_parameter("albedo_color", tint)
+		else:
+			var mat := stamp_mesh_instance.material_override as StandardMaterial3D
+			if mat != null:
+				mat.albedo_color = tint
 
 func _update_stamp_preview_texture() -> void:
 	if stamp_mesh_instance != null and stamp_mesh_instance.material_override != null:
