@@ -214,10 +214,11 @@ func test_toolbar_initial_state():
 	# Items across rows: Logo, Split button, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
 	# sep, Grid, GridState, sep, 9 op buttons, sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
 	# sep, Material button, Settings button, sep, Export button.
-	assert_eq(tb.get_item_count(), 37, "Toolbar should have 37 items in default two-row mode")
+	assert_eq(tb.get_item_count(), 38, "Toolbar should have 38 items in default two-row mode")
 	assert_true(tb.two_rows, "Default layout should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in default two-row mode")
 	assert_not_null(tb._btn_export, "Export button should exist")
+	assert_not_null(tb.env_button(), "Environment preset button should exist")
 	assert_not_null(tb._btn_split_rows, "Split rows button should exist")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._row1.get_child(0), tb._logo, "First item in Row 1 must be logo")
@@ -231,7 +232,7 @@ func test_toolbar_split_rows_toggle():
 	# Initially 2 rows by default
 	assert_true(tb.two_rows, "Initial state should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in two-row mode")
-	assert_eq(tb._row1.get_child_count(), 16, "Row 1 should contain logo, split button, tools (3+sep), and ops (9+sep)")
+	assert_eq(tb._row1.get_child_count(), 17, "Row 1 should contain logo, split button, tools (3+sep), ops (9+sep), and env")
 	assert_eq(tb._row2.get_child_count(), 21, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
 
 	# Toggle to 1 row
@@ -241,13 +242,13 @@ func test_toolbar_split_rows_toggle():
 
 	assert_false(tb.two_rows, "two_rows property should be false in single-row mode")
 	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
-	assert_eq(tb._row1.get_child_count(), 38, "Row 1 should have all items in single-row mode")
+	assert_eq(tb._row1.get_child_count(), 39, "Row 1 should have all items in single-row mode")
 
 	# Toggle back to 2 rows via button
 	tb._btn_split_rows.button_pressed = true
 	assert_true(tb.two_rows, "two_rows property should be true after toggling button")
 	assert_true(tb._row2.visible, "Row 2 should be visible again")
-	assert_eq(tb._row1.get_child_count(), 16, "Row 1 should contain 16 items")
+	assert_eq(tb._row1.get_child_count(), 17, "Row 1 should contain 17 items")
 	assert_eq(tb._row2.get_child_count(), 21, "Row 2 should contain 21 items")
 	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
 	assert_true(received_splits[0], "Emitted value should match button state")

@@ -264,6 +264,7 @@ PbmMap* pbm_load(const char* filepath) {
         (unsigned int)map->header.num_metadata);
     strncpy(map->map_name, "PoiRetro Map", sizeof(map->map_name) - 1);
     map->has_patrol_sphere = 0;
+    map->env_preset[0] = '\0';
     /* 1. Textures */
     if (map->header.num_textures > 0) {
         map->textures = (PbmTexture*)calloc(map->header.num_textures, sizeof(PbmTexture));
@@ -525,10 +526,14 @@ PbmMap* pbm_load(const char* filepath) {
                                 map->patrol_sphere.speed,
                                 (unsigned int)map->patrol_sphere.num_waypoints);
                         }
+                    } else if (strcmp(map->metadata[i].tag, "env_preset") == 0) {
+                        strncpy(map->env_preset, (const char*)mdata, sizeof(map->env_preset) - 1);
+                        map->env_preset[sizeof(map->env_preset) - 1] = '\0';
+                        printf("[PBM] Metadata parsed: Env Preset = '%s'\n", map->env_preset);
                     }
-                }
             }
         }
+    }
     }
 
     /* A map that claims meshes but has no vertices renders as an empty scene

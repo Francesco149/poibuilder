@@ -60,6 +60,12 @@ const ACTIONS: Dictionary = {
 	"op_knife":        { "label": "Mesh Op: Knife Tool",     "keys": [] },
 	# Dedicated Tools
 	"tool_sprite":     { "label": "Tool: Place Billboard / Sprite", "keys": [[KEY_B, 0, 0, 0]] },
+	# Environment / Time of Day
+	"env_dawn":        { "label": "Environment: Dawn", "keys": [] },
+	"env_day":         { "label": "Environment: Day", "keys": [] },
+	"env_dusk":        { "label": "Environment: Dusk", "keys": [] },
+	"env_night":       { "label": "Environment: Night", "keys": [] },
+	"env_cycle":       { "label": "Environment: Cycle Time of Day", "keys": [] },
 }
 
 ## Mesh-op action id → the op string the toolbar/plugin pipeline expects.

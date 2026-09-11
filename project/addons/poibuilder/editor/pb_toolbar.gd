@@ -60,6 +60,8 @@ signal materials_dock_requested
 
 ## Emitted when the user clicks the Export button to open the map export dialog.
 signal export_requested
+## Emitted when the user selects a Time of Day environment preset from the toolbar.
+signal env_preset_requested(preset_name: String)
 
 ## Emitted when the user toggles the split-rows layout button.
 signal split_rows_toggled(two_rows: bool)
@@ -104,6 +106,7 @@ var _btn_recover_overlay: Button
 var _btn_materials: Button
 var _op_buttons: Dictionary = {}
 var _btn_settings: Button
+var _btn_env: MenuButton
 var _btn_export: Button
 var _btn_grid_panel: Button
 var _lbl_grid_state: Label
@@ -307,6 +310,21 @@ func _build_ui() -> void:
 	_btn_settings.focus_mode = Control.FOCUS_NONE
 	_btn_settings.tooltip_text = "Display settings (grid, wireframe, selection, hover opacity)"
 	_btn_settings.toggled.connect(func(on: bool): settings_panel_toggled.emit(on))
+	# Environment group
+	_btn_env = MenuButton.new()
+	_btn_env.name = "EnvButton"
+	_btn_env.icon = _load_icon("icon_env.svg")
+	if _btn_env.icon == null:
+		_btn_env.text = "Env"
+	_btn_env.flat = true
+	_btn_env.focus_mode = Control.FOCUS_NONE
+	_btn_env.tooltip_text = "Time of Day: Quick environment presets (Dawn, Day, Dusk, Night)"
+	var env_popup: PopupMenu = _btn_env.get_popup()
+	env_popup.add_item("🌅 Dawn", 0)
+	env_popup.add_item("☀️ Day", 1)
+	env_popup.add_item("🌇 Dusk", 2)
+	env_popup.add_item("🌙 Night", 3)
+	env_popup.id_pressed.connect(_on_env_menu_pressed)
 
 	# Export group
 	_sep_export = _make_sep()
@@ -409,7 +427,7 @@ func _update_row_layout() -> void:
 		for c in grp_header: _row1.add_child(c)
 		for c in grp_tools: _row1.add_child(c)
 		for c in grp_ops: _row1.add_child(c)
-
+		_row1.add_child(_btn_env)
 		# Row 2: Modes (without initial sep) | Space | Grid | Shapes | Overlay | Docks | Export
 		_row2.add_child(_btn_object)
 		_row2.add_child(_btn_vertex)
@@ -423,7 +441,7 @@ func _update_row_layout() -> void:
 		for c in grp_export: _row2.add_child(c)
 	else:
 		_row2.visible = false
-		# Single Row: All 10 groups in sequential classic order
+		# Single Row: All groups in sequential classic order
 		for c in grp_header: _row1.add_child(c)
 		for c in grp_tools: _row1.add_child(c)
 		for c in grp_modes: _row1.add_child(c)
@@ -433,6 +451,7 @@ func _update_row_layout() -> void:
 		for c in grp_shapes: _row1.add_child(c)
 		for c in grp_overlay: _row1.add_child(c)
 		for c in grp_docks: _row1.add_child(c)
+		_row1.add_child(_btn_env)
 		for c in grp_export: _row1.add_child(c)
 
 ## Total number of controls and buttons across the toolbar rows.
@@ -647,3 +666,18 @@ func set_settings_panel_open(open: bool) -> void:
 
 func new_shape_button() -> MenuButton:
 	return _btn_new_shape
+func _on_env_menu_pressed(id: int) -> void:
+	var names := PBEnvironment.get_preset_names()
+	if id >= 0 and id < names.size():
+		set_env_preset(names[id])
+		env_preset_requested.emit(names[id])
+
+func set_env_preset(preset_name: String) -> void:
+	if _btn_env == null:
+		return
+	var p := PBEnvironment.get_preset(preset_name)
+	_btn_env.tooltip_text = "Time of Day: %s (Click to change: Dawn, Day, Dusk, Night)" % p.get("name", preset_name.capitalize())
+	if _btn_env.icon == null:
+		_btn_env.text = p.get("label", preset_name.capitalize()) + " ▾"
+func env_button() -> MenuButton:
+	return _btn_env

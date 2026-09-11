@@ -513,6 +513,19 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         "type": PBM_META_STRING,
         "data": map_name_str
     })
+    # Metadata: env_preset
+    env_preset_str = "day"
+    if "_dawn" in glb_path or "_dawn" in pbm_path:
+        env_preset_str = "dawn"
+    elif "_dusk" in glb_path or "_dusk" in pbm_path:
+        env_preset_str = "dusk"
+    elif "_night" in glb_path or "_night" in pbm_path:
+        env_preset_str = "night"
+    metadata_entries.append({
+        "tag": "env_preset",
+        "type": PBM_META_STRING,
+        "data": (env_preset_str + "\x00").encode("utf-8")
+    })
 
     # 2. Player Spawn Point (JSON)
     spawn_json = json.dumps({

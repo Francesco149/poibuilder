@@ -41,6 +41,37 @@ uint64_t psp_now_us(void) {
     return (uint64_t)sceKernelGetSystemTimeWide();
 }
 
+static const PbEnvDef s_env_defs[] = {
+    { "day",   0x382218, 1, 22.0f, 65.0f, 0x382218 },
+    { "dawn",  0x262028, 1, 16.0f, 52.0f, 0x262028 },
+    { "dusk",  0x1C1824, 1, 14.0f, 48.0f, 0x1C1824 },
+    { "night", 0x100A08, 1, 10.0f, 40.0f, 0x100A08 },
+};
+
+const PbEnvDef* pb_env_get(int preset_id) {
+    if (preset_id >= 0 && preset_id < 4) return &s_env_defs[preset_id];
+    return &s_env_defs[0];
+}
+
+const PbEnvDef* pb_env_find(const char* name) {
+    if (!name || !name[0]) return &s_env_defs[0];
+    for (int i = 0; i < 4; ++i) {
+        if (!strcasecmp(name, s_env_defs[i].name)) return &s_env_defs[i];
+    }
+    return &s_env_defs[0];
+}
+
+void render_cfg_set_env(RenderCfg* cfg, const char* name) {
+    const PbEnvDef* env = pb_env_find(name);
+    for (int i = 0; i < 4; ++i) {
+        if (&s_env_defs[i] == env) { cfg->env_preset = i; break; }
+    }
+    cfg->clear_color = env->clear_color;
+    cfg->fog_enabled = env->fog_enabled;
+    cfg->fog_near = env->fog_near;
+    cfg->fog_far = env->fog_far;
+    cfg->fog_color = env->fog_color;
+}
 void render_cfg_default(RenderCfg* c) {
     c->display_mode = 0;
     c->use_textures = 1;
@@ -61,6 +92,7 @@ void render_cfg_default(RenderCfg* c) {
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
     c->near_plane = 0.08f;
+    render_cfg_set_env(c, "day");
 }
 
 /* ── Font + 2D text ─────────────────────────────────────────────────────── */
@@ -185,8 +217,9 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
              fps, (unsigned)(verts / 3), (unsigned)verts, (unsigned)draws);
     psp_draw_text(8.0f, 8.0f, 0xFF00FF55, buf);
 
-    snprintf(buf, sizeof(buf), "Map: %s | %s", map->map_name,
-             display_mode == 0 ? "Textured" : (display_mode == 1 ? "Lighting" : "Wireframe"));
+    snprintf(buf, sizeof(buf), "Map: %s | %s | Env: %s", map->map_name,
+             display_mode == 0 ? "Textured" : (display_mode == 1 ? "Lighting" : "Wireframe"),
+             map->env_preset[0] ? map->env_preset : "day");
     psp_draw_text(8.0f, 18.0f, 0xFFFFFF00, buf);
 
     /* The Hold switch suppresses every button while leaving the analog stick
@@ -209,8 +242,7 @@ void psp_draw_hud(PbmMap* map, const RenderStats* stats, float fps,
     psp_draw_text(8.0f, 38.0f, 0xFFDDDDDD,
                   "Stick: Fly/Strafe | Hold Tri+Stick: Look | Square: Boost");
     snprintf(buf, sizeof(buf),
-             "X/O: Up/Down | L/R: Turn | Start: Reset | Select: Mode(%d)",
-             display_mode);
+             "X/O: Up/Down | L/R: Turn | Start: Reset | Select: Mode | Tri+L/R: Env");
     psp_draw_text(8.0f, 48.0f, 0xFFDDDDDD, buf);
 
     if (extra && *extra) psp_draw_text(8.0f, 58.0f, 0xFF66E0FF, extra);
@@ -242,6 +274,7 @@ void psp_render_skip_mesh(const char* needle) {
 void psp_render_overrides(RenderCfg* cfg) {
     FILE* f = fopen("host0:/poi_render.txt", "r");
     if (!f) f = fopen("ms0:/poi_render.txt", "r");
+    if (!f) f = fopen("poi_render.txt", "r");
     if (!f) return;
     char line[128];
     while (fgets(line, sizeof(line), f)) {
@@ -265,6 +298,7 @@ void psp_render_overrides(RenderCfg* cfg) {
             else if (!strcmp(v, "asym"))    cfg->tex_filter = PBFILT_ASYM;
             else                            cfg->tex_filter = PBFILT_MIP_LIN;
         } else if (!strcmp(k, "uv_scroll")) cfg->uv_scroll = atoi(v);
+        else if (!strcmp(k, "preset")) render_cfg_set_env(cfg, v);
         else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
         else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
         else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
@@ -520,9 +554,16 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     if (stats) { stats->draw_calls = 0; stats->vertices = 0; stats->triangles = 0; }
 
     /* Clear */
-    sceGuClearColor(0x382218);
+    sceGuClearColor(cfg->clear_color ? cfg->clear_color : 0x382218);
     sceGuClearDepth(65535);
     sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
+
+    if (cfg->fog_enabled) {
+        sceGuEnable(GU_FOG);
+        sceGuFog(cfg->fog_near, cfg->fog_far, cfg->fog_color);
+    } else {
+        sceGuDisable(GU_FOG);
+    }
 
     if (cfg->depth_test) {
         sceGuEnable(GU_DEPTH_TEST);

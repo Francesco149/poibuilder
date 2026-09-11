@@ -565,6 +565,21 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		"type": PBM_META_STRING,
 		"data": map_name_bytes
 	})
+	# Metadata: env_preset
+	var env_preset_str := "day"
+	if glb_path.find("_dawn") != -1:
+		env_preset_str = "dawn"
+	elif glb_path.find("_dusk") != -1:
+		env_preset_str = "dusk"
+	elif glb_path.find("_night") != -1:
+		env_preset_str = "night"
+	var env_preset_bytes := env_preset_str.to_utf8_buffer()
+	env_preset_bytes.append(0)
+	metadata_entries.append({
+		"tag": "env_preset",
+		"type": PBM_META_STRING,
+		"data": env_preset_bytes
+	})
 	# Metadata 2: player_spawn
 	var spawn_dict := {
 		"position": [spawn_pos.x, spawn_pos.y, spawn_pos.z],

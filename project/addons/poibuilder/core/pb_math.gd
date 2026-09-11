@@ -149,7 +149,9 @@ static func ray_intersects_triangle(ray_origin: Vector3, ray_dir: Vector3, v0: V
 		return {
 			"hit": true,
 			"distance": t,
-			"point": hit_point
+			"point": hit_point,
+			"u": u,
+			"v": v,
 		}
 
 	return {"hit": false}
