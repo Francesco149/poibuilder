@@ -118,13 +118,18 @@ void render_cfg_default(RenderCfg* c) {
      * at the worst view), bias=2 is what a weaker machine would want. */
     c->tex_filter = PBFILT_MIP_LIN;
     c->tex_lod_bias = 1.0f;
-    /* Painted detail is one level sharper than the rest of the scene: the baked
-     * tile/splat meshes are where the hardware's per-primitive level step shows,
-     * and they cover far less screen than the surfaces the global bias exists
-     * for. `detail_const` >= 0 pins them to ONE level instead, which removes the
-     * step entirely (measured budget in HARDWARE-TESTING.md). */
-    c->detail_bias = -1.0f;
-    c->detail_const = -1;
+    /* Painted detail (the baked splat/stamp tiles) is pinned to ONE mip level
+     * rather than left to the per-primitive LOD. The GE derives a level per
+     * triangle from that triangle's own UV derivatives, so a floor crossing
+     * several levels in a few metres steps in sharpness at every tile boundary
+     * — and, worse, the automatic level for a tile a couple of metres away
+     * lands several steps coarser than the texture's real detail, which reads
+     * as a blurred, seamed floor. One constant level keeps it crisp; measured
+     * at the grazing floor view: 0.50 vs 0.12 ms gpu (3.15 vs 2.49 ms frame),
+     * i.e. ~0.4 ms for the whole painted floor. `detail_const = -1` restores the
+     * per-primitive behaviour, and `detail_bias` applies in that case only. */
+    c->detail_const = 1;
+    c->detail_bias = -1.0f;   /* used only when detail_const < 0 (per-primitive mode) */
     c->tex_level_mode = PBLEVEL_AUTO;
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */

@@ -818,22 +818,32 @@ splatted parts have visible seams"):
   UV derivatives, and a floor crosses several levels across a few metres, so
   neighbouring baked tiles differ by a step; invisible at level 0-1, a visible
   band once the level is coarse.
-- PER-MESH LOD POLICY, the "micromanage" mechanism asked for: meshes matching
-  `detail_mesh=` (default `TileAtlas` — the baked splat/stamp tiles) take
-  `detail_bias` (default -1, one level sharper than the scene) or, when
-  `detail_const` >= 0, ONE constant level for the whole mesh, which is the only
-  setting that removes the step between neighbouring primitives. Applied per
-  draw call in both mesh passes (the level-mode registers are per draw), and the
-  emitter path explicitly resets to the global policy so a particle texture can
-  never inherit a mesh's. Measured at the grazing floor view: `fg_base` 0.12 /
-  `fg_detailoff` 0.12 / `fg_detail_const1` 0.50 ms (3.15 ms frame) — sharpness
-  there is nearly free because the detail meshes cover little screen; `fg_nomips`
-  26.2 ms for scale. Sign-off on the device: the shipped policy reads sharper
-  than the un-special-cased one at no measurable cost.
+- PER-MESH LOD POLICY, the "micromanagement" that was asked for: meshes
+  matching `detail_mesh=` (default `TileAtlas` — the baked splat/stamp tiles)
+  sample ONE CONSTANT mip level, `detail_const` (default 1, chosen at sign-off
+  off a device A/B). That is the only setting that removes the level step
+  between neighbouring primitives entirely, and it is what takes the painted
+  floor from a smeared, seamed look to crisp: at the grazing floor view,
+  `fg_base` (const 1) 0.57 ms gpu / 3.07 ms frame against `fg_const0` 1.68 /
+  4.71 (the sharpest possible, 3x the cost), `fg_const2` 0.12 / 2.57, and
+  `fg_perprim` 0.11 / 2.37 (the old seamed behaviour). `detail_const=-1`
+  restores per-primitive mode, in which `detail_bias` (default -1) applies
+  instead. The policy is applied per draw call in both mesh passes (the
+  level-mode registers are per draw) and the emitter path explicitly resets to
+  the global policy so a particle texture can never inherit a mesh's. Every
+  view with the shipped default is inside budget: spawn 0.55 gpu (3.36 frame),
+  arch/stairs/stairs_low/corner/balcony 0.11-0.12, grazing floor 0.57,
+  waterfall foot 2.71 (4.99 frame, 200 fps). Sign-off: decided by eye on the
+  device ("the last version had the best sharpness with basically no cost").
 - New live knobs (no rebuild): `cutout_mips=`, `detail_mesh=`, `detail_bias=`,
   `detail_const=` in poi_render.txt. New battery camera presets `foliage` and
   `floorgraz` with `fol_*` / `fg_*` rows guard both findings; the report tool and
   HARDWARE-TESTING.md carry the tables.
+- HAZARD (cost a device recovery this round): scripted capture loops that
+  reset-and-reload the module repeatedly can leave the display controller in a
+  black-screen state that a single `reset` clears — do ONE load per capture and
+  check scrshot's `frame_addr`/`pixel_format` before trusting a frame, rather
+  than retrying a load in a loop.
 
 v0.9.74 round complete ✓ — the waterfall-foot slowdown: the LOD bias was over
 the GE's texture-cache cliff (reported from the device, found with the battery,

@@ -689,21 +689,18 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     add_scene_test(t, &n, "fol_noflowers", "foliage", pc, &base);
     t[n - 1].skip = "Wildflowers";
     /* Floor at a grazing angle: where the per-primitive level step between
-     * neighbouring baked tiles is visible. `fg_base` uses the shipped detail
-     * policy (-1 level on the atlas meshes); the rest walk it, including the
-     * constant-level option, which is the only setting that removes the step
-     * between neighbouring primitives entirely. */
+     * neighbouring baked tiles is visible. `fg_base` is the SHIPPED default
+     * (the atlas meshes pinned to one constant mip level); the rest walk the
+     * alternatives, including the per-primitive mode that produced the seams. */
     add_scene_test(t, &n, "fg_base", "floorgraz", pc, &base);
-    add_scene_test(t, &n, "fg_detailoff", "floorgraz", pc, &base);
-    t[n - 1].cfg.detail_bias = 0.0f;
-    add_scene_test(t, &n, "fg_detail_sharp", "floorgraz", pc, &base);
-    t[n - 1].cfg.detail_bias = -2.0f;
-    add_scene_test(t, &n, "fg_detail_const1", "floorgraz", pc, &base);
-    t[n - 1].cfg.detail_const = 1;
-    add_scene_test(t, &n, "fg_detail_const2", "floorgraz", pc, &base);
+    add_scene_test(t, &n, "fg_const0", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = 0;
+    add_scene_test(t, &n, "fg_const2", "floorgraz", pc, &base);
     t[n - 1].cfg.detail_const = 2;
-    add_scene_test(t, &n, "fg_detail_nomatch", "floorgraz", pc, &base);
-    t[n - 1].cfg.detail_const = 1;      /* the policy off == the same knob, no match */
+    add_scene_test(t, &n, "fg_perprim", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = -1; t[n - 1].cfg.detail_bias = 0.0f;
+    add_scene_test(t, &n, "fg_perprim_sharp", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = -1; t[n - 1].cfg.detail_bias = -2.0f;
     add_scene_test(t, &n, "fg_nomips", "floorgraz", pc, &base);
     t[n - 1].cfg.use_mips = 0;
 
