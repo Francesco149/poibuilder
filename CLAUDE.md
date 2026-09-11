@@ -91,7 +91,12 @@ else counts as evidence:
   - `edl.toml` is the timeline (crop, trim, speed, captions, transitions);
     `build.sh` bakes a segment per clip, concatenates the master, encodes the
     README cut and verifies the result.
-  - `bake/` is scratch (frames, overlays, segments), `out/` is the deliverable.
+  - `bake/` is scratch (frames, overlays, segments); `out/` holds the
+    deliverables — the 720p master, the 960x540 cut the README embeds, the
+    poster, and `review-sheet.png` (a contact sheet of the whole timeline, for
+    reviewing a build without playing it). The README embed is a GitHub
+    `user-attachments` URL, which is uploaded from the web editor: drag the cut
+    in, replace the bare URL on its own line.
   - Everything downstream of the capture is Pillow + ffmpeg: restyle a caption
     or re-time a cut without re-rendering the editor.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
