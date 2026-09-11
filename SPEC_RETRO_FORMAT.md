@@ -185,51 +185,51 @@ The Mesh Chunk contains `header.num_meshes` records. Each record consists of a 7
 *(The 64-byte v2 mesh header ended at `0x40`; the two scroll words are what
 makes a v3 header 72 bytes.)*
 
-### 5.1 Animated UV Scroll
+### 5.1 Standard Specification: Animated UV Scrolling
 
-`uv_scroll_u` / `uv_scroll_v` carry the **velocity of the texture pattern
-across the surface**, in texture repeats per second, along that surface's own
-UV axes:
+The PBM specification formalizes animated scrolling textures through a **minimal, universal common denominator**: a continuous 2D linear translation offset.
 
-- `1.0` slides the pattern one full repeat per second along that axis.
-- The sign is a direction: on a wall (where V runs *up*) a waterfall falls
-  downward and is therefore **negative** in V; on a floor (where V runs toward
-  `+Z`) water spreading away from a wall is **positive**.
-- `0.0` on both axes is a static mesh, which is what every v1/v2 file contains.
+#### 5.1.1 Scope and Guarantees
 
+The specification guarantees **only** the simplest linear translation model:
 ```
 uv(t) = uv(0) + t * (uv_scroll_u, uv_scroll_v)
 ```
+Where:
+- $t$ is scene elapsed time in seconds.
+- `uv_scroll_u` and `uv_scroll_v` are float values expressing velocity in **texture repeats per second** along the surface's local UV axes.
+- `0.0, 0.0` denotes a static mesh.
 
-Implementations may realise this any way they like — a texture-coordinate
-offset register, a texture matrix, or a shader uniform. Two constraints are
-part of the format, not of any one engine:
+**Intentional Minimalism:** The format deliberately does *not* specify full animated UV node graphs, arbitrary rotation matrices, non-linear spline curves, or procedural UV distortion. Restricting the guarantee to linear 2D translation ensures universal compatibility across:
+1. **Fixed-function retro hardware:** Sony PlayStation Portable (PSP) Graphics Engine (GE) via hardware coordinate offset registers (`sceGuTexOffset`), with zero CPU vertex transformation, zero bus traffic, and zero allocation.
+2. **Modern GPU pipelines:** Direct material shader uniforms (`StandardMaterial3D.uv1_offset`) or vertex shader additions with near-zero overhead.
+3. **Software and minimal rasterizers:** Single addition per vertex or scanline iterator step.
 
-1. **A scrolling mesh's texture MUST be a standalone texture**, never a tile
-   inside a packed atlas. Atlas tiles address absolute slot coordinates and are
-   sampled with clamping; sliding one with an offset drags it across the slot
-   border and pulls its neighbours in.
-2. **The texture MUST wrap** (`GL_REPEAT` / `GU_REPEAT`), since the pattern
-   legitimately samples outside `[0,1]` once it has moved.
+#### 5.1.2 Format Constraints
 
-**Implementation rule — advance the offset with the speed.** Every renderer
-here realises the field the same way: each frame, `offset += speed * dt`, and the
-resulting offset is applied as that renderer's texture-coordinate offset for the
-mesh (on the GE, `sceGuTexOffset`). With that:
+To guarantee correct rasterization across all targets:
+1. **Standalone Texture Enforcement:** Any mesh with non-zero scroll velocity **MUST** reference a dedicated, standalone texture. It must **NEVER** be packed into a shared tile atlas. Atlased textures use clamped sampling within sub-rectangle coordinate slots; applying an offset to an atlased mesh would drag texture coordinates across slot boundaries into neighboring tiles.
+2. **Repeat Wrapping (`GU_REPEAT` / `GL_REPEAT`):** The referenced texture must wrap seamlessly along the scrolling axis.
+3. **Alpha Blending:** Scrolling surfaces requiring soft transparency (e.g. water streams, mist, glass) use `alpha_mode = PBM_ALPHA_BLEND` (RGBA8888 with mip chain retained). Hard-edged cutouts use `alpha_mode = PBM_ALPHA_CUTOUT`.
 
-- `speed_v < 0` sends a waterfall **down** a wall,
-- `speed_v < 0` sends churn on the floor **away from the wall** (toward `+Z`),
+#### 5.1.3 Sign and Direction Convention
 
-which is exactly what the showcase map demonstrates.
+`uv_scroll_u` and `uv_scroll_v` describe the direction the **pattern travels** across the surface:
+- **Walls:** The surface $V$ axis points vertically upward. A downward-falling waterfall moves toward $-V$; therefore, falling water has **negative** `uv_scroll_v` (e.g. `-0.75`).
+- **Floors:** The surface $V$ axis points toward world $+Z$. A fluid churning away from a wall (toward $+Z$) travels along $+V$; under the coordinate offset relation ($uv(t) = uv_0 + \vec{v} \cdot t$), advancing the offset translates the pattern outward.
+- **Billboards:** Rising steam, smoke, or mist moving upward has **positive** `uv_scroll_v` (e.g. `+0.35`).
 
-A renderer that *subtracts* the offset, or negates the speed, animates
-everything backwards — the naive reading of "an offset added to the coordinate
-slides the sampled image the other way" is the trap, and it is worth stating the
-rule as "whatever the API's sign convention, both reference renderers were
-verified to produce the same picture for the same value". It is invisible in any
-static frame and looks entirely plausible in motion at a glance, so the
-direction MUST be verified by measurement (§9, step 6) rather than reasoned
-about.
+#### 5.1.4 Authoring Workflow in PoiBuilder
+
+The canonical workflow to author scrolling textures in PoiBuilder:
+1. **Shape Creation (Plane):** Select **New Shape → Plane** (or press `B` / toolbar shortcut).
+2. **Surface Drag:** Click and drag on any surface (wall, floor, or sloped ramp) to establish a base rectangle parallel to the surface.
+3. **Standoff Offset:** Release mouse button; move the cursor along the surface normal (clamped $\ge 0$) to set the standoff elevation (keeping the sheet clear of wall/floor z-fighting), then click to confirm.
+4. **Material & UV Dock:** Select the face in Face Mode, navigate to **Scrolling Texture (UV Animation)** in the dock:
+   - Enter `Speed U` and `Speed V` in repeats/second (the dock displays live equivalent m/s translation).
+   - Click **Apply Scroll**. The material is automatically duplicated so other faces are not unintentionally animated, and metadata `poi_uv_scroll` is set.
+5. **Live In-Editor Preview:** The **Animate in Viewport** checkbox animates the scrolling texture live in the 3D editor viewport at 60 FPS while editing.
+6. **Export:** Exporting via **Export → PoiRetro (.pbm)** or GLB automatically writes `uv_scroll_u` / `uv_scroll_v` and keeps the texture standalone.
 
 ---
 

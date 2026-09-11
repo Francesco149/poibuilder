@@ -793,6 +793,29 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.72 round complete ✓ — bright courtyard tiles vs dark wet wall restored, seamless water textures with soft alpha, in-editor live scrolling textures, standard specification & 60 FPS showcase video:
+- DEMO MAP BRIGHT TILES VS DARK WET WALL RESTORED:
+  * Root cause of courtyard geometry appearing dark gray on PSP: `WetTilesMaterial` shared `tiles_light_4x4.png` with courtyard geometry while applying a `baseColorFactor` dark slate tint; both `pbm_conv.py` and `PBPbmConverter.gd` stored a single texture per source image, and seeing a tint on `WetTilesMaterial` permanently multiplied the shared `tiles_light_4x4` pixels by `(0.55, 0.62, 0.70)`, turning the entire geometry (pillars, stairs, balcony, ramp, doorway) dark gray on PSP while the floor splatting (baked into `TileAtlas`) stayed white.
+  * Implemented dedicated `tiles_wet_4x4.png` for `WetTilesMaterial` with clean white albedo.
+  * Fixed converter architecture in both `pbm_conv.py` and `PBPbmConverter.gd`: base textures are now keyed by `(image_index, tint_vector)` so multiple materials sharing an image with different `baseColorFactor` values never cross-contaminate or overwrite each other.
+- SEAMLESS WATER & WAVES TEXTURES WITH EDGE BLENDING & SOFT ALPHA:
+  * Root cause of seam lines at waterfall base: `water_pool.png` and `water_foam.png` generated non-integer wave and noise frequencies with non-periodic vertical fading, producing huge wrap differences (wrap diff Y = 42.5 on foam, wrap diff X/Y = 30+ on pool).
+  * Regenerated all water textures (`gen_water_textures.py`) using integer-frequency harmonic waves and periodic noise with toroidal Gaussian filtering (`_toroidal_blur`), eliminating boundary seam jumps entirely (wrap diff < 1.5 matching normal spatial gradients).
+  * Soft alpha edge blending: `Waterfall_Pool` and `Waterfall_Foam` now use `_water_material_props(..., true)` (`PBM_ALPHA_BLEND`), rendering in Pass 2 with soft blending so courtyard tiles show through underneath and foam churn blends without harsh rectangular boundaries.
+- IN-EDITOR LIVE SCROLLING TEXTURE ANIMATION:
+  * `PBMaterialDock` gained an "Animate in Viewport" checkbox under Scrolling Texture (persisted in `EditorSettings` under `poibuilder/editor/animate_scrolling_textures`).
+  * `poibuilder_plugin.gd` tracks materials with `PBUv.has_scroll(mat)` and continuously advances `uv1_offset` in `_process(delta)` at 60 FPS while editing, allowing authors to immediately inspect texture flow in the 3D viewport. Offsets reset cleanly on teardown.
+- STANDARDIZED SCROLLING TEXTURE SPECIFICATION:
+  * Updated `SPEC_RETRO_FORMAT.md` Section 5.1 and added Section N01 to `SPECIFICATION.md`.
+  * Guaranteed minimal universal common denominator: 2D linear translation offset $uv(t) = uv_0 + t \cdot (v_u, v_v)$.
+  * Stored in material metadata `poi_uv_scroll`, glTF `extras.poi_uv_scroll`, and PBM binary `uv_scroll_u` / `uv_scroll_v`.
+- POLISHED 60 FPS SHOWCASE VIDEO & REAL PSP VERIFICATION:
+  * Re-exported all showcase presets (`showcase_retro_baked.glb`, `showcase_retro_baked.pbm`, and dawn/day/dusk/night).
+  * Verified on real Sony PSP hardware via `./run_psp_hw.sh`: scene_stairs locked at 13.34ms (74.9 FPS), spawn 8.99ms (111.2 FPS), below_up 6.60ms (151.5 FPS), ramp 3.44ms (290.7 FPS), all within 16.67ms 60 FPS budget.
+  * Authored `showcase_movie_generator.gd/.tscn` with high-visibility software mouse cursor, click ripple pulses, and glassmorphism lower-third action cards.
+  * Recorded 1080p 60 FPS movie with native Godot Movie Maker and composited with Sony PSP hardware playback footage into `/home/headpats/Videos/Recordings/poibuilder-showcase-complete-60fps.mp4` (47.8s, 1920x1080, 60.0 FPS).
+- Tests: 834/834 GUT unit tests passing, 53/53 GUI harness tests passing with zero failures.
+
 v0.9.71 round complete ✓ — pre-particle performance restored on real PSP, shadow casting, orientation snapping & clean scratch playground:
 - CLEAN HARDWARE BASELINE RESTORED (psp_render.c, pbm_loader.h/c):
   * Completely removed dynamic particle simulation loops, emitter structures, and allocations from the PSP engine.

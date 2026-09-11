@@ -28,6 +28,7 @@ TAU = math.pi * 2  # kept explicit: every wobble frequency below is in radians
 # Strength of the blue-white tint used by every water surface, so the four
 # textures read as one material family under the baked courtyard lighting.
 DEEP = (48, 92, 122)
+CYAN_BODY = (68, 140, 185)
 MID = (96, 152, 186)
 BRIGHT = (198, 232, 246)
 FOAM = (238, 250, 255)
@@ -44,278 +45,216 @@ def _wrapped_blob(draw, x, y, w, h, fill, width, height):
 def _lerp(a, b, t):
     return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
-
-def _rope_field(width, height, seed, ropes):
-    """Builds the two fields a falling-water sheet needs, both seamless in x
-    and y:
-
-      rope(x, y)  in [0,1]: how far inside a rivulet this texel is (1 = the
-                  rope's core, 0 = the veil between ropes)
-      value(x, y) in [0,1]: brightness along the rope, so a rope lightens and
-                  darkens along its length instead of being a painted stripe
-
-    Ropes are never straight: each one's centre wobbles with two wrapped
-    sinusoids, and its strength surges along its length — which is what makes
-    a scrolling sheet read as running water rather than a moving grid.
-    """
-    rng = random.Random(seed)
-    rope_px = [[0.0] * height for _ in range(width)]
-    val_px = [[0.0] * height for _ in range(width)]
-
-    for r in ropes:
-        cx, half = r["x"], r["w"]
-        f1 = rng.uniform(0.4, 1.4) * TAU / height
-        f2 = rng.uniform(1.6, 3.4) * TAU / height
-        p1, p2 = rng.uniform(0, TAU), rng.uniform(0, TAU)
-        amp = rng.uniform(0.10, 0.30) * half
-        # A slow surge plus a faster "breaking" term: a rope thins to the veil
-        # where the break term dips, which is what a rope of water does.
-        fs, fb = rng.uniform(0.6, 1.2) * TAU / height, rng.uniform(2.0, 4.0) * TAU / height
-        ps, pb = rng.uniform(0, TAU), rng.uniform(0, TAU)
-        for y in range(height):
-            cx_y = cx + amp * (math.sin(y * f1 + p1) + 0.5 * math.sin(y * f2 + p2))
-            surge = 0.55 + 0.45 * math.sin(y * fs + ps)
-            brk = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(y * fb + pb))
-            strength = r["s"] * surge * brk
-            for x in range(width):
-                dx = x - cx_y
-                if dx > width / 2: dx -= width
-                elif dx < -width / 2: dx += width
-                d = abs(dx) / half
-                if d >= 1.0:
-                    continue
-                # Flat-topped profile: a rope has a body, not a gaussian ridge.
-                prof = 1.0 if d < 0.55 else (1.0 - (d - 0.55) / 0.45)
-                rr = prof * strength
-                if rr > rope_px[x][y]:
-                    rope_px[x][y] = rr
-                    val_px[x][y] = min(1.0, 0.35 + 0.65 * strength)
-    return rope_px, val_px
-
-
-def rng_hl(spec, y):
-    """Where the bright ridge sits inside a rope at a given height. Wobbling it
-    along the length keeps the highlight from reading as a drawn line."""
-    return spec["w"] * 0.35 * math.sin(y * 0.061 + spec["x"])
-
-
-def _shift_diff(img, frac):
-    """Mean absolute difference between a texture and itself shifted by `frac`
-    of its height — i.e. how much the sheet visibly CHANGES when the engine
-    advances the scroll by that amount.
-
-    This is the number that matters for a scrolling texture: a pattern that is
-    vertically uniform (straight unbroken ropes) scores near zero and reads as
-    frozen no matter how correct the animation is, which is exactly how one
-    shipping version of this sheet behaved.
-    """
-    a = np.asarray(img.convert("RGBA")).astype(float)
-    b = np.roll(a, int(round(frac * a.shape[0])), axis=0)
-    return float(np.abs(a - b).mean())
-
-
 def make_waterfall_sheet(width=128, height=256, seed=7):
-    """Falling water: a curtain of torrents, drawn after the pixel waterfall in
-    cosmic2d's waterwall demo.
+    """Falling water curtain: vertically stretched runnels with glistening specular streaks.
 
-    Three things make it read as water rather than as moving dots:
-      - few, LONG ropes spanning the tile, with real gaps between them where
-        the alpha drops out and the wall shows through,
-      - VARIATION ALONG each rope: it swells and pinches, brightens and dulls,
-        so advancing the scroll visibly moves something (see _shift_diff),
-      - highlights that break into patches rather than running as continuous
-        lines, which is what the eye follows down the fall.
-
-    Everything wraps in both axes, so the engine can move the sheet with a
-    texture-coordinate offset without a seam ever appearing.
+    Seamless on both X and Y axes via integer-period noise generators.
     """
-    rng = random.Random(seed)
-    # (centre, half-width, weight). Uneven spacing and weight: a curtain of
-    # identical ropes reads as a comb.
-    specs = [
-        {"x": 4.0,   "w": 8.0,  "s": 1.00},
-        {"x": 24.0,  "w": 2.6,  "s": 0.42},
-        {"x": 41.0,  "w": 10.5, "s": 0.92},
-        {"x": 66.0,  "w": 3.4,  "s": 0.58},
-        {"x": 80.0,  "w": 6.2,  "s": 0.76},
-        {"x": 99.0,  "w": 2.2,  "s": 0.34},
-        {"x": 112.0, "w": 9.0,  "s": 1.00},
-    ]
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    pix = img.load()
 
-    body_px = [[0.0] * height for _ in range(width)]
-    hl_px = [[0.0] * height for _ in range(width)]
-    alpha_px = [[0.0] * height for _ in range(width)]
-    for spec in specs:
-        cx, half, weight = spec["x"], spec["w"], spec["s"]
-        # Edge wobble (fast) + a slow swell (which is vertical structure).
-        f1 = rng.uniform(0.8, 2.0) * TAU / height
-        f2 = rng.uniform(2.5, 5.0) * TAU / height
-        p1, p2 = rng.uniform(0, TAU), rng.uniform(0, TAU)
-        amp = rng.uniform(0.12, 0.30) * half
-        # The swell: 2-4 pinches per tile, deep enough to see move.
-        fs = rng.uniform(2.0, 4.0) * TAU / height
-        ps = rng.uniform(0, TAU)
-        fs2 = rng.uniform(4.0, 8.0) * TAU / height
-        ps2 = rng.uniform(0, TAU)
-        for y in range(height):
-            cy = cx + amp * (math.sin(y * f1 + p1) + 0.5 * math.sin(y * f2 + p2))
-            swell = 0.62 + 0.38 * (0.5 + 0.5 * math.sin(y * fs + ps))
-            strength = weight * (0.80 + 0.14 * math.sin(y * fs + ps + 0.9)
-                                 + 0.06 * math.sin(y * fs2 + ps2))
-            half_y = half * (0.55 + 0.75 * swell)
-            for x in range(width):
-                dx = x - cy
-                if dx > width / 2: dx -= width
-                elif dx < -width / 2: dx += width
-                d = abs(dx) / half_y
-                if d >= 1.0:
-                    continue
-                prof = 1.0 if d < 0.45 else 1.0 - (d - 0.45) / 0.55
-                v = prof * strength
-                if v > body_px[x][y]:
-                    body_px[x][y] = v
-                    alpha_px[x][y] = 0.35 + 0.65 * swell
-                # A bright ridge off-centre in the rope, broken into patches
-                # that come and go along the length.
-                hd = abs(dx - rng_hl(spec, y)) / max(1.0, half_y * 0.34)
-                if hd < 1.0 and d < 0.95:
-                    patch = 0.5 + 0.5 * math.sin(y * fs2 + ps2 + 2.1)
-                    if patch > 0.30:
-                        v = (1.0 - hd) * strength * (patch - 0.30) / 0.70
-                        if v > hl_px[x][y]:
-                            hl_px[x][y] = v
-
-    img = Image.new("RGBA", (width, height))
-    ip = img.load()
     for y in range(height):
+        ny = y / float(height)
         for x in range(width):
-            b = min(1.0, body_px[x][y])
-            h = min(1.0, hl_px[x][y])
-            if b <= 0.01:
-                sheen = 0.5 + 0.5 * math.sin((x * 3 + y) * TAU / 97.0)
-                a = int(34 * sheen)
-                ip[x, y] = (DEEP[0], DEEP[1], DEEP[2], a) if a > 5 else (0, 0, 0, 0)
+            nx = x / float(width)
+            n1 = _wnoise(seed, nx * 6.0, ny * 4.0, 6, 4)
+            n2 = _wnoise(seed + 31, nx * 12.0, ny * 8.0, 12, 8)
+            n3 = _wnoise(seed + 77, nx * 24.0, ny * 16.0, 24, 16)
+            runnel = n1 * 0.55 + n2 * 0.30 + n3 * 0.15
+            col_mod = math.sin(nx * TAU * 3.0 + n1 * 1.5) * 0.5 + 0.5
+            val = runnel * (0.65 + 0.35 * col_mod)
+
+            if val < 0.36:
+                pix[x, y] = (0, 0, 0, 0)
                 continue
-            a = int(min(255, (24 + 226 * min(1.0, b * 1.15)) * (0.72 + 0.28 * alpha_px[x][y])))
-            col = _lerp(DEEP, BRIGHT, min(1.0, 0.18 + 0.82 * min(1.0, b * 1.2)))
-            if h > 0.15:
-                col = _lerp(col, FOAM, min(0.8, h * 0.95))
-            elif b > 0.6 and math.sin(x * 2.9 + y * 2.3) > 0.86:
-                col = _lerp(col, FOAM, 0.3)
-            ip[x, y] = (col[0], col[1], col[2], a)
-    return img.filter(ImageFilter.GaussianBlur(0.3))
+
+            d = (val - 0.36) / 0.64
+            if d < 0.45:
+                t = d / 0.45
+                c = _lerp(DEEP, CYAN_BODY, t)
+                alpha = int(140 + 90 * t)
+            elif d < 0.80:
+                t = (d - 0.45) / 0.35
+                c = _lerp(CYAN_BODY, BRIGHT, t)
+                alpha = int(230 + 20 * t)
+            else:
+                t = (d - 0.80) / 0.20
+                c = _lerp(BRIGHT, FOAM, t)
+                alpha = 255
+
+            pix[x, y] = (c[0], c[1], c[2], alpha)
+
+    return _toroidal_blur(img, 0.35)
 
 
 def make_waterfall_core(width=64, height=128, seed=19):
-    """The fast inner stream, drawn IN FRONT of the sheet and scrolling about
-    half again as fast. Sparse, bright rivulets with foam heads, so the two
-    layers moving at different speeds read as depth rather than as one sheet.
+    """Fast inner stream: narrower, focused cascade with bright specular highlights.
 
-    Blended (soft alpha), so the sheet and the wall read through the gaps.
+    Blended (soft alpha), seamless in X and Y on the torus.
     """
-    rng = random.Random(seed)
-    specs = [
-        {"x": 5.0,  "w": 3.4, "s": 1.00},
-        {"x": 18.0, "w": 1.6, "s": 0.60},
-        {"x": 31.0, "w": 4.2, "s": 0.95},
-        {"x": 47.0, "w": 1.3, "s": 0.55},
-        {"x": 56.0, "w": 2.8, "s": 0.85},
-    ]
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    pix = img.load()
 
-    img = Image.new("RGBA", (width, height))
-    ip = img.load()
-    for spec in specs:
-        cx, half, weight = spec["x"], spec["w"], spec["s"]
-        f1 = rng.uniform(0.6, 1.8) * TAU / height
-        f2 = rng.uniform(2.2, 4.5) * TAU / height
-        p1, p2 = rng.uniform(0, TAU), rng.uniform(0, TAU)
-        amp = rng.uniform(0.2, 0.5) * half
-        fs, ps = rng.uniform(1.0, 2.2) * TAU / height, rng.uniform(0, TAU)
-        # Foam heads: a bright blob every so often along the rivulet, the way
-        # a fast stream foams where it accelerates.
-        fh, ph = rng.uniform(2.0, 4.0) * TAU / height, rng.uniform(0, TAU)
-        for y in range(height):
-            cy = cx + amp * (math.sin(y * f1 + p1) + 0.5 * math.sin(y * f2 + p2))
-            half_y = half * (0.75 + 0.5 * (0.5 + 0.5 * math.sin(y * fs + ps + 0.9)))
-            strength = weight * (0.8 + 0.2 * math.sin(y * fs + ps))
-            head = max(0.0, math.sin(y * fh + ph)) ** 6
-            for x in range(width):
-                dx = x - cy
-                if dx > width / 2: dx -= width
-                elif dx < -width / 2: dx += width
-                d = abs(dx) / half_y
-                if d >= 1.0:
-                    continue
-                prof = 1.0 if d < 0.45 else 1.0 - (d - 0.45) / 0.55
-                v = prof * strength
-                a = int(min(255, 60 + 195 * v))
-                col = _lerp(MID, BRIGHT, min(1.0, 0.35 + 0.65 * v))
-                if head > 0.25 and d < 0.7:
-                    col = _lerp(col, FOAM, min(0.9, head * 1.2))
-                    a = int(min(255, a * (1.0 + 0.35 * head)))
-                if a > ip[x, y][3]:
-                    ip[x, y] = (col[0], col[1], col[2], a)
-    return img.filter(ImageFilter.GaussianBlur(0.35))
+    for y in range(height):
+        ny = y / float(height)
+        for x in range(width):
+            nx = x / float(width)
+            dist_from_center = abs(nx - 0.5) * 2.0
+            col_envelope = 1.0 - math.pow(dist_from_center, 1.8)
 
+            n1 = _wnoise(seed, nx * 5.0, ny * 4.0, 5, 4)
+            n2 = _wnoise(seed + 43, nx * 10.0, ny * 8.0, 10, 8)
+            val = (n1 * 0.6 + n2 * 0.4) * col_envelope
+
+            if val < 0.22:
+                pix[x, y] = (0, 0, 0, 0)
+                continue
+
+            norm = (val - 0.22) / 0.78
+            if norm < 0.40:
+                c = _lerp(CYAN_BODY, MID, norm / 0.40)
+                alpha = int(120 + 80 * (norm / 0.40))
+            elif norm < 0.75:
+                c = _lerp(MID, BRIGHT, (norm - 0.40) / 0.35)
+                alpha = int(200 + 40 * ((norm - 0.40) / 0.35))
+            else:
+                c = _lerp(BRIGHT, FOAM, (norm - 0.75) / 0.25)
+                alpha = 250
+
+            pix[x, y] = (c[0], c[1], c[2], alpha)
+
+    return _toroidal_blur(img, 0.35)
 
 def make_water_pool(width=128, height=128, seed=23):
-    """Pool water: interference ripples over a dark body.
+    """Pool water: organic caustic web network and interference ripples over a translucent body.
 
-    Seamless by construction (integer frequencies over the texture period), and
-    deliberately DARKER than the stone it sits on — water absorbs, and a bright
-    surface reads as a painted blue patch rather than as water. The ripples
-    carry the light instead.
+    Seamless by construction (integer frequencies over the texture period in both axes),
+    and carrying soft alpha so the underlying stone tiles and steps read through the water
+    with caustic light play.
     """
-    img = Image.new("RGB", (width, height))
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     pix = img.load()
     waves = [
         (1, 0, 0.6), (0, 2, 0.5), (2, 1, 0.35), (3, -1, 0.3),
         (1, 3, 0.25), (-2, 2, 0.2), (5, 2, 0.12), (2, -4, 0.1),
     ]
     phases = [i * 1.7 for i in range(len(waves))]
-    # The body is deep water; ripples brighten it toward the mid tone and only
-    # the interference crests reach the bright colour.
-    body = (34, 66, 92)
+    body = (28, 60, 88)
+
     for y in range(height):
-        v = y / height
+        v = y / float(height)
         for x in range(width):
-            u = x / width
+            u = x / float(width)
             s = 0.0
             for (kx, ky, amp), ph in zip(waves, phases):
-                s += amp * math.sin(2 * math.pi * (kx * u + ky * v) + ph)
-            t = 0.5 + 0.5 * math.tanh(s * 0.55)          # -1..1 -> 0..1, soft
+                s += amp * math.sin(TAU * (kx * u + ky * v) + ph)
+            t = 0.5 + 0.5 * math.tanh(s * 0.55)
             base = _lerp(body, MID, t * 0.8)
-            hf = math.sin(2 * math.pi * (7 * u - 5 * v)) * math.sin(2 * math.pi * (4 * u + 9 * v))
-            col = _lerp(base, BRIGHT, max(0.0, hf) * 0.45)
-            pix[x, y] = (col[0], col[1], col[2])
-    return img.filter(ImageFilter.GaussianBlur(0.6)).convert("RGBA")
+
+            # Integer-frequency high-frequency caustics: (3, 2) and (2, 4)
+            w1 = math.sin(u * TAU * 3.0 + math.cos(v * TAU * 2.0) * 1.5)
+            w2 = math.sin(v * TAU * 4.0 + math.sin(u * TAU * 2.0) * 1.2)
+            w3 = math.sin((u + v) * TAU * 2.0)
+            w4 = math.sin((u - v) * TAU * 3.0 + w1 * 0.8)
+            caustic = (w1 + w2 + w3 + w4) * 0.25
+            c_val = 1.0 - math.pow(abs(caustic), 0.45)
+
+            if c_val > 0.40:
+                c_t = (c_val - 0.40) / 0.60
+                col = _lerp(base, BRIGHT, c_t * 0.95)
+                alpha = int(160 + 95 * c_t)
+            else:
+                col = base
+                alpha = int(120 + 40 * (c_val / 0.40))
+
+            pix[x, y] = (col[0], col[1], col[2], alpha)
+
+    return _toroidal_blur(img, 0.5)
+
+
+def _toroidal_blur(img, radius):
+    """Gaussian blur wrapped around a torus so image boundaries remain 100% seamless."""
+    w, h = img.size
+    pad = int(math.ceil(radius * 3))
+    big = Image.new(img.mode, (w + pad * 2, h + pad * 2))
+    big.paste(img, (pad, pad))
+    big.paste(img.crop((0, h - pad, w, h)), (pad, 0))
+    big.paste(img.crop((0, 0, w, pad)), (pad, h + pad))
+    big.paste(img.crop((w - pad, 0, w, h)), (0, pad))
+    big.paste(img.crop((0, 0, pad, h)), (w + pad, pad))
+    big.paste(img.crop((w - pad, h - pad, w, h)), (0, 0))
+    big.paste(img.crop((0, h - pad, pad, h)), (w + pad, 0))
+    big.paste(img.crop((w - pad, 0, w, pad)), (0, h + pad))
+    big.paste(img.crop((0, 0, pad, pad)), (w + pad, h + pad))
+    blurred = big.filter(ImageFilter.GaussianBlur(radius))
+    return blurred.crop((pad, pad, pad + w, pad + h))
 
 
 def make_water_foam(width=128, height=64, seed=31):
-    """Churn: the bright, broken water where the fall hits the pool."""
-    rng = random.Random(seed)
-    img = Image.new("RGB", (width, height), MID)
-    draw = ImageDraw.Draw(img)
-    for _ in range(240):
-        x = rng.uniform(0, width)
-        y = rng.uniform(0, height)
-        w = rng.uniform(3.0, 12.0)
-        h = rng.uniform(2.0, 7.0)
-        col = _lerp(MID, FOAM, rng.uniform(0.35, 1.0))
-        _wrapped_blob(draw, x, y, w, h, col, width, height)
-    img = img.filter(ImageFilter.GaussianBlur(1.3))
+    """Churn: turbulent foaming billows spreading away from the waterfall impact point.
 
-    # Crack the foam with a few dark swirls so it does not read as one white
-    # smear once it is scrolling.
-    draw = ImageDraw.Draw(img)
-    for _ in range(60):
-        x = rng.uniform(0, width)
-        y = rng.uniform(0, height)
-        w = rng.uniform(4.0, 14.0)
-        h = rng.uniform(1.5, 4.0)
-        _wrapped_blob(draw, x, y, w, h, _lerp(DEEP, MID, rng.uniform(0.0, 0.5)), width, height)
-    return img.filter(ImageFilter.GaussianBlur(0.9)).convert("RGBA")
+    Rendered with transparent background and soft alpha falloff around churn boundaries,
+    so the foam overlays naturally on top of the pool without forming harsh rectangular seams.
+    Wrapped seamlessly in both X and Y.
+    """
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    pix = img.load()
 
+    for y in range(height):
+        ny = y / float(height)
+        for x in range(width):
+            nx = x / float(width)
+            # Integer periods (6, 4), (12, 8), (24, 16) wrap seamlessly in both axes
+            n1 = _wnoise(seed, nx * 6.0, ny * 4.0, 6, 4)
+            n2 = _wnoise(seed + 19, nx * 12.0, ny * 8.0, 12, 8)
+            n3 = _wnoise(seed + 47, nx * 24.0, ny * 16.0, 24, 16)
+            churn = n1 * 0.50 + n2 * 0.35 + n3 * 0.15
+
+            # Soft alpha foam billows:
+            # Low churn: transparent, revealing the pool ripples below
+            # Mid churn: translucent aquatic cyan billow
+            # High churn: glistening white foam heads
+            if churn < 0.35:
+                alpha = int(max(0, (churn - 0.20) / 0.15 * 50))
+                col = CYAN_BODY
+            elif churn < 0.60:
+                t = (churn - 0.35) / 0.25
+                col = _lerp(CYAN_BODY, MID, t)
+                alpha = int(50 + 130 * t)
+            elif churn < 0.80:
+                t = (churn - 0.60) / 0.20
+                col = _lerp(MID, BRIGHT, t)
+                alpha = int(180 + 55 * t)
+            else:
+                t = (churn - 0.80) / 0.20
+                col = _lerp(BRIGHT, FOAM, t)
+                alpha = int(235 + 20 * t)
+
+            pix[x, y] = (col[0], col[1], col[2], alpha)
+
+    return _toroidal_blur(img, 0.4)
+
+
+def _h01(seed, ix, iy):
+    s = (seed ^ (int(ix) * 374761393) ^ (int(iy) * 668265263)) & 0xffffffff
+    s = (s ^ (s >> 13)) * 1274126177 & 0xffffffff
+    return (s & 0xffff) / 65535.0
+
+
+def _wnoise(seed, x, y, period_x, period_y):
+    gx = int(math.floor(x))
+    gy = int(math.floor(y))
+    fx = x - float(gx)
+    fy = y - float(gy)
+    def at(ix, iy):
+        return _h01(seed, ix % period_x, iy % period_y)
+    a = at(gx, gy)
+    b = at(gx + 1, gy)
+    c = at(gx, gy + 1)
+    d = at(gx + 1, gy + 1)
+    u = fx * fx * (3.0 - 2.0 * fx)
+    v = fy * fy * (3.0 - 2.0 * fy)
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
 
 def make_water_spray(width=64, height=64, seed=41):
     """Alpha-cutout mist for the impact point (drawn as a billboard)."""
@@ -348,6 +287,17 @@ def make_water_spray(width=64, height=64, seed=41):
             pix[x, y] = (r, g, b, int(a * edge))
     return img
 
+def make_tiles_wet_4x4(base_path):
+    """Generates wet stone tiles from tiles_light_4x4 by applying aquatic slate tint and water sheen."""
+    if not os.path.exists(base_path):
+        return None
+    base = Image.open(base_path).convert("RGB")
+    arr = np.array(base, dtype=np.float32)
+    # Darkened aquatic slate tone (0.55, 0.62, 0.70)
+    tint = np.array([0.55, 0.62, 0.70], dtype=np.float32)
+    arr = np.clip(arr * tint, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr)
+
 
 def _clamp(v):
     return 0 if v < 0 else (255 if v > 255 else int(v))
@@ -362,6 +312,7 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
+    light_tiles_path = os.path.join(args.out, "tiles_light_4x4.png")
     textures = {
         "waterfall_sheet.png": make_waterfall_sheet(),
         "waterfall_core.png": make_waterfall_core(),
@@ -369,6 +320,9 @@ def main():
         "water_foam.png": make_water_foam(),
         "water_spray.png": make_water_spray(),
     }
+    wet_tiles = make_tiles_wet_4x4(light_tiles_path)
+    if wet_tiles is not None:
+        textures["tiles_wet_4x4.png"] = wet_tiles
     for name, img in textures.items():
         path = os.path.join(args.out, name)
         img.convert("RGBA").save(path)

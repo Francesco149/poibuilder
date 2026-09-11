@@ -85,6 +85,7 @@ var _spin_scroll_v: Range
 var _btn_scroll_apply: Button
 var _btn_scroll_clear: Button
 var _lbl_scroll_speed: Label
+var _chk_animate_in_editor: CheckBox
 
 # Paint Tool Controls
 var _active_paint_label: Label
@@ -457,6 +458,13 @@ func _build_ui() -> void:
 	_btn_scroll_clear.pressed.connect(_on_scroll_clear_pressed)
 	scroll_row.add_child(_btn_scroll_clear)
 	_uv_and_tint_section.add_child(scroll_row)
+
+	_chk_animate_in_editor = CheckBox.new()
+	_chk_animate_in_editor.text = "Animate in Viewport"
+	_chk_animate_in_editor.tooltip_text = "When enabled, scrolling textures animate live in the 3D editor viewport while editing."
+	_chk_animate_in_editor.button_pressed = plugin.animate_scrolling_textures if plugin != null else true
+	_chk_animate_in_editor.toggled.connect(_on_animate_in_editor_toggled)
+	_uv_and_tint_section.add_child(_chk_animate_in_editor)
 
 	# =========================================================================
 	# Section B: Texture Paint Tool Controls (Visible in PAINT mode)
@@ -1236,6 +1244,8 @@ func sync_selection() -> void:
 			_color_picker.color = Color.WHITE
 	else:
 		_update_scroll_speed_label(Vector2.ZERO, null)
+	if _chk_animate_in_editor != null and plugin != null:
+		_chk_animate_in_editor.set_pressed_no_signal(plugin.animate_scrolling_textures)
 
 	_syncing = false
 
@@ -1372,6 +1382,10 @@ func _on_scroll_apply_pressed() -> void:
 
 func _on_scroll_clear_pressed() -> void:
 	_apply_scroll_to_selection(Vector2.ZERO, "Clear Scrolling Texture")
+func _on_animate_in_editor_toggled(pressed: bool) -> void:
+	if plugin != null:
+		plugin.set_animate_scrolling_textures(pressed)
+
 
 func _apply_scroll_to_selection(speed: Vector2, action_name: String) -> void:
 	var mesh: PBMesh = editor.active_mesh if editor != null else null
@@ -1398,6 +1412,8 @@ func _apply_scroll_to_selection(speed: Vector2, action_name: String) -> void:
 		return
 	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 
+	if plugin != null:
+		plugin.scan_scrolling_materials()
 	_commit_mesh_action(mesh, action_name, before, after)
 	sync_selection()
 	if plugin != null and plugin.get("logger") != null:

@@ -56,6 +56,18 @@ var _last_press_msec: int = -10000
 ## to CONTAINER_SPATIAL_EDITOR_MENU, walked for the placement below, then
 ## removed again.
 var _toolbar_anchor: Control = null
+## Live animated scrolling textures in editor viewport.
+var animate_scrolling_textures: bool = true:
+	set(val):
+		animate_scrolling_textures = val
+		if not val:
+			_reset_scrolling_texture_offsets()
+		else:
+			scan_scrolling_materials()
+var _scroll_time: float = 0.0
+var _animated_materials: Dictionary = {} # Material -> { "speed": Vector2, "base_offset": Vector3 }
+var _last_scroll_scan_msec: int = -10000
+
 
 # ==============================================================================
 # Plugin Lifecycle
@@ -64,7 +76,7 @@ var _toolbar_anchor: Control = null
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.71"
+const VERSION := "0.9.72"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -74,6 +86,10 @@ func _enter_tree():
 	# editing context (the engine otherwise only forwards viewport input to
 	# plugins whose _handles() matches the currently edited object).
 	set_input_event_forwarding_always_enabled()
+	var ep_settings: EditorSettings = get_editor_interface().get_editor_settings() if get_editor_interface() != null else null
+	if ep_settings != null and ep_settings.has_setting("poibuilder/editor/animate_scrolling_textures"):
+		animate_scrolling_textures = ep_settings.get_setting("poibuilder/editor/animate_scrolling_textures")
+
 
 	# Wire up subsystems
 	editor.logger = logger
@@ -307,6 +323,7 @@ func _exit_tree():
 	remove_custom_type("PBMesh")
 	if grid_view != null:
 		grid_view.detach_scenario()
+	_reset_scrolling_texture_offsets()
 
 # ==============================================================================
 # 3D Editor UI Placement
@@ -852,7 +869,35 @@ func _update_editing_context() -> void:
 ## staleness — gizmo redraws are the native re-render trigger.
 var _grid_drawn_last := false
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	# Live animated scrolling textures in 3D editor viewport
+	if animate_scrolling_textures:
+		_scroll_time += delta
+		var now_msec := Time.get_ticks_msec()
+		if now_msec - _last_scroll_scan_msec > 1500:
+			_last_scroll_scan_msec = now_msec
+			scan_scrolling_materials()
+
+		if not _animated_materials.is_empty():
+			var to_erase: Array = []
+			for mat in _animated_materials.keys():
+				if not is_instance_valid(mat):
+					to_erase.append(mat)
+					continue
+				var entry: Dictionary = _animated_materials[mat]
+				var speed: Vector2 = entry["speed"]
+				if speed == Vector2.ZERO or not PBUv.has_scroll(mat):
+					(mat as StandardMaterial3D).uv1_offset = entry["base_offset"]
+					to_erase.append(mat)
+					continue
+				var base_off: Vector3 = entry["base_offset"]
+				var cur_u := fposmod(base_off.x + speed.x * _scroll_time, 1000.0)
+				var cur_v := fposmod(base_off.y + speed.y * _scroll_time, 1000.0)
+				(mat as StandardMaterial3D).uv1_offset = Vector3(cur_u, cur_v, base_off.z)
+
+			for m in to_erase:
+				_animated_materials.erase(m)
+
 	if grid_view == null:
 		return
 	var wants := show_grid_should_draw() and grid.show_grid
@@ -870,7 +915,6 @@ func _process(_delta: float) -> void:
 	grid_view.set_visible(wants)
 	if tool_bridge != null and tool_bridge.is_ready():
 		tool_bridge.set_engine_grid_hidden(wants, cam)
-
 ## The grid renders while any PoiBuilder context is active (a PBMesh is
 ## selected — object mode included — or shape creation is armed, or drawing
 ## on an elevated/custom grid, or grid settings panel is open).
@@ -923,6 +967,56 @@ func _on_grid_ui_setting(key: StringName, value: float) -> void:
 		&"elev_down":
 			grid.lower()
 
+func set_animate_scrolling_textures(enabled: bool) -> void:
+	animate_scrolling_textures = enabled
+	var ep_settings: EditorSettings = get_editor_interface().get_editor_settings() if get_editor_interface() != null else null
+	if ep_settings != null:
+		ep_settings.set_setting("poibuilder/editor/animate_scrolling_textures", enabled)
+
+func scan_scrolling_materials() -> void:
+	var scene_root: Node = null
+	if get_editor_interface() != null:
+		scene_root = get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		return
+	_scan_node_scrolling_materials(scene_root)
+
+func _scan_node_scrolling_materials(node: Node) -> void:
+	if node is PBMesh:
+		var pb: PBMesh = node
+		if pb.pb_mesh_data != null:
+			for mat in pb.pb_mesh_data.materials:
+				if mat is StandardMaterial3D and PBUv.has_scroll(mat):
+					_register_scrolling_mat(mat)
+	elif node is MeshInstance3D:
+		var mi: MeshInstance3D = node
+		if mi.material_override is StandardMaterial3D and PBUv.has_scroll(mi.material_override):
+			_register_scrolling_mat(mi.material_override)
+		if mi.mesh != null:
+			for s in range(mi.mesh.get_surface_count()):
+				var mat := mi.get_surface_override_material(s)
+				if mat == null:
+					mat = mi.mesh.surface_get_material(s)
+				if mat is StandardMaterial3D and PBUv.has_scroll(mat):
+					_register_scrolling_mat(mat)
+	for child in node.get_children():
+		_scan_node_scrolling_materials(child)
+
+func _register_scrolling_mat(mat: StandardMaterial3D) -> void:
+	if not _animated_materials.has(mat):
+		_animated_materials[mat] = {
+			"speed": PBUv.get_scroll_speed(mat),
+			"base_offset": mat.uv1_offset
+		}
+	else:
+		_animated_materials[mat]["speed"] = PBUv.get_scroll_speed(mat)
+
+func _reset_scrolling_texture_offsets() -> void:
+	for mat in _animated_materials.keys():
+		if is_instance_valid(mat):
+			var entry: Dictionary = _animated_materials[mat]
+			(mat as StandardMaterial3D).uv1_offset = entry["base_offset"]
+	_animated_materials.clear()
 ## The panel's Reset button: back to the stock defaults.
 func _on_grid_reset() -> void:
 	grid.enabled = true

@@ -37929,11 +37929,41 @@ The CSG boolean subsystem in ProBuilder has several documented limitations, prec
 **Open Questions:**
 - CSG.epsilon is exposed as a public static property with default 0.00001f, but BooleanEditor provides no user-configurable UI control or preference setting to adjust this threshold when CSG operations fail on very small or large geometric scales.
 - BooleanEditor does not provide an option to automatically delete or hide the source GameObjects upon generating the new boolean mesh, leaving duplicate overlapping geometry in the scene.
+---
+# PoiBuilder Extensions
+
+## N01: Animated UV Scrolling & Retro Map Export
+
+### SPECIFICATION AND GUARANTEES
+
+PoiBuilder specifies a minimal, universal standard for animated scrolling textures designed for maximum interoperability across both modern engines and fixed-function retro hardware (e.g. Sony PlayStation Portable).
+
+1. Mathematical Model (Universal Common Denominator):
+- Animated UV coordinates translate linearly over time along the local surface coordinate axes:
+$$uv(t) = uv_0 + t \cdot (v_u, v_v)$$
+where $t$ is elapsed scene time in seconds, and $(v_u, v_v)$ are velocities measured in **texture repeats per second**.
+- A value of $(0.0, 0.0)$ denotes static geometry.
+- Minimalist Guarantee: The specification explicitly restricts animated UV guarantees to simple 2D linear offset translation. It intentionally omits non-linear animation curves, rotational texture matrices, procedural warp grids, and complex shader node graphs. This guarantees that any target platform possessing basic texture coordinate offset registers (such as Sony PSP GU's `sceGuTexOffset`) or single-uniform vertex offsets (`BaseMaterial3D.uv1_offset`) can execute the animation with zero CPU vertex processing, zero dynamic memory allocations, and zero memory bus bandwidth consumption.
+
+2. Material and File Format Representation:
+- Material Metadata: In GDScript/Godot, the animation velocity is stored in the material metadata key `poi_uv_scroll` as a `Vector2` (or serialized as array `[u, v]`).
+- glTF / GLB Representation: Mirrored in `material.extras.poi_uv_scroll` as `[float, float]` for standard engine interchange.
+- Binary Retro Map Format (PBM v3.0): Encoded directly in `PbmMeshHeader` at offset `0x40` as two 32-bit little-endian floats: `float uv_scroll_u` and `float uv_scroll_v` (expanding mesh header from 64 to 72 bytes).
+
+3. Rasterization and Texture Constraints:
+- Standalone Texture Requirement: Any surface with non-zero scroll velocity must reference a standalone, power-of-two texture. Atlasing into composite tilemaps is strictly prohibited for scrolling surfaces because offset coordinate shifts would sample across atlas sub-tile boundaries into unrelated tiles.
+- Repeat Wrapping: The texture must be configured for repeat wrapping (`GL_REPEAT` / `GU_REPEAT`).
+- Translucency: Surfaces requiring soft transparency (flowing water streams, smoke, glass) use `alpha_mode = PBM_ALPHA_BLEND` (RGBA8888 with mipmapping). Cutouts use `PBM_ALPHA_CUTOUT`.
+
+4. Authoring and In-Editor Preview Workflow:
+- Surface-Parallel Plane Creation: Authored primarily via `New Shape -> Plane` (`PBShapeGenerators.create_plane`), dragging a base rectangle coplanar to any surface, followed by a mouse offset along the surface normal (clamped $\ge 0$) to set standoff distance and prevent z-fighting.
+- Material & UV Dock: Controlled via "Scrolling Texture (UV Animation)" with `Speed U` and `Speed V` spinners, "Apply Scroll", and "Clear".
+- Live Viewport Preview: An in-editor toggle ("Animate in Viewport") drives live 60 FPS texture offset animation directly in the editor's 3D viewport during map authoring.
 
 ---
 # Summary
 
-- Total sections: 201
+- Total sections: 202
 - Total source citations: 711
 - Open questions: 11
 

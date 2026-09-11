@@ -322,62 +322,90 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		atlases[atlas_idx].blit_rect(t_img, Rect2i(0, 0, 128, 128), Vector2i(col * 128, row * 128))
 		tile_to_atlas_map[uid] = { "atlas_idx": atlas_idx, "col": col, "row": row }
 	# Collect baseColorFactor from materials for any tinted base textures
-	var img_base_colors: Dictionary = {}
-	for mat in materials_gltf:
+	var img_tints: Dictionary = {} # img_idx -> Array of Vector3 (r, g, b)
+	var mat_tint: Dictionary = {}  # mat_idx -> Vector3
+	for mat_idx in range(materials_gltf.size()):
+		var mat: Dictionary = materials_gltf[mat_idx]
 		var pbr: Dictionary = mat.get("pbrMetallicRoughness", {})
 		var col: Array = pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])
+		var r := snappedf(float(col[0]), 0.001)
+		var g := snappedf(float(col[1]), 0.001)
+		var b := snappedf(float(col[2]), 0.001)
+		var tint := Vector3(r, g, b) if (r < 0.999 or g < 0.999 or b < 0.999) else Vector3.ONE
+		mat_tint[mat_idx] = tint
 		var base_tex: Dictionary = pbr.get("baseColorTexture", {})
 		var t_idx: int = base_tex.get("index", -1)
 		if t_idx >= 0 and t_idx < textures_gltf.size():
 			var s_idx: int = textures_gltf[t_idx].get("source", -1)
-			if s_idx >= 0 and (col[0] < 0.999 or col[1] < 0.999 or col[2] < 0.999):
-				img_base_colors[s_idx] = Color(col[0], col[1], col[2], col[3])
+			if s_idx >= 0:
+				if not img_tints.has(s_idx):
+					img_tints[s_idx] = []
+				var list: Array = img_tints[s_idx]
+				var found := false
+				for existing in list:
+					if (existing as Vector3).distance_to(tint) < 0.002:
+						found = true
+						break
+				if not found:
+					list.append(tint)
 
 	# 4. Assemble Textures Table
 	var textures: Array[Dictionary] = []
-	var img_to_tex_mapping: Dictionary = {} # raw_img_idx -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
+	var img_to_tex_mapping: Dictionary = {} # "img_idx|r|g|b" -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
 	# 4a. Base Textures
 	for base in base_images:
-		var img: Image = base["image"]
-		var w := img.get_width()
-		var h := img.get_height()
+		var orig_img: Image = base["image"]
+		var w := orig_img.get_width()
+		var h := orig_img.get_height()
 		var pot_w := next_pot(w)
 		var pot_h := next_pot(h)
 		if pot_w != w or pot_h != h:
-			img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
+			orig_img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
 			w = pot_w
 			h = pot_h
 
-		if img_base_colors.has(base["index"]):
-			var bcol: Color = img_base_colors[base["index"]]
-			for py in range(h):
-				for px in range(w):
-					var p_col: Color = img.get_pixel(px, py)
-					img.set_pixel(px, py, Color(p_col.r * bcol.r, p_col.g * bcol.g, p_col.b * bcol.b, p_col.a))
+		var b_idx: int = base["index"]
+		var tints: Array = img_tints.get(b_idx, [Vector3.ONE])
+		if tints.is_empty():
+			tints = [Vector3.ONE]
 
-		# The image's alpha mode is the strongest any material using it needs.
-		var mode := PBM_ALPHA_NONE
-		for mat_idx in material_alpha:
-			var bct: Dictionary = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
-			var t_idx: int = bct.get("index", -1)
-			if t_idx >= 0 and t_idx < textures_gltf.size() and int(textures_gltf[t_idx].get("source", -1)) == int(base["index"]):
-				mode = maxi(mode, int(material_alpha[mat_idx]))
-		# Soft alpha needs the 8 bits per channel that 5551 cannot carry.
-		var converted := convert_image_to_bytes(img, format_16bit and mode != PBM_ALPHA_BLEND)
-		if mode == PBM_ALPHA_NONE and int(converted["has_alpha"]) != 0:
-			# Opaque material, transparent art: the pixels still need the alpha
-			# pass, as a cutout.
-			mode = PBM_ALPHA_CUTOUT
-		var tex_id := textures.size()
-		textures.append({
-			"name": base["name"].substr(0, 31),
-			"width": w, "height": h,
-			"format": converted["format"],
-			"alpha_mode": mode,
-			"data": converted["data"]
-		})
-		img_to_tex_mapping[base["index"]] = { "tex_id": tex_id, "is_atlas": false, "col": 0, "row": 0 }
+		for tint_vec in tints:
+			var tint: Vector3 = tint_vec
+			var img: Image = orig_img.duplicate()
+			var tex_name: String = base["name"]
+			if tint.distance_to(Vector3.ONE) > 0.002:
+				tex_name += "_tint"
+				for py in range(h):
+					for px in range(w):
+						var p_col: Color = img.get_pixel(px, py)
+						img.set_pixel(px, py, Color(p_col.r * tint.x, p_col.g * tint.y, p_col.b * tint.z, p_col.a))
 
+			# The image's alpha mode is the strongest any material using it needs.
+			var mode := PBM_ALPHA_NONE
+			for mat_idx in material_alpha:
+				var m_tint: Vector3 = mat_tint.get(mat_idx, Vector3.ONE)
+				if m_tint.distance_to(tint) < 0.002:
+					var bct: Dictionary = materials_gltf[mat_idx].get("pbrMetallicRoughness", {}).get("baseColorTexture", {})
+					var t_idx: int = bct.get("index", -1)
+					if t_idx >= 0 and t_idx < textures_gltf.size() and int(textures_gltf[t_idx].get("source", -1)) == b_idx:
+						mode = maxi(mode, int(material_alpha[mat_idx]))
+
+			var converted := convert_image_to_bytes(img, format_16bit and mode != PBM_ALPHA_BLEND)
+			if mode == PBM_ALPHA_NONE and int(converted["has_alpha"]) != 0:
+				mode = PBM_ALPHA_CUTOUT
+			var tex_id := textures.size()
+			textures.append({
+				"name": tex_name.substr(0, 31),
+				"width": w, "height": h,
+				"format": converted["format"],
+				"alpha_mode": mode,
+				"data": converted["data"]
+			})
+			var key := "%d|%.3f|%.3f|%.3f" % [b_idx, tint.x, tint.y, tint.z]
+			img_to_tex_mapping[key] = { "tex_id": tex_id, "is_atlas": false, "col": 0, "row": 0 }
+			var fallback_key := "%d|fallback" % b_idx
+			if not img_to_tex_mapping.has(fallback_key) or tint.distance_to(Vector3.ONE) < 0.002:
+				img_to_tex_mapping[fallback_key] = img_to_tex_mapping[key]
 	var atlas_start_tex_id := textures.size()
 	for a_idx in range(atlases.size()):
 		var converted := convert_image_to_bytes(atlases[a_idx], format_16bit)
@@ -393,13 +421,15 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	for tile in tile_images:
 		var uid: int = img_to_unique_tile[tile["index"]]
 		var mapping: Dictionary = tile_to_atlas_map[uid]
-		img_to_tex_mapping[tile["index"]] = {
+		var info := {
 			"tex_id": atlas_start_tex_id + mapping["atlas_idx"],
 			"is_atlas": true,
 			"col": mapping["col"],
 			"row": mapping["row"]
 		}
-
+		var t_idx: int = tile["index"]
+		img_to_tex_mapping["%d|1.000|1.000|1.000" % t_idx] = info
+		img_to_tex_mapping["%d|fallback" % t_idx] = info
 	# 5. Map Materials to Texture Slots
 	var materials: Array = materials_gltf
 	var mat_to_tex_mapping: Dictionary = {}
@@ -411,9 +441,12 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		var tex_idx: int = base_tex.get("index", -1)
 		if tex_idx >= 0 and tex_idx < textures_gltf.size():
 			var src_img_idx: int = textures_gltf[tex_idx].get("source", -1)
-			if img_to_tex_mapping.has(src_img_idx):
-				mat_to_tex_mapping[mat_idx] = img_to_tex_mapping[src_img_idx]
-
+			var tint: Vector3 = mat_tint.get(mat_idx, Vector3.ONE)
+			var key := "%d|%.3f|%.3f|%.3f" % [src_img_idx, tint.x, tint.y, tint.z]
+			if img_to_tex_mapping.has(key):
+				mat_to_tex_mapping[mat_idx] = img_to_tex_mapping[key]
+			elif img_to_tex_mapping.has("%d|fallback" % src_img_idx):
+				mat_to_tex_mapping[mat_idx] = img_to_tex_mapping["%d|fallback" % src_img_idx]
 	# 6. Parse Nodes, Meshes, and Vertices
 	var nodes: Array = gltf.get("nodes", [])
 	var meshes_gltf: Array = gltf.get("meshes", [])
