@@ -103,6 +103,17 @@ the defaults in `psp_prof.c`: `frames`, `warmup`, `sweep`.
    simply failed to load (`0x800200D9`).
 6. **Verify the staged binary is current** before blaming a build:
    `strings hwrun/poiretro_psp_app.prx | grep "<new string>"`.
+   This round's version of that mistake: a capture script kept reloading an app
+   PRX staged BEFORE the change under test, so the two "A/B" frames it produced
+   were the same build. The `strings` check is one command.
+7. **One load per capture; never retry a load in a loop.** A script that does
+   `reset → ld → scrshot` and then retries on a black frame can leave the
+   display controller in a state where the module loads, reports success and
+   loops normally (the `poi_app.log` breadcrumbs prove it ran) while `scrshot`
+   never sees our framebuffer — a black screen that one `reset` clears. Loop
+   reloading makes that state likelier rather than less. Check
+   `frame_addr`(`0x4044000`)/`pixel_format`(`1`) before trusting a capture, and
+   use `reset` once when they are wrong.
 
 ## Unplugging / replugging is fine (and expected)
 
@@ -420,25 +431,28 @@ UV derivatives, and a floor crosses several levels across a few metres, so
 neighbouring baked tiles differ by one step and the step is a visible band once
 the level is coarse.
 
-The renderer now applies a **per-mesh LOD policy**: meshes matching
-`detail_mesh=` (default `TileAtlas`, the baked splat/stamp tiles) get
-`detail_bias` (default -1: one level sharper than the rest of the scene) — or,
-when `detail_const` is set, ONE constant level for the whole mesh, which is the
-only setting that removes the step between neighbouring primitives entirely.
+The renderer applies a **per-mesh LOD policy**: meshes matching `detail_mesh=`
+(default `TileAtlas`, the baked splat/stamp tiles) sample **one constant mip
+level** (`detail_const`, default 1) instead of the per-primitive choice — which
+is the only setting that removes the step between neighbouring primitives
+entirely. That default came out of signing the work off on the device: pinning
+the painted floor to level 1 took the grazing view from a smeared, seamed floor
+to a crisp one for about half a millisecond.
 
-| row (grazing floor view) | gpu ms | frame ms |
-|---|---|---|
-| `fg_base` (shipped: atlas tiles one level sharper) | 0.12 | 2.49 |
-| `fg_detailoff` (no policy) | 0.12 | 2.48 |
-| `fg_detail_const1` (atlas tiles pinned to level 1) | 0.50 | 3.15 |
-| `fg_nomips` (no chains at all, for scale) | 26.23 | 29.25 |
+| row (grazing floor view) | gpu ms | frame ms | |
+|---|---|---|---|
+| `fg_base` — **shipped** (atlas pinned to level 1) | 0.57 | 3.07 | crisp, no steps |
+| `fg_const0` (atlas at level 0, sharpest possible) | 1.68 | 4.71 | 3x the cost for little more |
+| `fg_const2` (one level coarser) | 0.12 | 2.57 | |
+| `fg_perprim` (the old per-primitive behaviour) | 0.11 | 2.37 | the seamed look |
+| `fg_perprim_sharp` (`detail_bias=-2` instead of const) | 0.12 | 2.48 | |
+| `fg_nomips` (no chains at all, for scale) | 26.24 | 29.14 | |
 
-All of it is well inside budget — the detail meshes cover a small part of the
-screen, so sharpness there is nearly free. The capture pair shows it: the
-shipped policy reads sharper than the un-special-cased one (confirmed by eye on
-the device), and `detail_const=1` removes the steps with no visible aliasing at
-that view. Widen the policy with `detail_mesh=TilesMaterial` (or any substring
-of a mesh or texture name) if the base tiling floor wants the same treatment.
+Every view with the shipped default stays inside budget with room to spare:
+spawn 0.55 ms gpu, arch/stairs/stairs_low/corner/balcony 0.11-0.12, the grazing
+floor 0.57, the waterfall foot 2.71 (4.99 ms frame, 200 fps). `detail_const=-1`
+restores the per-primitive behaviour (then `detail_bias` applies), and
+`detail_mesh=TilesMaterial` widens the policy to the base tiling floor.
 
 All four knobs are live in `poi_render.txt` — no rebuild: `cutout_mips=`,
 `detail_mesh=`, `detail_bias=`, `detail_const=`.

@@ -26,10 +26,9 @@ typedef struct {
     float tex_lod_bias;    /* negative = sharper (picks a smaller mip level) */
     int   tex_level_mode;  /* PBLEVEL_*: how the mip level is chosen */
     /* Per-mesh LOD policy for the meshes that carry painted detail (the baked
-     * splat/stamp tiles): they are the surfaces where a level step between
-     * neighbouring primitives reads as a seam, so they can be pinned sharper
-     * (`detail_bias`, added to tex_lod_bias) or to one level (`detail_const`,
-     * >= 0 = that level). Which meshes match is psp_render_detail_match(). */
+     * splat/stamp tiles): `detail_const` >= 0 pins them to that ONE mip level
+     * (the default), `detail_const` < 0 falls back to `detail_bias` added to
+     * tex_lod_bias. Which meshes match is psp_render_detail_match(). */
     float detail_bias;
     int   detail_const;
     int   force_small_tex; /* bind a cache-resident 64x64 texture to every mesh */
