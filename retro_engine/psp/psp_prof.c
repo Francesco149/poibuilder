@@ -36,7 +36,7 @@
 #define SCR_W 480
 #define SCR_H 272
 
-#define MAX_TESTS 64
+#define MAX_TESTS 128
 #define MAX_CAMS  24
 
 enum {
@@ -65,6 +65,8 @@ typedef struct {
     int   depth;
     int   blend;
     int   hud;         /* draw the in-game HUD block (scene tests) */
+    const char* skip;  /* drop meshes whose name contains this (one surface at
+                        * a time: what a view costs is usually one mesh) */
 } ProfTest;
 
 typedef struct {
@@ -143,6 +145,11 @@ static const CamPreset k_cams[] = {
     { "corner",      5.0f,  1.60f,  5.0f, -2.35f,        0.0f  },
     { "floor_graz",  0.0f,  0.25f,  3.0f,  0.0f,        -0.05f },
     { "sky_up",      0.0f,  1.60f,  0.0f,  0.0f,         1.2f  },
+    /* The foot of the waterfall, looking at the wall: the interactive app's
+     * own worst frame (~25 ms gpu against ~7 ms everywhere else) and the one
+     * view whose camera is not otherwise in this table. */
+    { "waterfall",   4.6f,  1.30f, -2.3f,  0.0f,         0.0f  },
+    { "waterfall_lo",4.6f,  0.60f, -2.3f,  0.0f,         0.15f },
 };
 #define NUM_CAMS ((int)(sizeof(k_cams) / sizeof(k_cams[0])))
 
@@ -580,6 +587,128 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     add_scene_test(t, &n, "abi2_alpha_off", "below_up", pc, &base);
     t[n - 1].cfg.alpha_pass = 0;
 
+    /* --- the waterfall foot: the one view that is expensive --------------
+     * Standing at the foot of the waterfall the app's own HUD reads ~25 ms
+     * gpu against ~7 ms almost everywhere else, while the scene it draws is
+     * the SAME 1526 triangles and 25 draw calls as the spawn view. So the
+     * cost is view-dependent: only what fills the screen changes. These rows
+     * walk the candidates one GE state at a time, on that exact camera.
+     *
+     * Read them as a set, not one by one: a row that removes a surface also
+     * reveals whatever was behind it, so `wf_skip_*` localizes and the state
+     * rows (wf_tex64 / wf_filt_* / wf_nomip / wf_vertcol) attribute. */
+    add_scene_test(t, &n, "wf_base", "waterfall", pc, &base);
+    add_scene_test(t, &n, "wf_base_lo", "waterfall_lo", pc, &base);
+    add_scene_test(t, &n, "wf_noemit", "waterfall", pc, &base);
+    t[n - 1].cfg.particles = 0;
+    add_scene_test(t, &n, "wf_blend_only", "waterfall", pc, &base);
+    t[n - 1].cfg.particles = 1;
+    add_scene_test(t, &n, "wf_add_only", "waterfall", pc, &base);
+    t[n - 1].cfg.particles = 2;
+    add_scene_test(t, &n, "wf_noscroll", "waterfall", pc, &base);
+    t[n - 1].cfg.uv_scroll = 0;
+    /* Texture sampling: `wf_notex` removes the texture unit, `wf_tex64`
+     * substitutes a cache-resident texture at identical coverage (the only
+     * form of "textures off" that says anything about the CACHE). */
+    add_scene_test(t, &n, "wf_notex", "waterfall", pc, &base);
+    t[n - 1].cfg.use_textures = 0;
+    add_scene_test(t, &n, "wf_vertcol", "waterfall", pc, &base);
+    t[n - 1].cfg.display_mode = 1;
+    add_scene_test(t, &n, "wf_wire", "waterfall", pc, &base);
+    t[n - 1].cfg.display_mode = 2;
+    add_scene_test(t, &n, "wf_tex64", "waterfall", pc, &base);
+    t[n - 1].cfg.force_small_tex = 1;
+    add_scene_test(t, &n, "wf_nomip", "waterfall", pc, &base);
+    t[n - 1].cfg.use_mips = 0;
+    add_scene_test(t, &n, "wf_filt_nearest", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_NEAREST; t[n - 1].cfg.tex_lod_bias = -1.0f;
+    add_scene_test(t, &n, "wf_filt_miplin", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = -1.0f;
+    /* The exact configuration this round replaced: trilinear + a -1.0 level
+     * bias. Kept as a row so the regression guard is one comparison
+     * (`wf_base` vs `wf_old_default`, expected ~2.8 ms vs ~25 ms) rather than
+     * a paragraph of history. */
+    add_scene_test(t, &n, "wf_old_default", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_LINEAR; t[n - 1].cfg.tex_lod_bias = -1.0f;
+    add_scene_test(t, &n, "wf_filt_miplin_b0", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN;
+    t[n - 1].cfg.tex_lod_bias = 0.0f;
+    add_scene_test(t, &n, "wf_level_const1", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_level_mode = PBLEVEL_CONST;
+    t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "wf_noclip", "waterfall", pc, &base);
+    t[n - 1].cfg.clip_planes = 0;
+    add_scene_test(t, &n, "wf_noalpha", "waterfall", pc, &base);
+    t[n - 1].cfg.alpha_pass = 0;
+    add_scene_test(t, &n, "wf_nodepth", "waterfall", pc, &base);
+    t[n - 1].cfg.depth_test = 0;
+    add_scene_test(t, &n, "wf_nocull", "waterfall", pc, &base);
+    t[n - 1].cfg.cull = 0;
+    /* One surface at a time (substring match on the mesh name). */
+    add_scene_test(t, &n, "wf_skip_sheet", "waterfall", pc, &base);
+    t[n - 1].skip = "waterfall_sheet";
+    add_scene_test(t, &n, "wf_skip_core", "waterfall", pc, &base);
+    t[n - 1].skip = "waterfall_core";
+    add_scene_test(t, &n, "wf_skip_spray", "waterfall", pc, &base);
+    t[n - 1].skip = "water_spray";
+    add_scene_test(t, &n, "wf_skip_pool", "waterfall", pc, &base);
+    t[n - 1].skip = "Waterfall_Pool";
+    add_scene_test(t, &n, "wf_skip_foam", "waterfall", pc, &base);
+    t[n - 1].skip = "water_foam";
+    add_scene_test(t, &n, "wf_skip_allwater", "waterfall", pc, &base);
+    t[n - 1].skip = "water";
+    add_scene_test(t, &n, "wf_skip_wetwall", "waterfall", pc, &base);
+    t[n - 1].skip = "tiles_wet";
+    add_scene_test(t, &n, "wf_skip_tiles", "waterfall", pc, &base);
+    t[n - 1].skip = "TilesMaterial";
+    add_scene_test(t, &n, "wf_skip_floor", "waterfall", pc, &base);
+    t[n - 1].skip = "FloorSplatMat";
+    add_scene_test(t, &n, "wf_skip_atlas", "waterfall", pc, &base);
+    t[n - 1].skip = "TileAtlas";
+
+    /* What the LOD policy is worth. The shipped bias is -1.0 ("trades a little
+     * softness back for detail"), which at the waterfall foot samples a level
+     * whose footprint is far past the GE's ~8 KB texture cache; the whole scene
+     * is then a cache miss per fragment. These rows walk the level control from
+     * sharper than correct to a constant level, so the fix can be chosen from
+     * measured cost instead of from taste. */
+    add_scene_test(t, &n, "wf_bias_p05", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 0.5f;
+    add_scene_test(t, &n, "wf_bias_p1", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "wf_bias_p2", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 2.0f;
+    add_scene_test(t, &n, "wf_bias_p3", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 3.0f;
+    add_scene_test(t, &n, "wf_near_p1", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_NEAREST; t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "wf_tri_p1", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_LINEAR; t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "wf_const0", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN;
+    t[n - 1].cfg.tex_level_mode = PBLEVEL_CONST; t[n - 1].cfg.tex_lod_bias = 0.0f;
+    add_scene_test(t, &n, "wf_const2", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN;
+    t[n - 1].cfg.tex_level_mode = PBLEVEL_CONST; t[n - 1].cfg.tex_lod_bias = 2.0f;
+    add_scene_test(t, &n, "wf_const3", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN;
+    t[n - 1].cfg.tex_level_mode = PBLEVEL_CONST; t[n - 1].cfg.tex_lod_bias = 3.0f;
+    add_scene_test(t, &n, "wf_const4", "waterfall", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN;
+    t[n - 1].cfg.tex_level_mode = PBLEVEL_CONST; t[n - 1].cfg.tex_lod_bias = 4.0f;
+    /* The other expensive views must not regress: the stairs at 11 ms and the
+     * spawn view every player opens on. */
+    add_scene_test(t, &n, "st_bias_p1", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "st_bias_p2", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 2.0f;
+    add_scene_test(t, &n, "st_tri_b0", "stairs", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 0.0f;
+    add_scene_test(t, &n, "sp_bias_p1", "spawn", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 1.0f;
+    add_scene_test(t, &n, "sp_tri_b0", "spawn", pc, &base);
+    t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 0.0f;
+
     /* --- synthetic probes ------------------------------------------- */
     ProfTest* x;
     x = new_test(t, &n, "clear_only", TK_CLEAR, pc, &base);
@@ -690,6 +819,7 @@ void psp_prof_suite(PbmMap* map) {
          * test, the log says which one. A run that produces no file at all then
          * means the crash is before the suite, which is a different bug. */
         if (f) { fprintf(f, "run %d/%d: %s\n", i + 1, n, tests[i].name); fflush(f); }
+        psp_render_skip_mesh(tests[i].skip ? tests[i].skip : "");
         run_test(map, &tests[i], &pc, &s_results[s_result_count]);
         report_row(f, &s_results[s_result_count]);
         if (f) fflush(f);

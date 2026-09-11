@@ -83,12 +83,41 @@ void render_cfg_default(RenderCfg* c) {
     c->uv_scroll = 1;
     c->particles = 3;
 
-    c->tex_filter = PBFILT_LINEAR;   /* trilinear: blends adjacent mip levels, which is what removes the level discontinuity between neighbouring tiles at grazing angles */
-    /* Mips make distant surfaces cheap but soft, and the hardware picks a level
-     * from the geometric mean of the UV derivatives, which over-blurs the
-     * compressed axis of a grazing surface. A small negative bias trades a
-     * little of that softness back for detail. */
-    c->tex_lod_bias = -1.0f;
+    /* Filtering and LOD policy: MEASURED on the device, not tuned by taste.
+     *
+     * The GE's texture cache is ~8 KB. A fragment whose sampled mip level does
+     * not fit it costs a main-memory fetch (~37 ns at 27 Mfrag/s, measured)
+     * against ~2 ns when the footprint fits (480 Mfrag/s) — the same 19x the
+     * no-mip case pays — and the cliff between the two is sharp. The level the
+     * hardware picks from the UV derivatives is the sharpest that still
+     * averages ~1 texel per pixel, so at that level the sampled footprint IS
+     * the surface's on-screen area: 75 000 pixels of wall means ~75 000 texels
+     * of the chosen level, ~150 KB for a 16-bit texture. Only close,
+     * screen-filling surfaces reach that, and they reach it hard.
+     *
+     * A NEGATIVE bias samples past that cliff. Measured at the foot of the
+     * showcase waterfall — the app's worst view, where the scene is the same
+     * 1526 triangles and 27 draw calls as the spawn view (battery rows wf_*):
+     *
+     *     bias -1.0 + trilinear   25.21 ms   <- was the default: 36 fps
+     *     bias -1.0 + mip_lin     14.61
+     *     bias  0.0 + mip_lin     11.20
+     *     bias +0.5 + mip_lin      4.32
+     *     bias +1.0 + mip_lin      2.79      (~0.8 ms of that is the frame floor)
+     *     bias +2.0 + mip_lin      1.02
+     * and at the two views the map is judged on: spawn 8.76 -> 0.43 ms,
+     * stairs 11.12 -> 0.11 ms. The old -1.0 was picked when the scene was
+     * cheaper and "quality was affordable"; it is not affordable any more,
+     * because it is the difference between the cache holding the footprint
+     * and missing on every fragment.
+     *
+     * So: sample ONE mip level (a mipmap-nearest filter — trilinear doubles the
+     * fetch set for a level-crossing smoothness that per-primitive LOD already
+     * steps anyway) and bias it one level coarse. `poi_render.txt` overrides
+     * both without a rebuild: bias=0 is visibly sharper and still fits (11 ms
+     * at the worst view), bias=2 is what a weaker machine would want. */
+    c->tex_filter = PBFILT_MIP_LIN;
+    c->tex_lod_bias = 1.0f;
     c->tex_level_mode = PBLEVEL_AUTO;
     c->force_small_tex = 0;
     c->use_mips = 1;   /* load-time mip chain: the default since it fixes the minified-fetch cost */
