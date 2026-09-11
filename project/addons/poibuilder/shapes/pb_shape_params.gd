@@ -259,7 +259,14 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		height: float, base_values: Dictionary = {}) -> void:
 	var height_known := not is_nan(height)
 	if values.has("height") and height_known:
-		values["height"] = maxf(0.1, height)
+		# The drag's SIGN is carried by the PLACEMENT, not by the parameter:
+		# placement_transform anchors the shape's TOP face to the drag plane
+		# when the drag went below it (ProBuilder's "drag down to grow below").
+		# So the parameter is the magnitude of the drag — clamping the signed
+		# value here turned a courtyard floor dragged 0.5 m downward into a
+		# 1 cm wafer sitting inside the grid ("the floor is placed with zero
+		# height, z-fighting the grid").
+		values["height"] = maxf(0.1, absf(height))
 	if values.has("depth"):
 		values["depth"] = maxf(0.1, v_size)
 	if values.has("width"):

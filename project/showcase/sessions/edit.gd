@@ -29,6 +29,10 @@ func run(dr: ShowcaseDirector) -> void:
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
 	bench = ShowcaseUtil.floor_slab(root, 34.0, ShowcaseUtil.mat(root, "ink"))
+	# The bench's top surface sits exactly on the plugin grid's plane, and two
+	# coplanar surfaces z-fight; the grid has nothing to add here anyway (every
+	# beat draws on the bench, not on the grid).
+	await d.grid_show(false)
 	await d.frames(20)
 
 	await d.shot("edit/select", _select)
@@ -39,6 +43,7 @@ func run(dr: ShowcaseDirector) -> void:
 	await d.shot("edit/subdivide", _subdivide)
 	await d.shot("edit/loopcut", _loopcut)
 	await d.shot("edit/merge", _merge)
+	await d.shot("edit/merge_ngon", _merge_nonplanar)
 	await d.shot("edit/weld", _weld)
 	await d.shot("edit/detach", _detach)
 	await d.shot("edit/delete", _delete)
@@ -52,19 +57,27 @@ func run(dr: ShowcaseDirector) -> void:
 
 ## Removes every demo object, leaving the bench.
 func _clear() -> void:
+	# See create.gd: the editor's references go first and the nodes are freed at
+	# end of frame, never mid-redraw.
+	d.plugin.editor.active_mesh = null
 	EditorInterface.get_selection().clear()
 	for c in root.get_children():
 		if c is PBMesh and c != bench:
 			root.remove_child(c)
-			c.free()
+			c.queue_free()
 
 ## Builds a fresh object, selects it, and frames the camera on it — all before
 ## the first captured frame of the beat.
+##
+## Every object in this act wears the soft checkerboard, tinted toward the
+## beat's palette colour: a flat-shaded face hides exactly what the beats are
+## about (a subdivided quad and an untouched one look identical), and the
+## 1 m tiling makes the auto-UV management visible when a face is resized.
 func _fresh(name: String, data: PBMeshData, color := "steel", pos := Vector3.ZERO,
 		fill := 0.40, az := 30.0, elev := 24.0) -> PBMesh:
 	var node: PBMesh = await d.off(func():
 		_clear()
-		var n := ShowcaseUtil.mesh(root, name, data, pos, ShowcaseUtil.mat(root, color))
+		var n := ShowcaseUtil.mesh(root, name, data, pos, ShowcaseUtil.checker_mat(root, color))
 		ShowcaseUtil.drop_on_ground(n)
 		EditorInterface.get_selection().add_node(n)
 		var f := d.framing_node(n, fill, az, elev)
@@ -113,6 +126,43 @@ func _sel_count() -> int:
 		return 0
 	return d.subgizmo_ids().size()
 
+## World-space centre of the face the plugin currently has selected (-1 → ZERO).
+func _selected_face_center() -> Vector3:
+	if obj == null:
+		return Vector3.ZERO
+	var sel = d.plugin.editor.selection
+	if sel.selected_faces.is_empty():
+		return Vector3.ZERO
+	return _face_center(int(sel.selected_faces[0]))
+
+func _face_center(face_id: int) -> Vector3:
+	if obj == null or face_id < 0 or face_id >= obj.pb_mesh_data.faces.size():
+		return Vector3.ZERO
+	var acc := Vector3.ZERO
+	var idxs: PackedInt32Array = obj.pb_mesh_data.faces[face_id].get_indexes()
+	for i in idxs:
+		acc += obj.to_global(obj.pb_mesh_data.positions[i])
+	return acc / float(maxi(1, idxs.size()))
+
+## True when any face of `obj` still has its centre within `radius` of `point`.
+func _has_face_near(point: Vector3, radius: float) -> bool:
+	if obj == null:
+		return false
+	for fi in range(obj.pb_mesh_data.faces.size()):
+		if _face_center(fi).distance_to(point) <= radius:
+			return true
+	return false
+
+## Faces with more than four corners — the n-gons a merge produces.
+func _polygon_face_count() -> int:
+	var n := 0
+	if obj == null:
+		return 0
+	for fa in obj.pb_mesh_data.faces:
+		if fa.get_distinct_indexes().size() > 4:
+			n += 1
+	return n
+
 # -----------------------------------------------------------------------------
 # beats
 # -----------------------------------------------------------------------------
@@ -142,21 +192,49 @@ func _edge_loop() -> void:
 	await d.swing_framing(d.framing_node(obj, 0.38, 44.0, 24.0), 34, 14.0, -3.0)
 	await d.click_button("face")
 
+## Face manipulation on a doorway: the SIMPLE case first (a side quad), then
+## the COMPLEX one — the front is a single n-gon that wraps the arched opening,
+## so dragging it moves the whole face, hole perimeter included, in one piece.
 func _move() -> void:
-	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "slate", Vector3.ZERO, 0.40, 28.0, 24.0)
-	var f := d.framing_node(obj, 0.40, 28.0, 24.0)
+	var door := PBShapeComplex.create_door(3.0, 3.2, 2.4, 0.5, 1.0, true, 8)
+	# The camera starts on the door's -X side: the simple quad has to be the face
+	# UNDER the cursor, and from the courtyard side the doorway's front n-gon
+	# hides it (a click there selects the big face instead — which is what the
+	# first version of this beat did, moving the wrong face twice).
+	obj = await _fresh("DemoDoor", door, "steel", Vector3.ZERO, 0.46, -38.0, 22.0)
+	var f := d.framing_node(obj, 0.46, -38.0, 22.0)
 	await d.click_button("face")
-	await d.orbit_glide(f["center"], 28.0, 36.0, 24.0, f["dist"],
-		Vector3(0.0, TOP, 0.0), 22, f["aim"])
+	# --- the simple face: a side quad
+	await d.orbit_glide(f["center"], -38.0, -52.0, 22.0, f["dist"],
+		Vector3(-1.5, 1.6, 0.0), 22, f["aim"])
 	await d.click()
-	d.check(_sel_count() == 1, "top face selected for the move")
-	await d.click_button("move")
-	var top0: float = _top_of(obj)
-	await d.move_selection(Vector3(0.0, 0.7, 0.0), 46)
-	d.check(absf(_top_of(obj) - top0) > 0.05,
-		"geometry moved (top %.2f -> %.2f)" % [top0, _top_of(obj)])
-	await d.cam_swing(f["center"] + Vector3(0, 0.35, 0), 36.0, 26.0, 24.0, 21.0,
-		f["dist"] * 1.06, 26, 1, f["aim"])
+	d.check(_sel_count() == 1, "door side quad selected")
+	var quads: int = obj.pb_mesh_data.faces.size()
+	var side_was := _selected_face_center()
+	await d.move_selection(Vector3(-0.9, 0.0, 0.0), 40)
+	# The proof is where the face ENDED UP, not the plugin's mirror: the commit
+	# clears the subgizmo selection, so reading it back proves nothing.
+	d.check(_has_face_near(side_was + Vector3(-0.9, 0.0, 0.0), 0.25),
+		"the side quad moved as one face (to %s)" % str(_selected_face_center().snappedf(0.01)))
+	# --- the complex face: the front n-gon with the arch cut out of it
+	var ngons := 0
+	for fa in obj.pb_mesh_data.faces:
+		if fa.get_distinct_indexes().size() > 4:
+			ngons += 1
+	d.check(ngons >= 2, "the doorway carries n-gons (%d faces over 4 corners)" % ngons)
+	# ...and now swing round to the courtyard side, where the front n-gon (the
+	# one wrapping the arch) is the face under the cursor.
+	var f2 := d.framing_node(obj, 0.46, 26.0, 16.0)
+	await d.frame_box_to(d.node_aabb(obj), 26.0, 16.0, 0.46, 30)
+	await d.orbit_glide(f2["center"], 26.0, 40.0, 16.0, f2["dist"],
+		Vector3(-0.4, 2.9, 0.7), 24, f2["aim"])
+	await d.click()
+	d.check(_sel_count() == 1, "the front n-gon selected (the whole side, hole and all)")
+	await d.move_selection(Vector3(0.0, 0.0, 0.8), 44)
+	d.check(obj.pb_mesh_data.faces.size() == quads,
+		"the n-gon moved as one face (%d faces before and after)" % quads)
+	await d.cam_swing(f2["center"] + Vector3(-0.4, 0.2, 0.4), 44.0, 20.0, 16.0, 22.0,
+		f2["dist"] * 1.08, 34, 1, f2["aim"])
 
 func _extrude() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "steel", Vector3.ZERO, 0.34, 30.0, 22.0)
@@ -187,14 +265,27 @@ func _inset() -> void:
 	await d.scale_selection_factor(0.42, 52, true)
 	d.check(obj.pb_mesh_data.faces.size() > before,
 		"shift+centre inset (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
-	await d.cam_swing(f["center"], 30.0, 42.0, 24.0, 28.0, f["dist"], 26, 1, f["aim"])
+	# The payoff: the inset left a RING around the inner face, so grab that face
+	# and lift it — the ring is what the operation actually produced.
+	await d.tool("move")
+	await d.glide_world_track(_top_world(obj), 18)
+	await d.click()
+	d.check(_sel_count() == 1, "the inset face re-selected")
+	var top0: float = _top_of(obj)
+	await d.move_selection(Vector3(0.0, 0.55, 0.0), 44)
+	d.check(absf(_top_of(obj) - top0) > 0.25,
+		"the inset face lifted clear of its ring (%.2f -> %.2f)" % [top0, _top_of(obj)])
+	await d.cam_swing(f["center"] + Vector3(0, 0.25, 0), 30.0, 46.0, 24.0, 34.0, f["dist"], 30, 1, f["aim"])
 
+## Subdivision is a TOPOLOGY change, so the beat has to show the topology: the
+## new interior edge is grabbed and dragged afterwards, which deforms the
+## checker squares around it — the wireframe alone is far too quiet on video.
 func _subdivide() -> void:
 	obj = await _fresh("DemoSlab", PBShapeGenerators.create_box(Vector3(4.0, 0.6, 4.0)),
-		"slate", Vector3.ZERO, 0.52, 30.0, 32.0)
-	var f := d.framing_node(obj, 0.52, 30.0, 32.0)
+		"slate", Vector3.ZERO, 0.56, 30.0, 30.0)
+	var f := d.framing_node(obj, 0.56, 30.0, 30.0)
 	await d.click_button("face")
-	await d.orbit_glide(f["center"], 30.0, 38.0, 32.0, f["dist"],
+	await d.orbit_glide(f["center"], 30.0, 38.0, 30.0, f["dist"],
 		_top_world(obj), 20, f["aim"])
 	await d.click()
 	d.check(_sel_count() == 1, "slab top selected")
@@ -202,7 +293,20 @@ func _subdivide() -> void:
 	await d.op("subdivide_faces", 20)
 	d.check(obj.pb_mesh_data.faces.size() > before,
 		"subdivide: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
-	await d.cam_swing(f["center"], 38.0, 52.0, 32.0, 26.0, f["dist"], 30, 1, f["aim"])
+	# the new interior edge, dragged sideways: the squares either side stretch
+	await d.click_button("edge")
+	await d.glide_world_track(Vector3(0.0, _top_world(obj).y, 1.25), 18)
+	await d.click()
+	d.check(_sel_count() == 1, "an edge created by the subdivision selected")
+	var pos_before: PackedVector3Array = obj.pb_mesh_data.positions.duplicate()
+	await d.move_selection(Vector3(0.8, 0.0, 0.0), 40)
+	var moved := 0
+	for i in range(mini(pos_before.size(), obj.pb_mesh_data.positions.size())):
+		if pos_before[i].distance_to(obj.pb_mesh_data.positions[i]) > 0.3:
+			moved += 1
+	d.check(moved >= 2, "the new edge moved (%d vertices followed it)" % moved)
+	await d.cam_swing(f["center"], 38.0, 54.0, 30.0, 44.0, f["dist"], 30, 1, f["aim"])
+	await d.click_button("face")
 
 func _loopcut() -> void:
 	obj = await _fresh("DemoBox", PBShapeGenerators.create_box(Vector3(3.0, 2.0, 3.0)),
@@ -225,12 +329,14 @@ func _loopcut() -> void:
 	await d.cam_swing(f["center"], 48.0, 60.0, 20.0, 26.0, f["dist"], 26, 1, f["aim"])
 	await d.click_button("face")
 
+## Merge, part one: coplanar quads become ONE face — and the proof is grabbing
+## that face and moving it, which leaves the untouched quads behind.
 func _merge() -> void:
 	obj = await _fresh("DemoSlab", PBShapeGenerators.create_box(Vector3(4.0, 0.6, 4.0)),
-		"brick", Vector3.ZERO, 0.52, 26.0, 34.0)
-	var f := d.framing_node(obj, 0.52, 26.0, 34.0)
+		"brick", Vector3.ZERO, 0.56, 26.0, 32.0)
+	var f := d.framing_node(obj, 0.56, 26.0, 32.0)
 	await d.click_button("face")
-	await d.orbit_glide(f["center"], 26.0, 32.0, 34.0, f["dist"],
+	await d.orbit_glide(f["center"], 26.0, 32.0, 32.0, f["dist"],
 		_top_world(obj), 18, f["aim"])
 	await d.click()
 	await d.op("subdivide_faces", 16)          # 4 coplanar quads to merge back
@@ -243,7 +349,43 @@ func _merge() -> void:
 	await d.op("merge_faces", 20)
 	d.check(obj.pb_mesh_data.faces.size() < before,
 		"merge: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
-	await d.cam_swing(f["center"], 32.0, 44.0, 34.0, 28.0, f["dist"], 26, 1, f["aim"])
+	# grab what the merge produced and lift it: one face, moving as one
+	var merged: int = _polygon_face_count()
+	d.check(merged >= 1, "the merge produced an n-gon (%d polygons over 4 corners)" % merged)
+	await d.glide_world_track(Vector3(-0.7, _top_world(obj).y, 0.7), 16)
+	await d.click()
+	d.check(_sel_count() == 1, "the merged face selected")
+	var after: int = obj.pb_mesh_data.faces.size()
+	await d.move_selection(Vector3(0.0, 0.45, 0.0), 44)
+	d.check(obj.pb_mesh_data.faces.size() == after,
+		"the merged face moved as one (%d faces before and after)" % after)
+	await d.cam_swing(f["center"] + Vector3(0, 0.2, 0), 32.0, 50.0, 32.0, 40.0, f["dist"], 30, 1, f["aim"])
+
+## Merge, part two: the faces do NOT have to be coplanar. Two faces meeting at
+## a right angle merge into one bent n-gon that moves in one piece.
+func _merge_nonplanar() -> void:
+	obj = await _fresh("DemoCorner", PBMeshData.create_cube(2.4), "moss", Vector3.ZERO, 0.46, 34.0, 26.0)
+	var f := d.framing_node(obj, 0.46, 34.0, 26.0)
+	await d.click_button("face")
+	await d.orbit_glide(f["center"], 34.0, 30.0, 26.0, f["dist"],
+		_top_world(obj), 20, f["aim"])
+	# top face, then the face beside it: they share the crease edge
+	var picked := await d.select_points([
+		Vector3(0.0, _top_world(obj).y, 0.0),
+		Vector3(0.0, _top_world(obj).y - 1.2, 1.2)])
+	d.check(picked == 2, "two faces across the crease selected (%d)" % picked)
+	var before: int = obj.pb_mesh_data.faces.size()
+	await d.op("merge_faces", 20)
+	d.check(obj.pb_mesh_data.faces.size() < before,
+		"non-coplanar merge: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
+	await d.glide_world_track(Vector3(0.0, _top_world(obj).y - 1.2, 1.2), 16)
+	await d.click()
+	d.check(_sel_count() == 1, "the bent n-gon selected")
+	var after: int = obj.pb_mesh_data.faces.size()
+	await d.move_selection(Vector3(0.0, 0.5, 0.0), 44)
+	d.check(obj.pb_mesh_data.faces.size() == after,
+		"top and side moved together as one face (%d before and after)" % after)
+	await d.cam_swing(f["center"] + Vector3(0, 0.3, 0), 30.0, 52.0, 26.0, 34.0, f["dist"], 30, 1, f["aim"])
 
 func _weld() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "slate", Vector3.ZERO, 0.40, 34.0, 24.0)
@@ -266,36 +408,72 @@ func _weld() -> void:
 	await d.cam_swing(f["center"], 40.0, 54.0, 24.0, 28.0, f["dist"], 26, 1, f["aim"])
 	await d.click_button("face")
 
+## Detach, then PROVE it detached: the new object is selected and its face is
+## dragged away from the hole it left behind.
 func _detach() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "steel", Vector3.ZERO, 0.40, 30.0, 24.0)
 	var f := d.framing_node(obj, 0.40, 30.0, 24.0)
 	await d.click_button("face")
 	await d.orbit_glide(f["center"], 30.0, 38.0, 24.0, f["dist"],
-		Vector3(0.0, 1.0, 1.0), 22, f["aim"])
+		Vector3(0.0, _top_world(obj).y, 0.0), 22, f["aim"])
 	await d.click()
-	d.check(_sel_count() == 1, "face selected for detach")
+	d.check(_sel_count() == 1, "top face selected for detach")
+	var before: int = obj.pb_mesh_data.faces.size()
 	await d.op("detach_faces", 22)
+	d.check(obj.pb_mesh_data.faces.size() < before,
+		"the source lost the face (%d -> %d)" % [before, obj.pb_mesh_data.faces.size()])
 	# The detached sibling is named "<source>_Detached" (the plugin's own
 	# naming), so match on the suffix rather than on a prefix.
-	var made := []
+	var made: Array = []
 	for c in root.get_children():
 		if String(c.name).contains("_Detached"):
 			made.append(c)
 	d.check(made.size() == 1, "detach spawned a new node (%d)" % made.size())
-	await d.cam_swing(f["center"], 38.0, 52.0, 24.0, 28.0, f["dist"], 30, 1, f["aim"])
+	if made.is_empty():
+		return
+	# Select the new object and drag its face up and away: what was a face of
+	# the cube is now a mesh of its own, and the cube has a hole.
+	var piece: PBMesh = made[0]
+	var center := (piece.global_transform * (piece as MeshInstance3D).get_aabb()).get_center()
+	await d.off(func():
+		var sel := EditorInterface.get_selection()
+		sel.clear()
+		sel.add_node(piece))
+	await d.frames(6)
+	var g := d.framing(AABB(center - Vector3(1.6, 0.2, 1.6), Vector3(3.2, 3.4, 3.2)), 0.62, 30.0, 20.0)
+	await d.frame_box_to(AABB(center - Vector3(1.6, 0.2, 1.6), Vector3(3.2, 3.4, 3.2)),
+		30.0, 20.0, 0.62, 26)
+	await d.glide_world_track(center, 16)
+	await d.click()
+	d.check(_sel_count() == 1, "the detached face selected as its own object")
+	await d.move_selection(Vector3(0.0, 1.3, 0.6), 48)
+	d.check(String(d.active_mesh().name).contains("_Detached"),
+		"the piece that moved is the detached object (%s)" % String(d.active_mesh().name))
+	await d.cam_swing(g["center"] + Vector3(0, 0.5, 0), 30.0, 52.0, 20.0, 34.0, float(g["dist"]), 34, 1, g["aim"])
 
+## Delete, with the result on camera: two faces go (the top and the front) and
+## the camera drops to look INTO the opening they leave. The check is not the
+## face count alone — the face that was selected has to be the one that is
+## gone, which is what "it never seems to delete the face" actually meant.
 func _delete() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "brick", Vector3.ZERO, 0.40, 30.0, 24.0)
 	var f := d.framing_node(obj, 0.40, 30.0, 24.0)
 	await d.click_button("face")
-	await d.orbit_glide(f["center"], 30.0, 38.0, 24.0, f["dist"],
-		Vector3(0.0, 1.0, 1.0), 22, f["aim"])
-	await d.click()
-	var before: int = obj.pb_mesh_data.faces.size()
-	await d.op("delete_faces", 20)
-	d.check(obj.pb_mesh_data.faces.size() < before,
-		"delete: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
-	await d.cam_swing(f["center"], 38.0, 50.0, 24.0, 28.0, f["dist"], 26, 1, f["aim"])
+	for target in [Vector3(0.0, _top_world(obj).y, 0.0), Vector3(0.0, TOP * 0.5, 1.0)]:
+		var was: int = obj.pb_mesh_data.faces.size()
+		await d.glide_world_track(target, 18)
+		await d.click()
+		d.check(_sel_count() == 1, "a face is selected for the delete")
+		var gone := _selected_face_center()
+		await d.op("delete_faces", 20)
+		d.check(obj.pb_mesh_data.faces.size() == was - 1,
+			"delete removed one face (%d -> %d)" % [was, obj.pb_mesh_data.faces.size()])
+		d.check(not _has_face_near(gone, 0.4),
+			"the face that was selected is the one that is gone")
+	await d.cam_look_at(f["center"] + Vector3(2.6, 2.9, 2.6), f["center"] + Vector3(0, 0.4, 0))
+	await d.frames(4)
+	await d.cam_swing(f["center"] + Vector3(0, 0.4, 0), 45.0, 20.0, 42.0, 22.0,
+		f["dist"] * 1.05, 34, 1, f["aim"])
 
 func _knife() -> void:
 	obj = await _fresh("DemoSlab", PBShapeGenerators.create_box(Vector3(4.0, 1.0, 4.0)),

@@ -45,13 +45,13 @@ cursor = false
 card = { kicker = "Godot 4 editor plugin", title = "PoiBuilder", sub = "ProBuilder-style mesh building, inside the editor" }
 
 [[clip]]
-id = "01-teaser-create"
-source = "create:create/door"
+id = "01-teaser-move"
+source = "edit:edit/move"
 region = "viewport"
-at = -1.2
-dur = 1.2
+at = -1.4
+dur = 1.3
 cursor = false
-zoom = [1.0, 1.04]
+zoom = [1.0, 1.05]
 
 [[clip]]
 id = "02-teaser-extrude"
@@ -63,69 +63,70 @@ cursor = false
 zoom = [1.0, 1.05]
 
 [[clip]]
-id = "03-teaser-torus"
-source = "shapes:shapes/torus"
-region = "viewport"
-at = 1.1
-dur = 1.2
-cursor = false
-
-[[clip]]
-id = "04-teaser-paint"
-source = "paint:paint/splat"
-region = "viewport_ui"
-at = -1.4
-dur = 1.2
-cursor = false
-
-[[clip]]
-id = "05-teaser-map"
+id = "03-teaser-arch"
 source = "map:map/arch"
 region = "viewport"
-at = -1.3
-dur = 1.2
+at = -1.4
+dur = 1.3
+cursor = false
+zoom = [1.0, 1.04]
+
+[[clip]]
+id = "04-teaser-waterfall"
+source = "map:map/waterfall"
+region = "viewport"
+at = -1.5
+dur = 1.4
 cursor = false
 zoom = [1.0, 1.05]
+
+[[clip]]
+id = "05-teaser-night"
+source = "map:map/night"
+region = "viewport"
+at = -1.6
+dur = 1.5
+cursor = false
 
 # ===========================================================================
 # CREATE
 # ===========================================================================
 
 [[clip]]
-id = "10-create-grid"
-source = "create:create/grid"
+id = "10-create-floor"
+source = "create:create/surfaces"
 region = "viewport_ui"
-at = 1.3
-dur = 2.5
-zoom = [1.0, 1.30]
-caption = { label = "Create", text = "Drag on any surface — snapped to the grid", at = 0.25, dur = 3.0 }
+at = 0.7
+dur = 3.4
+zoom = [1.0, 1.22]
+caption = { label = "Create", text = "Drag on any surface — the floor first", at = 0.25, dur = 3.0 }
 
 [[clip]]
-id = "11-create-stairs"
+id = "11-create-wall"
+source = "create:create/surfaces"
+region = "viewport_ui"
+at = 5.2
+dur = 3.2
+zoom = [1.0, 1.18]
+caption = { label = "Create", text = "…the same drag on a wall: it grows along the normal", at = 0.2, dur = 2.8 }
+
+[[clip]]
+id = "12-create-slope"
+source = "create:create/surfaces"
+region = "viewport_ui"
+at = 8.5
+dur = 2.5
+zoom = [1.0, 1.18]
+caption = { label = "Create", text = "…and on a slope", at = 0.2, dur = 2.2 }
+
+[[clip]]
+id = "13-create-stairs"
 source = "create:create/stairs"
 region = "viewport_ui"
-at = 1.4
-dur = 3.5
+at = -3.4
+dur = 3.4
 zoom = [1.0, 1.20]
-caption = { label = "Create", text = "Parameterised shapes with a live preview", at = 0.2, dur = 3.2 }
-
-[[clip]]
-id = "12-create-door"
-source = "create:create/door"
-region = "viewport_ui"
-at = 1.2
-dur = 3.3
-zoom = [1.0, 1.22]
-caption = { label = "Create", text = "Arched doorway, built from its parameters", at = 0.2, dur = 3.2 }
-
-[[clip]]
-id = "13-create-round"
-source = "create:create/round"
-region = "viewport_ui"
-at = 2.1
-dur = 2.3
-zoom = [1.0, 1.20]
-caption = { label = "Create", text = "Round shapes grow from the height drag", at = 0.2, dur = 2.6 }
+caption = { label = "Create", text = "Parameterised shapes with a live preview", at = 0.2, dur = 3.0 }
 
 [[clip]]
 id = "14-create-params"
@@ -133,8 +134,17 @@ source = "create:create/params"
 region = "viewport_ui"
 at = -2.8
 dur = 2.8
-zoom = [1.0, 1.18]
-caption = { label = "Create", text = "Re-edit any pristine shape", at = 0.2, dur = 2.4 }
+zoom = [1.0, 1.20]
+caption = { label = "Create", text = "Re-edit any pristine shape — 10 steps, then 16", at = 0.2, dur = 2.6 }
+
+[[clip]]
+id = "15-create-door"
+source = "create:create/door"
+region = "viewport_ui"
+at = -2.6
+dur = 2.6
+zoom = [1.0, 1.20]
+caption = { label = "Create", text = "Arched doorway, built from its parameters", at = 0.2, dur = 2.4 }
 
 # ===========================================================================
 # EDIT — the mesh operations, one beat each
@@ -160,9 +170,9 @@ caption = { label = "Select", text = "Alt-click for the whole edge loop", at = 0
 id = "22-edit-move"
 source = "edit:edit/move"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "Edit", text = "Move — snapped to the world grid", at = 0.2, dur = 1.8 }
+at = -3.0
+dur = 3.0
+caption = { label = "Edit", text = "Move — a side quad, then the whole arched face", at = 0.2, dur = 2.6 }
 
 [[clip]]
 id = "23-edit-extrude"
@@ -178,15 +188,15 @@ source = "edit:edit/inset"
 region = "viewport_ui"
 at = -2.2
 dur = 2.2
-caption = { label = "Edit", text = "Shift + the centre handle to inset", at = 0.2, dur = 1.8 }
+caption = { label = "Edit", text = "Inset, then lift the new face out of its ring", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "25-edit-subdiv"
 source = "edit:edit/subdivide"
 region = "viewport_ui"
-at = -2.0
-dur = 2.0
-caption = { label = "Edit", text = "Subdivide quads", at = 0.2, dur = 1.6 }
+at = -2.8
+dur = 2.8
+caption = { label = "Edit", text = "Subdivide, then drag the edge it created", at = 0.2, dur = 2.4 }
 
 [[clip]]
 id = "25-toolbar"
@@ -210,9 +220,17 @@ caption = { label = "Edit", text = "Insert an edge loop", at = 0.2, dur = 1.8 }
 id = "27-edit-merge"
 source = "edit:edit/merge"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "Edit", text = "Merge coplanar faces", at = 0.2, dur = 1.8 }
+at = -2.6
+dur = 2.6
+caption = { label = "Edit", text = "Merge coplanar faces, then move them as one", at = 0.2, dur = 2.2 }
+
+[[clip]]
+id = "27b-edit-merge-ngon"
+source = "edit:edit/merge_ngon"
+region = "viewport_ui"
+at = -2.4
+dur = 2.4
+caption = { label = "Edit", text = "Merge across a crease — one bent n-gon", at = 0.2, dur = 2.0 }
 
 [[clip]]
 id = "28-edit-weld"
@@ -228,16 +246,16 @@ source = "edit:edit/detach"
 region = "viewport_ui"
 at = -2.2
 dur = 2.2
-caption = { label = "Edit", text = "Detach faces into a new object", at = 0.2, dur = 1.8 }
+caption = { label = "Edit", text = "Detach faces into a new object — and move it away", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "30-edit-delete"
 source = "edit:edit/delete"
 region = "viewport_ui"
-at = -2.0
-dur = 2.0
+at = -2.6
+dur = 2.6
 zoom = [1.0, 1.15]
-caption = { label = "Edit", text = "Delete faces", at = 0.2, dur = 1.6 }
+caption = { label = "Edit", text = "Delete faces — and look into the opening", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "31-edit-knife"
@@ -341,40 +359,52 @@ caption = { label = "Shapes", text = "Arched doorway", at = 0.2, dur = 2.2 }
 id = "60-map-floor"
 source = "map:map/floor"
 region = "viewport_ui"
-at = -2.4
-dur = 2.4
+at = -2.6
+dur = 2.6
 zoom = [1.0, 1.28]
-caption = { label = "The map", text = "Lay the courtyard floor", at = 0.2, dur = 2.0 }
+caption = { label = "The map", text = "Lay the courtyard floor — dragged down from the grid", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "61-map-arch"
 source = "map:map/arch"
+# The doorway's own parameter modal is where the arch reads unmistakably (the
+# finished door is white tile against a white floor), so the clip runs from the
+# live preview into the placed piece.
 region = "viewport_ui"
-at = -2.6
-dur = 2.6
-zoom = [1.20, 1.55]
-caption = { label = "The map", text = "Walls, and an arched doorway", at = 0.2, dur = 2.2 }
+at = 3.2
+dur = 3.2
+zoom = [1.0, 1.18]
+caption = { label = "The map", text = "Arched doorway, arched from its parameters", at = 0.2, dur = 2.8 }
 
 [[clip]]
 id = "62-map-stairs"
 source = "map:map/stairs"
 region = "viewport_ui"
-at = -2.4
-dur = 2.4
+at = -2.6
+dur = 2.6
 zoom = [1.0, 1.30]
-caption = { label = "The map", text = "Grand stairs and a balcony", at = 0.2, dur = 2.0 }
+caption = { label = "The map", text = "Grand stairs, and the balcony above them", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "63-map-pillars"
 source = "map:map/pillars"
 region = "viewport_ui"
-at = -2.6
-dur = 2.6
+at = -2.8
+dur = 2.8
 zoom = [1.0, 1.30]
-caption = { label = "The map", text = "Pillars and a ramp", at = 0.2, dur = 2.2 }
+caption = { label = "The map", text = "Hex pillars and the east ramp", at = 0.2, dur = 2.4 }
 
 [[clip]]
-id = "64-map-paint"
+id = "64-map-waterfall"
+source = "map:map/waterfall"
+region = "viewport_ui"
+at = -3.6
+dur = 3.6
+zoom = [1.0, 1.22]
+caption = { label = "The map", text = "The waterfall — scrolling sheets on a wall panel", at = 0.2, dur = 3.2 }
+
+[[clip]]
+id = "65-map-paint"
 source = "map:map/paint"
 region = "viewport_ui"
 at = -3.0
@@ -383,7 +413,16 @@ zoom = [1.0, 1.18]
 caption = { label = "The map", text = "Paint the path, stamp the sign", at = 0.2, dur = 2.6 }
 
 [[clip]]
-id = "65-map-export"
+id = "66-map-particles"
+source = "map:map/particles"
+region = "viewport_ui"
+at = -3.4
+dur = 3.4
+zoom = [1.0, 1.20]
+caption = { label = "The map", text = "Particle emitters — brazier flames, mist at the fall", at = 0.2, dur = 3.0 }
+
+[[clip]]
+id = "67-map-export"
 source = "map:map/export"
 region = "viewport_ui"
 at = -3.0
@@ -391,7 +430,7 @@ dur = 3.0
 caption = { label = "The map", text = "One click to a retro .pbm map", at = 0.2, dur = 2.6 }
 
 [[clip]]
-id = "66-map-night"
+id = "68-map-night"
 source = "map:map/night"
 region = "viewport_ui"
 at = -2.5
@@ -418,7 +457,35 @@ captions = [
 ]
 
 [[clip]]
-id = "71-psp-water"
+id = "71-psp-mist"
+kind = "video"
+file = "psp-day.mp4"
+# The impact point: the mist emitter is the whole visual, and the HUD line
+# above it reads "Parts: 46" — the per-map budget, in one draw.
+at = 5.0
+dur = 2.6
+cursor = false
+grade = { temperature = 4200, mix = 0.8, saturation = 0.88, contrast = 1.10, brightness = -0.02 }
+captions = [
+  { label = "Particles", text = "Mist at the fall — emitters are a format feature", at = 0.25, dur = 2.2, pos = "bc" },
+]
+
+[[clip]]
+id = "72-psp-fire"
+kind = "video"
+file = "psp-night.mp4"
+# After dark the brazier is the brightest thing in the map: additive flames
+# and embers, unsorted and free (see the particles rows in HARDWARE-TESTING).
+at = 5.6
+dur = 2.8
+cursor = false
+grade = { temperature = 4200, mix = 0.8, saturation = 0.88, contrast = 1.10, brightness = -0.02 }
+captions = [
+  { label = "Particles", text = "…and the brazier fire after dark", at = 0.25, dur = 2.4, pos = "bc" },
+]
+
+[[clip]]
+id = "73-psp-water"
 kind = "video"
 file = "psp-day.mp4"
 at = 8.6
@@ -426,11 +493,11 @@ dur = 2.6
 cursor = false
 grade = { temperature = 4200, mix = 0.8, saturation = 0.88, contrast = 1.10, brightness = -0.02 }
 captions = [
-  { label = "Hardware", text = "Animated water and particle emitters", at = 0.25, dur = 2.2, pos = "bc" },
+  { label = "Hardware", text = "Animated water on the same device", at = 0.25, dur = 2.2, pos = "bc" },
 ]
 
 [[clip]]
-id = "72-psp-night"
+id = "74-psp-night"
 kind = "video"
 file = "psp-night.mp4"
 at = 0.4
@@ -443,7 +510,7 @@ captions = [
 ]
 
 [[clip]]
-id = "73-psp-hud"
+id = "75-psp-hud"
 kind = "video"
 file = "psp-day.mp4"
 at = 14.6

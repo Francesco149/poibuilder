@@ -2341,6 +2341,69 @@ physics-reproduced headlessly — "stuck the moment I touch them"):
 - Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
   plugin.cfg).
 
+v0.9.78 round complete ✓ — the showcase video reworked from the first
+review, plus the plugin bugs the rework exposed. The video is BUILT FROM DATA
+(`showcase_video/`): each beat below is a session script driving the real UI, and
+every beat ends in a `check()` — a beat that silently does nothing fails its
+render.
+- THE MAP ACT IS THE SHIPPED MAP, BUILT BY GESTURE (`sessions/map.gd`). Every
+  structural piece is drag-created at the footprint `TestMapShowcaseBuilder`
+  puts it, with the builder's own materials (tiles / wet tiles / the water
+  materials), and asserted against a `REAL` table of AABBs probed out of the
+  shipped scene — so the courtyard the PSP act runs in is recognisably THIS
+  scene. Samples from the render log: floor `(-6.0,-0.51,-6.0)..(6.0,0.0,6.0)`
+  vs `(-6,-0.5,-6)..(6,0,6)`; archway `(-2,0,-6)..(2,4,-5)` exact; both pillars,
+  the balcony, the ramp and the waterfall wall all within 0.1 m. The act has no
+  bench: the courtyard IS the scene, the floor is drawn on the grid plane and
+  the height drag goes DOWN so the walking surface lands at y = 0, and the grid
+  is switched off the moment the slab exists (coplanar surfaces fight).
+- BUILD ORDER IS PART OF THE CHOREOGRAPHY: the colonnade goes up BEFORE the
+  terrace, because the balcony overhangs the pillars — once it exists, no
+  camera reaches the floor under it (from above the drag lands on the balcony,
+  from low down the stairs block the ray, and from low-and-oblique the floor
+  rect collapses to a couple of pixels, which is how PillarB came out a 0.2 m
+  needle floating over a step).
+- PLUGIN BUG 1, the "zero-height floor": `apply_drag_extents` clamped the
+  signed drag height (`maxf(0.1, height)`), so the courtyard floor dragged 0.5 m
+  DOWNWARD became a 1 cm wafer inside the grid. The sign belongs to the
+  PLACEMENT (`placement_transform` anchors the top face to the plane; the
+  parameter is the magnitude) — now `maxf(0.1, absf(height))`, locked by
+  `test_negative_height_keeps_the_dragged_magnitude`.
+- PLUGIN BUG 2, the stamp preview: `_update_preview_material` cast the stamp
+  overlay to StandardMaterial3D, but that preview wears the DECAL SHADER, so the
+  cast was null and every stamp-opacity change threw ("Invalid assignment ...
+  on a base object of type 'Nil'"). The tint is a shader parameter now.
+- HARNESS FIXES worth keeping (`showcase_director.gd`): `height_drag_to()`
+  closes the loop on the creation height stage (the height is
+  `(ray ∩ view-parallel plane − press) · normal`, so gliding the pointer to
+  `corner + normal * target` — what the beats used to do — never produced that
+  height); `grid_show()`; `arm_shape()` now HIDES a leftover New Shape popup,
+  because an open popup swallows every later drag (one stuck popup silently
+  killed the ramp and the entire waterfall in a single run); and the create act
+  PARKS its shapes instead of freeing them — freeing a node the creation flow
+  made segfaults the editor (signal 11, no usable backtrace, at the beat
+  handoff; parked nodes are renamed so they cannot be mistaken for a new shape).
+- THE VIDEO (edl.toml, 124 s): the cold open is manipulation and map building
+  (move, extrude, arch, waterfall, night) instead of shape orbits; the round
+  shape's creation clip is gone; "drag on any surface" is three clips from one
+  beat (floor → wall → sloped face, each growing along that surface's normal);
+  the stairs' Edit Params beat doubles the step count (10 → 16) from a low side
+  angle where every new tread lands; the move beat works a doorway (side quad,
+  then the front n-gon with its arch hole moving as one face); detach moves the
+  piece away; delete removes two faces and the camera looks into the hole;
+  subdivide grabs the edge it created and drags it; merge moves the merged face
+  as one and a second beat merges ACROSS a crease; inset lifts the new face out
+  of its ring; the map act now includes the waterfall and a particles beat, and
+  the hardware act carries PSP mist (day) and brazier-fire (night) clips.
+- GEOMETRY BEATS WEAR A SOFT CHECKERBOARD (8 cells per metre, tinted to the
+  beat's palette colour, `project/materials/textures/showcase_checker_soft.png`
+  + `ShowcaseUtil.checker_mat`): a flat-shaded face hides exactly what the beats
+  are about, and the tiling makes the auto-UV management visible.
+- ALSO: the git history was rewritten to drop every regenerable artifact
+  (~100 MB of video, map exports and PSP binaries; `.git` 119 MB → 5.7 MB) and
+  the rule went into this file and `.pi/ORIENTATION.md`.
+- Version bump 0.9.77 → 0.9.78. Suite: 836/836.
+
 v0.9.77 round complete ✓ — the README video is built from data instead of
 screen-recorded, plus two PSP-side fixes that fell out of watching it:
 - THE PIPELINE (`showcase_video/`): a frame-stepped recorder drives a REAL

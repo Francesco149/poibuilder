@@ -989,6 +989,14 @@ func arm_shape(shape_id: StringName, settle := 14) -> void:
 		_log_line("shape '%s' armed via menu" % shape_id)
 	_check(_shape_armed(shape_id), "shape '%s' armed" % shape_id)
 
+	# A popup left open (the menu path above can miss the item rect) swallows
+	# every later viewport event: the next press goes to the popup, no base drag
+	# starts, and the piece silently never gets built. Close it either way.
+	var popup_left: Popup = menu.get_popup()
+	if popup_left != null and popup_left.visible:
+		popup_left.hide()
+		_log_line("closed a leftover New Shape popup")
+	await frames(2)
 func _shape_armed(shape_id: StringName) -> bool:
 	var sc = plugin.shape_creator
 	if sc == null:
@@ -1157,6 +1165,47 @@ func screen_axis(origin: Vector3, world_dir: Vector3) -> Vector2:
 	var a := w2s(origin)
 	var b := w2s(origin + world_dir.normalized())
 	return (b - a)
+
+# =============================================================================
+# Shape creation: the height stage, and the grid it draws on
+# =============================================================================
+
+## Drives the creation HEIGHT stage to (approximately) `target` world units
+## along the surface normal, and returns the height the plugin actually
+## reached.
+##
+## WHY THIS IS A CLOSED LOOP: the height is `(ray ∩ view-parallel plane − press
+## point) · normal`, so gliding the pointer to `corner + normal * target` — the
+## obvious thing, and what the beats used to do — does not produce that height
+## at all (the two only coincide for a camera looking straight down the
+## normal). Here each step moves the pointer by the screen delta between the
+## CURRENT and the TARGET reference point and then reads `shape_creator.height`
+## back, so the error shrinks every step whatever the camera orientation is.
+func height_drag_to(target: float, max_steps := 8) -> float:
+	var sc = plugin.shape_creator
+	var h := float(sc.height)
+	for i in range(max_steps):
+		if absf(target - h) <= 0.02:
+			break
+		var here: Vector3 = sc.rect_center + sc.plane_normal * h
+		var goal: Vector3 = sc.rect_center + sc.plane_normal * target
+		var px: Vector2 = w2s(goal) - w2s(here)
+		if px.length() < 1.0:
+			break
+		await glide(cursor + px, 8)
+		h = float(sc.height)
+	return h
+
+## Shows/hides PoiBuilder's own grid. A surface lying exactly at the grid's
+## elevation (the courtyard floor, a bench top) z-fights with it, so beats that
+## build one turn the grid off once the drag that needed it is done. Drawing on
+## the grid still works while it is hidden — the creation surface fallback uses
+## the grid PLANE, not its pixels.
+func grid_show(on: bool) -> void:
+	plugin.grid.show_grid = on
+	if plugin.grid_view != null:
+		plugin.grid_view.mark_dirty()
+	await frames(2)
 
 # =============================================================================
 # Regions, events, checks, manifest

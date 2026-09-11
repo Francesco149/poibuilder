@@ -30,6 +30,33 @@ const PALETTE := {
 
 const META_CACHE := "__showcase_mats"
 
+## The soft checkerboard (8 cells per texture repeat, one repeat per metre)
+## that every geometry-manipulating beat wears, tinted toward a palette colour.
+##
+## WHY EVERYTHING IS TEXTURED: a flat-shaded face hides exactly the things the
+## edit beats are about — a subdivided quad and an untouched one look identical
+## in flat grey, and so do a stretched UV, a merged n-gon and a snapped edge.
+## One repeat per metre also means the tiling itself demonstrates the auto-UV
+## management (resize a face and the squares stay square).
+const CHECKER := "res://materials/textures/showcase_checker_soft.png"
+
+static func checker_mat(root: Node, color_name: String) -> StandardMaterial3D:
+	var cache: Dictionary = root.get_meta(META_CACHE, {})
+	var key := "checker_" + color_name
+	if cache.has(key):
+		return cache[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load(CHECKER)
+	m.albedo_color = PALETTE.get(color_name, Color.WHITE)
+	m.roughness = 0.72
+	m.metallic = 0.0
+	m.uv1_scale = Vector3.ONE
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	m.resource_name = "Showcase_Checker_" + color_name
+	cache[key] = m
+	root.set_meta(META_CACHE, cache)
+	return m
+
 ## Builds (once per scene root) a simple lit material for a palette colour.
 static func mat(root: Node, color_name: String, roughness := 0.72) -> StandardMaterial3D:
 	var cache: Dictionary = root.get_meta(META_CACHE, {})
@@ -100,8 +127,18 @@ static func dress(node: PBMesh, tex_path: String) -> void:
 	var m: Material = PBMeshData.load_material_or_texture(tex_path)
 	if m == null:
 		return
-	var mats: Array[Material] = [m]
+	dress_material(node, m)
+
+## Replaces a mesh's material list with a Material INSTANCE (the showcase map's
+## own materials: the tile, wet-tile and water materials the shipped scene
+## uses), so a beat builds the real map rather than a lookalike of it.
+static func dress_material(node: PBMesh, mat: Material, face_index := -1) -> void:
+	if node == null or node.pb_mesh_data == null or mat == null:
+		return
+	var mats: Array[Material] = [mat]
 	node.pb_mesh_data.materials = mats
+	if face_index >= 0 and face_index < node.pb_mesh_data.faces.size():
+		node.pb_mesh_data.faces[face_index].submesh_index = 0
 	node.rebuild()
 
 ## Drops a node onto the ground plane. The shape generators disagree about

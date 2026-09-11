@@ -90,7 +90,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 		splat_mat.set_shader_parameter("layer_1_texture", load("res://addons/poibuilder/materials/textures/circular_square_pattern.png"))
 	splat_mat.set_shader_parameter("layer_1_mask", ImageTexture.create_from_image(mask_img))
 
-	var tiles_mat := _get_tiles_material()
+	var tiles_mat := tiles_material()
 	floor_node.pb_mesh_data.materials = [splat_mat, tiles_mat]
 	for f_idx in range(floor_node.pb_mesh_data.faces.size()):
 		var f: PBFace = floor_node.pb_mesh_data.faces[f_idx]
@@ -169,7 +169,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	door_node.pb_mesh_data = PBShapeComplex.create_door(4.0, 4.0, 2.8, 0.8, 1.0, true, 8)
 	door_node.position = Vector3(0, 2.0, -5.5)
 	door_node.collider_type = PBMesh.ColliderType.ACCURATE
-	door_node.pb_mesh_data.materials = [_get_tiles_material()]
+	door_node.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(door_node)
 
 	# 4. Geometry: Grand Stairs to Balcony
@@ -179,7 +179,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	stairs_node.pb_mesh_data = PBShapeComplex.create_stairs(Vector3(2.5, 3.0, 4.0), 8)
 	stairs_node.position = Vector3(-4.5, 1.5, 0.0)
 	stairs_node.rotation.y = PI
-	stairs_node.pb_mesh_data.materials = [_get_tiles_material()]
+	stairs_node.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(stairs_node)
 
 	# Elevated Balcony Platform
@@ -188,7 +188,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	balcony.pb_mesh_data = PBShapeGenerators.create_box(Vector3(3.0, 0.4, 4.0))
 	balcony.position = Vector3(-4.5, 3.0, -4.0)
 	balcony.collider_type = PBMesh.ColliderType.ACCURATE
-	balcony.pb_mesh_data.materials = [_get_tiles_material()]
+	balcony.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(balcony)
 
 	# ==========================================================================
@@ -199,7 +199,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	pillar1.pb_mesh_data = PBShapeCylinder.create_cylinder(0.4, 3.0, 6) # 6-sided prism
 	pillar1.position = Vector3(-3.2, 1.5, -4.0)
 	pillar1.collider_type = PBMesh.ColliderType.ACCURATE
-	pillar1.pb_mesh_data.materials = [_get_tiles_material()]
+	pillar1.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(pillar1)
 
 	var pillar2 := PBMesh.new()
@@ -207,7 +207,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	pillar2.pb_mesh_data = PBShapeCylinder.create_cylinder(0.4, 3.0, 6)
 	pillar2.position = Vector3(-5.5, 1.5, -4.0)
 	pillar2.collider_type = PBMesh.ColliderType.ACCURATE
-	pillar2.pb_mesh_data.materials = [_get_tiles_material()]
+	pillar2.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(pillar2)
 
 	# ==========================================================================
@@ -218,7 +218,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	ramp.pb_mesh_data = PBShapeGenerators.create_prism(Vector3(2.0, 2.0, 4.0))
 	ramp.position = Vector3(4.5, 1.0, 1.0)
 	ramp.collider_type = PBMesh.ColliderType.ACCURATE
-	ramp.pb_mesh_data.materials = [_get_tiles_material()]
+	ramp.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(ramp)
 
 	# Decal stamp on prism slope (face 3), partially cut off at the top ridge
@@ -305,7 +305,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	fall_wall.pb_mesh_data = PBShapeGenerators.create_box(Vector3(4.0, 5.0, 0.6))
 	fall_wall.position = Vector3(4.5, 2.5, -5.3)
 	fall_wall.collider_type = PBMesh.ColliderType.ACCURATE
-	fall_wall.pb_mesh_data.materials = [_get_wet_tiles_material()]
+	fall_wall.pb_mesh_data.materials = [wet_tiles_material()]
 	root.add_child(fall_wall)
 
 	# Standing water sheets: the plane's local +X/+Z span the sheet, and the
@@ -316,22 +316,22 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# of the wall at that texel, so the stone reads through the thin parts and
 	# the rope crests go almost opaque. It is emitted before the core, which is
 	# the order the engine needs to blend the two layers back to front.
-	var sheet := _make_water_sheet("Waterfall_Sheet", 2.0, 4.2,
+	var sheet := make_water_sheet("Waterfall_Sheet", 2.0, 4.2,
 		Vector3(fall_x, 2.2, wall_face_z + 0.06),
 		"res://addons/poibuilder/materials/textures/waterfall_sheet.png",
 		Vector2(0.04, -0.75), Vector2(0.6, 0.35))
-	_water_material_props(sheet.pb_mesh_data.materials[0], true)
+	apply_water_props(sheet.pb_mesh_data.materials[0], true)
 	root.add_child(sheet)
 
 	# The core sheet is BLENDED (transparency = Alpha): the spray of water in
 	# front of the fall lets the wall through, which is what reads as "wet".
 	# It also sits in front of the opaque sheet, so it blends over finished
 	# pixels whatever order the engine draws the two in.
-	var core := _make_water_sheet("Waterfall_Core", 0.9, 4.0,
+	var core := make_water_sheet("Waterfall_Core", 0.9, 4.0,
 		Vector3(fall_x - 0.25, 2.1, wall_face_z + 0.14),
 		"res://addons/poibuilder/materials/textures/waterfall_core.png",
 		Vector2(0.0, -1.15), Vector2(1.2, 0.5))
-	_water_material_props(core.pb_mesh_data.materials[0], true)
+	apply_water_props(core.pb_mesh_data.materials[0], true)
 	root.add_child(core)
 
 	# Pool: a flat ripple surface floating just above the courtyard floor, its
@@ -340,26 +340,26 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# It drifts TOWARD the viewer, i.e. away from the wall: on the floor +V runs
 	# toward +Z, and an advancing offset walks the pattern toward -V, so away
 	# from the wall is a NEGATIVE v speed.
-	var pool := _make_water_floor("Waterfall_Pool", 3.6, 3.2,
+	var pool := make_water_floor("Waterfall_Pool", 3.6, 3.2,
 		Vector3(fall_x, 0.04, wall_face_z + 1.6),
 		"res://addons/poibuilder/materials/textures/water_pool.png",
 		Vector2(0.02, -0.03), Vector2(0.55, 0.55))
-	_water_material_props(pool.pb_mesh_data.materials[0], true)
+	apply_water_props(pool.pb_mesh_data.materials[0], true)
 	root.add_child(pool)
 	# Foam ribbon: the churn pushed out of the impact point, its trailing edge
 	# at the wall so the churn starts where the water lands. Like the pool it
 	# spreads away from the wall, which is a NEGATIVE v speed for the reason
 	# above.
-	var foam := _make_water_floor("Waterfall_Foam", 2.8, 1.6,
+	var foam := make_water_floor("Waterfall_Foam", 2.8, 1.6,
 		Vector3(fall_x, 0.06, wall_face_z + 0.8),
 		"res://addons/poibuilder/materials/textures/water_foam.png",
 		Vector2(0.0, -0.30), Vector2(0.5, 0.9))
-	_water_material_props(foam.pb_mesh_data.materials[0], true)
+	apply_water_props(foam.pb_mesh_data.materials[0], true)
 	root.add_child(foam)
 	# Spray: a billboard whose texture scrolls upwards, so the mist appears to
 	# climb off the impact point. Billboard materials repeat their texture (the
 	# exporter only clamps tiling for decals), which is what lets it scroll.
-	var spray := _create_billboard_node("WaterfallSpray",
+	var spray := create_billboard("WaterfallSpray",
 		"res://addons/poibuilder/materials/textures/water_spray.png",
 		Vector2(2.2, 1.5), Vector3(fall_x, 0.62, wall_face_z + 0.35), false, true)
 	PBUv.set_scroll_speed(spray.material_override as Material, Vector2(0.0, 0.35))
@@ -378,19 +378,19 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# 7b. Billboards: Foliage & Trees (Lit and Unlit)
 	# ==========================================================================
 	# Lit Pine Tree
-	var tree_pine := _create_billboard_node("Tree_Pine",
+	var tree_pine := create_billboard("Tree_Pine",
 		"res://addons/poibuilder/materials/textures/tree_pine.png",
 		Vector2(2.5, 5.0), Vector3(3.5, 2.5, 4.0), true)
 	root.add_child(tree_pine)
 
 	# Lit Oak Tree
-	var tree_oak := _create_billboard_node("Tree_Oak",
+	var tree_oak := create_billboard("Tree_Oak",
 		"res://addons/poibuilder/materials/textures/tree_oak.png",
 		Vector2(4.0, 4.5), Vector3(-4.0, 2.25, 4.0), true)
 	root.add_child(tree_oak)
 
 	# Lit Bush
-	var bush := _create_billboard_node("Bush_Foliage",
+	var bush := create_billboard("Bush_Foliage",
 		"res://addons/poibuilder/materials/textures/bush_foliage.png",
 		Vector2(1.5, 1.5), Vector3(2.0, 0.75, 3.2), true)
 	root.add_child(bush)
@@ -400,7 +400,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# stayed at full brightness while everything around them went dark, and at
 	# a distance they read as flat white cards. A lit billboard samples the
 	# baked vertex lighting like the trees do.
-	var flowers := _create_billboard_node("Wildflowers",
+	var flowers := create_billboard("Wildflowers",
 		"res://addons/poibuilder/materials/textures/flower_patch.png",
 		Vector2(1.2, 1.2), Vector3(-2.0, 0.6, 2.0), true)
 	root.add_child(flowers)
@@ -463,14 +463,14 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# Authored as ordinary GPUParticles3D nodes; the exporter maps their process
 	# material and draw-pass quad onto the format, so the editor preview and the
 	# PSP playback are the same effect.
-	var brazier := _create_emitter("Emitter_Brazier", Vector3(-3.2, 3.05, -4.0),
+	var brazier := create_emitter("Emitter_Brazier", Vector3(-3.2, 3.05, -4.0),
 		"res://addons/poibuilder/materials/textures/particle_flame.png",
 		20, 0.8, 0.9, true, true, 2, 2)
 	root.add_child(brazier)
 
 	# Embers: the same fire with the additive glimmer instead of the flipbook,
 	# thrown wider and higher so the two read as one brazier.
-	var embers := _create_emitter("Emitter_Embers", Vector3(-3.2, 3.05, -4.0),
+	var embers := create_emitter("Emitter_Embers", Vector3(-3.2, 3.05, -4.0),
 		"res://addons/poibuilder/materials/textures/particle_glow.png",
 		12, 1.3, 0.32, true, false)
 	var ember_pm := embers.process_material as ParticleProcessMaterial
@@ -482,7 +482,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# Mist: the blend path — a soft puff at the foot of the waterfall, rising
 	# and swelling. Its texture carries a real alpha gradient, so the exporter
 	# keeps it as RGBA8888 and the runtime sorts it back to front.
-	var mist := _create_emitter("Emitter_Mist", Vector3(4.5, 0.35, -4.7),
+	var mist := create_emitter("Emitter_Mist", Vector3(4.5, 0.35, -4.7),
 		"res://addons/poibuilder/materials/textures/particle_smoke.png",
 		14, 1.7, 1.3, false, true)
 	root.add_child(mist)
@@ -594,12 +594,12 @@ static func _set_owner_recursive(node: Node, scene_owner: Node) -> void:
 ## A standing water sheet: a 1-cell plane whose normal (+Y) is rotated out of
 ## the wall it hangs on. `uv_scale` is the face's tiling (repeats per metre);
 ## the scroll speed lives on the material (see PBUv.set_scroll_speed).
-static func _make_water_sheet(name_str: String, width: float, height: float,
+static func make_water_sheet(name_str: String, width: float, height: float,
 		pos: Vector3, tex_path: String, scroll: Vector2, uv_scale: Vector2) -> PBMesh:
 	var node := PBMesh.new()
 	node.name = name_str
 	node.pb_mesh_data = PBShapeGenerators.create_plane(width, height)
-	node.pb_mesh_data.materials = [_water_material(name_str + "_Mat", tex_path, scroll)]
+	node.pb_mesh_data.materials = [water_material(name_str + "_Mat", tex_path, scroll)]
 	node.pb_mesh_data.faces[0].uv_scale = uv_scale
 	# local +X -> world +X, +Y (the plane normal) -> +Z out of the wall,
 	# +Z -> -Y (down): a right-handed basis whose sheet faces the courtyard.
@@ -608,18 +608,18 @@ static func _make_water_sheet(name_str: String, width: float, height: float,
 	return node
 
 ## A horizontal water surface (pool, foam ribbon) lying on the floor, normal up.
-static func _make_water_floor(name_str: String, width: float, depth: float,
+static func make_water_floor(name_str: String, width: float, depth: float,
 		pos: Vector3, tex_path: String, scroll: Vector2, uv_scale: Vector2) -> PBMesh:
 	var node := PBMesh.new()
 	node.name = name_str
 	node.pb_mesh_data = PBShapeGenerators.create_plane(width, depth)
-	node.pb_mesh_data.materials = [_water_material(name_str + "_Mat", tex_path, scroll)]
+	node.pb_mesh_data.materials = [water_material(name_str + "_Mat", tex_path, scroll)]
 	node.pb_mesh_data.faces[0].uv_scale = uv_scale
 	node.position = pos
 	node.collider_type = PBMesh.ColliderType.OFF
 	return node
 
-static func _water_material(name_str: String, tex_path: String, scroll: Vector2,
+static func water_material(name_str: String, tex_path: String, scroll: Vector2,
 		blended: bool = false) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = name_str
@@ -628,13 +628,13 @@ static func _water_material(name_str: String, tex_path: String, scroll: Vector2,
 	if ResourceLoader.exists(tex_path):
 		mat.albedo_texture = load(tex_path)
 	PBUv.set_scroll_speed(mat, scroll)
-	_water_material_props(mat, blended)
+	apply_water_props(mat, blended)
 	return mat
 
 ## Sets the transparency a water surface needs. TRANSPARENCY_ALPHA is the
 ## SOFT one: the retro exporters turn it into a blended texture with an 8-bit
 ## alpha ramp (and keep its mip chain), where DISABLED keeps it opaque.
-static func _water_material_props(mat: Material, blended: bool) -> void:
+static func apply_water_props(mat: Material, blended: bool) -> void:
 	var sm := mat as StandardMaterial3D
 	if sm == null:
 		return
@@ -650,7 +650,7 @@ static func _water_material_props(mat: Material, blended: bool) -> void:
 ## "emitters" lump (PBMapExporter._emitter_from_node). Nothing about it is
 ## retro-specific — the editor preview and the PSP playback are one effect —
 ## and the alpha ramp's peak is what becomes the runtime's size/colour knee.
-static func _create_emitter(name_str: String, pos: Vector3, tex_path: String,
+static func create_emitter(name_str: String, pos: Vector3, tex_path: String,
 		amount: int, lifetime: float, quad_h: float, additive: bool,
 		y_locked: bool = false, atlas_cols: int = 1, atlas_rows: int = 1) -> GPUParticles3D:
 	var p := GPUParticles3D.new()
@@ -725,7 +725,7 @@ static func _create_emitter(name_str: String, pos: Vector3, tex_path: String,
 	p.set_meta("poi_y_locked", y_locked)
 	return p
 
-static func _create_billboard_node(name_str: String, tex_path: String,
+static func create_billboard(name_str: String, tex_path: String,
 		size: Vector2, pos: Vector3, is_lit: bool, soft_alpha: bool = false) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.name = name_str
@@ -774,7 +774,7 @@ static func _get_checker_material() -> StandardMaterial3D:
 	_cached_checker_material = mat
 	return mat
 
-static func _get_tiles_material() -> StandardMaterial3D:
+static func tiles_material() -> StandardMaterial3D:
 	if _cached_tiles_material != null:
 		return _cached_tiles_material
 	var mat := StandardMaterial3D.new()
@@ -787,7 +787,7 @@ static func _get_tiles_material() -> StandardMaterial3D:
 	return mat
 static var _cached_wet_tiles_material: StandardMaterial3D = null
 
-static func _get_wet_tiles_material() -> StandardMaterial3D:
+static func wet_tiles_material() -> StandardMaterial3D:
 	if _cached_wet_tiles_material != null:
 		return _cached_wet_tiles_material
 	var mat := StandardMaterial3D.new()
