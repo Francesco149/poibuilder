@@ -1,5 +1,14 @@
 # ProBuilder → Godot Specification Extraction Protocol
 
+> **Historical: this extraction is COMPLETE and its output shipped.**
+> `SPECIFICATION.md` (201 sections, 711 citations) is the result, and nothing in
+> this repository is currently driven by the protocol below. These files are
+> kept as provenance for how that spec was produced:
+> `PROTOCOL.md`, `agent-prompt-template.md`, `gen-prompt.py`,
+> `assemble-spec.py`, `work-units.json`, `poibuilder-manifest.json`, `reports/`.
+> Do not treat the assignments below as current work. For how the project is
+> built today see `CLAUDE.md`; for what is left to do, the README roadmap.
+
 ## Goal
 
 Extract a complete, precise specification of every feature, UX interaction,

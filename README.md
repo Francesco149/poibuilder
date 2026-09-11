@@ -27,17 +27,19 @@ https://github.com/user-attachments/assets/bc2a71ff-8978-433f-8258-80be66e44397
 PoiBuilder bridges the gap between **modern 3D level authoring** and **hardcore retro hardware constraints**:
 
 - **Modern Engine Target (glTF / GLB)**: Author complex scenes using native PBR materials, multi-layer alpha splatting, decal stamps, arbitrary n-gons, and curved geometry — exported directly to standard `.glb` for modern engines (Godot 4, Unreal, Unity, WebGL).
-- **Dedicated Retro Target (PoiRetro `.pbm` v2 — Proven on Sony PSP)**: One-click export to a zero-overhead binary map format tailored for fixed-function hardware (PlayStation Portable MIPS Allegrex 333MHz, Dreamcast, PS2, custom retro engines):
+- **Dedicated Retro Target (PoiRetro `.pbm` v3 — measured on real Sony PSP hardware)**: One-click export to a zero-overhead binary map format tailored for fixed-function hardware (PlayStation Portable MIPS Allegrex 333MHz, Dreamcast, PS2, custom retro engines). v3 adds animated UV scrolling, three-valued alpha modes and the standard `emitters` lump; v1/v2 files still load.
   - **Zero-CPU Direct DMA**: Interleaved 24-byte vertex structures (`float u,v; uint32_t color; float x,y,z;`) matching Sony GU hardware registers (`GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D`), 16-byte aligned for direct display list DMA rendering with zero runtime vertex conversion.
   - **Power-of-Two 4x4 Tile Atlasing**: Packs 128x128 baked splat/stamp tiles into 512x512 atlases with edge-to-edge UV slot mapping, cutting draw calls and texture swaps by ~85% (81 $\rightarrow$ 12 calls).
-  - **Load-Time Mip Chains (the single biggest PSP win)**: swizzled mip chains are built for every opaque texture at load and sampled with trilinear minification. Without a chain the GE's tiny texture cache misses on nearly every fragment of a minified surface: a 512x512 texture at a grazing angle measures **25 Mfrag/s** against **480 Mfrag/s** for a cache-resident one — a 19x per-fragment penalty. Adding the chain took the courtyard scene from **27.25 ms to 0.58 ms per frame** (34.9 fps to 568 fps of headroom at the worst camera).
+  - **Load-Time Mip Chains, and the LOD policy that makes them pay (the single biggest PSP win)**: swizzled mip chains are built for every texture at load — including cutout foliage, whose chain uses an alpha-preserving combine so the silhouette does not erode — and sampled with a single-level mipmap filter. Without a chain, every minified surface pays a texture-cache miss per fragment: a 512x512 texture measures **25 Mfrag/s** against **480 Mfrag/s** for a cache-resident one, a 19x penalty. The level the hardware picks is "sharpest that averages ~1 texel/pixel", so the shipped policy biases it one step coarser and pins the baked splat/stamp meshes to one constant level. Measured on the device, at the worst view in the showcase (the foot of the waterfall): **25.2 ms → 2.79 ms per frame** when the bias moved from −1 to +1, and the stairs view 11.1 → 0.11 ms. The whole camera sweep now runs at **2.4-5.0 ms/frame (200-450 fps)**.
   - **Native 16-bit Swizzled Textures**: Direct `RGBA5551` conversion and memory swizzling (16-byte $\times$ 8-row tiles), cutting VRAM bandwidth in half and eliminating GPU texture cache thrashing.
   - **Pre-Baked Vertex Lighting & AO**: Direct sunlight, point lights, raytraced shadow casting, and Fibonacci hemisphere ambient occlusion pre-baked into 32-bit vertex colors (`0xAABBGGRR`) for rich atmospheric lighting with zero runtime lighting cost.
   - **Guardband Clipping & Spatial Chunking**: large surfaces are subdivided into spatial chunks ($\le 384$ vertices) and the near plane sits at 8cm. On-device profiling later showed the clipper was never the bottleneck for this scene — a guardband-crossing quad costs the same with clip planes on and off — so treat this as headroom, not as the reason it runs fast; textures were.
   - **Arbitrary Binary Metadata & Entity Scripting**: Extensible lump table embedding level descriptors, waypoints, and animated scripted entities (e.g. cyclic patrol spheres) directly within the map binary.
   - **Native Physical Collision**: Automatic extraction of box, trimesh, and ramp collision hulls for instant player traversal and raycasting.
   - **Standalone Homebrew Player & Viewer**: Includes native C PSP homebrew application (`EBOOT.PBP`, 60 FPS fly camera, HUD) and standalone Godot retro viewer with live physics play mode.
-  - **Known limitation — grazing-angle LOD seams**: on tiled floors viewed at a shallow angle, thin lines appear where neighbouring tile quads meet and shift as the camera moves. The Graphics Engine derives texture LOD **per primitive**, so adjacent tiles land on different mip levels and step in sharpness along their shared edge; the hardware has no anisotropic filtering and no per-surface LOD smoothing. Ruled out by measurement: mipmapping, atlas mip bleeding, coplanar z-fighting. Full investigation in `retro_engine/psp/HARDWARE-TESTING.md`. **If you know a technique that removes this on PSP hardware, contributions are genuinely welcome** — the two partial mitigations we have (`bias`, `level_mode=const`) trade it against sharpness or aliasing.
+  - **Stateless Particle Emitters (format standard)**: an emitter is a looping, stateless stream — particle *i*'s state at time *t* is a closed form of `(t, i, seed)`, so a runtime evaluates a few flops per particle with no simulation, no allocation and one draw call per emitter. Authored as ordinary `GPUParticles3D` nodes; the file's `emitters` lump carries position/direction/spread, speed/life ranges, gravity, damping, size and colour curves, rotation/spin, wobble, flipbook grid, blend flags and the seed. Additive emitters need no sorting; blended ones are drawn back-to-front. The whole 256-particle budget measures 0.72 ms gpu / 1.14 ms cpu on the device.
+  - **Known limitation — grazing-angle LOD seams**: on tiled floors viewed at a shallow angle, a step in sharpness appears where neighbouring tile quads meet, because the Graphics Engine derives texture LOD **per primitive** and the hardware has no anisotropic filtering or per-surface LOD smoothing. Ruled out by measurement: mipmapping, atlas mip bleeding, coplanar z-fighting. The practical mitigation now ships by default — the painted splat/stamp meshes are pinned to one constant mip level, which removes the step entirely for ~0.4 ms — and `retro_engine/psp/HARDWARE-TESTING.md` records the whole investigation, including the knobs (`bias`, `level_mode`, `detail_*`) and what was already ruled out. **Contributions that remove the residue without giving up per-surface LOD are welcome.**
+  - **Measured, not assumed**: every performance claim in this repository comes from `./run_psp_hw.sh` running the map on a real PSP over USB — cpu/gpu split per frame, a camera sweep, per-stage ablations and synthetic calibration probes. PPSSPP cannot price a PSP frame (it rasterises on the host GPU), so it is used for correctness and visuals only. `retro_engine/psp/OPTIMIZATION.md` is the engine's full optimization inventory; `retro_engine/RETRO-AUTHORING.md` is the authoring-side recipe book; `SPEC_RETRO_FORMAT.md` §11 tells an engine author how to get the same behaviour.
 ## Status
 
 Experimental but actively developed. Every phase lands with a green headless
@@ -117,8 +119,21 @@ workflow.
         metadata tags (`poi_stamps`, `poi_paint`).
       - **Dedicated Export Dialog & Toolbar Button**.
 - [x] **Standalone Retro Map Viewer (`run_viewer.sh`)**: free-flight WASD camera,
-      live scene stats, and 4 display modes (`[1]` Full Baked, `[2]` Vertex Lighting/AO,
-      `[3]` Textures Only, `[4]` High-contrast wireframe).
+      live scene stats, 5 display modes (`[1]` Full Baked, `[2]` Vertex Lighting/AO,
+      `[3]` Textures Only, `[4]` High-contrast wireframe with 3 styles, `[5]` Collider
+      inspection) plus a first-person **play mode** (`P`) that spawns a character
+      against the exported colliders
+- [x] **Animated UV scrolling textures** (PBM 3.0): speed authored on the material,
+      live in the editor viewport, carried through the GLB round trip (`poi_uv_scroll`)
+      and replayed identically in the viewer and on the device — including soft-alpha
+      blend modes through the whole pipeline
+- [x] **Particle emitters as part of the retro format** (`emitters` standard lump):
+      authored as `GPUParticles3D`, exported as stateless emitter records, rendered
+      with one draw call each and measured on PSP hardware
+- [x] **PSP renderer with a measured LOD policy**: load-time mip chains (alpha-preserving
+      for cutouts), a single-level mipmap filter with a +1 level bias, and per-mesh
+      pinning for painted splat/stamp detail — the fixes behind the waterfall view going
+      from 25 ms to 2.8 ms per frame on device
 - [x] **Full undo/redo** through the editor's own history, incl. whole gestures
 - [x] **Persistent toolbar** (tools, modes, ops, shape menu, grid, material, export)
       + a compact, draggable, collapsible overlay panel
@@ -151,10 +166,13 @@ agents**, directed and sign-off-tested by a human. The process:
    others) implements phases and fix rounds in agent sessions. Each commit
    carries a `Co-authored-by` trailer documenting exactly which model wrote
    it — the git history doubles as an experiment log.
-4. **Verify.** A hardened headless test suite (`run_tests.sh`, ~590 tests /
-   ~9.9k assertions) must stay green, and every phase ends with a human
+4. **Verify.** A hardened headless test suite (`run_tests.sh`, currently **834
+   tests / ~15.9k assertions** across 54 files, and it fails if any test script
+   was silently skipped) must stay green, and every phase ends with a human
    sign-off checklist driving the next round of fixes. Most of the real UX
-   quality comes from those sign-off rounds rather than the first pass.
+   quality comes from those sign-off rounds rather than the first pass. Retro
+   and PSP work additionally goes through the **device battery** on real
+   hardware — see "Measured, not assumed" above.
 
 **Brick walls we hit (and how they fell):**
 

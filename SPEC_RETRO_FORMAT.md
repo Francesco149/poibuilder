@@ -26,7 +26,7 @@ The **PoiBuilder Retro Map** format (`.pbm`) is a compact, zero-overhead, memory
 1. **Direct DMA / Hardware Alignment**: All vertex data is pre-interleaved into a single 24-byte structure matching native GPU registers (`GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D` on Sony PSP GU). Vertices require zero runtime rearrangement or format conversion.
 2. **Zero Runtime Decompression**: Textures are stored in native uncompressed power-of-two formats (16-bit `RGBA5551` or 32-bit `RGBA8888`) ready for immediate VRAM upload via DMA (`sceGuTexImage`).
 3. **Texture Swizzling Support**: 16-bit textures can be swizzled into 16-byte $\times$ 8-row cache-friendly Morton/tile blocks to eliminate memory bus thrashing.
-4. **Tile-Based Texture Atlasing**: Discrete baked tiles (splats, stamps, decals) are packed into 512x512 texture atlases with half-texel clamped UV coordinates.
+4. **Tile-Based Texture Atlasing**: Discrete baked tiles (splats, stamps, decals) are packed into 512x512 texture atlases whose slots map **edge-to-edge** (a tile samples right up to its slot border and the sampler clamps at the atlas edge; there is deliberately no half-texel inset, which would shift the pattern at every slot boundary).
 5. **Baked Vertex Lighting & AO**: Static scene illumination (directional sun, omni lights, shadows, and hemisphere ambient occlusion) is fully pre-baked into 32-bit vertex colors (`0xAABBGGRR`).
 6. **Built-in Physical Collision**: Dedicated bounding-box and triangle-mesh collision hulls are stored alongside visual meshes for native player collision and raycasting.
 7. **Arbitrary Binary Metadata & Entity Scripting**: Version 2 introduces an extensible metadata chunk table for embedding arbitrary binary payloads, level descriptors, waypoints, scripting logic, and entity definitions directly within the map file.
@@ -52,7 +52,7 @@ A `.pbm` file is composed of five sequential contiguous binary chunks in Little-
 |   └── ...                                                   |
 +-------------------------------------------------------------+
 | Collider Chunk (num_colliders entries)                      |
-|   ├── PbmColliderHeader (68 bytes)                          |
+|   ├── PbmColliderHeader (64 bytes)                          |
 |   └── Triangle Buffer (num_triangles * 36 bytes)            |
 |   └── ...                                                   |
 +-------------------------------------------------------------+
@@ -146,8 +146,16 @@ everything else → `NONE`; in glTF: `alphaMode` `BLEND` / `MASK` / absent).
 |---|---|---|---|
 | `PBM_TEX_FMT_RGBA8888` | `0` | 32 | 32-bit direct color: 8 bits Red, 8 bits Green, 8 bits Blue, 8 bits Alpha. |
 | `PBM_TEX_FMT_RGBA5551` | `1` | 16 | 16-bit direct color: 5 bits Red, 5 bits Green, 5 bits Blue, 1 bit Alpha (`R:0..4, G:5..9, B:10..14, A:15`). Halves VRAM usage. |
-| `PBM_TEX_FMT_RGBA4444` | `2` | 16 | 16-bit direct color: 4 bits Red, 4 bits Green, 4 bits Blue, 4 bits Alpha. |
-| `PBM_TEX_FMT_RGB565`   | `3` | 16 | 16-bit direct color: 5 bits Red, 6 bits Green, 5 bits Blue, 0 bits Alpha. |
+| `PBM_TEX_FMT_RGBA4444` | `2` | 16 | 16-bit direct color: 4 bits per channel, including alpha. **Legal in the format, not produced by the reference exporters.** |
+| `PBM_TEX_FMT_RGB565`   | `3` | 16 | 16-bit direct color: 5/6/5 with no alpha. **Legal in the format, not produced by the reference exporters.** |
+
+The reference exporters emit only `RGBA5551` (opaque and `CUTOUT`: 2 bytes per
+texel, swizzleable, one alpha bit is enough to cut a hard edge) and `RGBA8888`
+(`BLEND`: soft alpha needs 8 bits). Consumers that cannot sample 4444/565 MUST
+**reject them explicitly** rather than bind them as something else — the
+reference loader treats any other value as fatal, because a silently
+mis-sampled texture (a 4444 payload read as 8888) renders garbage that is far
+harder to diagnose than a refusal.
 
 ### Memory Swizzling Specification
 For 16-bit textures (`RGBA5551`) targeting Sony PSP GU hardware, pixels SHOULD be pre-swizzled or runtime-swizzled into 16-byte $\times$ 8-row tiles:
@@ -239,7 +247,7 @@ The canonical workflow to author scrolling textures in PoiBuilder:
 
 ## 6. Collider Chunk Specification
 
-The Collider Chunk contains `header.num_colliders` collision hulls. Each record has a 68-byte `PbmColliderHeader` followed by triangle vertex data if `type == PBM_COL_TRIMESH`.
+The Collider Chunk contains `header.num_colliders` collision hulls. Each record has a 64-byte `PbmColliderHeader` followed by triangle vertex data if `type == PBM_COL_TRIMESH`.
 
 ### `PbmColliderHeader` (64 bytes, packed)
 
@@ -750,8 +758,13 @@ In your frame loop:
        }
    }
    ```
-4. **Particle Stepping**:
-   Spawn particles over time and integrate velocity and gravity ($p + v \cdot \Delta t + \frac{1}{2} g \cdot \Delta t^2$).
+4. **Particles**:
+   Evaluate the emitter lump (§8) — particles are stateless: particle *i*'s
+   position at scene time *t* is the closed form
+   $p_i(t) = p_0 + d_i v_i \tau + \tfrac{1}{2} g \tau^2$ (with the analytic damped
+   form when the emitter drags, §8.3). There is nothing to integrate between
+   frames and nothing to allocate; two implementations that follow §8 show the
+   same particle field.
 
 ---
 
@@ -760,17 +773,16 @@ In your frame loop:
 To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 
 ```bash
-# 1. Open Godot Editor on isolated scratch project with the showcase map:
-./scratch.sh
-# (or via unified runner: ./test.sh scratch)
-
-# 2. Edit geometry, move entities, adjust triggers or ball pit parameters in Godot
-
-# 3. Re-export and test directly:
-# In scratch project terminal, run:
-#   ./export_to_raylib.sh
-# Or launch Raylib runner directly:
-#   ./run_raylib.sh
+# 1. Open the isolated scratch project with the showcase map:
+./scratch.sh                     # (or ./test.sh scratch)
+# 2. Edit geometry, move entities, adjust triggers or ball pit parameters in Godot.
+# 3. Export from the editor:  Export -> PoiRetro (.pbm)  (or Modern glTF for other targets)
+# 4. Run the map:
+./run_raylib.sh                  # interactive Raylib playground
+./run_raylib.sh path/to/map.pbm  # a specific export
+./run_raylib.sh --headless       # 60-frame automated check under Xvfb
+./run_viewer.sh                  # Godot retro viewer (visuals: baked / vertex colour / textures / wireframe / colliders + play mode)
+./run_psp_hw.sh --app            # the real thing: PSP over USB (performance lives here)
 ```
 
 ---
@@ -904,16 +916,158 @@ If the pattern moves the wrong way, the sign flipped somewhere: the file's
 meaning is "where the pattern travels", and hardware offset registers are
 commonly the opposite of it (see the implementation note in §5.1).
 
-## 11. Hardware Clipping & Performance Rules (PSP Guidelines)
+## 11. Getting the Most Out of the Format (Performance & Fidelity Rules)
 
-1. **Near-Plane Distance**:
-   Perspective projection near plane MUST be set between `0.05f` and `0.10f` meters (`sceGumPerspective(fov, aspect, 0.08f, 200.0f)`). A near plane of `0.5m` causes geometry within arm's reach of floors and stairs to intersect the near clipping plane, inducing heavy hardware re-triangulation.
-2. **Hardware Clipping Planes**:
-   Call `sceGuEnable(GU_CLIP_PLANES)` to ensure the hardware near-plane clipper handles near-Z triangles correctly without driver fallbacks.
-3. **Guardband Culling**:
-   Set `sceGuViewport(2048, 2048, 480, 272)` and `sceGuOffset(2048 - 240, 2048 - 136)`. Triangles within the $4096 \times 4096$ virtual coordinate space avoid software clipping and rasterize at full hardware fillrate.
-4. **Spatial Mesh Chunking**:
-   Large planar meshes (such as 12m terrain floors) SHOULD be subdivided into $\le 6\text{m} \times 6\text{m}$ spatial chunks rather than merged into a single multi-thousand-vertex draw call. This ensures that off-screen chunks are culled and only local triangles undergo near-plane testing.
+A `.pbm` says nothing about how fast it will run: the same file renders at 200
+fps or 35 fps depending on decisions the **consuming engine** makes and the
+**exporter** baked. Every number below was measured on a real PSP; the raw
+tables and the method are in `psp/HARDWARE-TESTING.md`, the engine-side
+rationale is in `psp/OPTIMIZATION.md`, and the authoring-side companion is
+`../RETRO-AUTHORING.md`.
+
+### 11.1 Textures decide everything
+
+The GE's texture cache is ~8 KB. A fragment whose sampled mip level fits it
+costs ~2 ns; one that misses costs ~37 ns — measured as **480 vs 27 Mfrag/s**,
+a 19x per-fragment penalty, and the single most important number in this
+document.
+
+A conforming consumer MUST:
+
+1. **Build a mip chain for every texture at load** (one buffer per level, down
+   to 16x16). Without a chain, every minified surface pays the 19x; with one,
+   the fetch footprint collapses to roughly one texel per pixel.
+2. **Sample the chain with a mipmap minification filter**
+   (`GU_LINEAR_MIPMAP_NEAREST` on PSP). The plain filters ignore the chain
+   entirely — this is the mistake that makes a "fixed" build measure no faster.
+3. **Keep magnification linear**, and drop trilinear unless it is paid for:
+   it doubles the fetch set (two levels per fragment) for a level-crossing
+   smoothness that per-primitive LOD steps through anyway. Measured at the
+   worst view: 25.21 ms (trilinear) vs 14.61 ms (single level) at equal bias.
+4. **Swizzle 16-bit levels, keep 32-bit levels linear.** The 16-bit swizzle
+   layout does not apply to `RGBA8888`; each level needs its own base/size
+   register either way.
+5. **Downsample alpha-aware**: opaque and `BLEND` textures by alpha-weighted
+   box filter; `CUTOUT` textures with an **ANY-opaque-wins** combine, because
+   averaging a 1-bit alpha erodes the silhouette away by the fourth level (and
+   shipping cutouts *without* a chain costs the full 19x on 256x512 foliage:
+   measured 6.09 → 0.46 ms when the chain arrived).
+6. **Clamp atlas sampling, repeat standalone textures.** An offset applied to an
+   atlas slot drags the tile across its border; a scrolling texture must
+   therefore never be atlased (§5.1.2).
+
+Recommended LOD policy, and the cliff it sits on:
+
+- **Bias the level one step coarser than "sharpest" (`+1`).** The hardware's
+  automatic level is the sharpest that still averages ~1 texel per pixel, and
+  at that level the sampled footprint *is* the surface's on-screen area — so a
+  forward bias is what keeps a close-up surface inside the cache. A **negative**
+  bias samples past the boundary and costs 10-100x at close range: at the
+  showcase's worst view, 25.21 ms (bias -1.0) → 11.20 (0.0) → 4.32 (+0.5) →
+  **2.79 (+1.0)** → 1.02 (+2.0).
+- **Override the bias per mesh where detail matters.** The GE picks one level
+  per primitive, so a floor crossing several levels in a few metres steps in
+  sharpness at every tile boundary — invisible at level 0-1, a visible band once
+  the level is coarse. Pinning the baked tile/splat meshes to ONE constant level
+  removes the step entirely: measured 0.57 ms gpu for the painted floor at a
+  grazing view (326 fps) against 1.68 ms pinned at level 0 and 26.2 ms with no
+  chains at all.
+- All of it is tunable at runtime in the reference engine (`poi_render.txt`:
+  `bias=`, `filter=`, `level_mode=`, `detail_mesh=`, `detail_bias=`,
+  `detail_const=`, `cutout_mips=`, `mips=`), so a policy can be A/B'd on the
+  device without a rebuild.
+
+### 11.2 Fill: budget in screens per frame, not in objects
+
+A 480x272 screen is 130 560 fragments = ~0.27 ms of untextured fill, measured at
+487-490 Mfrag/s. A 60 fps budget is 16.67 ms. Consequences:
+
+- Count **screens**, not models: the showcase's worst view spends ~10 screens of
+  fill (4.98 ms/frame) and its most common views ~3-5.
+- Every **blended** surface re-shades the pixels underneath it, so stacked alpha
+  (water sheet + core + spray + pool + foam) is the most expensive kind of
+  content per visible pixel. It is affordable at showcase sizes; a
+  screen-filling stack of it is not.
+- **Close-up hero surfaces** cost the most (their sampled level is the biggest,
+  and they cover the most screen). That is where to look first when a view is
+  slow.
+- Backface culling is worth ~3 ms at the showcase's worst view. The format's
+  winding convention (triangles wound CCW seen from the front, i.e. the outward
+  normal) exists so consumers can cull; do not disable it.
+
+### 11.3 Geometry & submission
+
+1. **Vertex layout**: 24-byte interleaved `float u, v; uint32_t color;
+   float x, y, z;` — `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF |
+   GU_TRANSFORM_3D`. Consumers submit the buffer directly; there is nothing to
+   convert.
+2. **Draw calls and triangles are cheap** (~0.94 µs per draw call, ~2.2 M
+   tris/s). At the showcase's 25-30 draws and ~1 500 triangles they are not the
+   bottleneck; two orders of magnitude of fill is.
+3. **Spatial chunking** (exporters emit $\le 384$-vertex chunks) exists so that
+   a mesh's bounds are *local*: one draw call per neighbourhood, bounded
+   per-mesh cost, and tight AABBs for any consumer that wants them. It is
+   **not** a culling mechanism — the reference runtime draws every chunk every
+   frame, and measured that culling was never the win.
+4. **Near plane**: keep it tight (`0.05`-`0.10` m; the reference uses 0.08).
+   A 0.5 m near plane puts the floor within arm's reach inside the clip volume
+   and forces the hardware clipper to split large treads and floor quads.
+5. **Clipping is effectively free** on this hardware: a guardband-crossing quad
+   measures 0.26 ms with clip planes on and off. Keep `GU_CLIP_PLANES` on for
+   correctness and the guardband (`sceGuViewport(2048, 2048, 480, 272)` +
+   `sceGuOffset(2048 - 240, 2048 - 136)`) for the virtual coordinate space, but
+   do not expect either to be the reason a frame is fast or slow.
+
+### 11.4 Depth: tested, not written
+
+The reference runtime tests depth (`GU_LEQUAL`) but **never writes it** —
+`GU_DEPTH_MASK` stays off in every pass. That makes draw order the visibility
+order, which is exactly what the exporters arrange: opaque meshes are emitted so
+the surviving surface is drawn last, and transparent surfaces are emitted in
+blend order (a scrolling sheet is emitted before the core it must blend onto).
+Writing depth is measured **free** on this content (0.114 vs 0.114 ms; 2.749 vs
+2.735; 0.688 vs 0.683) and buys real occlusion, but it exposes z-fighting
+between the coplanar floor layers (base material quad and baked tile quads at
+the same height) that the current arrangement hides — so consumers choosing to
+write depth should verify those layers. The reference knob is `depth_write=1`.
+
+### 11.5 Particles
+
+- The emitter lump (§8) is **stateless by design**: particle state is a pure
+  function of `(t, index, seed)`, so a consumer evaluates a few flops per
+  particle per frame with no state, no allocation and one draw call per emitter.
+- **256 particles per map** is the format's budget; measured, the whole budget
+  costs 0.72 ms gpu / 1.14 ms cpu — about a fifth of a frame. Particle *count*
+  is cheap; particle *screen area* is not.
+- **Additive** emitters need no sorting (order-independent) and should be the
+  default near the camera. **Blended** emitters must be drawn back-to-front and
+  pay their fill like any surface; keep them small or distant.
+- An emitter texture must be **small and power-of-two**, and a **multi-cell
+  flipbook must not be sampled with a mip chain** (a mip level would average
+  neighbouring frames together) — single-cell emitter textures *should* use the
+  chain, which is what keeps the mist from costing 19x.
+
+### 11.6 Colliders, metadata and entities
+
+- Colliders are a separate chunk and cost nothing to render; `BOX` is an AABB,
+  `TRIMESH` carries triangles, `RAMP` is the smooth stair wedge. Pick the
+  cheapest type that is walkable.
+- The metadata table (§7) is the extension point: put level descriptors,
+  waypoints, spawn logic, audio triggers and arbitrary payloads in it rather
+  than inventing new chunks. Unknown tags MUST be skipped, so metadata is the
+  compatible way to add anything.
+- Scripted entities are just data: the reference runtime animates a patrol
+  sphere along waypoints from the metadata lump, and adds one small draw call.
+
+### 11.7 The shortest version
+
+If a consumer implements only this list, it will be within ~10% of the reference
+runtime: swizzled 16-bit + linear 32-bit textures, mip chains for everything
+with the right alpha combine, a mipmap minification filter with a +1 level bias
+and per-mesh pinning for painted detail, one interleaved vertex buffer per mesh
+with no conversion, backface culling, alpha-test + blend for `CUTOUT`/`BLEND`
+and nothing else, and additive-before-blended emitters with no sorting required
+for the additive half.
 
 ---
 
@@ -926,15 +1080,18 @@ A compliant PBM exporter and loader MUST pass the following tests:
 3. Successfully load textures with power-of-two dimensions and 16-byte memory alignment.
 4. Successfully parse arbitrary metadata entries by tag and type.
 5. Store a `BLEND` texture as RGBA8888 and never leave it without its mip chain;
-   store a `CUTOUT` texture without a mip chain.
+   build a `CUTOUT` texture's chain with the alpha-preserving combine (never
+   without a chain, and never with a plain box filter, which erodes the
+   silhouette).
 6. Never apply a UV scroll to a tile-atlas texture, and keep every scrolling
    mesh's texture standalone.
 7. Load the standard `emitters` lump (§8): skip a lump whose own version is newer
    than the loader supports, clamp an over-budget `count` instead of failing
    (stating the clamp in the log), and derive the per-particle constants with the
    specified `pbm_rand` so two implementations show the same particle field.
-8. Never sample an emitter texture with a mip chain, and never let an emitter
-   reference a tile-atlas texture.
+8. Sample a SINGLE-CELL emitter texture through its mip chain and keep a
+   multi-cell flipbook on level 0 (a mip level would average neighbouring
+   frames together); never let an emitter reference a tile-atlas texture.
 9. Draw additive emitters without sorting them and blended emitters
    back-to-front; leave the emitters unlit.
 10. 100% binary validation against the reference Python oracle (`pbm_conv.py`)

@@ -1,13 +1,32 @@
 # ProBuilder Godot Implementation Protocol
 
+> **This is the HISTORICAL plan, not the current state.** It is the IU breakdown
+> the project was originally built from: small, independently testable units for
+> Flash sub-agents, with a human sign-off gate per phase. It is kept because the
+> phase names ("Phase 7 mesh ops", "Phase 9-lite") are the vocabulary the round
+> history in `CLAUDE.md` uses, and because the gates below still apply.
+>
+> **What is authoritative today:**
+> - current status and conventions → `CLAUDE.md`
+> - feature status → `README.md` (feature checklist + roadmap)
+> - architecture, file by file → `CLAUDE.md` → Architecture
+> - tests → `./run_tests.sh` (never raw GUT; see Testing below)
+> - the retro pipeline → `retro_engine/RETRO-AUTHORING.md`,
+>   `retro_engine/psp/OPTIMIZATION.md`, `SPEC_RETRO_FORMAT.md`
+>
+> Where this document and the code disagree, the code and the documents above
+> win. Do not treat the phase list below as a backlog: several phases were
+> completed in a different order, some IUs were replaced outright (the
+> hand-rolled input stack became native subgizmos), and the remaining work lives
+> in the README roadmap.
+
 ## Overview
 
 This document defines the phased implementation plan for building a ProBuilder
-clone as a Godot 4.3+ editor plugin. The work is decomposed into small,
-independently testable implementation units (IUs) sized for Gemini 3.7 Flash
-sub-agents. Each IU produces working code with headless smoke tests.
-
-The plugin is named **ProBuilder** (internal class prefix: `PB`).
+clone as a Godot editor plugin (the plugin is **PoiBuilder** since v0.8.0;
+internal class prefix `PB`). The work is decomposed into small, independently
+testable implementation units (IUs). Each IU produces working code with
+headless smoke tests.
 
 ## Principles
 
@@ -26,65 +45,37 @@ The plugin is named **ProBuilder** (internal class prefix: `PB`).
 
 ## Directory Structure
 
+The authoritative, maintained layout is in `CLAUDE.md` → **Architecture**
+(plugin entry, core data model, editor integration, gizmo plugin, tool bridge,
+toolbar, overlays, shape creator, picking, commands, shapes, mesh ops,
+materials, export). The tree that was planned here described files that were
+never written (`editor/pb_input.gd`, `editor/tools/*`, `shaders/`) and an
+`export/` folder that is now the retro pipeline rather than OBJ/PLY/STL
+writers; keeping a second, drifting copy of the layout helped nobody.
+
+Top level, for orientation:
+
 ```
 newbuilder/
-├── project/                          # Godot project root
-│   ├── project.godot
-│   ├── addons/
-│   │   └── poibuilder/              # The plugin
-│   │       ├── plugin.cfg
-│   │       ├── poibuilder_plugin.gd # Main EditorPlugin entry
-│   │       ├── core/                # Data model, math, mesh representation
-│   │       │   ├── pb_mesh_data.gd  # PBMeshData Resource
-│   │       │   ├── pb_face.gd       # PBFace Resource
-│   │       │   ├── pb_edge.gd       # PBEdge
-│   │       │   ├── pb_shared_vertex.gd
-│   │       │   ├── pb_math.gd       # Math utilities
-│   │       │   ├── pb_mesh_ops.gd   # Mesh operations (extrude, bevel, etc.)
-│   │       │   └── pb_topology.gd   # WingedEdge, traversal
-│   │       ├── editor/              # Editor integration
-│   │       │   ├── pb_editor.gd     # Editor state, mode management
-│   │       │   ├── pb_selection.gd  # Selection state + picking
-│   │       │   ├── pb_input.gd      # Input handling
-│   │       │   ├── pb_toolbar.gd    # Toolbar UI
-│   │       │   ├── pb_overlay.gd    # Wireframe/selection overlay rendering
-│   │       │   └── tools/           # Individual tools
-│   │       │       ├── pb_tool.gd   # Base tool class
-│   │       │       ├── pb_tool_move.gd
-│   │       │       ├── pb_tool_rotate.gd
-│   │       │       ├── pb_tool_scale.gd
-│   │       │       ├── pb_tool_cut.gd
-│   │       │       └── pb_tool_shape.gd
-│   │       ├── commands/            # Undo/redo command pattern
-│   │       │   ├── pb_command.gd    # Base command
-│   │       │   ├── cmd_move_elements.gd
-│   │       │   └── ...
-│   │       ├── shapes/              # Shape generators
-│   │       │   ├── pb_shape_cube.gd
-│   │       │   ├── pb_shape_cylinder.gd
-│   │       │   └── ...
-│   │       ├── gui/                 # Dock panels, dialogs
-│   │       │   ├── docks/
-│   │       │   └── dialogs/
-│   │       ├── shaders/             # Overlay shaders, picking shader
-│   │       ├── icons/               # Tool icons
-│   │       ├── debug/               # Debug/telemetry infrastructure
-│   │       │   ├── pb_logger.gd
-│   │       │   ├── pb_telemetry.gd
-│   │       │   └── pb_debug_dock.gd
-│   │       └── export/              # OBJ, PLY, STL, GLTF export
-│   ├── tests/                       # GUT test scripts
-│   │   ├── test_pb_face.gd
-│   │   ├── test_pb_mesh_data.gd
-│   │   └── ...
-│   └── test_scenes/                 # Pre-built scenes for human verification
-│       ├── human_test_phase1.tscn
-│       └── ...
-├── SPECIFICATION.md                 # Assembled spec (37k lines)
-├── UNITY-GODOT-MAPPING.md           # API mapping reference
-├── IMPLEMENTATION.md                # This file
-├── reports/                         # Spec extraction reports
-└── ...
++-- project/                 Godot project (the plugin lives in addons/poibuilder/)
+|   +-- addons/poibuilder/   THE PLUGIN: plugin.cfg, poibuilder_plugin.gd,
+|   |                        core/ editor/ commands/ shapes/ mesh_ops/ gui/
+|   |                        materials/ export/ debug/ icons/
+|   +-- tests/               GUT test scripts (54 files, run via run_tests.sh)
+|   +-- test_scenes/         human sign-off scenes, showcase builder, viewer
++-- SPECIFICATION.md         ProBuilder behaviour spec (37k lines)
++-- SPEC_RETRO_FORMAT.md     the .pbm format + performance rules for consumers
++-- UNITY-GODOT-MAPPING.md   Unity -> Godot API translation reference
++-- CLAUDE.md                current status, conventions, round history
++-- IMPLEMENTATION.md        this file (historical plan)
++-- retro_engine/            the retro pipeline: exporters, viewers, PSP homebrew
+    +-- pbm_conv.py          Python GLB -> PBM oracle (parity reference)
+    +-- pbm_analyze.py       host-side view analysis (coverage, minification)
+    +-- pbm_profile_report.py  turns a device battery log into a verdict
+    +-- RETRO-AUTHORING.md   authoring recipes for the retro target
+    +-- raylib/              Raylib custom-engine runner
+    +-- psp/                 PSP homebrew renderer + HARDWARE-TESTING.md,
+                             OPTIMIZATION.md, run/build scripts
 ```
 
 ## Testing Strategy
@@ -94,13 +85,14 @@ newbuilder/
 Every IU writes tests using GUT (Godot Unit Test framework).
 
 ```bash
-# Run all tests headlessly
-godot-mono --headless -s addons/gut/gut_cmdln.gd \
-  -gdir=res://tests -ginclude_subdirs -gexit
+# THE ONLY accepted way to run tests, from the repo root:
+./run_tests.sh
 
-# Run specific test
-godot-mono --headless -s addons/gut/gut_cmdln.gd \
-  -gtest=res://tests/test_pb_mesh_data.gd -gexit
+# It refreshes the class cache, runs GUT, fails on ANY script error, and fails
+# if a test script was silently skipped. Raw `godot-mono --headless -s
+# addons/gut/gut_cmdln.gd …` invocations report green even when test scripts
+# fail to parse -- never cite them as evidence that a change works, and never
+# claim "tests pass" without run_tests.sh output.
 ```
 
 Test categories:
@@ -434,7 +426,7 @@ You are implementing IU {iu_id}: {description}
 ## Required Output
 1. Create/modify: {file_list}
 2. Create test: tests/{test_file}
-3. Run: godot-mono --headless -s addons/gut/gut_cmdln.gd -gtest=res://tests/{test_file} -gexit
+3. Run: ./run_tests.sh   (never raw GUT -- it reports green on unparseable tests)
 4. Test must pass with exit code 0.
 
 ## Constraints

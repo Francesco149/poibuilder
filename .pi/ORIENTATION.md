@@ -1,31 +1,55 @@
-# ProBuilder Godot — Worker Orientation
+# PoiBuilder — Worker Orientation
 
-You are implementing part of a ProBuilder clone as a Godot 4.3+ editor plugin.
+You are implementing part of **PoiBuilder** (a ProBuilder-style mesh builder for
+Godot, plugin folder `addons/poibuilder/`), including its retro pipeline
+(exporters + a PSP homebrew renderer). The installed engine is **Godot 4.7**.
 
 ## Project Layout
 
 ```
 /opt/src/newbuilder/
-├── project/                    # Godot project root
-│   ├── project.godot
-│   ├── addons/poibuilder/      # THE PLUGIN (your work goes here)
-│   │   ├── plugin.cfg
-│   │   ├── poibuilder_plugin.gd
-│   │   ├── core/               # Data model, math, mesh ops
-│   │   ├── editor/             # Editor integration, tools
-│   │   ├── commands/           # Undo/redo command pattern
-│   │   ├── shapes/             # Shape generators
-│   │   ├── gui/                # Dock panels, dialogs
-│   │   ├── shaders/            # Overlay and picking shaders
-│   │   ├── debug/              # PBLogger, PBTelemetry, PBDebugDock
-│   │   └── export/             # OBJ, PLY, STL exporters
-│   ├── tests/                  # GUT test scripts (your tests go here)
-│   └── test_scenes/            # Human verification scenes
-├── SPECIFICATION.md            # Full ProBuilder spec (37k lines)
-├── UNITY-GODOT-MAPPING.md      # Unity→Godot API translation reference
-├── IMPLEMENTATION.md           # Phased implementation plan with IU details
-└── reports/                    # Spec extraction reports (JSON)
++-- project/                    # Godot project root
+|   +-- project.godot
+|   +-- addons/poibuilder/      # THE PLUGIN (your work goes here)
+|   |   +-- plugin.cfg
+|   |   +-- poibuilder_plugin.gd   # EditorPlugin entry point
+|   |   +-- core/               # Data model, math, topology, splat/paint data
+|   |   +-- editor/             # Editor integration (gizmo plugin, toolbar,
+|   |   |                       #   element editor, tool bridge, picking,
+|   |   |                       #   shape creator, grid, actions)
+|   |   +-- commands/           # Undo/redo command pattern
+|   |   +-- shapes/             # Primitive generators + shape params
+|   |   +-- mesh_ops/           # PBMeshOps: extrude/inset/merge/weld/cut/...
+|   |   +-- materials/          # Default material, textures, splat/decal shaders
+|   |   +-- export/             # THE RETRO PIPELINE: map exporter, tile/light
+|   |   |                       #   bakers, colliders, PBPbmConverter (.pbm)
+|   |   +-- gui/                # Docks (material/UV, paint, stamp) + overlay
+|   |   +-- debug/              # PBLogger, PBTelemetry
+|   +-- tests/                  # GUT test scripts (your tests go here)
+|   +-- test_scenes/            # Human sign-off scenes, showcase, retro viewer
++-- SPECIFICATION.md            # Full ProBuilder behaviour spec (37k lines)
++-- SPEC_RETRO_FORMAT.md        # The .pbm format + consumer performance rules
++-- UNITY-GODOT-MAPPING.md      # Unity->Godot API translation reference
++-- CLAUDE.md                   # Current status, conventions, round history
++-- IMPLEMENTATION.md           # Historical IU plan (not the current state)
++-- retro_engine/               # Retro pipeline: exporters, viewers, PSP homebrew
+|   +-- pbm_conv.py            # Python GLB->PBM oracle (parity reference)
+|   +-- RETRO-AUTHORING.md     # Authoring recipes for the retro target
+|   +-- psp/HARDWARE-TESTING.md, OPTIMIZATION.md  # Device measurement + engine
++-- reports/                    # Spec extraction reports (historical)
 ```
+
+## Rules that apply to every worker
+
+1. **Tests**: `./run_tests.sh` from the repo root is the only accepted way to
+   run them (raw GUT reports green even when test scripts fail to parse).
+2. **Performance claims need a PSP.** `./run_psp_hw.sh` over USB is the only
+   source of truth; PPSSPP and the desktop viewers are for "does it crash" and
+   "does it look right" only. Never write a perf claim that was not measured on
+   hardware, and if no PSP is connected, say so rather than assuming.
+3. **Read before you write**: `CLAUDE.md` (conventions + the round history that
+   explains why the code looks unusual), then the architecture notes and the
+   retro docs listed above for the area you are touching.
 
 ## Reference Repos
 

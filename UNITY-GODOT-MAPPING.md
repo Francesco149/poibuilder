@@ -110,21 +110,23 @@ func _forward_3d_draw_over_viewport(viewport_control: Control):
 
 ### 3.2 Dock Panels
 
-Cyclops uses `EditorDock` (a Godot 4.3+ class). For broader compatibility:
+Cyclops uses `EditorDock` (a Godot 4.3+ class). **PoiBuilder does not**: the
+material dock is added with the long-standing
+`add_control_to_dock(DOCK_SLOT_RIGHT_UL, panel)` call, which still works on the
+project's target engine (4.7) and keeps the dock code free of version branches:
 
 ```gdscript
-# Godot 4.3+
-var dock = EditorDock.new()
-dock.add_child(panel)
-dock.title = "Tool Properties"
-dock.default_slot = EditorDock.DOCK_SLOT_RIGHT_BL
-add_dock(dock)
+# What the plugin actually does (poibuilder_plugin.gd)
+add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
+remove_control_from_docks(material_dock)   # on teardown
 
-# Godot 4.0-4.2 fallback
-add_control_to_dock(DOCK_SLOT_RIGHT_BL, panel)
+# EditorDock (4.3+) is the newer API — a custom dock with its own title and
+# slot — and is worth migrating to if a dock ever needs to be user-movable:
+#   var dock = EditorDock.new(); dock.add_child(panel); add_dock(dock)
 ```
 
-Our target: Godot 4.3+ (EditorDock API available). This matches Cyclops's approach.
+Project target: **Godot 4.7** (the installed engine); 4.3+ APIs are available,
+older 4.x are untested (see `CLAUDE.md`).
 
 ### 3.3 Custom Node Types vs Custom Types
 
