@@ -22,6 +22,13 @@ source — and are intentional.
 godot-mono --editor project/project.godot
 # Retro pipeline: see retro_engine/RETRO-AUTHORING.md (authoring recipes) and
 # run_viewer.sh / run_psp_hw.sh --app (viewer / real device).
+#
+# Build artifacts are gitignored and regenerated on demand:
+#   project/exports/*.glb        -> ./run_tests.sh (test_pb_map_showcase.gd
+#                                   exports all five presets) or the Export dialog
+#   test_scenes/test_map_showcase.tscn -> same test, or ./showcase_map.sh
+#   retro_engine/psp/EBOOT.PBP + PoiRetro_PSP.zip -> ./run_psp.sh (builds if missing)
+#   showcase_video/out/*         -> ./showcase_video/build.sh
 ```
 
 Interactive launchers (`./test.sh raylib|psp`, `./run_raylib.sh`) need an X
@@ -2420,6 +2427,21 @@ compact-HUD changes).
 
 ## Key Conventions
 
+- GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this
+  repo can produce it, it does not belong in git. That covers video and audio
+  files, rendered frame sequences, screenshots, map exports (`.glb`, `.pbm`),
+  built PSP binaries (`EBOOT.PBP`, `*.prx`, `PoiRetro_PSP.zip`), generated
+  scenes and extracted textures (`test_map_showcase.tscn`, `*_albedo.png`),
+  device logs, and test reports. The reason is measured, not stylistic: the
+  files above were committed before v0.9.78 and cost ~100 MB of history for
+  artifacts a reader never needs (the README video alone was 9 MB of it), so
+  the whole history was rewritten to drop them. The root `.gitignore` lists
+  every one of them with the command that regenerates it; build output goes
+  under a gitignored dir (`showcase_video/bake/`, `showcase_video/out/`) or
+  `/tmp`. The only tracked binaries are the authored textures, materials and
+  fonts the plugin ships. If a `git add` is about to stage something over
+  ~100 KB, it is an artifact — commit the source instead, and if a fresh
+  clone needs the file, add the regeneration step to the docs.
 - COMMIT SIGNING (mandatory): every commit must end with a blank line plus
   a `Co-authored-by` trailer naming the model that produced it, in the
   format used across the history:
