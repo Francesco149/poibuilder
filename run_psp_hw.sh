@@ -125,23 +125,39 @@ else
     echo "=== [3c/5] no stale module -- loading without a reset ==="
 fi
 
-echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
+reset_device() {
+    echo "=== clearing the device state (psplink reset) ==="
+    timeout 30 "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
+    for i in $(seq 1 40); do
+        sleep 1
+        if timeout 10 "${PSPSH[@]}" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+            echo "link back after reset (${i}s)"
+            return 0
+        fi
+    done
+    die "psplink did not come back after the reset.
+  The PSP is now sitting at the XMB: relaunch PSPLink, then re-run."
+}
+
 # A resident module blocks the next load (ALREADY_LOADED). The test binary
 # unloads itself on exit, so normally there is nothing to clear.
 #
 # DELIBERATELY NOT `modstop`: force-stopping a module that is still running
 # leaves this PSP unable to start any further module (they load, report
 # success, and then never execute — a device reset is the only recovery).
-for uid in $("${PSPSH[@]}" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
-    if "${PSPSH[@]}" -n -e "modunld $uid" >/dev/null 2>&1; then
-        echo "cleared leftover module $uid"
-    else
-        die "module $uid is still resident and will not unload harmlessly.
-  It is probably still running: press Start+Select on the PSP to exit and
-  unload it, then re-run. (Do not force it — that wedges module startup.)"
-    fi
-done
-timeout 60 "${PSPSH[@]}" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
+load_module() {
+    for uid in $("${PSPSH[@]}" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
+        if "${PSPSH[@]}" -n -e "modunld $uid" >/dev/null 2>&1; then
+            echo "cleared leftover module $uid"
+        else
+            echo "module $uid would not unload; the wedge recovery below handles it"
+        fi
+    done
+    timeout 60 "${PSPSH[@]}" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
+}
+
+echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
+load_module
 
 if [ "$MODE" = app ]; then
     echo "=== app running on the device (start+select or Home exits) ==="
@@ -159,9 +175,17 @@ if [ "$MODE" = app ]; then
 fi
 
 echo "=== [5/5] Waiting for host0:/poi_profile.txt (up to ${WAIT_SECS}s) ==="
+# The profiler writes its header within ~2 s of starting (after the map load),
+# so "resident module, no file" after WEDGE_GRACE means the documented wedge:
+# the module loaded and reported success but never executed, because the GE and
+# display controller were left in the state the PREVIOUS run died in. Observed
+# on roughly every other run when the previous module exited by itself. It is
+# recoverable, so recover: reset, reload, and carry on with the same run.
+WEDGE_GRACE=30
 prev=-1
 stable=0
 link_lost=0
+retried=0
 for ((i = 0; i < WAIT_SECS; i++)); do
     cur=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
     if [ "$cur" != "0" ] && [ "$cur" = "$prev" ]; then
@@ -179,6 +203,15 @@ for ((i = 0; i < WAIT_SECS; i++)); do
         echo "PSP left USB at ${i}s (unplugged or suspended)"
         link_lost=1
         break
+    fi
+
+    if [ "$cur" = "0" ] && [ "$i" -ge "$WEDGE_GRACE" ] && [ "$retried" = 0 ]; then
+        echo "no output after ${WEDGE_GRACE}s: module loaded but never ran -- recovering"
+        reset_device
+        load_module
+        retried=1
+        prev=-1
+        stable=0
     fi
     sleep 1
 done

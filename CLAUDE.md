@@ -793,6 +793,72 @@ drag, and the debug gate:
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
 
+v0.9.74 round complete ✓ — the waterfall-foot slowdown: the LOD bias was over
+the GE's texture-cache cliff (reported from the device, found with the battery,
+fixed, guarded):
+- THE REPORT: standing right in front of the waterfall base the app's HUD read
+  **gpu 24.7-24.8 ms / 36 fps** (three captures, rock steady) while every other
+  view read ~7 ms — and it stayed expensive while looking away from the mist.
+  Reproduced exactly on the device: the battery's new `waterfall` camera preset
+  (4.6 1.3 -2.3) measures `wf_base` = **25.12 ms**.
+- WHAT IT IS NOT (ablatated one state at a time on that pose — the scene there
+  is the SAME 1526 tris / 25-27 draws as the 8.7 ms spawn view, so everything
+  is per-fragment): particles `wf_noemit` 22.75 (only ~2 ms of 25 — the mist
+  costs, the flame is free, as the report said), scrolling `wf_noscroll` 24.67
+  (NOTHING — answered the "is it the scrolling texture" question), clip planes
+  25.10, depth test 25.12, culling 28.18. Skinnying it out:
+  `wf_notex` **0.69**, `wf_tex64` (a cache-resident 64x64 stand-in for every
+  texture, identical coverage) **2.96**. Texture sampling, specifically the
+  GE's ~8 KB texture cache.
+- THE MECHANISM, and why "sharper" WAS the bug: a fragment whose sampled mip
+  level fits the cache costs ~2 ns (481 Mfrag/s); one that misses costs ~37 ns
+  (27 Mfrag/s) — the same 19x the no-mip case pays. The level the hardware
+  picks from the UV derivatives is the sharpest that still averages ~1 texel
+  per pixel, so at that level the sampled footprint IS the surface's on-screen
+  AREA: 75 000 px of wall = ~75 000 texels of the chosen level (~150 KB for a
+  16-bit texture). Only close, screen-filling surfaces reach that — the exact
+  geometry of standing under a waterfall — and the cliff is sharp. The shipped
+  `tex_lod_bias = -1.0` ("trades a little softness back for detail", chosen
+  when the scene was cheaper and "quality was affordable") sampled one level
+  past it, and one level is the whole cliff:
+      bias -1 + trilinear  25.21 ms   (the replaced default)
+      bias -1 + mip_linear 14.61
+      bias  0 + mip_linear 11.20      (sharpest that still fits: 75 fps)
+      bias +0.5            4.32
+      bias +1              2.79       <- shipped
+      bias +2              1.02
+      const level 0        43.83      const level 3/4  1.49 / 0.87
+- THE FIX (psp_render.c, render_cfg_default): `PBFILT_MIP_LIN` (one mip level;
+  trilinear doubles the fetch set for a level-crossing smoothness that
+  per-primitive LOD steps anyway) + `tex_lod_bias = +1.0`. Verified on the
+  device, same poses: waterfall foot **25.20 -> 2.77 ms** (4.80 ms/frame, 208
+  fps), spawn 8.76 -> 0.42, stairs 11.12 -> 0.11 (CPU-bound at 470). In the app
+  itself at the reported spot: **gpu 24.84 -> 2.69 ms, 36.0 -> 59.9 fps**.
+  Visual cost, checked against the pre-fix capture of the same pose: a mild
+  softening (visible on close tiled walls); `poi_render.txt` takes `bias=0`
+  for a sharper look (11.2 ms / 75 fps at the worst view) and `bias=2` for a
+  weaker machine. Do not move it back toward -1 without re-measuring — this is
+  a cache boundary, not a smooth quality/cost trade.
+- INSTRUMENTS (kept, they are the regression harness): battery camera presets
+  `waterfall` / `waterfall_lo`; `wf_*` rows — per-state ablations (bias/level/
+  filter/nomip/tex64/notex/vertcol/wire/noemit/blend-only/add-only/noscroll/
+  noclip/nodepth/nocull/noalpha) plus per-surface `skip_mesh` rows for the wet
+  wall, sheet, core, spray, pool, foam and the atlas/floor/tile layers;
+  `wf_old_default` keeps the REPLACED policy as a live row so the guard is one
+  comparison (2.77 vs 25.20 ms); `ProfTest.skip` + a public
+  `psp_render_skip_mesh()`; the report tool grew an "LOD policy at the
+  waterfall foot" section and a worst-view line in the verdict.
+- HARNESS: `run_psp_hw.sh` now recovers from the documented wedge by itself
+  (module resident + no output after 30 s = loaded-but-never-ran, the state the
+  previous run leaves behind: reset, reload, continue). Two of four runs died
+  on that before the change; it is now one unattended command.
+- Lesson worth keeping: "textures are expensive" was measurable and took three
+  device runs; "the scene is the same 1526 triangles everywhere" is what turned
+  a vague slowdown into a per-fragment question. HARDWARE-TESTING.md carries
+  the full table and the authoring rule that follows (a surface that fills the
+  screen at ~1 texel/px is the expensive case; the level bias is the renderer
+  lever, the tiling density is the content lever).
+
 v0.9.73 round complete ✓ — particles become a standard part of the retro
 format: stateless looping emitters, authored as GPUParticles3D, measured on real
 hardware:

@@ -307,6 +307,82 @@ is a single 60-character row (480 px / 8 px per glyph) — a longer format strin
 silently loses its last digits (a full particle count read as "Parts: 4" that
 way).
 
+## The waterfall foot: the LOD cliff (found, fixed, regression-guarded)
+
+The report was precise and worth recording as it arrived: *"standing right in
+front of the base of the waterfall the gpu time increases to a massive 25 ms —
+only for that one spot. The flame particles have near zero overhead, and even
+if the mist is off screen it still spikes."* The app's HUD at `pos 4.6 1.3 -2.3`
+confirmed **gpu 24.7-24.8 ms / 36 fps**, rock steady across three captures.
+
+The scene drawn there is the *same* 1526 triangles and 25-27 draw calls as the
+spawn view (which runs at 8.7). So the cost had to be per-fragment, and the
+battery now has the camera for it (`waterfall`, plus `wf_*` rows that ablate one
+thing at a time on that exact pose):
+
+| row | what it removes | gpu ms |
+|---|---|---|
+| `wf_base` | — (the old default) | 25.12 |
+| `wf_noemit` | both emitters | 22.75 |
+| `wf_blend_only` / `wf_add_only` | one emitter half each | 25.20 / 22.69 |
+| `wf_noscroll` | animated UV scroll | 24.67 |
+| `wf_noclip` / `wf_nodepth` / `wf_nocull` | clip planes / depth test / culling | 25.10 / 25.12 / 28.18 |
+| `wf_skip_allwater` | all five water surfaces | 15.98 |
+| `wf_skip_wetwall` | the tiled wall behind the fall | 14.84 |
+| `wf_notex` | texture sampling | **0.69** |
+| `wf_tex64` | a cache-resident 64x64 stand-in for every texture | **2.96** |
+
+**Not the particles** (+2 ms of 25), **not the scrolling textures** (nothing at
+all), **not clipping or depth** — texture sampling, and specifically the GE's
+texture cache.
+
+### The mechanism, and why "sharper" was the bug
+
+The texture cache is ~8 KB. A fragment whose sampled mip level fits costs
+~2 ns (481 Mfrag/s); one that misses costs ~37 ns (27 Mfrag/s) — the same 19x
+the no-mip case pays, and the same rate the `fill2d_1x_tex512` probe reports.
+The level the hardware picks from the UV derivatives is the sharpest that still
+averages ~1 texel/pixel, so at that level **the sampled footprint IS the
+surface's on-screen area**: 75 000 pixels of wall means ~75 000 texels of the
+chosen level (~150 KB for a 16-bit texture). Only close, screen-filling
+surfaces reach that — which is exactly the geometry of standing under a
+waterfall — and the cliff between fitting and not fitting is sharp.
+
+The renderer shipped a `-1.0` LOD bias ("trades a little softness back for
+detail", chosen when the scene was cheaper and the budget had room). One level
+sharper is enough to push every close surface off that cliff:
+
+| config at the waterfall foot | gpu ms | frame ms |
+|---|---|---|
+| trilinear, bias −1.0 — the replaced default | 25.21 | 27.8 |
+| mip_linear, bias −1.0 | 14.61 | 16.9 |
+| mip_linear, bias 0.0 | 11.20 | 13.3 |
+| mip_linear, bias +0.5 | 4.32 | 6.3 |
+| **mip_linear, bias +1.0 — shipped** | **2.79** | **4.8** |
+| trilinear, bias +1.0 | 4.63 | 6.6 |
+| mip_linear, bias +2.0 | 1.02 | 2.6 |
+| const level 3 / const level 0 | 1.49 / 43.83 | 3.4 / 46.3 |
+
+At the two views the map is judged on, the same one-line change reads:
+
+| view | replaced default | shipped |
+|---|---|---|
+| spawn | 8.76 | 0.43 |
+| stairs | 11.12 | 0.11 |
+| waterfall foot | 25.12 | 2.79 |
+
+`poi_render.txt` reproduces any row without a rebuild (`filter=`, `bias=`,
+`level_mode=`); `bias=0` is visibly sharper and still fits at the worst view
+(11.2 ms / 75 fps), `bias=2` is what a weaker machine would want. **Do not
+raise the bias back toward −1 "for sharpness" without re-measuring**: this is a
+cache boundary, not a smooth quality/cost trade, and the whole map is 10-100x
+slower on the wrong side of it.
+
+Authoring rule that follows: a surface that fills the screen at ~1 texel per
+pixel is the expensive case. Tiling a texture more densely per metre (smaller
+repeat on screen) is the content-side lever; the level bias is the renderer-side
+one.
+
 ## Grazing-angle seams on tiled surfaces (investigated, partly inherent)
 
 Thin lines at tile boundaries on a floor seen at a shallow angle. What was

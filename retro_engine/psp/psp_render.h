@@ -74,6 +74,11 @@ void render_cfg_default(RenderCfg* cfg);
  * Lets filter/mip settings be re-tested without rebuilding the binary. */
 void psp_render_overrides(RenderCfg* cfg);
 
+/* Drops any mesh whose NAME contains `needle` from both passes ("" re-enables
+ * everything). The profiler uses it to attribute frame cost to one surface at
+ * a time; the runtime override file exposes it as `skip_mesh=`. */
+void psp_render_skip_mesh(const char* needle);
+
 typedef struct {
     uint32_t draw_calls;
     uint32_t vertices;
