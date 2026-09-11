@@ -1,0 +1,6 @@
+[project]
+name = "poibuilder-showcase"
+version = "0.1.0"
+description = "Assembly pipeline for the PoiBuilder showcase video"
+requires-python = ">=3.11"
+dependencies = ["pillow>=10.0"]

@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://cshowcasemoviegen01"]
-
-[ext_resource type="Script" path="res://test_scenes/showcase_movie_generator.gd" id="1_showcase"]
-
-[node name="ShowcaseMovieGenerator" type="Node3D"]
-script = ExtResource("1_showcase")
