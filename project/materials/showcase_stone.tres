@@ -1,0 +1,8 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "ShowcaseStone"
+albedo_color = Color(0.72, 0.7, 0.66, 1)
+roughness = 0.72
+metallic = 0.0
+vertex_color_use_as_albedo = true

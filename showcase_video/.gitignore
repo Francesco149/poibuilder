@@ -1,0 +1,8 @@
+# Scratch: rendered frames, overlays, baked segments, preview sheets, the
+# uv venv, and the isolated editor homes the recorder boots with.
+bake/
+.venv/
+uv.lock
+# Footage is dropped here by hand (see edl.toml); it is not part of the repo.
+source/*
+!source/.gitkeep
