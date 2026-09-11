@@ -130,7 +130,7 @@ The Texture Chunk contains `header.num_textures` sequential records. Each record
 | Constant | Value | Meaning | Engine behaviour |
 |---|---|---|---|
 | `PBM_ALPHA_NONE` | `0` | Fully opaque | Opaque pass; mip chain built. |
-| `PBM_ALPHA_CUTOUT` | `1` | Hard-edged transparency (foliage, decals, lace) | Alpha-tested in the alpha pass (a threshold near 1/16 of full range); **no mip chain** — box-filtering a 1-bit alpha makes every level further transparent and eats the silhouette. |
+| `PBM_ALPHA_CUTOUT` | `1` | Hard-edged transparency (foliage, decals, lace) | Alpha-tested in the alpha pass (a threshold near 1/16 of full range); mip chain built with an **alpha-preserving combine** — ANY opaque texel of a 2x2 block keeps the level's texel opaque, so the silhouette dilates by half a texel per level. A plain box filter would instead make every level further transparent and eat the silhouette, which is why an implementation may be tempted to ship cutouts with no chain; doing so costs a texture-cache miss per fragment on art that is routinely 256x512 or larger. |
 | `PBM_ALPHA_BLEND` | `2` | Soft, partial alpha (water, glass, smoke, wetness overlays) | Blended in the alpha pass with a zero threshold (only fully transparent texels are discarded, which keeps early-Z working); mip chain built. |
 
 **A `BLEND` texture MUST be stored as `PBM_TEX_FMT_RGBA8888`.** The 16-bit

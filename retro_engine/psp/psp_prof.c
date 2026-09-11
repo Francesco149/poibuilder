@@ -150,6 +150,12 @@ static const CamPreset k_cams[] = {
      * view whose camera is not otherwise in this table. */
     { "waterfall",   4.6f,  1.30f, -2.3f,  0.0f,         0.0f  },
     { "waterfall_lo",4.6f,  0.60f, -2.3f,  0.0f,         0.15f },
+    /* The two surface classes with their own LOD question: the foliage
+     * billboards (CUTOUT textures) seen from 2-6 m, and the tiled floor at a
+     * grazing angle where the per-primitive level step between baked tiles
+     * shows. */
+    { "foliage",     0.0f,  1.60f,  0.0f,  3.1415927f,   0.05f },
+    { "floorgraz",   0.0f,  0.50f,  3.5f,  0.0f,         0.0f  },
 };
 #define NUM_CAMS ((int)(sizeof(k_cams) / sizeof(k_cams[0])))
 
@@ -665,6 +671,41 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].skip = "FloorSplatMat";
     add_scene_test(t, &n, "wf_skip_atlas", "waterfall", pc, &base);
     t[n - 1].skip = "TileAtlas";
+
+    /* --- the two surface classes the LOD policy has to special-case --------
+     * Foliage: CUTOUT textures. They used to carry no mip chain at all (a
+     * box-filtered 1-bit alpha erodes the silhouette), so they sampled level 0
+     * forever — 256x512 to 512x512 of texture, a cache miss per fragment — and
+     * no bias could touch them. The loader now builds them an alpha-preserving
+     * chain; `fol_cutoutnomip` is the A/B against the old behaviour, and the
+     * per-sprite skip rows say which one costs. */
+    add_scene_test(t, &n, "fol_base", "foliage", pc, &base);
+    add_scene_test(t, &n, "fol_cutoutnomip", "foliage", pc, &base);
+    t[n - 1].cfg.cutout_mips = 0;
+    add_scene_test(t, &n, "fol_notree", "foliage", pc, &base);
+    t[n - 1].skip = "Tree";
+    add_scene_test(t, &n, "fol_nobush", "foliage", pc, &base);
+    t[n - 1].skip = "Bush";
+    add_scene_test(t, &n, "fol_noflowers", "foliage", pc, &base);
+    t[n - 1].skip = "Wildflowers";
+    /* Floor at a grazing angle: where the per-primitive level step between
+     * neighbouring baked tiles is visible. `fg_base` uses the shipped detail
+     * policy (-1 level on the atlas meshes); the rest walk it, including the
+     * constant-level option, which is the only setting that removes the step
+     * between neighbouring primitives entirely. */
+    add_scene_test(t, &n, "fg_base", "floorgraz", pc, &base);
+    add_scene_test(t, &n, "fg_detailoff", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_bias = 0.0f;
+    add_scene_test(t, &n, "fg_detail_sharp", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_bias = -2.0f;
+    add_scene_test(t, &n, "fg_detail_const1", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = 1;
+    add_scene_test(t, &n, "fg_detail_const2", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = 2;
+    add_scene_test(t, &n, "fg_detail_nomatch", "floorgraz", pc, &base);
+    t[n - 1].cfg.detail_const = 1;      /* the policy off == the same knob, no match */
+    add_scene_test(t, &n, "fg_nomips", "floorgraz", pc, &base);
+    t[n - 1].cfg.use_mips = 0;
 
     /* What the LOD policy is worth. The shipped bias is -1.0 ("trades a little
      * softness back for detail"), which at the waterfall foot samples a level

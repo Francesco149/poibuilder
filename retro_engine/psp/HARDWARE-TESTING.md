@@ -383,6 +383,68 @@ pixel is the expensive case. Tiling a texture more densely per metre (smaller
 repeat on screen) is the content-side lever; the level bias is the renderer-side
 one.
 
+## Two surface classes with their own LOD policy (follow-up round)
+
+### Foliage paid the cache penalty the bias cannot reach
+
+CUTOUT textures (tree/bush/flower sprites, the 1-bit-alpha particle art) used to
+ship with **no mip chain at all** — halving a 1-bit alpha erodes the silhouette,
+so the loader refused to build one — which means they sampled level 0 forever:
+256x512 to 512x512 of texture, minified, at a cache miss per fragment. That is
+also why they looked "unaffected by the LOD bias": with no chain there is no
+level for a bias to select from.
+
+Fix: build them a chain with an **alpha-preserving (ANY-opaque-wins) combine**.
+The silhouette dilates by half a texel per level instead of eroding, and the
+chain collapses the fetch footprint like every other texture:
+
+| row (foliage view, sprites 2-6 m away) | gpu ms |
+|---|---|
+| `fol_cutoutnomip` (the old level-0-only behaviour) | 6.09 |
+| `fol_base` (alpha-preserving chain) | **0.46** |
+
+Visually identical at that range (captures compared side by side): the chain
+only engages as a sprite recedes, which is where it also removes the shimmer the
+old build had. Costs ~1/3 more texture memory for the cutout textures (~345 KB
+in this map); the loader still fails loudly if the heap runs out.
+`cutout_mips=0` restores the old behaviour at runtime for an A/B.
+
+### The splat/tile seams are per-primitive LOD steps, and they are tunable per mesh
+
+The reported symptom was "the splatted parts have visible seams". Reproduced at
+a grazing floor view and pinned down by ablation: with `mips=0` (every fragment
+samples level 0) the painted path is **perfectly continuous — no bands at all**,
+and a *constant* level removes them too. So they are the hardware's
+per-primitive LOD: the GE picks one level per triangle from that triangle's own
+UV derivatives, and a floor crosses several levels across a few metres, so
+neighbouring baked tiles differ by one step and the step is a visible band once
+the level is coarse.
+
+The renderer now applies a **per-mesh LOD policy**: meshes matching
+`detail_mesh=` (default `TileAtlas`, the baked splat/stamp tiles) get
+`detail_bias` (default -1: one level sharper than the rest of the scene) — or,
+when `detail_const` is set, ONE constant level for the whole mesh, which is the
+only setting that removes the step between neighbouring primitives entirely.
+
+| row (grazing floor view) | gpu ms | frame ms |
+|---|---|---|
+| `fg_base` (shipped: atlas tiles one level sharper) | 0.12 | 2.49 |
+| `fg_detailoff` (no policy) | 0.12 | 2.48 |
+| `fg_detail_const1` (atlas tiles pinned to level 1) | 0.50 | 3.15 |
+| `fg_nomips` (no chains at all, for scale) | 26.23 | 29.25 |
+
+All of it is well inside budget — the detail meshes cover a small part of the
+screen, so sharpness there is nearly free. The capture pair shows it: the
+shipped policy reads sharper than the un-special-cased one (confirmed by eye on
+the device), and `detail_const=1` removes the steps with no visible aliasing at
+that view. Widen the policy with `detail_mesh=TilesMaterial` (or any substring
+of a mesh or texture name) if the base tiling floor wants the same treatment.
+
+All four knobs are live in `poi_render.txt` — no rebuild: `cutout_mips=`,
+`detail_mesh=`, `detail_bias=`, `detail_const=`.
+
+
+
 ## Grazing-angle seams on tiled surfaces (investigated, partly inherent)
 
 Thin lines at tile boundaries on a floor seen at a shallow angle. What was
@@ -405,17 +467,24 @@ camera moves, which reads as flickering. The PSP has no anisotropic filtering
 and no per-surface LOD smoothing, so this is structural to tiled textures on
 this hardware.
 
-**Status: known limitation of this hardware, not a bug with a known fix.** If you
-find a technique that removes it on a GE with per-primitive LOD and no
-anisotropic filtering, it belongs here — the investigations above list what has
-already been ruled out so the same ground is not re-covered.
+**Status: a hardware limitation with a now-tunable severity, not a bug with a
+known fix.** The investigations above list what has been ruled out so the same
+ground is not re-covered. The per-mesh detail policy above is the practical
+mitigation — `detail_bias` (default -1) keeps the painted tiles sharper than the
+rest of the scene, and `detail_const=<level>` removes the neighbouring-primitive
+step entirely on whichever meshes it matches (`detail_mesh=`); both were
+verified by capture at a grazing floor view. If you find a technique that
+removes the step *without* giving up per-surface LOD, it belongs here.
 
-Two knobs, both one line in `poi_render.txt`:
+Three knobs, all one line in `poi_render.txt`:
 - `bias=+N` — blurrier, which compresses the differences between neighbouring
   levels (measured: bias +1 costs 1.40 ms vs 2.04 at bias -0.5).
 - `level_mode=const` with `bias=<level>` — one LOD everywhere, which removes the
   steps entirely and looks sharper, at the cost of aliasing on the most-minified
   surfaces. Needs a level tuned per scene, so it is not the default.
+- `detail_const=<level>` — the same, but only for the meshes `detail_mesh=`
+  matches, which is the version that costs nothing measurable (0.50 vs 0.12 ms
+  at the grazing floor view).
 
 ## Profiling methodology
 
