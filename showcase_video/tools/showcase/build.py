@@ -335,13 +335,13 @@ def verify(master: Path, proj: edl.Project) -> bool:
         ffmpeg.run([ffmpeg.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
                     "-ss", f"{t:.2f}", "-i", str(master), "-frames:v", "1", str(p)])
         img = Image.open(p).convert("RGB").resize((160, 90))
-        px = list(img.getdata())
+        px = list(img.getdata() if hasattr(img, 'getdata') else [])
         mean = sum(sum(p) for p in px) / (len(px) * 3)
         if mean < 6:
             print(f"[verify] FAIL: frame at {t:.1f}s is black (mean {mean:.1f})")
             ok = False
         if prev is not None:
-            diff = sum(abs(a[0] - b[0]) for a, b in zip(px, list(prev.getdata()))) / len(px)
+            diff = sum(abs(a[0] - b[0]) for a, b in zip(px, list(prev.getdata()))) / max(len(px), 1)
             if diff < 0.5:
                 print(f"[verify] WARN: frames at {t:.1f}s look identical to the previous sample")
         prev = img
