@@ -198,7 +198,6 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	door_node.pb_mesh_data.materials = [_get_tiles_material()]
 	root.add_child(door_node)
 
-	# ==========================================================================
 	# 4. Geometry: Grand Stairs to Balcony
 	# ==========================================================================
 	var stairs_node := PBMesh.new()
@@ -206,7 +205,6 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	stairs_node.pb_mesh_data = PBShapeComplex.create_stairs(Vector3(2.5, 3.0, 4.0), 8)
 	stairs_node.position = Vector3(-4.5, 1.5, 0.0)
 	stairs_node.rotation.y = PI
-	stairs_node.collider_type = PBMesh.ColliderType.ACCURATE
 	stairs_node.pb_mesh_data.materials = [_get_tiles_material()]
 	root.add_child(stairs_node)
 
@@ -227,7 +225,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	pillar1.pb_mesh_data = PBShapeCylinder.create_cylinder(0.4, 3.0, 6) # 6-sided prism
 	pillar1.position = Vector3(-3.2, 1.5, -4.0)
 	pillar1.collider_type = PBMesh.ColliderType.ACCURATE
-	pillar1.pb_mesh_data.materials = [_get_checker_material()]
+	pillar1.pb_mesh_data.materials = [_get_tiles_material()]
 	root.add_child(pillar1)
 
 	var pillar2 := PBMesh.new()
@@ -235,7 +233,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	pillar2.pb_mesh_data = PBShapeCylinder.create_cylinder(0.4, 3.0, 6)
 	pillar2.position = Vector3(-5.5, 1.5, -4.0)
 	pillar2.collider_type = PBMesh.ColliderType.ACCURATE
-	pillar2.pb_mesh_data.materials = [_get_checker_material()]
+	pillar2.pb_mesh_data.materials = [_get_tiles_material()]
 	root.add_child(pillar2)
 
 	# ==========================================================================
@@ -333,7 +331,7 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	fall_wall.pb_mesh_data = PBShapeGenerators.create_box(Vector3(4.0, 5.0, 0.6))
 	fall_wall.position = Vector3(4.5, 2.5, -5.3)
 	fall_wall.collider_type = PBMesh.ColliderType.ACCURATE
-	fall_wall.pb_mesh_data.materials = [_get_tiles_material()]
+	fall_wall.pb_mesh_data.materials = [_get_wet_tiles_material()]
 	root.add_child(fall_wall)
 
 	# Standing water sheets: the plane's local +X/+Z span the sheet, and the
@@ -393,6 +391,15 @@ static func build_showcase_scene(include_player: bool = false) -> Node3D:
 	PBUv.set_scroll_speed(spray.material_override as Material, Vector2(0.0, 0.35))
 	root.add_child(spray)
 
+	# Light near waterfall: illuminates the waterfall, pool, and churning foam at night
+	var fall_lantern := OmniLight3D.new()
+	fall_lantern.name = "WaterfallLantern"
+	fall_lantern.position = Vector3(fall_x - 1.6, 2.6, wall_face_z + 0.4)
+	fall_lantern.light_color = Color(0.70, 0.90, 1.0) # Vivid cyan-azure aquatic glow
+	fall_lantern.light_energy = 2.2
+	fall_lantern.omni_range = 7.0
+	fall_lantern.omni_attenuation = 1.0
+	root.add_child(fall_lantern)
 	# ==========================================================================
 	# 7b. Billboards: Foliage & Trees (Lit and Unlit)
 	# ==========================================================================
@@ -636,4 +643,18 @@ static func _get_tiles_material() -> StandardMaterial3D:
 		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png")
 	mat.roughness = 0.7
 	_cached_tiles_material = mat
+	return mat
+static var _cached_wet_tiles_material: StandardMaterial3D = null
+
+static func _get_wet_tiles_material() -> StandardMaterial3D:
+	if _cached_wet_tiles_material != null:
+		return _cached_wet_tiles_material
+	var mat := StandardMaterial3D.new()
+	mat.resource_name = "WetTilesMaterial"
+	# Darkened by water saturation with rich aquatic slate tint for contrast
+	mat.albedo_color = Color(0.55, 0.62, 0.70, 1.0)
+	if ResourceLoader.exists("res://addons/poibuilder/materials/textures/tiles_light_4x4.png"):
+		mat.albedo_texture = load("res://addons/poibuilder/materials/textures/tiles_light_4x4.png")
+	mat.roughness = 0.35 # Wet stone sheen
+	_cached_wet_tiles_material = mat
 	return mat

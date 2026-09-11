@@ -29,7 +29,8 @@ PSP_DIR="$REPO_DIR/retro_engine/psp"
 HOSTDIR="$PSP_DIR/hwrun"
 PSPLINK_SRC="${PSPLINK_SRC:-/tmp/psplinkusb}"
 USBHOSTFS="$PSPLINK_SRC/usbhostfs_pc/usbhostfs_pc"
-PSPSH="$PSPLINK_SRC/pspsh/pspsh"
+PSPSH_BIN="$PSPLINK_SRC/pspsh/pspsh"
+PSPSH=("$PSPSH_BIN" -h 127.0.0.1)
 PRX_NAME="poiretro_psp_hwtest.prx"
 LOG="$HOSTDIR/poi_profile.txt"
 WAIT_SECS="${WAIT_SECS:-240}"
@@ -38,7 +39,7 @@ MODE=prof
 for arg in "$@"; do
     case "$arg" in
         --keep) KEEP=1 ;;
-        --app)  MODE=app ;;   # interactive build instead of the profiling battery
+        --app)  MODE=app; KEEP=1 ;;   # interactive build needs host0: to stay alive!
     esac
 done
 
@@ -50,9 +51,8 @@ psp_make() {
         bash -c "export PATH=\$PATH:/usr/local/pspdev/bin; make $*"
 }
 
-[ -x "$USBHOSTFS" ] || die "usbhostfs_pc not built at $USBHOSTFS
-  git clone https://github.com/pspdev/psplinkusb.git $PSPLINK_SRC && (cd $PSPLINK_SRC/usbhostfs_pc && make) && (cd $PSPLINK_SRC/pspsh && make)"
-[ -x "$PSPSH" ] || die "pspsh not built at $PSPSH"
+[ -x "$USBHOSTFS" ] || die "usbhostfs_pc not built at $USBHOSTFS"
+[ -x "$PSPSH_BIN" ] || die "pspsh not built at $PSPSH_BIN"
 
 if [ "$MODE" = app ]; then
     echo "=== [1/5] Building the interactive PRX ==="
@@ -84,7 +84,7 @@ fi
 pgrep -f "usbhostfs_pc" >/dev/null || { cat /tmp/usbhostfs_pc.log; die "usbhostfs_pc died"; }
 
 echo "=== [3b/5] Checking the PSPLink USB link ==="
-if ! timeout 25 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+if ! timeout 25 "${PSPSH[@]}" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
     cat <<'MSG'
 PSPLink is not answering on USB. Check, in order:
   1. Is PSPLink running on the PSP? (Game -> Memory Stick -> PSPLink)
@@ -108,13 +108,13 @@ echo "link OK"
 # and if PSPLink does not come back on its own you are left staring at the XMB
 # with nothing running — which is exactly what happened. So: only reset when
 # there is something to clear.
-stale=$("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}' | tr '\n' ' ')
+stale=$("${PSPSH[@]}" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}' | tr '\n' ' ')
 if [ -n "$stale" ]; then
     echo "=== [3c/5] stale module(s) present ($stale) -- resetting psplink ==="
-    "$PSPSH" -n -e "reset" >/dev/null 2>&1 || true
+    "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
     for i in $(seq 1 40); do
         sleep 1
-        if timeout 10 "$PSPSH" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
+        if timeout 10 "${PSPSH[@]}" -n -e "modlist" 2>/dev/null | grep -q "UID:"; then
             echo "link back after reset (${i}s)"
             break
         fi
@@ -132,8 +132,8 @@ echo "=== [4/5] Loading and starting $PRX_NAME over USB ==="
 # DELIBERATELY NOT `modstop`: force-stopping a module that is still running
 # leaves this PSP unable to start any further module (they load, report
 # success, and then never execute — a device reset is the only recovery).
-for uid in $("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
-    if "$PSPSH" -n -e "modunld $uid" >/dev/null 2>&1; then
+for uid in $("${PSPSH[@]}" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}'); do
+    if "${PSPSH[@]}" -n -e "modunld $uid" >/dev/null 2>&1; then
         echo "cleared leftover module $uid"
     else
         die "module $uid is still resident and will not unload harmlessly.
@@ -141,7 +141,7 @@ for uid in $("$PSPSH" -n -e "modlist" 2>/dev/null | awk '/PoiRetro/{print $2}');
   unload it, then re-run. (Do not force it — that wedges module startup.)"
     fi
 done
-timeout 60 "$PSPSH" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
+timeout 60 "${PSPSH[@]}" -n -e "ld host0:/$PRX_NAME" || echo "(pspsh returned non-zero; checking for results anyway)"
 
 if [ "$MODE" = app ]; then
     echo "=== app running on the device (start+select or Home exits) ==="
@@ -152,7 +152,7 @@ if [ "$MODE" = app ]; then
     echo "=== restoring the shipping build ==="
     psp_make all >/dev/null 2>&1 && psp_make test_build >/dev/null 2>&1 \
         || echo "(shipping rebuild failed; EBOOT.PBP may be missing)"
-    [ "$KEEP" = 0 ] && pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
+    # Keep usbhostfs_pc running so host0: I/O works while the user plays
     echo "Take a screenshot any time with:"
     echo "  $PSPSH -n -e \"scrshot host0:/shot.bmp\"   # lands in $HOSTDIR (480x272x24 BMP)"
     exit 0
