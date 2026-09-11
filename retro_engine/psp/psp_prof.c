@@ -704,6 +704,20 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     add_scene_test(t, &n, "fg_nomips", "floorgraz", pc, &base);
     t[n - 1].cfg.use_mips = 0;
 
+    /* Depth WRITES in the opaque pass (off = the shipped behaviour: depth is
+     * tested but never written, so nothing is rejected and draw order decides
+     * occlusion). On should buy early-Z rejection in the alpha pass; the rows
+     * exist to price it and to check it against the coplanar floor layers,
+     * which the current arrangement hides. */
+    add_scene_test(t, &n, "dw_arch_on", "arch", pc, &base);
+    t[n - 1].cfg.depth_write = 1;
+    add_scene_test(t, &n, "dw_wf_on", "waterfall", pc, &base);
+    t[n - 1].cfg.depth_write = 1;
+    add_scene_test(t, &n, "dw_floor_on", "floorgraz", pc, &base);
+    t[n - 1].cfg.depth_write = 1;
+    add_scene_test(t, &n, "dw_spawn_on", "spawn", pc, &base);
+    t[n - 1].cfg.depth_write = 1;
+
     /* What the LOD policy is worth. The shipped bias is -1.0 ("trades a little
      * softness back for detail"), which at the waterfall foot samples a level
      * whose footprint is far past the GE's ~8 KB texture cache; the whole scene

@@ -514,6 +514,18 @@ PbmMap* pbm_load(const char* filepath) {
             tex->num_levels = 0;
             tex->is_swizzled = 0;
 
+            /* The format field carries four values, but this runtime samples
+             * exactly two. Anything else would be mis-sampled (a 4444 or 565
+             * texture bound as 8888 is garbage), and a garbage texture is far
+             * harder to diagnose than a refusal, so refuse. */
+            if (thdr.format != PBM_TEX_FMT_RGBA5551 && thdr.format != PBM_TEX_FMT_RGBA8888) {
+                pbm_log("[PBM] FATAL: texture %u '%s' uses format %u, which this runtime "
+                        "does not support (RGBA5551 = 1, RGBA8888 = 0). Mis-sampling it "
+                        "would render garbage; re-export with one of those two.\n",
+                        (unsigned)i, tex->name, (unsigned)thdr.format);
+                goto load_failed;
+            }
+
             uint8_t* linear = (uint8_t*)malloc(thdr.data_size);
             if (!linear) {
                 pbm_log("[PBM] FATAL: out of memory for texture %u (%u bytes)\n",

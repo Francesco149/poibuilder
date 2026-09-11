@@ -234,18 +234,31 @@ which by definition runs with a live link, writes `host0:` first.
 
 ### Runtime render overrides — no rebuild
 
-The app reads `host0:/poi_render.txt` once at startup:
+The app reads `host0:/poi_render.txt` once at startup. Current defaults in
+brackets — every one of these was measured on the device, so an A/B is one line
+and one re-run:
 
 ```
-filter=linear     # linear (trilinear) | mip_lin | nearest | asym
-bias=-1           # negative = sharper; also the constant level when level_mode=const
-mips=0            # 1 = use the load-time mip chain
-level_mode=const  # auto (per-primitive derivative) | const (one level everywhere)
-skip_mesh=Foo     # drop any mesh whose name contains this (isolate a draw)
+filter=mip_lin     # mip_lin [default] | linear (trilinear) | nearest | asym
+bias=1             # LOD level bias; +1 is the shipped default, negative is
+                   # SHARPER AND 10-100x SLOWER at close range (cache cliff)
+mips=1             # 1 [default] = sample the load-time mip chain
+cutout_mips=1      # 1 [default] = cutouts sample their alpha-preserving chain
+level_mode=auto    # auto [default] (per-primitive derivative) | const
+detail_mesh=TileAtlas  # which meshes the per-mesh LOD policy applies to
+detail_const=1     # [default] those meshes sample ONE level (removes the
+                   # per-primitive sharpness step); -1 = per-primitive instead
+detail_bias=-1     # only used when detail_const=-1
+particles=3        # bitmask: 1 blended, 2 additive, 3 [default] both, 0 off
+uv_scroll=1        # 1 [default] = animate the scrolling meshes
+depth_write=0      # 0 [default] = depth tested but never written (draw order
+                   # decides occlusion); 1 = write depth in the opaque pass
+skip_mesh=Foo      # drop any mesh whose name contains this (isolate a draw)
+preset=day         # dawn | day [default] | dusk | night
 ```
 
-Edit the file, re-run, screenshot. This is how the tile-seam and blur issues
-were A/B'd without a build per data point.
+Edit the file, re-run, screenshot. This is how the tile-seam, blur, LOD-cliff and
+per-mesh-policy questions were all A/B'd without a build per data point.
 
 ## Particles (standard lump "emitters", SPEC §8)
 
@@ -283,20 +296,21 @@ Mfrag/s for the `fill2d` probes, and the blend mode and the texture format make
 no measurable difference at this size. Cost tracks the on-screen AREA of the
 particles, not their count.
 
-### The one expensive configuration
+### The one expensive configuration (solved)
 
-At the spawn view the showcase's emitters cost **+1.7 ms gpu / +0.5 ms cpu**, and
-the split says it is entirely the *blended* emitter: the additive pair measures
-free (6.76 vs 6.84 with no emitters at all), while the 14 blended mist puffs cost
-8.61. The same delta appears in the interactive app's own HUD (+0.5 cpu, +1.7
-gpu), i.e. it is reproducible in two independent measurements.
+At the spawn view the showcase's emitters used to cost **+1.7 ms gpu / +0.5 ms
+cpu**, and the split said it was entirely the *blended* emitter: the additive
+pair measured free, while the 14 blended mist puffs cost 8.61. The mechanism
+turned out to be the same texture-cache cliff as everything else in this file: a
+soft-alpha puff is `RGBA8888`, so a 64x64 emitter texture is **16 KB** — twice
+the GE's cache — and a magnified puff samples level 0, i.e. the whole thing, at
+a miss per fragment. The additive brazier uses `RGBA5551` (**8 KB**, exactly the
+cache) and was free. The shipped LOD bias and the alpha-preserving chains put the
+mist on a level that fits, and the spawn view now costs 0.55 ms gpu *including*
+all 46 particles.
 
-The mechanism is not yet identified: the coverage of those puffs (~tens of
-thousands of fragments) accounts for ~0.05 ms of fill at the measured rate, and
-neither the 8888 format nor blending is expensive per fragment (`pfill_*` above).
-Recorded so it is not re-investigated from scratch — and the practical guidance
-is unaffected: keep blended emitters small or distant, and prefer additive for
-anything close to the camera.
+Practical guidance unchanged: keep blended emitters small or distant, prefer
+additive near the camera, and keep emitter textures small and power-of-two.
 
 ### Two ways this measurement lied before it was right
 
@@ -484,11 +498,11 @@ this hardware.
 **Status: a hardware limitation with a now-tunable severity, not a bug with a
 known fix.** The investigations above list what has been ruled out so the same
 ground is not re-covered. The per-mesh detail policy above is the practical
-mitigation — `detail_bias` (default -1) keeps the painted tiles sharper than the
-rest of the scene, and `detail_const=<level>` removes the neighbouring-primitive
-step entirely on whichever meshes it matches (`detail_mesh=`); both were
-verified by capture at a grazing floor view. If you find a technique that
-removes the step *without* giving up per-surface LOD, it belongs here.
+mitigation — `detail_const=<level>` (default 1) pins the painted splat/stamp
+meshes to one mip level, which removes the neighbouring-primitive step entirely
+on whichever meshes `detail_mesh=` matches; verified by capture and by eye on
+the device at a grazing floor view. If you find a technique that removes the
+step *without* giving up per-surface LOD, it belongs here.
 
 Three knobs, all one line in `poi_render.txt`:
 - `bias=+N` — blurrier, which compresses the differences between neighbouring
@@ -528,14 +542,21 @@ cache-resident texture at identical coverage is.
 
 | probe | result |
 |---|---|
-| clear + swap (per-frame floor) | 0.32 ms |
-| untextured full-screen fill | 487 Mfrag/s |
+| clear + swap (per-frame floor) | 0.29-0.32 ms |
+| untextured full-screen fill | 487-490 Mfrag/s |
 | full-screen fill, cache-resident 64x64 texture | 480 Mfrag/s |
-| full-screen fill, 512x512 texture, **no mip chain** | **25 Mfrag/s** (19x penalty) |
+| full-screen fill, 512x512 texture, **no mip chain** | **25-27 Mfrag/s** (19x penalty) |
 | draw call | ~0.94 µs (19 calls ≈ 18 µs) |
 | triangle throughput (`tris_4096`) | ~2.2 M tris/s |
 | guardband clipper (big quad, clip planes on vs off) | 0.26 vs 0.26 ms — **free** |
-| scene, with mip chain (worst of 11 poses) | 3.04 ms → 328 fps of headroom |
+| CPU per frame (display-list construction, scene) | 2.1-2.8 ms — the floor in most views |
+| **scene, current build (worst of the camera sweep)** | **4.98 ms/frame** at the waterfall foot (200 fps); 2.1-3.6 ms at every other pose |
+| scene, before the LOD-cliff fix | 25.2 ms at the waterfall foot, 11.1 at the stairs, 8.8 at the spawn |
+
+The scene rows move with every renderer change — re-run the battery rather than
+trusting a number copied into a document (this table was itself out of date once:
+it still said 3.04 ms worst-case after the map had grown water surfaces and
+emitters).
 
 The 19x texture-cache penalty is the single most important number here: it is
 why the renderer must sample a mip chain, and why every measurement must be

@@ -20,7 +20,8 @@ source — and are intentional.
 
 # Open in editor for interactive testing
 godot-mono --editor project/project.godot
-# Then open: test_scenes/human_test_phase6.tscn
+# Retro pipeline: see retro_engine/RETRO-AUTHORING.md (authoring recipes) and
+# run_viewer.sh / run_psp_hw.sh --app (viewer / real device).
 ```
 
 Interactive launchers (`./test.sh raylib|psp`, `./run_raylib.sh`) need an X
@@ -30,6 +31,31 @@ session, so `xdisplay.sh` resolves one: reuse `DISPLAY`, else start
 `xvfb-run` and say so. Starting a private `Xwayland :99` does **not** work —
 it has no compositor behind it, so the program runs and renders perfectly into
 a window nobody can see. That was the entire "no window appears" bug.
+
+## Performance Claims (non-negotiable)
+
+**A performance number is real only if it came from a PSP over USB.** Nothing
+else counts as evidence:
+
+- `./run_psp_hw.sh` is the only source of truth (cpu/gpu split, the camera sweep,
+  the ablations). Run it before and after any renderer/exporter change and quote
+  its rows — `retro_engine/psp/HARDWARE-TESTING.md` has the method and the
+  accumulated tables.
+- **PPSSPP (and any emulator, and any desktop viewer) is for correctness only**:
+  does it load, does it crash, does it look right, roughly how should this
+  frame's pixels sit. It rasterises on the host GPU with a huge texture cache,
+  no shared memory bus and no clipper, so it happily reports 60 fps for a build
+  that spends 27 ms of a 16.6 ms budget on the device. Never cite it for speed,
+  and never conclude from it that a slowdown is fixed.
+- **Do not build on unmeasured performance assumptions** — not in code comments,
+  not in docs, not in a summary. "This should be faster" is not a result; either
+  measure it or state plainly that it is unmeasured.
+- **If no PSP is connected**, say so and ask the user to set one up before the
+  session ends (`./setup_psplink.sh`, 30 seconds, once per device). Until the
+  battery has run, mark perf-related work as unverified rather than done.
+- Every optimization claim in the docs carries the device row that produced it.
+  If you change a measured default (LOD bias, filter, level policy, texture
+  format, emitter budget), re-measure and update the row in the same commit.
 
 ## Key Documents
 
@@ -46,6 +72,16 @@ a window nobody can see. That was the entire "no window appears" bug.
   direction on the device. Read this BEFORE concluding anything about PSP
   performance — PPSSPP cannot measure it, and a build that runs at 60 fps there
   can spend 27 ms of a 16.6 ms budget on the device.
+- `retro_engine/psp/OPTIMIZATION.md` — **the PSP engine's optimization
+  inventory**, in the order that matters, with the measured cost of every
+  decision (fill and the texture-cache cliff, the mip/LOD policy, passes, the
+  per-frame CPU budget, what is deliberately not done). Read it before changing
+  the renderer or the exporters.
+- `retro_engine/RETRO-AUTHORING.md` — **authoring recipes for the retro
+  pipeline**: the Godot → `.pbm` workflow, what the export bakes, the
+  performance rules that actually bite, the knob tables (export dialog, node
+  metadata, `poi_render.txt`) and the pitfalls. Read it before authoring or
+  reviewing level content.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
 
 ## Reference Repos
@@ -113,7 +149,17 @@ Plugin: `project/addons/poibuilder/`
   apply_drag_extents() mapping the base drag + height onto size dims.
 - `editor/pb_picking.gd` — Pure-logic ray/screen picking.
 - `commands/` — Undo/redo command pattern (CmdMove/Rotate/ScaleElements)
-- `shapes/` — Primitive shape generators
+- `shapes/` — Primitive shape generators (+ `pb_shape_params.gd`: per-shape
+  parameter defs, defaults, and the drag-extent mapping)
+- `mesh_ops/` — PBMeshOps: topology operations (extrude, inset, subdivide, loop
+  cut, merge, weld, delete, detach, knife cuts), headless-static
+- `materials/` — the default material and shipped textures, the splat/decal
+  shaders, and the paint/splat data model (`core/pb_splat.gd`)
+- `export/` — THE RETRO PIPELINE: `pb_map_exporter.gd` (ExportSettings, the
+  async export, the glTF writer, light/tile baking, colliders) and
+  `pb_pbm_converter.gd` (the GDScript `.pbm` writer, byte-compatible with the
+  Python oracle `retro_engine/pbm_conv.py`)
+- `gui/` — docks (Material & UV / paint / stamp) and the in-viewport overlay
 - `debug/` — PBLogger, PBTelemetry
 
 Hover highlights: `_forward_3d_gui_input` observes mouse motion (never
@@ -792,6 +838,69 @@ drag, and the debug gate:
   orientation and render-triangle audits) ALSO check the flag so their
   format strings are never built. Tests that assert on INFO entries set
   PBLogger.verbose = true themselves.
+
+v0.9.76 round complete ✓ — documentation pass, hardware-truth rules, and a
+runner that recovers from a wedged PSP by itself:
+- TWO NEW DOCS (the deliverables of this round):
+  * `retro_engine/psp/OPTIMIZATION.md` — the PSP engine's optimization
+    inventory, in the order that matters, with the measured cost of every
+    decision: the three numbers that shape everything (fill, the cache cliff,
+    state changes), where the frame actually goes, geometry/submission,
+    textures (formats, swizzle, alpha-aware chains, the LOD policy), passes and
+    state discipline, per-frame CPU work, what is deliberately NOT done (with
+    reasons, including the depth-write finding below), the authoring budget, and
+    how to change the engine safely (measure on hardware, hold coverage, use the
+    existing rows, the cliffs are steps not slopes).
+  * `retro_engine/RETRO-AUTHORING.md` — Godot recipes for building levels that
+    treat the retro pipeline as first-class: setup, the loop in rework-avoiding
+    order, what the export bakes (with the consequences), the performance rules
+    that actually bite (texel-density matching, counting screens of fill,
+    particles, draw calls), the knob tables (export dialog, node metadata,
+    `poi_render.txt`), pitfalls, and a ship checklist.
+- SPEC_RETRO_FORMAT.md §11 rewritten from four clipping rules into "getting the
+  most out of the format": a consumer-side MUST list for textures (chains +
+  the right filter + alpha-aware downsampling + swizzle rules), the recommended
+  LOD policy with its cliff, fill budgeting in screens, geometry/submission
+  facts (draw calls and triangles are cheap; chunking is NOT a culling
+  mechanism — the runtime draws every chunk every frame), the depth model,
+  particles, and "the shortest version" for a new engine. Compliance items
+  fixed: cutouts DO carry an alpha-preserving chain now, and a single-cell
+  emitter texture SHOULD be sampled through its chain (both items said the
+  opposite). The format table now states which two formats the reference
+  exporters emit and that the other two must be REJECTED rather than
+  mis-sampled — the loader does exactly that now (it previously bound any
+  non-5551 texture as 8888, silently).
+- RUNNER HARDENED (`run_psp_hw.sh`): resets the device before every profiling
+  load (measured: 2 of 4 runs wedged when loading onto a device a previous
+  module had exited on, 0 of 6 after a reset), verifies that the profiler
+  actually started writing, and retries the whole attempt up to 3 times with a
+  fresh reset; `--no-reset` exists for the debug case. App mode now checks
+  scrshot's `frame_addr` to confirm the app took the display and reloads once if
+  it did not. It also stages without leaking `poi_render.txt` between runs.
+- DEPTH WRITE FINDING (documented, default unchanged): the renderer tests depth
+  but never writes it, so draw order decides occlusion — which is what the
+  exporters arrange for. Writing depth is measured free (0.114 vs 0.114 ms;
+  2.749 vs 2.735; 0.688 vs 0.683) and is now a one-knob experiment
+  (`depth_write=1`) with `dw_*` battery rows; it stays off because the coplanar
+  floor layers resolve by draw order today (LEQUAL + equal depth) and depth
+  writes make that ordering load-bearing. A capture with depth writes on showed
+  no z-fighting, so the change is plausible — it just needs the layered floor
+  verified deliberately, not in a docs round.
+- STALENESS SWEEP: README (v2 → v3 retro target, the real mip/LOD policy, the
+  measured numbers, the mitigated seam limitation, 834/15.9k tests, the new
+  checklist entries, and a "measured, not assumed" section), CLAUDE.md
+  (Performance Claims rule, Key Documents, architecture list completed,
+  backlog line replaced with the next scheduled work), IMPLEMENTATION.md
+  (marked historical, stale directory tree and raw-GUT commands removed),
+  `UNITY-GODOT-MAPPING.md` (dock API claim corrected, target 4.7),
+  `.pi/ORIENTATION.md` (rewritten: PoiBuilder, current layout, three worker
+  rules), `PROTOCOL.md` (marked historical: the extraction is complete).
+- THE RULE, for the record: **performance numbers are real only from a PSP over
+  USB**. PPSSPP and the desktop viewers answer "does it crash" and "does it look
+  right". If no PSP is connected, ask the user to set one up before the session
+  ends and mark perf work unverified. (Added to CLAUDE.md's new "Performance
+  Claims" section and to the worker orientation.)
+- Next: a proper showcase video (the current one barely shows anything).
 
 v0.9.75 round complete ✓ — cutout textures get alpha-preserving mip chains, and
 painted-detail meshes get their own LOD policy (both from the same follow-up:
@@ -2208,8 +2317,13 @@ physics-reproduced headlessly — "stuck the moment I touch them"):
 - Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
   plugin.cfg).
 
-Next: Phase 7 leftovers — bevel edges, connect, bridge. Re-run the printed
-checklist in test_scenes/human_test_phase6.tscn for the human pass.
+Backlog lives in the README's roadmap (human-facing). The next scheduled piece
+of work is a **proper showcase video**: the existing one barely shows anything,
+and it should demonstrate the courtyard at 60 fps on hardware, the water and
+particle effects, the authoring workflow, and the retro export — recorded from
+the device where performance claims are visible. `showcase_movie_generator.gd`
+and the PSP capture path in `retro_engine/psp/HARDWARE-TESTING.md` are the
+starting points.
 
 ## Key Conventions
 

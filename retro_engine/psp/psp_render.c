@@ -76,6 +76,7 @@ void render_cfg_default(RenderCfg* c) {
     c->display_mode = 0;
     c->use_textures = 1;
     c->depth_test = 1;
+    c->depth_write = 0;   /* depth-tested, not depth-written: see psp_render.h */
     c->cull = 1;
     c->clip_planes = 1;
     c->alpha_pass = 1;
@@ -363,6 +364,7 @@ void psp_render_overrides(RenderCfg* cfg) {
         else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
         else if (!strcmp(k, "mips"))   cfg->use_mips = atoi(v);
         else if (!strcmp(k, "cutout_mips")) cfg->cutout_mips = atoi(v);
+        else if (!strcmp(k, "depth_write")) cfg->depth_write = atoi(v);
         else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
         else if (!strcmp(k, "detail_mesh")) psp_render_detail_match(v);
         else if (!strcmp(k, "detail_bias")) cfg->detail_bias = (float)atof(v);
@@ -1291,7 +1293,11 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     if (cfg->depth_test) {
         sceGuEnable(GU_DEPTH_TEST);
         sceGuDepthFunc(GU_LEQUAL);
-        sceGuDepthMask(GU_FALSE);
+        /* Pass 1 may WRITE depth (cfg->depth_write) so later passes can reject
+         * against it; off is the shipped default -- see the field's comment in
+         * psp_render.h and the depth section of OPTIMIZATION.md. Pass 2 forces
+         * the mask off again below, because blended surfaces never write. */
+        sceGuDepthMask(cfg->depth_write ? GU_TRUE : GU_FALSE);
     } else {
         sceGuDisable(GU_DEPTH_TEST);
     }
@@ -1388,6 +1394,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
      * gives foliage its hard silhouette instead of a haze of soft texels. */
     if (cfg->alpha_pass) {
         sceGuEnable(GU_ALPHA_TEST);
+        sceGuDepthMask(GU_FALSE);   /* blended/cutout fragments never write depth */
         int cur_alpha_ref = 0x10;
         sceGuAlphaFunc(GU_GREATER, cur_alpha_ref, 0xFF);
         sceGuEnable(GU_BLEND);

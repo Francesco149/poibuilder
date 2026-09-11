@@ -12,6 +12,14 @@ typedef struct {
     int   display_mode;    /* 0 textured+baked, 1 vertex colour only, 2 wireframe */
     int   use_textures;    /* 0 binds no textures (vertex colour only) */
     int   depth_test;
+    int   depth_write;     /* write depth in the opaque pass. Off (the shipped
+                            * default) means depth TESTING only: the buffer is
+                            * cleared and never written, so nothing is ever
+                            * rejected and DRAW ORDER decides occlusion -- which
+                            * is what the exporter's mesh order and the separate
+                            * alpha pass are arranged around, and what keeps the
+                            * coplanar floor layers from z-fighting. On buys
+                            * early-Z rejection at the cost of exposing that. */
     int   cull;
     int   clip_planes;     /* GE near/far clip planes vs guardband-only */
     int   alpha_pass;      /* the billboard/foliage alpha+blend pass */
