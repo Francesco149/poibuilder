@@ -1,0 +1,5 @@
+# Every file here is a build product of ./showcase_video/build.sh (the master,
+# the README cut, the poster, the review sheet, the segment list). None of it
+# belongs in git: the README's embed is a GitHub user-attachment URL.
+*
+!.gitignore

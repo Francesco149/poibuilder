@@ -47,7 +47,18 @@ Godot, plugin folder `addons/poibuilder/`), including its retro pipeline
    source of truth; PPSSPP and the desktop viewers are for "does it crash" and
    "does it look right" only. Never write a perf claim that was not measured on
    hardware, and if no PSP is connected, say so rather than assuming.
-3. **Read before you write**: `CLAUDE.md` (conventions + the round history that
+3. **Never commit regenerable artifacts.** No video/audio, no rendered frame
+   sequences, no screenshots, no map exports (`.glb`/`.pbm`), no built PSP
+   binaries (`EBOOT.PBP`, `.prx`, `PoiRetro_PSP.zip`), no generated scenes or
+   extracted textures, no logs, no test reports — even when the file is small.
+   They are produced by scripts in this repo, they bloated history by ~100 MB,
+   and the root `.gitignore` lists every one of them. Put build output in a
+   gitignored directory (`showcase_video/bake/`, `showcase_video/out/`) or
+   `/tmp`, regenerate it when needed, and commit only the SOURCE that makes
+   it. About to `git add` a binary over ~100 KB? Stop — it is almost certainly
+   an artifact (the only legitimately tracked binaries are the authored
+   textures/materials/fonts the plugin ships).
+4. **Read before you write**: `CLAUDE.md` (conventions + the round history that
    explains why the code looks unusual), then the architecture notes and the
    retro docs listed above for the area you are touching.
 

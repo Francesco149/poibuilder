@@ -76,9 +76,16 @@ func test_stairs_treads_and_risers_subdivide():
 		assert_gt(total_tris, 0, "Stairs step face %d must have triangles" % fi)
 
 func test_showcase_stairs_in_glb():
+	var glb_path := "res://exports/showcase_retro_baked.glb" if FileAccess.file_exists("res://exports/showcase_retro_baked.glb") else "res://test_scenes/showcase_retro_baked.glb"
+	# The GLB is a build artifact and is NOT tracked (see CLAUDE.md, "Generated
+	# artifacts"). test_pb_map_showcase.gd exports it, and GUT runs that file
+	# after this one — so on a fresh checkout this test skips on the first run
+	# and runs on every run after it.
+	if not FileAccess.file_exists(glb_path):
+		pending("no exported showcase GLB yet — run the suite once (test_pb_map_showcase.gd exports it)")
+		return
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
-	var glb_path := "res://exports/showcase_retro_baked.glb" if FileAccess.file_exists("res://exports/showcase_retro_baked.glb") else "res://test_scenes/showcase_retro_baked.glb"
 	var err := doc.append_from_file(glb_path, state)
 	var scene := doc.generate_scene(state)
 	assert_not_null(scene)
