@@ -21,6 +21,9 @@ from PIL import Image
 
 from . import capture, draw, edl, ffmpeg, overlay
 
+# Review-sheet tile geometry (one tile per clip, in timeline order).
+TILE_W, TILE_H, LABEL_H, GAP = 300, 169, 20, 6
+
 REPO = Path(__file__).resolve().parents[3]
 BAKE = REPO / "showcase_video" / "bake"
 DEFAULT_EDL = REPO / "showcase_video" / "edl.toml"
@@ -192,6 +195,27 @@ def _shot_signature(frames_dir: Path) -> list:
     return [count, total, int(newest)]
 
 
+def _tool_signature() -> list:
+    """Size and mtime of the modules that decide what a baked segment looks like.
+
+    A source hash cannot see a CODE fix: the cursor patch (the letterboxed
+    clips drew the pointer up to 90 px off) changed every overlay, yet every
+    stamp matched, and the master would have kept the old overlays until the
+    segment files were deleted by hand. Hashing the pipeline's own sources
+    re-bakes exactly the clips a tool change affects.
+    """
+    here = Path(__file__).parent
+    out = []
+    for name in ("draw.py", "overlay.py", "ffmpeg.py", "edl.py", "build.py"):
+        f = here / name
+        try:
+            st = f.stat()
+            out.append([name, int(st.st_size), int(st.st_mtime)])
+        except OSError:
+            out.append([name, 0, 0])
+    return out
+
+
 def fingerprint(clip: edl.Clip, proj: edl.Project, src: Source) -> str:
     """A hash of everything that decides what a segment looks like.
 
@@ -208,6 +232,7 @@ def fingerprint(clip: edl.Clip, proj: edl.Project, src: Source) -> str:
         "first": src.first_frame,
         "crop": src.crop,
         "span": src.span_src,
+        "tools": _tool_signature(),
     }
     if src.shot is not None:
         payload["shot"] = [src.shot.directory, src.shot.frames]
@@ -255,6 +280,26 @@ def clicks_for(src: Source, clip: edl.Clip) -> list[tuple[int, int, int]]:
             if src.first_frame - 2 <= c[0] < src.first_frame + src.span_src + 4]
 
 
+def overlay_plan(clip: edl.Clip, proj: edl.Project, src: Source, fit: ffmpeg.Fit,
+                 frames: int | None = None) -> overlay.OverlayPlan:
+    """The plan the overlay is drawn from — and verified against.
+
+    ONE constructor for both, because the two used to build their mappers
+    separately: the renderer kept a call site that dropped the clip's `into`
+    box and `contain` mode, so every letterboxed clip drew its cursor where a
+    full-frame cover would put it (`cursor_check` meanwhile passed, since it
+    built a correct mapper of its own). `frames` lets the check bake a short
+    run of the same plan instead of the whole clip.
+    """
+    plan = overlay.plan_overlay(clip, src.session, src.shot, src.crop,
+                                (proj.width, proj.height), src.first_frame,
+                                src.out_frames if frames is None else frames,
+                                clicks_for(src, clip),
+                                (fit.x, fit.y, fit.box_w, fit.box_h), fit.mode)
+    plan.zoom_span = src.span_src
+    return plan
+
+
 def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
               preview_seconds: float = 0.0) -> Path:
     src = resolve(clip, proj, preview_seconds)
@@ -268,13 +313,7 @@ def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
     overlay_dir: Path | None = None
     needs_overlay = clip.cursor or bool(clip.captions) or bool(clip.frame)
     if needs_overlay:
-        plan = overlay.plan_overlay(clip, src.session, src.shot, src.crop,
-                                    (proj.width, proj.height),
-                                    src.first_frame, src.out_frames,
-                                    clicks_for(src, clip),
-                                    (fit.x, fit.y, fit.box_w, fit.box_h),
-                                    fit.mode)
-        plan.zoom_span = src.span_src
+        plan = overlay_plan(clip, proj, src, fit)
         overlay_dir = BAKE / "overlays" / draw.slug(clip.id)
         n = overlay.render_sequence(plan, overlay_dir, workers=workers)
         print(f"  overlay: {n} frames -> {overlay_dir}")
@@ -327,6 +366,48 @@ def encode_readme(master: Path, out: Path, proj: edl.Project) -> Path:
                 "-c:v", "libx264", "-crf", "26", "-preset", "slower",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                 "-an", str(out)])
+    return out
+
+
+def review_sheet(master: Path, out: Path, segments: list[Path], proj: edl.Project,
+                 clips_per_row: int = 6) -> Path:
+    """A contact sheet of the whole timeline: one tile per clip, in order.
+
+    Built from the MASTER (so it can only show what the film actually contains —
+    the hand-made sheet this replaces was a leftover file nothing regenerated,
+    and it survived two builds showing clips that had already been re-cut).
+    """
+    from PIL import Image, ImageDraw
+
+    st = ffmpeg.video_stream(master)
+    fps = float(proj.fps)
+    tiles: list[tuple[Image.Image, str]] = []
+    t = 0.0
+    for seg in segments:
+        n = int(ffmpeg.frames_of(seg))
+        mid = t + (n / 2.0) / fps
+        tmp = BAKE / "sheet" / (seg.stem + ".png")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        ffmpeg.run([ffmpeg.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", f"{mid:.3f}", "-i", str(master), "-frames:v", "1",
+                    "-vf", f"scale={TILE_W}:{TILE_H}", str(tmp)])
+        if tmp.exists():
+            tiles.append((Image.open(tmp).convert("RGB"), seg.stem))
+        t += n / fps
+
+    rows = (len(tiles) + clips_per_row - 1) // clips_per_row
+    W = clips_per_row * (TILE_W + GAP) + GAP
+    H = rows * (TILE_H + LABEL_H + GAP) + GAP
+    sheet = Image.new("RGB", (W, H), (10, 11, 14))
+    d = ImageDraw.Draw(sheet)
+    font = draw.font(14, 600)
+    for i, (img, label) in enumerate(tiles):
+        cx = GAP + (i % clips_per_row) * (TILE_W + GAP)
+        cy = GAP + (i // clips_per_row) * (TILE_H + LABEL_H + GAP)
+        sheet.paste(img, (cx, cy))
+        d.text((cx + 2, cy + TILE_H + 3), label, font=font, fill=(198, 209, 224))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out)
     return out
 
 
@@ -468,6 +549,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[readme] {readme}")
     p = poster(master, out_dir / proj.poster, min(4.0, ffmpeg.duration(master) / 3))
     print(f"[poster] {p}")
+    sheet = review_sheet(master, out_dir / "review-sheet.png", segments, proj)
+    print(f"[sheet] {sheet}")
 
     print(f"[size] master {master.stat().st_size / 1e6:.1f} MB, "
           f"readme {readme.stat().st_size / 1e6:.1f} MB")

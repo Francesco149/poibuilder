@@ -28,6 +28,7 @@ func run(dr: ShowcaseDirector) -> void:
 	root = EditorInterface.get_edited_scene_root()
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
+	ShowcaseUtil.fresh_grid(d.plugin)
 	bench = ShowcaseUtil.floor_slab(root, 34.0, ShowcaseUtil.mat(root, "ink"))
 	# The bench's top surface sits exactly on the plugin grid's plane, and two
 	# coplanar surfaces z-fight; the grid has nothing to add here anyway (every
@@ -113,6 +114,11 @@ func _nearest_vertex(node: PBMesh, world: Vector3) -> Vector3:
 			best = w
 	return best
 
+## Highest point of a node's own box, in WORLD space.
+func _box_top(node: Node3D) -> float:
+	var a := d.node_aabb(node)
+	return a.position.y + a.size.y
+
 ## Highest vertex of the mesh in LOCAL space — the observable result of a move.
 func _top_of(node: PBMesh) -> float:
 	var top := -INF
@@ -153,6 +159,13 @@ func _has_face_near(point: Vector3, radius: float) -> bool:
 			return true
 	return false
 
+## World-space AABB spanning several nodes (the union of their own boxes).
+func _union_aabb(nodes: Array) -> AABB:
+	var box: AABB = d.node_aabb(nodes[0])
+	for i in range(1, nodes.size()):
+		box = box.merge(d.node_aabb(nodes[i]))
+	return box
+
 ## Faces with more than four corners — the n-gons a merge produces.
 func _polygon_face_count() -> int:
 	var n := 0
@@ -179,16 +192,27 @@ func _select() -> void:
 	d.check(_sel_count() == 1, "one face selected")
 	await d.swing_framing(d.framing_node(obj, 0.38, 40.0, 22.0), 30, 12.0, -2.0)
 
+## Selecting a whole edge RING: shift+alt+click a vertical edge of a cube and
+## the walk runs around the shape through the four vertical edges — the gesture
+## a loop cut is seeded from. (Alt+click alone is the edge LOOP, which a plain
+## cube's valence-3 corners stop immediately; the loop is shown where it
+## exists, on the loop cut beat's own new edges.)
 func _edge_loop() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "brick", Vector3.ZERO, 0.38, 34.0, 24.0)
 	var f := d.framing_node(obj, 0.38, 34.0, 24.0)
 	await d.click_button("edge")
+	# The box sits on the ground, so a corner click at (±1, 1, ±1) is the middle
+	# of a vertical edge.
 	await d.orbit_glide(f["center"], 34.0, 44.0, 24.0, f["dist"],
-		Vector3(1.0, 0.0, 1.0), 24, f["aim"])
-	await d.click(Vector2.INF, 12, ["alt"])
+		Vector3(1.0, 1.0, 1.0), 24, f["aim"])
+	await d.click(Vector2.INF, 12, ["alt", "shift"])
 	var sel = d.plugin.editor.selection
-	d.check(sel.selected_edges.size() >= 4,
-		"alt+click expanded the edge to its ring (%d edges)" % sel.selected_edges.size())
+	d.check(sel.selected_edges.size() == 4,
+		"shift+alt+click expanded the edge to its ring (%d edges)" % sel.selected_edges.size())
+	# The expansion is live: the whole ring moves with a drag of the seed.
+	var moved: int = await d.off(func():
+		return d.element_editor().element_indices(obj.pb_mesh_data, d.subgizmo_ids()[0]).size())
+	d.check(moved >= 8, "the ring's corners follow the seed's drag (%d positions)" % moved)
 	await d.swing_framing(d.framing_node(obj, 0.38, 44.0, 24.0), 34, 14.0, -3.0)
 	await d.click_button("face")
 
@@ -262,9 +286,14 @@ func _inset() -> void:
 	await d.click()
 	d.check(_sel_count() == 1, "extruded cap re-selected")
 	var before: int = obj.pb_mesh_data.faces.size()
-	await d.scale_selection_factor(0.42, 52, true)
+	# Slow on purpose: the ring the inset leaves is the operation's whole
+	# result, and it only reads if the drag is seen contracting the cap — at the
+	# old speed the clip opened after it had already happened.
+	await d.frames(16)
+	await d.scale_selection_factor(0.42, 84, true)
 	d.check(obj.pb_mesh_data.faces.size() > before,
 		"shift+centre inset (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
+	await d.frames(20)
 	# The payoff: the inset left a RING around the inner face, so grab that face
 	# and lift it — the ring is what the operation actually produced.
 	await d.tool("move")
@@ -308,15 +337,21 @@ func _subdivide() -> void:
 	await d.cam_swing(f["center"], 38.0, 54.0, 30.0, 44.0, f["dist"], 30, 1, f["aim"])
 	await d.click_button("face")
 
+## Loop cut. Two things have to be true on camera for the operation to read:
+## the cut has to be visible on EVERY side (an orbit shows all four — a cut that
+## never turns the corner looks like it only touched two faces), and the new
+## loop has to be a selectable, movable LOOP (alt-click expands to the chain of
+## edges the cut created, all four of them; the RING of one of those edges —
+## shift+alt — is the wider set that runs over the top and under the bottom).
 func _loopcut() -> void:
 	obj = await _fresh("DemoBox", PBShapeGenerators.create_box(Vector3(3.0, 2.0, 3.0)),
-		"steel", Vector3.ZERO, 0.40, 40.0, 20.0)
-	var f := d.framing_node(obj, 0.40, 40.0, 20.0)
+		"steel", Vector3.ZERO, 0.48, 40.0, 18.0)
+	var f := d.framing_node(obj, 0.48, 40.0, 18.0)
 	await d.click_button("edge")
 	# Exactly the mid-point of the front-right VERTICAL edge: a corner click or
 	# a face-centre click lands on whichever edge is nearest, and the ring walk
 	# (and therefore the cut) depends on which edge that is.
-	await d.orbit_glide(f["center"], 40.0, 48.0, 20.0, f["dist"],
+	await d.orbit_glide(f["center"], 40.0, 48.0, 18.0, f["dist"],
 		Vector3(1.5, 1.0, 1.5), 22, f["aim"])
 	await d.click()
 	d.check(_sel_count() == 1, "vertical edge selected")
@@ -324,17 +359,26 @@ func _loopcut() -> void:
 		"edge selection mirrored into the plugin")
 	var before: int = obj.pb_mesh_data.faces.size()
 	await d.op("insert_edge_loop", 20)
-	d.check(obj.pb_mesh_data.faces.size() > before,
-		"loop cut: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
-	# The cut itself is a hairline on video, so the beat shows what it produced:
-	# alt-click the new loop (the gesture the edge-loop beat teaches) and SCALE it
-	# out, and the ring the loop cut made is unmistakable.
+	d.check(obj.pb_mesh_data.faces.size() == before + 4,
+		"loop cut split all four sides (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
+	# THE CUT, all the way round: a slow orbit over the four sides the cut
+	# crossed, so the new mid-height edge is seen on each of them in turn.
+	await d.cam_swing(f["center"], 48.0, 168.0, 18.0, 26.0, f["dist"] * 1.05, 78, 1, f["aim"])
+	await d.cam_swing(f["center"], 168.0, 232.0, 26.0, 18.0, f["dist"], 40, 1, f["aim"])
+	# ...then show what the cut MADE: alt-click one of the new mid-height edges.
+	# Its loop runs end to end through the four 4-valence corners the cut
+	# created, so the whole new loop lights up — proof the cut went round.
 	await d.glide_world_track(Vector3(0.0, 1.0, 1.5), 18)
 	await d.click(Vector2.INF, 8, ["alt"])
-	d.check(d.plugin.editor.selection.selected_edges.size() >= 4,
-		"the new loop selected (%d edges)" % d.plugin.editor.selection.selected_edges.size())
-	await d.scale_selection_factor(1.35, 52)
-	await d.cam_swing(f["center"], 48.0, 64.0, 20.0, 30.0, f["dist"], 30, 1, f["aim"])
+	var loop_n: int = d.plugin.editor.selection.selected_edges.size()
+	d.check(loop_n == 4, "the cut's own edges select as one loop (%d edges)" % loop_n)
+	# Moving the loop slides the band the cut made: the faces above and below it
+	# stretch, and nothing else on the box moves.
+	var top_before: float = _top_of(obj)
+	await d.move_selection(Vector3(0.0, 0.35, 0.0), 46)
+	d.check(absf(_top_of(obj) - top_before) < 0.01,
+		"moving the loop leaves the box's own height alone (%.2f)" % _top_of(obj))
+	await d.cam_swing(f["center"], 232.0, 250.0, 18.0, 30.0, f["dist"] * 1.05, 30, 1, f["aim"])
 	await d.click_button("face")
 
 ## Merge, part one: coplanar quads become ONE face — and the proof is grabbing
@@ -371,47 +415,81 @@ func _merge() -> void:
 
 ## Merge, part two: two faces AT AN ANGLE. A prism's roof is the honest example
 ## of the shape this is for — two quads meeting along the ridge, which merge into
-## one bent face that then moves as a single face. (The first version of this beat
-## used a cube's top and front, which are perpendicular: the merged face rendered
-## as a degenerate-looking fold rather than a V.)
+## one bent face that then moves as a single face.
+##
+## The prism stands on a PLINTH (a plain cube of the same footprint): when the
+## merged roof is dragged up, the prism's own walls stretch above a base that
+## does not move, so "both slopes moved together" is visible as the column
+## growing — the shape of the change, not just a face count. The two clicks that
+## pick the slopes are the slowest part of the beat and stay on screen: one
+## slope, a full swing around the ridge, then shift+click the far slope, so the
+## viewer sees exactly which two faces the merge consumes.
 func _merge_nonplanar() -> void:
-	obj = await _fresh("DemoV", PBShapeGenerators.create_prism(Vector3(2.4, 1.6, 3.2)),
-		"moss", Vector3.ZERO, 0.5, 30.0, 30.0)
-	var f := d.framing_node(obj, 0.5, 30.0, 30.0)
+	var built: Array = await d.off(func():
+		_clear()
+		var plinth := ShowcaseUtil.mesh(root, "DemoPlinth",
+			PBShapeGenerators.create_box(Vector3(2.4, 1.0, 3.2)), Vector3(0, 0.5, 0),
+			ShowcaseUtil.checker_mat(root, "steel"))
+		var prism := ShowcaseUtil.mesh(root, "DemoV",
+			PBShapeGenerators.create_prism(Vector3(2.4, 1.6, 3.2)), Vector3(0, 1.8, 0),
+			ShowcaseUtil.checker_mat(root, "moss"))
+		obj = prism
+		EditorInterface.get_selection().add_node(prism)
+		return [plinth, prism])
+	var plinth: PBMesh = built[0]
+	var prism: PBMesh = built[1]
+	obj = prism
+	var f := d.framing(_union_aabb([plinth, prism]), 0.62, 30.0, 24.0)
+	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
+	await d.frames(10)
 	await d.click_button("face")
 	# Each slope is clicked from ITS OWN side. One camera cannot see both: from
 	# any 3/4 angle the far slope hides behind the ridge, the second click lands
 	# on the near slope, and the merge has one face to merge. (A click per side is
 	# also exactly what a person does.)
-	var mid_y: float = obj.position.y
-	await d.orbit_glide(f["center"], 30.0, 22.0, 26.0, f["dist"],
-		Vector3(0.6, mid_y, 0.0), 22, f["aim"])
+	var mid_y: float = prism.position.y
+	await d.orbit_glide(f["center"], 30.0, 20.0, 24.0, f["dist"],
+		Vector3(0.6, mid_y, 0.0), 30, f["aim"])
+	await d.frames(18)
 	await d.click()
 	d.check(_sel_count() == 1, "the near slope selected")
-	var g := d.framing_node(obj, 0.5, -150.0, 26.0)
-	await d.frame_box_to(d.node_aabb(obj), -150.0, 26.0, 0.5, 30)
-	await d.orbit_glide(g["center"], -150.0, -158.0, 26.0, g["dist"],
-		Vector3(-0.6, mid_y, 0.0), 24, g["aim"])
-	await d.click(Vector2.INF, 8, ["shift"])
+	# The swing to the far side is the shot's slow part: a long arc, then a
+	# settle before the second click, so the two halves of the pair are legible.
+	await d.cam_swing(f["center"], 20.0, -150.0, 24.0, 24.0, f["dist"], 96, 1, f["aim"])
+	await d.frames(20)
+	await d.orbit_glide(f["center"], -150.0, -160.0, 24.0, f["dist"],
+		Vector3(-0.6, mid_y, 0.0), 26, f["aim"])
+	await d.frames(16)
+	await d.click(Vector2.INF, 10, ["shift"])
 	var picked := _sel_count()
 	d.check(picked >= 2, "both slopes of the V selected (%d)" % picked)
 	var before: int = obj.pb_mesh_data.faces.size()
-	await d.op("merge_faces", 20)
+	await d.op("merge_faces", 26)
 	d.check(obj.pb_mesh_data.faces.size() < before,
 		"the V merged into one face (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
 	d.check(_polygon_face_count() >= 1, "the merge produced a bent n-gon")
-	# ...and it moves as ONE face
-	var g2 := d.framing_node(obj, 0.5, 40.0, 40.0)
-	await d.frame_box_to(d.node_aabb(obj), 40.0, 40.0, 0.5, 26)
-	await d.orbit_glide(g2["center"], 40.0, 26.0, 40.0, g2["dist"],
-		Vector3(0.6, mid_y, 0.0), 22, g2["aim"])
+	# ...and it moves as ONE face, elongating the column above the plinth.
+	var g2 := d.framing(_union_aabb([plinth, prism]), 0.62, 34.0, 26.0)
+	await d.cam_swing(f["center"], -160.0, 34.0, 24.0, 26.0, g2["dist"], 84, 1, f["aim"])
+	await d.frames(16)
+	await d.orbit_glide(g2["center"], 34.0, 28.0, 26.0, g2["dist"],
+		Vector3(0.6, mid_y, 0.0), 26, g2["aim"])
+	await d.frames(14)
 	await d.click()
 	d.check(_sel_count() == 1, "the bent face selected")
 	var after: int = obj.pb_mesh_data.faces.size()
-	await d.move_selection(Vector3(0.0, 0.55, 0.0), 46)
+	var top_before: float = _top_of(obj)
+	var plinth_top: float = await d.off(func(): return _box_top(plinth))
+	await d.move_selection(Vector3(0.0, 0.7, 0.0), 62)
 	d.check(obj.pb_mesh_data.faces.size() == after,
 		"both slopes moved together as one face (%d faces before and after)" % after)
-	await d.cam_swing(g2["center"] + Vector3(0, 0.3, 0), 26.0, 50.0, 40.0, 30.0, g2["dist"], 32, 1, g2["aim"])
+	d.check(_top_of(obj) > top_before + 0.5,
+		"the column elongated (%.2f -> %.2f)" % [top_before, _top_of(obj)])
+	var plinth_top_after: float = await d.off(func(): return _box_top(plinth))
+	d.check(absf(plinth_top_after - plinth_top) < 0.01,
+		"the plinth it stands on did not move")
+	await d.cam_swing(g2["center"] + Vector3(0, 0.4, 0), 28.0, 46.0, 26.0, 22.0,
+		g2["dist"] * 1.05, 40, 1, g2["aim"])
 
 func _weld() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "slate", Vector3.ZERO, 0.40, 34.0, 24.0)
@@ -528,15 +606,20 @@ func _knife() -> void:
 	await d.frames(8)
 	d.check(obj.pb_mesh_data.faces.size() > before,
 		"knife cut: %d -> %d faces" % [before, obj.pb_mesh_data.faces.size()])
-	# ...and the two halves are separate faces now, so one of them extrudes:
+	# ...and the two halves are separate faces now, so one of them extrudes. It
+	# has to be the one the camera looks OVER: lifting the near half stands a
+	# wall between the lens and the cut, which is the clip's whole subject (the
+	# camera sits at +X/+Z, so the piece behind the path is the far one).
 	await d.click_button("face")
-	await d.glide_world_track(Vector3(-1.2, top, 1.4), 16)
+	await d.glide_world_track(Vector3(0.6, top, -1.5), 16)
 	await d.click()
 	d.check(_sel_count() == 1, "one side of the cut selected")
+	d.check(_selected_face_center().z < 0.0,
+		"the far half is the one selected (centre z=%.2f)" % _selected_face_center().z)
 	await d.move_selection(Vector3(0.0, 0.9, 0.0), 44, true)
 	d.check(obj.pb_mesh_data.faces.size() > before + 1,
 		"the cut half extruded (%d faces)" % obj.pb_mesh_data.faces.size())
-	await d.cam_swing(f["center"], 30.0, 48.0, 38.0, 28.0, f["dist"], 34, 1, f["aim"])
+	await d.cam_swing(f["center"], 30.0, 52.0, 38.0, 26.0, f["dist"] * 1.1, 34, 1, f["aim"])
 
 func _ngon() -> void:
 	await d.off(func(): _clear())

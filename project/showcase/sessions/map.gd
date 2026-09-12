@@ -53,6 +53,9 @@ const REAL := {
 	"RampEast": [Vector3(3.5, 0.0, -1.0), Vector3(5.5, 2.0, 3.0)],
 	"FallWall": [Vector3(2.5, 0.0, -5.6), Vector3(6.5, 5.0, -5.0)],
 	"FallSheet": [Vector3(3.5, 0.1, -4.94), Vector3(5.5, 4.3, -4.94)],
+	"FallCore": [Vector3(3.8, 0.1, -4.86), Vector3(4.7, 4.1, -4.86)],
+	"FallPool": [Vector3(2.7, 0.04, -5.0), Vector3(6.3, 0.04, -1.8)],
+	"FallFoam": [Vector3(3.1, 0.06, -5.0), Vector3(5.9, 0.06, -3.4)],
 }
 
 func run(dr: ShowcaseDirector) -> void:
@@ -61,6 +64,7 @@ func run(dr: ShowcaseDirector) -> void:
 	root = EditorInterface.get_edited_scene_root()
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
+	ShowcaseUtil.fresh_grid(d.plugin)
 	# No bench and no walls: the courtyard IS the scene, which is why the grid
 	# has to go once the floor exists (a surface at the grid's own elevation
 	# z-fights with it).
@@ -106,8 +110,17 @@ func _work(a: Vector3, b: Vector3, height: float) -> AABB:
 ## finished node. Returns the created node.
 func _place(shape_id: StringName, name_hint: String, a: Vector3, b: Vector3,
 		height: float, mat: Material = null, setup: Callable = Callable(),
-		snap_height := true, az := 36.0, elev := 26.0) -> PBMesh:
+		snap_height := true, az := 36.0, elev := 26.0, snap := true) -> PBMesh:
 	var before := ShowcaseUtil.names_of(root, "Shape_")
+	# `snap` false draws the piece at the pointer's exact position instead of the
+	# grid's: the shipped map's own coordinates are not all grid multiples (its
+	# waterfall wall spans 2.5..6.5, its stairs -5.75..-3.25), and snapping
+	# quantised them onto the step — a 4 m wall came out 3.8 m, a 0.2 m sliver
+	# away from the map the video is supposed to be building.
+	var grid_was: bool = d.plugin.grid.enabled
+	# Explicit, not inherited: the piece's own flag decides (a leftover "snap
+	# off" from a previous beat or session must not silently change the drag).
+	d.plugin.grid.enabled = snap
 	# `az`/`elev` matter: the base drag lands on the FIRST surface its ray hits,
 	# so a piece drawn under an overhang has to be approached from low down —
 	# from above, the overhang is what the drag would land on (this is how a
@@ -120,11 +133,11 @@ func _place(shape_id: StringName, name_hint: String, a: Vector3, b: Vector3,
 	# Snapping quantises the height to the grid's 0.2 m step, which is right for
 	# everything that stands ON the floor and wrong for the floor itself (its
 	# walking surface has to land exactly at y = 0).
-	var snap_was: bool = d.plugin.grid.enabled
 	if not snap_height:
 		d.plugin.grid.enabled = false
 	var got: float = await d.height_drag_to(height)
-	d.plugin.grid.enabled = snap_was
+	if not snap_height:
+		d.plugin.grid.enabled = grid_was
 	d.check(absf(got - height) < 0.05, "%s height drag reached %.2f m (%.2f)" % [name_hint, height, got])
 	if absf(got) < 0.001 and absf(height) > 0.001:
 		# The base drag never started (the press missed every surface): abort the
@@ -138,6 +151,7 @@ func _place(shape_id: StringName, name_hint: String, a: Vector3, b: Vector3,
 		if setup.is_valid():
 			await setup.call()
 		await d.overlay_button("ApplyParams", 12)
+	d.plugin.grid.enabled = grid_was
 	var after := ShowcaseUtil.names_of(root, "Shape_")
 	for n in after:
 		if not before.has(n):
@@ -169,6 +183,32 @@ func _matches(name: String, node: Node3D, tol := 0.12) -> void:
 	d.check(ok, "%s matches the shipped map (got %s..%s, want %s..%s)" % [
 		name, str(box.position.snappedf(0.01)), str((box.position + box.size).snappedf(0.01)),
 		str(want[0]), str(want[1])])
+
+## Asserts a FLAT water layer against the shipped map's PLAN (x/z) and that it
+## floats clear of the floor it was drawn on.
+##
+## The lift is the one number that is deliberately NOT the map's: the map's pool
+## and foam sit 4 and 6 cm above the floor, two centimetres apart from each
+## other, and in an editing viewport at a grazing angle that is a z-fight (the
+## striped band across the wet stone in the first cuts of this act). The device
+## resolves them by draw order; the editor does not. Everything else — where the
+## layer sits in plan, what it is made of, how it scrolls — is the map's own.
+func _matches_footprint(name: String, node: Node3D, clearance := 0.03) -> void:
+	if node == null:
+		d.check(false, "%s exists" % name)
+		return
+	var want: Array = REAL[name]
+	var box := _box(node)
+	var want_hi: Vector3 = want[1]
+	var ok: bool = absf(box.position.x - want[0].x) <= 0.06 \
+		and absf(box.position.z - want[0].z) <= 0.06 \
+		and absf(box.position.x + box.size.x - want_hi.x) <= 0.06 \
+		and absf(box.position.z + box.size.z - want_hi.z) <= 0.06
+	d.check(ok, "%s covers the shipped map's footprint (got x %.2f..%.2f z %.2f..%.2f, want x %.2f..%.2f z %.2f..%.2f)" % [
+		name, box.position.x, box.position.x + box.size.x, box.position.z, box.position.z + box.size.z,
+		want[0].x, want_hi.x, want[0].z, want_hi.z])
+	d.check(box.position.y >= clearance,
+		"%s floats %.2f m above the floor it was drawn on (no coplanar fight)" % [name, box.position.y])
 
 func _keep(name: String, node: PBMesh) -> void:
 	pieces[name] = node
@@ -245,7 +285,7 @@ func _stairs() -> void:
 	# climbs toward -Z like the shipped map's (it is rotated 180 degrees there).
 	var stairs := await _place(&"stair", "GrandStairs", Vector3(-5.75, 0.0, 2.0), Vector3(-3.25, 0.0, -2.0),
 		3.0, TestMapShowcaseBuilder.tiles_material(),
-		func(): await d.overlay_param("steps", 8, 10))
+		func(): await d.overlay_param("steps", 8, 10), true, 36.0, 26.0, false)
 	_keep("GrandStairs", stairs)
 	_matches("GrandStairs", stairs)
 	# balcony: 3 x 0.4 x 4 slab at y 2.8..3.2 — created on the grid raised to
@@ -278,7 +318,7 @@ func _pillars() -> void:
 	_matches("PillarA", a)
 	_matches("PillarB", b)
 	var ramp := await _place(&"prism", "RampEast", Vector3(3.5, 0.0, -1.0), Vector3(5.5, 0.0, 3.0),
-		2.0, TestMapShowcaseBuilder.tiles_material())
+		2.0, TestMapShowcaseBuilder.tiles_material(), Callable(), true, 36.0, 26.0, false)
 	_keep("RampEast", ramp)
 	_matches("RampEast", ramp)
 	# Close on the colonnade, then out to the map so far: the courtyard reads as
@@ -300,31 +340,47 @@ func _waterfall() -> void:
 	var wall_a := Vector3(2.5, 0.0, -5.6)
 	var wall_b := Vector3(6.5, 0.0, -5.0)
 	var wall := await _place(&"cube", "FallWall", wall_a, wall_b, 5.0,
-		TestMapShowcaseBuilder.wet_tiles_material())
+		TestMapShowcaseBuilder.wet_tiles_material(), Callable(), true, 36.0, 26.0, false)
 	_keep("FallWall", wall)
-	_matches("FallWall", wall)
+	_matches("FallWall", wall, 0.06)
 	# the two standing sheets, drawn against the wall's courtyard-facing side
 	var sheet := await _plane("FallSheet", Vector3(3.5, 0.1, -5.0), Vector3(5.5, 4.3, -5.0), 0.06,
 		TestMapShowcaseBuilder.water_material("FallSheet_Mat", WATER_SHEET, Vector2(0.04, -0.75), true),
 		Vector2(0.6, 0.35))
 	_keep("FallSheet", sheet)
-	_matches("FallSheet", sheet, 0.2)
-	var core := await _plane("FallCore", Vector3(3.8, 0.1, -5.0), Vector3(4.7, 4.1, -5.0), 0.14,
+	_matches("FallSheet", sheet, 0.06)
+	# The core is drawn ON THE SHEET it sits in front of (z = -4.94), not on the
+	# wall: the press ray lands on whatever surface is first under the cursor, so
+	# aiming at the wall would put the rect 6 cm behind where the cursor is and
+	# shift the whole footprint. Its 8 cm stand-off lands it exactly on the
+	# shipped map's -4.86.
+	var core := await _plane("FallCore", Vector3(3.8, 0.1, -4.94), Vector3(4.7, 4.1, -4.94), 0.08,
 		TestMapShowcaseBuilder.water_material("FallCore_Mat", WATER_CORE, Vector2(0.0, -1.15), true),
 		Vector2(1.2, 0.5))
 	_keep("FallCore", core)
-	# the pool on the floor, spreading away from the wall
-	var pool := await _plane("FallPool", Vector3(2.7, 0.0, -5.0), Vector3(6.3, 0.0, -1.8), 0.06,
+	_matches("FallCore", core, 0.06)
+	# The pool on the floor, spreading away from the wall. Both floor layers are
+	# dragged from their NEAR corner: the press ray stops at whatever surface is
+	# first under the cursor, and the far corner sits exactly on the wall's base
+	# plane — a press there hits the WALL, and the pool comes out vertical (the
+	# foam did, 0.8 m below the floor). A rect is direction-agnostic, so starting
+	# from the near corner changes nothing but which surface the ray lands on.
+	var pool := await _plane("FallPool", Vector3(6.3, 0.0, -1.8), Vector3(2.7, 0.0, -5.0), 0.06,
 		TestMapShowcaseBuilder.water_material("FallPool_Mat", WATER_POOL, Vector2(0.02, -0.03), true),
 		Vector2(0.55, 0.55))
 	_keep("FallPool", pool)
 	# The foam sits ON the pool and they overlap in plan: 2 cm apart they fought
 	# for depth on camera, which is what the striped band across the wet floor
 	# was. 12 cm is the smallest separation that stays clear at grazing angles.
-	var foam := await _plane("FallFoam", Vector3(3.1, 0.0, -5.0), Vector3(5.9, 0.0, -3.4), 0.18,
+	# Drawn on the POOL (y = 0.06), the surface it actually rests on — aiming at
+	# the floor under it shifted the rect ~0.2 m south, because the press ray
+	# stops at the pool first. 12 cm of stand-off keeps the two layers clear.
+	var foam := await _plane("FallFoam", Vector3(5.9, 0.06, -3.4), Vector3(3.1, 0.06, -5.0), 0.12,
 		TestMapShowcaseBuilder.water_material("FallFoam_Mat", WATER_FOAM, Vector2(0.0, -0.30), true),
 		Vector2(0.5, 0.9))
 	_keep("FallFoam", foam)
+	_matches_footprint("FallPool", pool)
+	_matches_footprint("FallFoam", foam)
 	# The rest of the shipped composition — the spray billboard, the mist and
 	# flame emitters, the foliage, the lights — is added while the camera is
 	# still on the wall, and the beats after this one are framed on it.
@@ -345,17 +401,32 @@ func _plane(name_hint: String, a: Vector3, b: Vector3, offset: float,
 	var f := d.framing(AABB(a.min(b) - Vector3(0.6, 0.6, 0.6), (b - a).abs() + Vector3(1.2, 1.2, 1.2)), 0.6, 30.0, 18.0)
 	await d.frame_box_to(AABB(a.min(b) - Vector3(0.8, 0.8, 0.8), (b - a).abs() + Vector3(1.6, 1.6, 1.6)),
 		30.0, 18.0, 0.6, 24)
+	# These sheets are SMALLER than the grid's step (2.0 x 4.2, 0.9 x 4.0,
+	# 3.6 x 3.2, 2.8 x 1.6) and stand off their surface by centimetres, so
+	# snapping quantises both away: a 4.2 m drag became 4.4, and the 6 cm
+	# stand-off became 0 — the sheet lying IN the wall and the pool IN the
+	# floor, which is where the striped z-fighting across the wet stone came
+	# from. The shipped map's own numbers are the target, so snapping is off
+	# for the whole plane flow (the same way the courtyard floor turns it off
+	# for its negative height).
+	var snap_was: bool = d.plugin.grid.enabled
+	d.plugin.grid.enabled = false
 	await d.arm_shape(&"plane")
 	await d.drag(d.w2s(a), d.w2s(b), 26)
 	# OFFSET stage: the sheet rides out along the surface normal (there is no
 	# third dimension to drag — see PBShapeParams.height_drags_offset). The
-	# normal is the one the creator captured from the face that was drawn on.
-	var sc = d.plugin.shape_creator
-	await d.glide_world_track(sc.rect_center + sc.plane_normal * offset, 14)
+	# normal is the one the creator captured from the face that was drawn on,
+	# and the value is CLOSED-LOOP: the plugin reads the pointer's position back
+	# along that normal, so the pointer has to be walked there and re-read until
+	# it agrees — gliding to `centre + normal * offset` and clicking, which this
+	# beat used to do, landed the sheet 2 cm off the wall instead of 6.
+	var got: float = await d.height_drag_to(offset)
+	d.check(absf(got - offset) <= 0.03, "%s stand-off reached %.2f m (%.2f)" % [name_hint, got, offset])
 	await d.click()
 	await d.frames(8)
 	if d.plugin.tool_overlay.params_open:
 		await d.overlay_button("ApplyParams", 12)
+	d.plugin.grid.enabled = snap_was
 	var after := ShowcaseUtil.names_of(root, "Shape_")
 	for n in after:
 		if not before.has(n):

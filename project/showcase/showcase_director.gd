@@ -1183,17 +1183,40 @@ func screen_axis(origin: Vector3, world_dir: Vector3) -> Vector2:
 ## back, so the error shrinks every step whatever the camera orientation is.
 func height_drag_to(target: float, max_steps := 8) -> float:
 	var sc = plugin.shape_creator
+	# The plugin derives the height from the pointer's ray ∩ the view-parallel
+	# plane through the rect centre, projected on the surface normal. To land a
+	# GIVEN height the pointer has to sit on the normal's IN-PLANE component,
+	# scaled by how much of that component the height functional actually sees
+	# (1 - cos²θ, θ being the angle between the normal and the view): walking to
+	# `centre + normal * target` directly only covers that fraction of the
+	# distance, which is why a 6 cm stand-off came back as 2 cm, and — with the
+	# pixel-step loop breaking on sub-pixel moves — a floor pool's as 0.
+	var n: Vector3 = sc.plane_normal
+	var cam_dir: Vector3 = -cam.global_transform.basis.z
+	var n_in: Vector3 = n - cam_dir * n.dot(cam_dir)
+	var seen: float = 1.0 - n.dot(cam_dir) * n.dot(cam_dir)
+	if n_in.length_squared() > 0.000001 and seen > 0.0001:
+		await glide(w2s(sc.rect_center + n_in * (target / seen)), 10)
 	var h := float(sc.height)
 	for i in range(max_steps):
 		if absf(target - h) <= 0.02:
 			break
-		var here: Vector3 = sc.rect_center + sc.plane_normal * h
-		var goal: Vector3 = sc.rect_center + sc.plane_normal * target
-		var px: Vector2 = w2s(goal) - w2s(here)
-		if px.length() < 1.0:
+		# Re-glide to the ABSOLUTE closed-form position rather than stepping by
+		# a pixel delta: the step is idempotent, while a relative step computed
+		# from a stale reading can overshoot (a narrow sheet at a grazing angle
+		# came out 0.06 m past its target, which then read as a footprint
+		# mismatch against the shipped map).
+		n = sc.plane_normal
+		cam_dir = -cam.global_transform.basis.z
+		n_in = n - cam_dir * n.dot(cam_dir)
+		seen = 1.0 - n.dot(cam_dir) * n.dot(cam_dir)
+		if n_in.length_squared() < 0.000001 or seen < 0.0001:
 			break
-		await glide(cursor + px, 8)
-		h = float(sc.height)
+		await glide(w2s(sc.rect_center + n_in * (target / seen)), 8)
+		var measured := float(sc.height)
+		if is_equal_approx(measured, h):
+			break
+		h = measured
 	return h
 
 ## Shows/hides PoiBuilder's own grid. A surface lying exactly at the grid's

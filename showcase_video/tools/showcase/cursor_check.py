@@ -9,9 +9,12 @@ own arithmetic:
 
 1. ``check_mapper`` drives a SYNTHETIC frame through the clip's real ffmpeg
    filtergraph with a marker drawn at the recorded click, finds the marker in
-   the output, and compares it with ``draw.make_mapper``'s prediction. This is
-   the check that would have caught the letterboxed clips the old mapper placed
-   the cursor on as if they were full-frame covers.
+   the output, and compares it with the mapper the renderer itself uses
+   (``overlay.point_mapper``, from ``build.overlay_plan``). Both halves matter:
+   the letterboxed clips shipped with the cursor up to 90 px off because the
+   renderer's call site dropped the clip's ``into`` box and ``contain`` mode
+   while this check built a correct mapper of its own — so the check now goes
+   through the production construction, not a copy of it.
 2. ``check_hotspot`` draws the real cursor sprite at a known point and measures
    the arrow's tip in the raster, so the sprite/hotspot pair is verified too
    (the hotspot used to be two guessed fractions of the sprite size, which put
@@ -89,10 +92,11 @@ def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmp
                "-i", str(tdp / "%04d.png"), "-filter_complex", graph,
                "-map", "[vout]", "-frames:v", str(frames), str(out / "%04d.png")]
         subprocess.run(cmd, check=True)
-        mapper = draw.make_mapper(tuple(src.crop), (proj.width, proj.height),
-                                  tuple(clip.zoom) if clip.zoom else None,
-                                  max(src.span_src, 1),
-                                  (fit.x, fit.y, fit.box_w, fit.box_h), fit.mode)
+        # The PRODUCTION mapper, from the SAME plan constructor the bake uses:
+        # this check passed while the renderer drew the cursor with a mapper
+        # that had dropped `into`/`fit`, because it built its own correct one.
+        plan = build.overlay_plan(clip, proj, src, fit, frames=frames)
+        mapper = overlay.point_mapper(plan)
         frames_out = sorted(out.glob("*.png"))
         if len(frames_out) < frames:
             print(f"  (ffmpeg produced {len(frames_out)} frames)")
