@@ -181,6 +181,9 @@ Plugin: `project/addons/poibuilder/`
   max/step/default/kind), defaults, build() dispatch to the generators, and
   apply_drag_extents() mapping the base drag + height onto size dims.
 - `editor/pb_picking.gd` — Pure-logic ray/screen picking.
+- `editor/uv/` — Dedicated 2D UV Editor: `pb_uv_canvas.gd` (interactive 2D canvas,
+  pan/zoom, grid, texture underlay, wireframe, selection), `pb_uv_editor_panel.gd`
+  (bottom dock container, toolbar, pop-out window, selection sync).
 - `commands/` — Undo/redo command pattern (CmdMove/Rotate/ScaleElements)
 - `shapes/` — Primitive shape generators (+ `pb_shape_params.gd`: per-shape
   parameter defs, defaults, and the drag-extent mapping)
@@ -2632,6 +2635,26 @@ build.sh` rebuilds the master, the README cut and the poster in a few minutes.
 The next scheduled piece of work is a **courtyard walkthrough with the real
 device in frame** (the current handheld clip was shot before the lit-foliage and
 compact-HUD changes).
+
+v0.9.82 round complete ✓ — Session 1: 2D UV Editor Panel Base (canvas, navigation, grid, texture underlay, wireframe, selection sync & bottom dock):
+- DEDICATED 2D UV EDITOR PANEL (`PBUvEditorPanel` in `editor/uv/pb_uv_editor_panel.gd`):
+  * Added to Godot's bottom panel dock via `add_control_to_bottom_panel(uv_editor_panel, "UV Editor")`.
+  * Top toolbar with modes (Face, Vertex, Edge, Island), channel selector (UV1/UV2), framing buttons (`[0,1]` and `⛶ Frame`), snap toggle and step selection (1/32 to 1.0), texture underlay controls (texture toggle, repeat tile toggle, opacity slider), selection status readout, and a pop-out floating window button (`Window` popup centered).
+  * Toolbar button "UV" added to the persistent toolbar (`PBToolbar`) next to Material button to quickly open/focus the bottom panel.
+- INTERACTIVE 2D UV CANVAS (`PBUvCanvas` in `editor/uv/pb_uv_canvas.gd`):
+  * 2D control with cursor-anchored mouse wheel zoom (`MIN_ZOOM = 20.0`, `MAX_ZOOM = 10000.0`, `DEFAULT_ZOOM = 350.0`) and middle-mouse or Space+LMB drag panning.
+  * Invertible, exact coordinate space conversions between normalized UV space $[0, 1]$ and local canvas pixel coordinates (`uv_to_screen`, `screen_to_uv`).
+  * Dark slate background (`Color(0.12, 0.13, 0.16)`), adaptive grid lines adapting to zoom and snap step, $[0, 1]$ unit square border line with corner coordinate labels.
+  * Material texture underlay from active mesh's material with repeat tiling toggle and adjustable opacity.
+  * UV wireframe drawing: unselected faces/edges (subtle cyan/white), selected faces/edges (bright yellow), hovered elements (cyan).
+  * Point picking with distance threshold, rubber-band marquee drag selection with Shift-toggle support, and UV island detection (double-click).
+- BIDIRECTIONAL SELECTION SYNCHRONIZATION:
+  * Selecting a face in the 3D viewport immediately reflects onto the 2D UV canvas (`sync_selection_from_3d`).
+  * Selecting faces in the 2D UV editor synchronizes back to `editor.selection` in the 3D scene.
+- TESTS & VERIFICATION:
+  * 859/859 GUT unit tests passing (+8 tests in `test_pb_uv_editor.gd`).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
+- Version bump 0.9.81 -> 0.9.82 (poibuilder_plugin.gd, pb_editor.gd, plugin.cfg).
 
 ## Key Conventions
 

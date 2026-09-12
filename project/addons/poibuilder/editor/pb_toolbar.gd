@@ -57,6 +57,8 @@ signal grid_panel_toggled(open: bool)
 ## Emitted when the user toggles the Display Settings section in the overlay.
 signal settings_panel_toggled(open: bool)
 signal materials_dock_requested
+## Emitted when the user clicks the UV Editor button to focus the 2D UV panel.
+signal uv_editor_requested
 
 ## Emitted when the user clicks the Export button to open the map export dialog.
 signal export_requested
@@ -104,6 +106,7 @@ var _btn_edit_params: Button
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
 var _btn_materials: Button
+var _btn_uv_editor: Button
 var _op_buttons: Dictionary = {}
 var _btn_settings: Button
 var _btn_env: MenuButton
@@ -300,6 +303,13 @@ func _build_ui() -> void:
 	_btn_materials.tooltip_text = "Material & UV: Focus the material picker and UV mapping dock"
 	_btn_materials.pressed.connect(func(): materials_dock_requested.emit())
 
+	_btn_uv_editor = Button.new()
+	_btn_uv_editor.name = "UvEditorButton"
+	_btn_uv_editor.text = "UV"
+	_btn_uv_editor.flat = true
+	_btn_uv_editor.tooltip_text = "UV Editor: Open the 2D UV canvas panel in the bottom dock"
+	_btn_uv_editor.pressed.connect(func(): uv_editor_requested.emit())
+
 	_btn_settings = Button.new()
 	_btn_settings.name = "SettingsButton"
 	_btn_settings.icon = _load_icon("icon_settings.svg")
@@ -418,7 +428,7 @@ func _update_row_layout() -> void:
 	]
 	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
 	var grp_overlay: Array[Control] = [_sep_overlay, _btn_overlay, _btn_recover_overlay]
-	var grp_docks: Array[Control] = [_sep_docks, _btn_materials, _btn_settings]
+	var grp_docks: Array[Control] = [_sep_docks, _btn_materials, _btn_uv_editor, _btn_settings]
 	var grp_export: Array[Control] = [_sep_export, _btn_export]
 
 	if _two_rows:
@@ -630,7 +640,7 @@ func _on_shape_menu_pressed(id: int) -> void:
 ## its own mode; switching back to an element mode must always be possible).
 func set_editing_active(active: bool) -> void:
 	for btn: Button in [_btn_move, _btn_rotate, _btn_scale, _btn_space,
-			_btn_object, _btn_vertex, _btn_edge, _btn_face]:
+			_btn_object, _btn_vertex, _btn_edge, _btn_face, _btn_uv_editor]:
 		btn.disabled = not active
 	# New Shape stays enabled: creation needs no editing context.
 	_on_selection_info_changed()

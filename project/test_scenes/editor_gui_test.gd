@@ -1394,6 +1394,21 @@ func _run() -> void:
 						_fail("ENV: environment popup missing preset items")
 				else:
 					_fail("ENV: toolbar environment button not found")
+				# ── UV Editor Panel Test ───────────────────────────────────────
+				if plugin.uv_editor_panel != null:
+					_pass("UV-EDITOR: uv_editor_panel instance exists in plugin")
+					if plugin.toolbar != null and plugin.toolbar._btn_uv_editor != null:
+						_pass("UV-EDITOR: toolbar UV button exists")
+						plugin.toolbar._btn_uv_editor.pressed.emit()
+						await _frames(2)
+						if plugin.uv_editor_panel.canvas != null:
+							_pass("UV-EDITOR: uv canvas active and responsive")
+						else:
+							_fail("UV-EDITOR: canvas is null")
+					else:
+						_fail("UV-EDITOR: toolbar UV button not found")
+				else:
+					_fail("UV-EDITOR: uv_editor_panel is null")
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────

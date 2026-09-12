@@ -36,6 +36,8 @@ var sprite_placer: PBSpritePlacer = PBSpritePlacer.new()
 var tool_overlay: PBToolOverlay
 var toolbar: PBToolbar
 var material_dock: PBMaterialDock = null
+var uv_editor_panel: PBUvEditorPanel = null
+var _uv_bottom_button: Button = null
 var material_drop_overlay: PBMaterialDropOverlay = null
 var paint_controller: PBPaintController = PBPaintController.new()
 var _export_dialog: PBExportDialog = null
@@ -76,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.81"
+const VERSION := "0.9.82"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -154,6 +156,7 @@ func _enter_tree():
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
 	toolbar.materials_dock_requested.connect(focus_material_dock)
+	toolbar.uv_editor_requested.connect(focus_uv_editor)
 	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
 	toolbar.export_requested.connect(_on_export_requested)
 	toolbar.env_preset_requested.connect(_on_env_preset_requested)
@@ -215,6 +218,12 @@ func _enter_tree():
 	material_dock.sprite_placer = sprite_placer
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
+	# Dedicated 2D UV Editor Panel (Bottom dock)
+	uv_editor_panel = PBUvEditorPanel.new()
+	uv_editor_panel.editor = editor
+	if Engine.is_editor_hint():
+		_uv_bottom_button = add_control_to_bottom_panel(uv_editor_panel, "UV Editor")
+	uv_editor_panel.pop_out_toggled.connect(_on_uv_pop_out_toggled)
 	# Half-size manipulator gizmos by default (the engine default of 80px is
 	# huge next to PoiBuilder's element work). Respect user customization:
 	# only applied while the setting still sits at the engine default.
@@ -299,6 +308,14 @@ func _exit_tree():
 		remove_control_from_docks(material_dock)
 		if is_instance_valid(material_dock):
 			material_dock.queue_free()
+	# Remove UV editor panel
+	if uv_editor_panel != null:
+		if not uv_editor_panel._is_floating and Engine.is_editor_hint():
+			remove_control_from_bottom_panel(uv_editor_panel)
+		if is_instance_valid(uv_editor_panel):
+			uv_editor_panel.queue_free()
+		uv_editor_panel = null
+		_uv_bottom_button = null
 	# Remove export dialog
 	if _export_dialog != null:
 		if is_instance_valid(_export_dialog) and _export_dialog.get_parent() != null:
@@ -757,6 +774,7 @@ func _on_active_mesh_changed(mesh: PBMesh) -> void:
 	_update_editing_context()
 	if material_dock != null:
 		material_dock.sync_selection()
+	_sync_uv_editor_selection()
 
 ## Selects the element under the last click position on `mesh` (single-id
 ## subgizmo selection — the engine's script API) so the element gizmo shows
@@ -788,6 +806,7 @@ func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 	_update_editing_context()
 	if material_dock != null:
 		material_dock.sync_selection()
+	_sync_uv_editor_selection()
 
 func _on_element_selection_changed() -> void:
 	if tool_overlay:
@@ -797,6 +816,7 @@ func _on_element_selection_changed() -> void:
 	_update_engine_tool.call_deferred()
 	if material_dock != null:
 		material_dock.sync_selection()
+	_sync_uv_editor_selection()
 
 func _on_orientation_space_changed(_space: PBEditor.OrientationSpace) -> void:
 	# The engine's transform gizmo only adopts a subgizmo's basis while its
@@ -1198,6 +1218,40 @@ func focus_material_dock() -> void:
 					tb.call("grab_focus", true)
 	material_dock.show()
 	material_dock.sync_selection()
+
+## Focuses or opens the UV Editor bottom dock panel.
+func focus_uv_editor() -> void:
+	if uv_editor_panel == null:
+		return
+	if uv_editor_panel._is_floating:
+		if uv_editor_panel._floating_window != null:
+			uv_editor_panel._floating_window.show()
+			uv_editor_panel._floating_window.grab_focus()
+	else:
+		if Engine.is_editor_hint():
+			make_bottom_panel_item_visible(uv_editor_panel)
+	_sync_uv_editor_selection()
+
+func _on_uv_pop_out_toggled(floating: bool) -> void:
+	if not Engine.is_editor_hint():
+		return
+	if floating:
+		remove_control_from_bottom_panel(uv_editor_panel)
+		_uv_bottom_button = null
+	else:
+		_uv_bottom_button = add_control_to_bottom_panel(uv_editor_panel, "UV Editor")
+		make_bottom_panel_item_visible(uv_editor_panel)
+
+func _sync_uv_editor_selection() -> void:
+	if uv_editor_panel == null:
+		return
+	if uv_editor_panel.active_mesh != editor.active_mesh:
+		uv_editor_panel.active_mesh = editor.active_mesh
+	if editor.active_mesh != null and editor.selection != null:
+		var sel_faces: Array = []
+		for fi in editor.selection.selected_faces:
+			sel_faces.append(fi)
+		uv_editor_panel.sync_selection_from_3d(sel_faces)
 
 ## Moves Inspector and other standard docks from DockSlotRightUL to DockSlotRightUR,
 ## leaving DockSlotRightUL exclusively for PoiBuilder's Material & UV dock.
