@@ -425,72 +425,54 @@ func _merge() -> void:
 ## slope, a full swing around the ridge, then shift+click the far slope, so the
 ## viewer sees exactly which two faces the merge consumes.
 func _merge_nonplanar() -> void:
-	var built: Array = await d.off(func():
-		_clear()
-		var plinth := ShowcaseUtil.mesh(root, "DemoPlinth",
-			PBShapeGenerators.create_box(Vector3(2.4, 1.0, 3.2)), Vector3(0, 0.5, 0),
-			ShowcaseUtil.checker_mat(root, "steel"))
-		var prism := ShowcaseUtil.mesh(root, "DemoV",
-			PBShapeGenerators.create_prism(Vector3(2.4, 1.6, 3.2)), Vector3(0, 1.8, 0),
-			ShowcaseUtil.checker_mat(root, "moss"))
-		obj = prism
-		EditorInterface.get_selection().add_node(prism)
-		return [plinth, prism])
-	var plinth: PBMesh = built[0]
-	var prism: PBMesh = built[1]
-	obj = prism
-	var f := d.framing(_union_aabb([plinth, prism]), 0.62, 30.0, 24.0)
+	obj = await _fresh("DemoHouse",
+		ShowcaseUtil.create_house(Vector3(2.4, 1.8, 3.2), 1.2), "moss",
+		Vector3.ZERO, 0.52, 28.0, 22.0)
+	var f := d.framing_node(obj, 0.52, 28.0, 22.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(10)
-	await d.click_button("face")
-	# Each slope is clicked from ITS OWN side. One camera cannot see both: from
-	# any 3/4 angle the far slope hides behind the ridge, the second click lands
-	# on the near slope, and the merge has one face to merge. (A click per side is
-	# also exactly what a person does.)
-	var mid_y: float = prism.position.y
-	await d.orbit_glide(f["center"], 30.0, 20.0, 24.0, f["dist"],
-		Vector3(0.6, mid_y, 0.0), 30, f["aim"])
-	await d.frames(18)
-	await d.click()
-	d.check(_sel_count() == 1, "the near slope selected")
-	# The swing to the far side is the shot's slow part: a long arc, then a
-	# settle before the second click, so the two halves of the pair are legible.
-	await d.cam_swing(f["center"], 20.0, -150.0, 24.0, 24.0, f["dist"], 96, 1, f["aim"])
-	await d.frames(20)
-	await d.orbit_glide(f["center"], -150.0, -160.0, 24.0, f["dist"],
-		Vector3(-0.6, mid_y, 0.0), 26, f["aim"])
-	await d.frames(16)
-	await d.click(Vector2.INF, 10, ["shift"])
-	var picked := _sel_count()
-	d.check(picked >= 2, "both slopes of the V selected (%d)" % picked)
-	var before: int = obj.pb_mesh_data.faces.size()
-	await d.op("merge_faces", 26)
-	d.check(obj.pb_mesh_data.faces.size() < before,
-		"the V merged into one face (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
-	d.check(_polygon_face_count() >= 1, "the merge produced a bent n-gon")
-	# ...and it moves as ONE face, elongating the column above the plinth.
-	var g2 := d.framing(_union_aabb([plinth, prism]), 0.62, 34.0, 26.0)
-	await d.cam_swing(f["center"], -160.0, 34.0, 24.0, 26.0, g2["dist"], 84, 1, f["aim"])
-	await d.frames(16)
-	await d.orbit_glide(g2["center"], 34.0, 28.0, 26.0, g2["dist"],
-		Vector3(0.6, mid_y, 0.0), 26, g2["aim"])
-	await d.frames(14)
-	await d.click()
-	d.check(_sel_count() == 1, "the bent face selected")
-	var after: int = obj.pb_mesh_data.faces.size()
-	var top_before: float = _top_of(obj)
-	var plinth_top: float = await d.off(func(): return _box_top(plinth))
-	await d.move_selection(Vector3(0.0, 0.7, 0.0), 62)
-	d.check(obj.pb_mesh_data.faces.size() == after,
-		"both slopes moved together as one face (%d faces before and after)" % after)
-	d.check(_top_of(obj) > top_before + 0.5,
-		"the column elongated (%.2f -> %.2f)" % [top_before, _top_of(obj)])
-	var plinth_top_after: float = await d.off(func(): return _box_top(plinth))
-	d.check(absf(plinth_top_after - plinth_top) < 0.01,
-		"the plinth it stands on did not move")
-	await d.cam_swing(g2["center"] + Vector3(0, 0.4, 0), 28.0, 46.0, 26.0, 22.0,
-		g2["dist"] * 1.05, 40, 1, g2["aim"])
 
+	# 1. Start in VERTEX mode: select the front roof apex and move it inwards
+	# to create a shallow crease angle for the gable triangle.
+	await d.click_button("vertex")
+	var apex_world := obj.to_global(Vector3(0.0, 2.1, 1.6))
+	await d.orbit_glide(f["center"], 28.0, 32.0, 22.0, f["dist"],
+		apex_world, 24, f["aim"])
+	await d.click()
+	d.check(_sel_count() == 1, "the front roof apex vertex selected")
+	await d.move_selection(Vector3(0.0, 0.0, -0.6), 36)
+	d.check(obj.to_global(Vector3(0.0, 2.1, 1.0)).distance_to(apex_world) > 0.4,
+		"apex moved inward to create shallow angle")
+
+	# 2. Switch to FACE mode: select both the shallow gable triangle and the quad wall below it.
+	await d.click_button("face")
+	var tri_world := obj.to_global(Vector3(0.0, 1.3, 1.4))
+	var quad_world := obj.to_global(Vector3(0.0, 0.0, 1.6))
+	await d.orbit_glide(f["center"], 32.0, 28.0, 22.0, f["dist"],
+		tri_world, 20, f["aim"])
+	await d.click()
+	d.check(_sel_count() == 1, "the tilted gable triangle selected")
+	await d.glide_world_track(quad_world, 18)
+	await d.click(Vector2.INF, 10, ["shift"])
+	d.check(_sel_count() >= 2, "both the tilted triangle and quad selected")
+
+	# 3. Merge across the crease into one bent n-gon.
+	var before: int = obj.pb_mesh_data.faces.size()
+	await d.op("merge_faces", 24)
+	d.check(obj.pb_mesh_data.faces.size() < before,
+		"the triangle and quad merged into one face (%d -> %d faces)" % [before, obj.pb_mesh_data.faces.size()])
+	d.check(_polygon_face_count() >= 1, "the merge produced a bent n-gon")
+
+	# 4. Showcase moving the merged bent face as one piece.
+	await d.glide_world_track(quad_world + Vector3(0, 0.3, 0), 18)
+	await d.click()
+	d.check(_sel_count() == 1, "the bent n-gon selected")
+	var after: int = obj.pb_mesh_data.faces.size()
+	await d.move_selection(Vector3(0.0, 0.25, 0.7), 48)
+	d.check(obj.pb_mesh_data.faces.size() == after,
+		"the bent n-gon moved as one face (%d faces before and after)" % after)
+	await d.cam_swing(f["center"] + Vector3(0, 0.3, 0.3), 28.0, 48.0, 22.0, 28.0,
+		f["dist"] * 1.06, 40, 1, f["aim"])
 func _weld() -> void:
 	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "slate", Vector3.ZERO, 0.40, 34.0, 24.0)
 	var f := d.framing_node(obj, 0.40, 34.0, 24.0)

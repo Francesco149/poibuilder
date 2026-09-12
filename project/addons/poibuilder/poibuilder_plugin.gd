@@ -76,7 +76,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.79"
+const VERSION := "0.9.80"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1115,6 +1115,8 @@ func _cycle_env_preset() -> void:
 	_on_env_preset_requested(names[next_idx])
 
 func _on_export_requested() -> void:
+	if paint_controller != null:
+		paint_controller.mode = PBPaintController.Mode.NONE
 	if _export_dialog == null:
 		return
 	var scene: Node = null
@@ -2416,6 +2418,8 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 					paint_controller.update_delete_hover(camera, event.position, scene_root)
 					if paint_controller.delete_hovered_stamp():
 						return AFTER_GUI_INPUT_STOP
+					return AFTER_GUI_INPUT_PASS
+				if _export_dialog != null and _export_dialog.visible:
 					return AFTER_GUI_INPUT_PASS
 				# Make sure hit is up-to-date at click time
 				var hit := _pick_paint_surface(camera, event.position)

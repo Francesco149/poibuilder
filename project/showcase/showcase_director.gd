@@ -87,6 +87,10 @@ func _boot() -> void:
 	await frames(40)
 	iface = EditorInterface
 	win = get_tree().root
+	win.gui_embed_subwindows = true
+	var ed_settings = iface.get_editor_settings()
+	if ed_settings != null:
+		ed_settings.set_setting("interface/editor/single_window_mode", true)
 	iface.set_main_screen_editor("3D")
 	await frames(20)
 
@@ -164,6 +168,7 @@ func _find_plugin(node: Node) -> Node:
 ## The showcase layout: 3D main screen, bottom panel closed (a startup warning
 ## auto-opens it, which would eat 268 px of the captured column).
 func _prepare_layout() -> void:
+	win.gui_embed_subwindows = true
 	var base = iface.get_base_control()
 	for node in _walk(base):
 		if node is Button:
@@ -505,6 +510,7 @@ func op_verify(op_name: String, probe: Callable, settle := 16) -> void:
 ## nothing — and the toolbar click can be swallowed like any other. Both are
 ## checked here, with the plugin's own entry point as the fallback.
 func open_export_dialog() -> bool:
+	win.gui_embed_subwindows = true
 	var dlg = plugin._export_dialog
 	if dlg == null:
 		_check(false, "the plugin has an export dialog")
@@ -517,7 +523,6 @@ func open_export_dialog() -> bool:
 		await frames(8)
 	_check((dlg as Window).visible, "export dialog is on screen")
 	return (dlg as Window).visible
-
 ## Applies a time-of-day preset by clicking the toolbar's Env menu and picking
 ## the item, falling back to the plugin's entry point if the popup row cannot be
 ## hit. Verified against the scene meta the preset applier writes.
@@ -927,7 +932,6 @@ func dialog_ok(win: Window, settle := 14) -> bool:
 		_check(false, "dialog has an OK button")
 		return false
 	return await click_control(ok_btn as Control, settle)
-
 ## Clicks a control inside the plugin's viewport overlay (e.g. the params
 ## modal's ApplyParams / CancelParams buttons) by node name.
 func overlay_button(name: String, settle := 12) -> bool:
@@ -1001,8 +1005,7 @@ func _shape_armed(shape_id: StringName) -> bool:
 	var sc = plugin.shape_creator
 	if sc == null:
 		return false
-	return int(sc.state) != 0 or String(sc.shape_id) == String(shape_id)
-
+	return int(sc.state) != 0 and String(sc.shape_id) == String(shape_id)
 ## Fires a mesh operation through its toolbar button, and — if the click does
 ## not reach the operation — restores the element selection the click dropped
 ## and drives the plugin's own entry point instead, so the beat still performs

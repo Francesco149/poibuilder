@@ -421,9 +421,56 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 		for i in cycle:
 			dup.append(_dup_position(mesh_data, i, Vector3.ZERO))
 		var face := PBFace.new(PackedInt32Array())
+
+		# 2D ear-clip the cycle to avoid degenerate zero-area or overlapping fan triangles.
+		var cycle_3d := PackedVector3Array()
+		for i in cycle:
+			cycle_3d.append(mesh_data.positions[i])
+		var reg_n := Vector3.ZERO
+		for fi in region:
+			if fi >= 0 and fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
+				reg_n += PBMath.normal_from_positions(mesh_data.positions, mesh_data.faces[fi].get_indexes())
+		if reg_n.length_squared() < 0.0001:
+			reg_n = Vector3.UP
+		else:
+			reg_n = reg_n.normalized()
+
+		var basis := PBUv.get_planar_basis(reg_n)
+		var u_axis: Vector3 = basis["u"]
+		var v_axis: Vector3 = basis["v"]
+		var pts_2d := PackedVector2Array()
+		for p in cycle_3d:
+			pts_2d.append(Vector2(u_axis.dot(p), v_axis.dot(p)))
+
+		var area2 := 0.0
+		var n_pts := pts_2d.size()
+		for i in range(n_pts):
+			area2 += pts_2d[i].cross(pts_2d[(i + 1) % n_pts])
+
+		var pts_for_clip := pts_2d
+		var reversed := false
+		if area2 < 0.0:
+			pts_for_clip = pts_2d.duplicate()
+			pts_for_clip.reverse()
+			reversed = true
+
+		var tris := PBShapeComplex._triangulate_2d(pts_for_clip)
 		var idxs := PackedInt32Array()
-		for i in range(1, dup.size() - 1):
-			idxs.append_array(PackedInt32Array([dup[0], dup[i], dup[i + 1]]))
+		if not tris.is_empty():
+			for tri in tris:
+				var i0: int = tri[0]
+				var i1: int = tri[1]
+				var i2: int = tri[2]
+				if reversed:
+					i0 = n_pts - 1 - i0
+					i1 = n_pts - 1 - i1
+					i2 = n_pts - 1 - i2
+					idxs.append_array(PackedInt32Array([dup[i0], dup[i2], dup[i1]]))
+				else:
+					idxs.append_array(PackedInt32Array([dup[i0], dup[i1], dup[i2]]))
+		else:
+			for i in range(1, dup.size() - 1):
+				idxs.append_array(PackedInt32Array([dup[0], dup[i], dup[i + 1]]))
 		face.set_indexes(idxs)
 		# The merged face replaces its pieces, so it wears their look: the first
 		# piece's material slot and auto-UV settings (a fresh face would reset a

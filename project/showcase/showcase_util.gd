@@ -206,3 +206,56 @@ static func names_of(root: Node, prefix: String) -> Array:
 		if String(c.name).begins_with(prefix):
 			out.append(c)
 	return out
+
+## A combined cube + prism mesh (box base with a gabled roof on top) as a single
+## watertight 2-manifold PBMeshData, with front quad and front gable triangle sharing an edge.
+static func create_house(box_size: Vector3 = Vector3(2.4, 1.8, 3.2), roof_height: float = 1.2) -> PBMeshData:
+	var hx := box_size.x * 0.5
+	var hy := box_size.y * 0.5
+	var hz := box_size.z * 0.5
+	var rh := roof_height
+
+	var positions := PackedVector3Array()
+	var textures0 := PackedVector2Array()
+	var faces: Array[PBFace] = []
+
+	var add_quad = func(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3):
+		var base := positions.size()
+		positions.append_array([p0, p1, p2, p3])
+		textures0.append_array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
+		faces.append(PBFace.new(PackedInt32Array([base, base + 1, base + 2, base + 2, base + 3, base])))
+
+	var add_tri = func(p0: Vector3, p1: Vector3, p2: Vector3):
+		var base := positions.size()
+		positions.append_array([p0, p1, p2])
+		textures0.append_array([Vector2(0, 0), Vector2(1, 0), Vector2(0.5, 1)])
+		faces.append(PBFace.new(PackedInt32Array([base, base + 1, base + 2])))
+
+	# 0: Bottom (Y = -hy) - normal (0, -1, 0)
+	add_quad.call(Vector3(-hx, -hy, hz), Vector3(-hx, -hy, -hz), Vector3(hx, -hy, -hz), Vector3(hx, -hy, hz))
+	# 1: Back Wall (Z = +hz) - normal (0, 0, 1)
+	add_quad.call(Vector3(-hx, -hy, hz), Vector3(hx, -hy, hz), Vector3(hx, hy, hz), Vector3(-hx, hy, hz))
+	# 2: Left Wall (X = -hx) - normal (-1, 0, 0)
+	add_quad.call(Vector3(-hx, -hy, -hz), Vector3(-hx, -hy, hz), Vector3(-hx, hy, hz), Vector3(-hx, hy, -hz))
+	# 3: Right Wall (X = +hx) - normal (1, 0, 0)
+	add_quad.call(Vector3(hx, -hy, hz), Vector3(hx, -hy, -hz), Vector3(hx, hy, -hz), Vector3(hx, hy, hz))
+	# 4: Front Wall (Z = -hz) - normal (0, 0, -1)
+	add_quad.call(Vector3(hx, -hy, -hz), Vector3(-hx, -hy, -hz), Vector3(-hx, hy, -hz), Vector3(hx, hy, -hz))
+	# 5: Roof Left Slope - normal (-rh, hx, 0) pointing up-left
+	add_quad.call(Vector3(0, hy + rh, hz), Vector3(0, hy + rh, -hz), Vector3(-hx, hy, -hz), Vector3(-hx, hy, hz))
+	# 6: Roof Right Slope - normal (+rh, hx, 0) pointing up-right
+	add_quad.call(Vector3(hx, hy, hz), Vector3(hx, hy, -hz), Vector3(0, hy + rh, -hz), Vector3(0, hy + rh, hz))
+	# 7: Back Gable (Triangle at Z = +hz) - normal (0, 0, 1)
+	add_tri.call(Vector3(-hx, hy, hz), Vector3(hx, hy, hz), Vector3(0, hy + rh, hz))
+	# 8: Front Gable (Triangle at Z = -hz) - normal (0, 0, -1)
+	add_tri.call(Vector3(hx, hy, -hz), Vector3(-hx, hy, -hz), Vector3(0, hy + rh, -hz))
+
+	var data := PBMeshData.new()
+	data.positions = positions
+	data.textures0 = textures0
+	data.faces = faces
+	data.shared_vertices = PBMeshData.build_welds_from_positions(positions)
+	data.shared_textures = []
+	data.invalidate_caches()
+	PBUv.refresh_mesh_uvs(data)
+	return data

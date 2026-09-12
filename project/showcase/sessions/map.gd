@@ -538,12 +538,27 @@ func _paint() -> void:
 	d.check(holder != null and holder.get_child_count() > 0,
 		"the sign decal landed on the floor (%d stamps)" % (holder.get_child_count() if holder != null else 0))
 	await d.cam_swing(f["center"], 34.0, 18.0, 32.0, 40.0, f["dist"], 34, 1, f["aim"])
+	pc.mode = PBPaintController.Mode.NONE
+	await d.click_dock_member("_btn_mode_mat", 10)
+	await d.click_button("materials", 10)
+	var fall_p: Node = pieces.get("FallWall")
+	if fall_p != null:
+		var stray = fall_p.get_node_or_null("PBStamps")
+		if stray != null:
+			fall_p.remove_child(stray)
+			stray.queue_free()
 
 ## The atmosphere the map carries: the mist at the fall's foot and the brazier
 ## flames on the pillar (both GPUParticles3D emitters, which is what the retro
 ## exporters turn into the .pbm's emitter records).
 func _particles() -> void:
-	# The brazier: flames + embers rising off the pillar top.
+	d.plugin.paint_controller.mode = PBPaintController.Mode.NONE
+	var fall_pt: Node = pieces.get("FallWall")
+	if fall_pt != null:
+		var stray_pt = fall_pt.get_node_or_null("PBStamps")
+		if stray_pt != null:
+			fall_pt.remove_child(stray_pt)
+			stray_pt.queue_free()
 	var brazier_box := AABB(Vector3(-3.9, 2.4, -4.6), Vector3(1.6, 2.0, 1.6))
 	var f := d.framing(brazier_box, 0.8, 20.0, 14.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
@@ -558,6 +573,13 @@ func _particles() -> void:
 	await d.cam_swing(g["center"], 26.0, 4.0, 12.0, 18.0, float(g["dist"]), 100, 1, g["aim"])
 
 func _export() -> void:
+	d.plugin.paint_controller.mode = PBPaintController.Mode.NONE
+	var fall_ex: Node = pieces.get("FallWall")
+	if fall_ex != null:
+		var stray_ex = fall_ex.get_node_or_null("PBStamps")
+		if stray_ex != null:
+			fall_ex.remove_child(stray_ex)
+			stray_ex.queue_free()
 	var f := _view(AABB(Vector3(-6.0, 0.0, -6.0), Vector3(12.0, 6.0, 12.0)), 0.92, 38.0, 26.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(6)
@@ -566,12 +588,14 @@ func _export() -> void:
 	if opened and dlg != null:
 		if dlg._mode_option != null:
 			dlg._mode_option.selected = 0
-		dlg._txt_path.text = "res://exports/showcase_map.glb"
-		await d.frames(24)
-		await d.dialog_ok(dlg, 16)
-		await d.frames(48)
+			dlg._on_mode_selected(0)
+		dlg._txt_path.text = "res://exports/showcase_retro_baked.pbm"
+		await d.frames(60)
+		await d.dialog_ok(dlg, 20)
+		await d.frames(40)
+		if dlg.visible:
+			dlg.hide()
 	await d.cam_swing(f["center"], 38.0, 58.0, 26.0, 34.0, f["dist"], 40, 1, f["aim"])
-
 ## One click re-lights the whole courtyard: the toolbar's Env menu swaps the
 ## environment AND the sun, and the map the device renders in the next act is
 ## this one at night.
