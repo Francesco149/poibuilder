@@ -69,6 +69,23 @@ def plan_overlay(clip: Clip, session: Session | None, shot, crop: tuple[int, int
     )
 
 
+def point_mapper(plan: "OverlayPlan"):
+    """THE mapper the overlay is drawn with, built from the plan alone.
+
+    It lives here, not at the call site, because the call site is where it went
+    wrong: the fit box (`into`) and the `contain` mode were threaded into
+    ``draw.make_mapper`` but the renderer kept calling it with the crop and a
+    full-frame cover box, so on every letterboxed clip (all three paint clips,
+    the toolbar cut, the HUD card) the cursor was drawn where a full-frame
+    cover would have put it — up to 90 px off, the "the mouse is offset"
+    report. ``cursor_check`` calls this function too, so the verification and
+    the renderer cannot drift apart again.
+    """
+    return draw.make_mapper(plan.region, plan.out_size, plan.zoom,
+                            plan.zoom_span or plan.frames,
+                            plan.frame_rect, plan.fit_mode)
+
+
 def caption_alpha(cap: Caption, t: float, clip_dur: float) -> tuple[float, float]:
     """(alpha, slide) for a caption at clip-local time t (seconds)."""
     start = cap.at
@@ -91,8 +108,7 @@ def render_frame(plan: OverlayPlan, index: int, cursors: list[tuple[int, int]]) 
     clip_dur = plan.frames / fps
     src = plan.first_frame + int(round(index * plan.speed))
 
-    map_pt = draw.make_mapper(plan.region, plan.out_size, plan.zoom,
-                              plan.zoom_span or plan.frames)
+    map_pt = point_mapper(plan)
 
     if plan.frame_style and plan.frame_rect != (0, 0, 0, 0):
         canvas.alpha_composite(draw.frame_layer(plan.frame_rect, (W, H), 22))

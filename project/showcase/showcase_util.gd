@@ -156,6 +156,22 @@ static func drop_on_ground(node: Node3D) -> void:
 static func env(plugin: Node, preset: String) -> void:
 	plugin.call("_on_env_preset_requested", preset)
 
+## Puts the plugin's grid back to its defaults at the start of a session.
+##
+## The render harness keeps a CACHED editor home between runs, and the plugin
+## persists its grid settings there — so a beat that leaves snapping off (the
+## map act does exactly that, once per water sheet) changes what the NEXT
+## session's drags produce. That is how the courtyard's wall came out 3.8 m in
+## one render and 4.0 m in the next, and why the toolbar read "snap off" on
+## camera through the whole of the map act's creation beats.
+static func fresh_grid(plugin: Node) -> void:
+	var g = plugin.grid
+	if g == null:
+		return
+	g.enabled = true
+	g.show_grid = false
+	g.origin = Vector3.ZERO
+
 ## Post-preset lighting trim. The presets are tuned for editing readability
 ## (day ships sun 1.25 + ambient 0.65), which clips bright materials on video.
 ## This dials them to a film look without touching the plugin's own presets.

@@ -31,6 +31,7 @@ func run(dr: ShowcaseDirector) -> void:
 	root = EditorInterface.get_edited_scene_root()
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
+	ShowcaseUtil.fresh_grid(d.plugin)
 	# Created shapes arrive wearing the checkerboard (the plugin's "default
 	# material for new shapes", set through the same setting the dock writes),
 	# so even the live preview during the drag shows real UVs.

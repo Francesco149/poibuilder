@@ -162,9 +162,9 @@ caption = { label = "Select", text = "Face, edge and vertex modes", at = 0.2, du
 id = "21-edit-loop"
 source = "edit:edit/edge_loop"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "Select", text = "Alt-click for the whole edge loop", at = 0.2, dur = 1.8 }
+at = -2.3
+dur = 2.3
+caption = { label = "Select", text = "Shift+alt-click for the whole edge ring", at = 0.2, dur = 2.2 }
 
 [[clip]]
 id = "22-edit-move"
@@ -186,9 +186,10 @@ caption = { label = "Edit", text = "Shift + drag to extrude", at = 0.2, dur = 2.
 id = "24-edit-inset"
 source = "edit:edit/inset"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "Edit", text = "Inset, then lift the new face out of its ring", at = 0.2, dur = 2.2 }
+at = -4.0
+dur = 4.0
+zoom = [1.0, 1.14]
+caption = { label = "Edit", text = "Inset — the ring it leaves, then the face lifted out of it", at = 0.3, dur = 3.4 }
 
 [[clip]]
 id = "25-edit-subdiv"
@@ -212,9 +213,10 @@ caption = { label = "Toolbar", text = "Every operation is one click away", at = 
 id = "26-edit-loopcut"
 source = "edit:edit/loopcut"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "Edit", text = "Insert an edge loop", at = 0.2, dur = 1.8 }
+at = -5.9
+dur = 5.9
+zoom = [1.0, 1.12]
+caption = { label = "Edit", text = "Insert an edge loop — it turns all four corners", at = 0.3, dur = 5.3 }
 
 [[clip]]
 id = "27-edit-merge"
@@ -228,9 +230,9 @@ caption = { label = "Edit", text = "Merge coplanar faces, then move them as one"
 id = "27b-edit-merge-ngon"
 source = "edit:edit/merge_ngon"
 region = "viewport_ui"
-at = -2.4
-dur = 2.4
-caption = { label = "Edit", text = "Merge across a crease — one bent n-gon", at = 0.2, dur = 2.0 }
+at = -9.0
+dur = 9.0
+caption = { label = "Edit", text = "Merge across a crease — one bent n-gon, and the column grows", at = 0.3, dur = 8.4 }
 
 [[clip]]
 id = "28-edit-weld"
@@ -261,10 +263,10 @@ caption = { label = "Edit", text = "Delete faces — and look into the opening",
 id = "31-edit-knife"
 source = "edit:edit/knife"
 region = "viewport_ui"
-at = -1.9
-dur = 1.9
-zoom = [1.10, 1.42]
-caption = { label = "Edit", text = "Knife — cut a face along a drawn path", at = 0.2, dur = 2.0 }
+at = -2.4
+dur = 2.4
+zoom = [1.10, 1.36]
+caption = { label = "Edit", text = "Knife — cut a face along a drawn path", at = 0.2, dur = 2.6 }
 
 [[clip]]
 id = "32-edit-ngon"

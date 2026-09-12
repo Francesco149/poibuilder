@@ -34,6 +34,7 @@ func run(dr: ShowcaseDirector) -> void:
 	# size, so subjects should sit large in the frame.
 	d.fill_scale = 1.35
 	root = EditorInterface.get_edited_scene_root()
+	ShowcaseUtil.fresh_grid(d.plugin)
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
 	bench = ShowcaseUtil.floor_slab(root, 60.0, ShowcaseUtil.mat(root, "ink"))

@@ -30,6 +30,7 @@ func run(dr: ShowcaseDirector) -> void:
 	root = EditorInterface.get_edited_scene_root()
 	ShowcaseUtil.env(d.plugin, "day")
 	ShowcaseUtil.grade_light(root)
+	ShowcaseUtil.fresh_grid(d.plugin)
 	ShowcaseUtil.use_default_material("res://materials/showcase_stone.tres")
 	bench = ShowcaseUtil.floor_slab(root, 44.0, ShowcaseUtil.mat(root, "ink"))
 	await d.frames(16)
@@ -136,8 +137,12 @@ func _scroll() -> void:
 			PBUv.set_scroll_speed(sm, Vector2(0.03, -0.75))
 		var plane := ShowcaseUtil.mesh(root, "FallSheet",
 			PBShapeGenerators.create_plane(6.2, 4.6), Vector3(0, 2.5, 0.42), sheet_mat)
-		# create_plane builds in XZ (a floor); a waterfall sheet has to stand up
-		plane.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		# create_plane builds in XZ (a floor), so a sheet has to be stood up —
+		# and WHICH WAY MATTERS: the material's speed is negative (the pattern
+		# travels toward -V), so the plane's V axis has to run DOWN the wall for
+		# the water to fall. Rotating -90° about X leaves V pointing UP and the
+		# stream climbs, which is exactly what the review caught.
+		plane.rotation_degrees = Vector3(90.0, 0.0, 0.0)
 		d.plugin.call("scan_scrolling_materials")
 		return [wall_node, plane])
 	wall = built[0]
