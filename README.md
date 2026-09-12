@@ -2,9 +2,11 @@
 
 A free, open-source **ProBuilder / UniBuilder-style mesh building plugin for
 Godot 4** — primitives, drag-to-create, and direct vertex/edge/face editing
-inside the editor, in the spirit of Unity's ProBuilder.
+inside the editor, auto UVs in the spirit of Unity's ProBuilder. One click export to baked glb or custom pbm format optimized for retro pipelines, tested on a real Sony PSP.
 
 **Pure GDScript**: PoiBuilder is written 100% in standard GDScript. It runs in the standard Godot 4 editor (no Godot Mono / .NET build required) and needs **no C/C++ compilation, no GDExtension, and no native binaries** — just drop the `addons/poibuilder/` folder into any standard Godot 4 project and enable it.
+
+https://github.com/user-attachments/assets/a2052e4c-fa6e-4c8b-a0ea-e3ae500fbac6
 
 > **This is an AI-assisted hobby project.** PoiBuilder was written mainly for
 > my own use, because I wanted a free and open source UniBuilder equivalent
@@ -20,7 +22,6 @@ same thing, keep an eye on **UniBuilder** (upcoming):
 Another open source Godot level builder in a similar spirit is **GoBuild**:
 **https://github.com/marcel-b-roodt/GoBuild**
 
-https://github.com/user-attachments/assets/bc2a71ff-8978-433f-8258-80be66e44397
 
 ### Author Once, Target Everywhere: Modern Engines + Retro Hardware
 
