@@ -400,6 +400,7 @@ func _build_ui() -> void:
 	canvas.selection_changed.connect(_on_canvas_selection_changed)
 	canvas.view_changed.connect(_on_canvas_view_changed)
 	canvas.tool_changed.connect(_on_canvas_tool_changed)
+	canvas.select_mode_changed.connect(_on_canvas_select_mode_changed)
 	canvas_container.add_child(canvas)
 
 func _create_mode_btn(label: String, icon_name: String, mode: PBUvCanvas.SelectMode, tip: String) -> Button:
@@ -444,6 +445,17 @@ func _on_canvas_tool_changed(mode: PBUvGizmo.ToolMode) -> void:
 			if _btn_tool_rot: _btn_tool_rot.button_pressed = true
 		PBUvGizmo.ToolMode.SCALE:
 			if _btn_tool_scale: _btn_tool_scale.button_pressed = true
+
+func _on_canvas_select_mode_changed(mode: PBUvCanvas.SelectMode) -> void:
+	match mode:
+		PBUvCanvas.SelectMode.VERTEX:
+			if _btn_mode_vert: _btn_mode_vert.button_pressed = true
+		PBUvCanvas.SelectMode.EDGE:
+			if _btn_mode_edge: _btn_mode_edge.button_pressed = true
+		PBUvCanvas.SelectMode.FACE:
+			if _btn_mode_face: _btn_mode_face.button_pressed = true
+		PBUvCanvas.SelectMode.ISLAND:
+			if _btn_mode_island: _btn_mode_island.button_pressed = true
 func _make_vsep() -> VSeparator:
 	var sep := VSeparator.new()
 	sep.custom_minimum_size = Vector2(0, 18)
@@ -477,6 +489,8 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_edges.clear()
 			canvas.selected_verts.clear()
 			canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
+			if _btn_mode_vert:
+				_btn_mode_vert.button_pressed = true
 			for sv_idx in selection.selected_vertices:
 				if sv_idx >= 0 and sv_idx < mesh_data.shared_vertices.size():
 					var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
@@ -489,6 +503,8 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_verts.clear()
 			canvas.selected_edges.clear()
 			canvas.select_mode = PBUvCanvas.SelectMode.EDGE
+			if _btn_mode_edge:
+				_btn_mode_edge.button_pressed = true
 			for edge in selection.selected_edges:
 				if edge != null:
 					canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
@@ -497,10 +513,18 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_verts.clear()
 			canvas.selected_edges.clear()
 			canvas.selected_faces.clear()
-			canvas.select_mode = PBUvCanvas.SelectMode.FACE
-			for fi in selection.selected_faces:
-				canvas.selected_faces[int(fi)] = true
-
+			if canvas.select_mode == PBUvCanvas.SelectMode.ISLAND:
+				if _btn_mode_island:
+					_btn_mode_island.button_pressed = true
+				for fi in selection.selected_faces:
+					for ifi in canvas._get_uv_island(int(fi)):
+						canvas.selected_faces[ifi] = true
+			else:
+				canvas.select_mode = PBUvCanvas.SelectMode.FACE
+				if _btn_mode_face:
+					_btn_mode_face.button_pressed = true
+				for fi in selection.selected_faces:
+					canvas.selected_faces[int(fi)] = true
 	canvas.refresh_from_mesh()
 	_syncing_selection = false
 	_update_status()

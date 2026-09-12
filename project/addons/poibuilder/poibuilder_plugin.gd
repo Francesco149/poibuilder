@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.85"
+const VERSION := "0.9.86"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1245,6 +1245,8 @@ func _on_uv_pop_out_toggled(floating: bool) -> void:
 
 func _sync_uv_editor_selection() -> void:
 	if uv_editor_panel == null:
+		return
+	if uv_editor_panel._syncing_selection:
 		return
 	if uv_editor_panel.active_mesh != editor.active_mesh:
 		uv_editor_panel.active_mesh = editor.active_mesh

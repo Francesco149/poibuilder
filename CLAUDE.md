@@ -2722,6 +2722,20 @@ v0.9.85 round complete ✓ — Bidirectional 3D/2D Selection Synchronization & S
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
 - Version bump 0.9.84 -> 0.9.85 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.86 round complete ✓ — 3D/2D Mode Feedback Loop Fix & Stitched Face Coincident Movement:
+- 3D/2D SELECTION MODE SYNC & FEEDBACK LOOP ELIMINATION:
+  * Root cause of 3D mode switch leaving UV editor in vertex mode and deselecting on click: (1) `poibuilder_plugin.gd`'s `_sync_uv_editor_selection()` did not check `uv_editor_panel._syncing_selection`, so 2D mode changes triggered 3D mode changes that fired `_on_select_mode_changed()`, which wiped the 2D selection and left the gizmo detached; (2) `PBUvEditorPanel`'s mode button states (`_btn_mode_*`) were not updated when `canvas.select_mode` changed, leaving the Vertex button visually toggled on so clicking it again was ignored by Godot's `ButtonGroup`.
+  * Added `_syncing_selection` early return in `poibuilder_plugin.gd._sync_uv_editor_selection()`.
+  * Added `signal select_mode_changed(mode: SelectMode)` to `PBUvCanvas`, connected to `PBUvEditorPanel._on_canvas_select_mode_changed()`, automatically updating `_btn_mode_*.button_pressed = true`.
+  * `sync_selection_from_3d_state()` now updates `_btn_mode_*.button_pressed = true` and expands selected faces to the full UV island when `canvas.select_mode == ISLAND`.
+- STITCHED FACES COINCIDENT MOVEMENT:
+  * Root cause of stitched faces separating when moved in Face mode: `get_selected_vertex_indices()` previously only returned the selected face's 4 vertices, omitting the coincident vertices of adjacent faces sewn/stitched to that shared edge.
+  * Updated `PBUvCanvas.get_selected_vertex_indices()` across all modes (Vertex, Edge, Face, Island) to expand all vertex indices through `get_coincident_uv_vertices()`. Moving a face or element with sewn edges now moves all coincident vertices in lockstep, keeping stitched seams completely joined.
+- TESTS & VERIFICATION:
+  * 877/877 GUT unit tests passing (16,269 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
+- Version bump 0.9.85 -> 0.9.86 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

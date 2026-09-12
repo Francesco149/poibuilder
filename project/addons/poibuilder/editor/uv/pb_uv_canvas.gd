@@ -28,6 +28,9 @@ signal view_changed(zoom: float, pan: Vector2)
 ## Emitted when the active 2D transform tool (Move, Rotate, Scale) changes.
 signal tool_changed(tool_mode: PBUvGizmo.ToolMode)
 
+## Emitted when the selection mode (Vertex, Edge, Face, Island) changes.
+signal select_mode_changed(mode: SelectMode)
+
 # ==============================================================================
 # Constants & Enums
 # ==============================================================================
@@ -101,6 +104,7 @@ var select_mode: SelectMode = SelectMode.FACE:
 			hover_face = -1
 			_convert_selection_to_mode(val)
 			_update_gizmo_pivot()
+			select_mode_changed.emit(val)
 			queue_redraw()
 ## Target UV channel to display and edit.
 var uv_channel: UvChannel = UvChannel.UV1:
@@ -495,24 +499,39 @@ func get_selected_vertex_indices() -> Array[int]:
 	match select_mode:
 		SelectMode.VERTEX:
 			for v_idx: int in selected_verts:
-				if v_idx >= 0 and v_idx < uvs.size():
-					seen[v_idx] = true
-					result.append(v_idx)
+				for c_idx in get_coincident_uv_vertices(v_idx):
+					if c_idx >= 0 and c_idx < uvs.size() and not seen.has(c_idx):
+						seen[c_idx] = true
+						result.append(c_idx)
 		SelectMode.EDGE:
 			for edge: Vector2i in selected_edges:
-				for v_idx: int in [edge.x, edge.y]:
-					if v_idx >= 0 and v_idx < uvs.size() and not seen.has(v_idx):
-						seen[v_idx] = true
-						result.append(v_idx)
-		SelectMode.FACE, SelectMode.ISLAND:
+				for ce in get_coincident_uv_edges(edge):
+					for v_idx in [ce.x, ce.y]:
+						for c_idx in get_coincident_uv_vertices(v_idx):
+							if c_idx >= 0 and c_idx < uvs.size() and not seen.has(c_idx):
+								seen[c_idx] = true
+								result.append(c_idx)
+		SelectMode.FACE:
 			if active_mesh and active_mesh.pb_mesh_data:
 				for f_idx: int in selected_faces:
 					if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
 						var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
 						for v_idx in face.get_distinct_indexes():
-							if v_idx >= 0 and v_idx < uvs.size() and not seen.has(v_idx):
-								seen[v_idx] = true
-								result.append(v_idx)
+							for c_idx in get_coincident_uv_vertices(v_idx):
+								if c_idx >= 0 and c_idx < uvs.size() and not seen.has(c_idx):
+									seen[c_idx] = true
+									result.append(c_idx)
+		SelectMode.ISLAND:
+			if active_mesh and active_mesh.pb_mesh_data:
+				for f_idx: int in selected_faces:
+					for ifi in _get_uv_island(f_idx):
+						if ifi >= 0 and ifi < active_mesh.pb_mesh_data.faces.size():
+							var face: PBFace = active_mesh.pb_mesh_data.faces[ifi]
+							for v_idx in face.get_distinct_indexes():
+								for c_idx in get_coincident_uv_vertices(v_idx):
+									if c_idx >= 0 and c_idx < uvs.size() and not seen.has(c_idx):
+										seen[c_idx] = true
+										result.append(c_idx)
 	return result
 
 ## Returns all vertex indices that share both the UV coordinate and 3D position of `v_idx` (sewn / stitched vertices).
