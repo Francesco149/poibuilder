@@ -38,31 +38,62 @@ const DIAGONAL_SCALE_FACTOR := 0.7071067811865475
 ## Computes orthonormal U (horizontal) and V (vertical) tangent vectors in the plane
 ## of a face with unit normal `normal`.
 ##
-## Heuristic:
-## - Non-vertical surfaces (|normal.y| < 0.9999, e.g. walls, roofs, ramps, angled quads):
-##   U = (Vector3.UP x normal).normalized()
-##   V = (normal x U).normalized()
-##   This ensures that looking directly at any wall or slope, U always points to the
-##   viewer's right and V always points upward along the surface slope.
-## - Vertical surfaces (|normal.y| >= 0.9999, e.g. floors, ceilings):
-##   Top and Bottom: U = Vector3.RIGHT (+X), V = Vector3.BACK (+Z), anchored to -Z edge.
+## Robust Dominant-Axis Projection (ProBuilder parity):
+## Determines which cardinal projection axis the normal faces predominantly:
+## - Dominant Y (|ny| > |nx| and |ny| > |nz|, e.g. floors, ceilings, roofs, horizontal slopes):
+##   U aligns with world X (+X), and V aligns with world Z (+Z on floors/slopes).
+##   Lifting an edge or vertex stretches the texture naturally along the slope without
+##   sudden 45-degree diagonal spins or 90-degree U/V axis swaps.
+## - Dominant Z (|nz| >= |nx|, e.g. front/back walls, steep north/south slopes, 45-deg roofs):
+##   U is horizontal along X, and V points up along the slope.
+## - Dominant X (|nx| > |nz|, e.g. right/left walls, steep east/west slopes, 45-deg roofs):
+##   U is horizontal along Z (+Z), and V points up along the slope.
 static func get_planar_basis(normal: Vector3) -> Dictionary:
-	var n := normal.normalized()
+	var n := normal.normalized() if normal.length_squared() > 0.000001 else Vector3.UP
 	var u := Vector3.ZERO
 	var v := Vector3.ZERO
 
-	if absf(n.y) < 0.9999:
-		if absf(n.x - 1.0) < 0.001:
-			u = Vector3.BACK
-			v = Vector3.UP
+	var ax := absf(n.x)
+	var ay := absf(n.y)
+	var az := absf(n.z)
+
+	const EPS := 0.0001
+
+	if (ax - ay > EPS) and (ax - az > EPS):
+		# Dominant X (Right / Left wall or steep east/west slope)
+		var prj := Vector3.UP
+		if n.x >= 0.0:
+			u = n.cross(prj)
+			v = u.cross(n)
 		else:
-			u = Vector3.UP.cross(n).normalized()
-			if u.length_squared() < 0.0001:
-				u = Vector3.RIGHT.cross(n).normalized()
-			v = n.cross(u).normalized()
+			u = prj.cross(n)
+			v = n.cross(u)
+	elif (ay - az > EPS):
+		# Dominant Y (Floor / Ceiling / gentle roof slope / tilted floor)
+		if n.y >= 0.0:
+			var prj := Vector3.BACK
+			u = n.cross(prj)
+			v = u.cross(n)
+		else:
+			var prj := Vector3.FORWARD
+			u = n.cross(prj)
+			v = n.cross(u)
 	else:
+		# Dominant Z (Front / Back wall or steep north/south slope, or 45-deg roof)
+		var prj := Vector3.UP
+		u = prj.cross(n)
+		v = n.cross(u)
+
+	if u.length_squared() < 0.0001:
 		u = Vector3.RIGHT
+	else:
+		u = u.normalized()
+
+	if v.length_squared() < 0.0001:
 		v = Vector3.BACK
+	else:
+		v = v.normalized()
+
 	return {"u": u, "v": v, "normal": n}
 
 # ==============================================================================

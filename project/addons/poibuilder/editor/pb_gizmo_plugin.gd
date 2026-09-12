@@ -688,7 +688,7 @@ func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
 	if write_idx < lines.size():
 		lines.resize(write_idx)
 	if lines.size() >= 2:
-		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo))
+		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo), THICK_LINE_OFFSET * 1.5, 2)
 ## The hovered (not selected) edge as a translucent yellow on-top stroke.
 func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
@@ -702,7 +702,7 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	if edge.a < 0 or edge.a >= positions.size() or edge.b < 0 or edge.b >= positions.size():
 		return
 	_add_thick_lines(gizmo, PackedVector3Array([positions[edge.a], positions[edge.b]]),
-		get_material("pb_hover_edge", gizmo))
+		get_material("pb_hover_edge", gizmo), THICK_LINE_OFFSET * 1.5, 2)
 
 ## All shared vertices as gray dots, selected ones as opaque yellow dots, the
 ## hovered one (when not selected) as a slightly more transparent yellow dot.

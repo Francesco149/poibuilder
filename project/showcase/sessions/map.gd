@@ -602,7 +602,7 @@ func _export() -> void:
 func _night() -> void:
 	var f := _view(AABB(Vector3(-6.0, 0.0, -6.0), Vector3(12.0, 6.0, 12.0)), 0.94, 38.0, 20.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
-	await d.frames(8)
-	await d.env_preset("night")
 	await d.frames(24)
+	await d.env_preset("night", 24)
+	await d.frames(40)
 	await d.cam_swing(f["center"], 38.0, 20.0, 20.0, 14.0, float(f["dist"]) * 0.86, 70, 1, f["aim"])

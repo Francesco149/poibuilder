@@ -162,9 +162,9 @@ caption = { label = "Select", text = "Face, edge and vertex modes", at = 0.2, du
 id = "21-edit-loop"
 source = "edit:edit/edge_loop"
 region = "viewport_ui"
-at = -2.3
-dur = 2.3
-caption = { label = "Select", text = "Shift+alt-click for the whole edge ring", at = 0.2, dur = 2.2 }
+at = -3.6
+dur = 3.6
+caption = { label = "Select", text = "Shift+alt-click selects an edge ring — then move it", at = 0.2, dur = 3.2 }
 
 [[clip]]
 id = "22-edit-move"
@@ -312,6 +312,7 @@ into = [0, 16, 1280, 512]
 fit = "contain"
 at = -2.0
 dur = 2.0
+cursor = false
 caption = { label = "Paint", text = "Animated materials — UV scroll in the viewport", at = 0.2, dur = 2.6 }
 
 # ===========================================================================
@@ -324,6 +325,7 @@ source = "shapes:shapes/lineup"
 region = "viewport"
 at = 0.3
 dur = 5.0
+cursor = false
 caption = { label = "Shapes", text = "14 primitives, generated from parameters", at = 0.3, dur = 4.4 }
 
 [[clip]]
@@ -435,9 +437,9 @@ caption = { label = "The map", text = "One click to a retro .pbm map", at = 0.2,
 id = "68-map-night"
 source = "map:map/night"
 region = "viewport_ui"
-at = -2.5
-dur = 2.5
-caption = { label = "Time of day", text = "One click re-lights the whole map", at = 0.2, dur = 2.8 }
+at = 0.05
+dur = 3.8
+caption = { label = "Time of day", text = "One click re-lights the whole map", at = 0.3, dur = 3.4 }
 
 # ===========================================================================
 # HARDWARE — the same courtyard on a PSP, shot handheld. Warm room light, so the

@@ -75,6 +75,114 @@ static func _triangulate_2d(points: PackedVector2Array) -> Array:
 	elif idxs.size() > 3:
 		for i in range(1, idxs.size() - 1):
 			tris.append([idxs[0], idxs[i], idxs[i + 1]])
+	return _delaunay_refine_2d(points, tris)
+
+## Applies Lawson's edge-flipping algorithm to refine an existing 2D triangulation
+## into a Constrained Delaunay Triangulation (CDT). This eliminates arbitrary long
+## diagonals, maximizes minimum angles, and produces symmetric, intuitive triangulations
+## when edges have split midpoints (e.g. subdivided adjacent faces or merged n-gons).
+static func _delaunay_refine_2d(points: PackedVector2Array, tris: Array) -> Array:
+	if tris.size() <= 1:
+		return tris
+
+	# 1. Ensure all triangles are wound CCW
+	for i in range(tris.size()):
+		var t: Array = tris[i]
+		var a: Vector2 = points[t[0]]
+		var b: Vector2 = points[t[1]]
+		var c: Vector2 = points[t[2]]
+		if (b - a).cross(c - b) < 0.0:
+			tris[i] = [t[0], t[2], t[1]]
+
+	var max_flips: int = points.size() * points.size() + 24
+	var flipped := true
+	while flipped and max_flips > 0:
+		flipped = false
+		max_flips -= 1
+
+		# Map internal edges to the triangles sharing them
+		var edge_map: Dictionary = {}
+		for ti in range(tris.size()):
+			var t: Array = tris[ti]
+			for e in range(3):
+				var u: int = t[e]
+				var v: int = t[(e + 1) % 3]
+				var key := Vector2i(mini(u, v), maxi(u, v))
+				if not edge_map.has(key):
+					edge_map[key] = []
+				edge_map[key].append([ti, u, v])
+
+		for key: Vector2i in edge_map:
+			var shared: Array = edge_map[key]
+			if shared.size() == 2:
+				var s0: Array = shared[0]
+				var s1: Array = shared[1]
+				var ti0: int = s0[0]
+				var ti1: int = s1[0]
+				var u0: int = s0[1]
+				var v0: int = s0[2]
+				var t0: Array = tris[ti0]
+				var t1: Array = tris[ti1]
+
+				# Find opposite vertices in t0 and t1
+				var opp0: int = -1
+				for idx: int in t0:
+					if idx != key.x and idx != key.y:
+						opp0 = idx
+						break
+				var opp1: int = -1
+				for idx: int in t1:
+					if idx != key.x and idx != key.y:
+						opp1 = idx
+						break
+				if opp0 < 0 or opp1 < 0:
+					continue
+
+				# Orient u and v such that in t0 the CCW order is (u_idx, opp0, v_idx)
+				var u_idx: int = u0
+				var v_idx: int = v0
+				if (t0[0] == u0 and t0[1] == opp0) or (t0[1] == u0 and t0[2] == opp0) or (t0[2] == u0 and t0[0] == opp0):
+					u_idx = u0
+					v_idx = v0
+				else:
+					u_idx = v0
+					v_idx = u0
+
+				var pu: Vector2 = points[u_idx]
+				var po0: Vector2 = points[opp0]
+				var pv: Vector2 = points[v_idx]
+				var po1: Vector2 = points[opp1]
+
+				# Check strict convexity of quadrilateral (u_idx, opp0, v_idx, opp1) in CCW order
+				var quad_pts: Array[Vector2] = [pu, po0, pv, po1]
+				var convex := true
+				for i in range(4):
+					var pa: Vector2 = quad_pts[i]
+					var pb: Vector2 = quad_pts[(i + 1) % 4]
+					var pc: Vector2 = quad_pts[(i + 2) % 4]
+					var cp: float = (pb - pa).cross(pc - pb)
+					if cp <= 0.000001:
+						convex = false
+						break
+				if not convex:
+					continue
+
+				# In-circle determinant for po1 in circumcircle of (pu, po0, pv)
+				var adx: float = pu.x - po1.x
+				var ady: float = pu.y - po1.y
+				var bdx: float = po0.x - po1.x
+				var bdy: float = po0.y - po1.y
+				var cdx: float = pv.x - po1.x
+				var cdy: float = pv.y - po1.y
+				var det: float = (adx * adx + ady * ady) * (bdx * cdy - cdx * bdy) \
+					- (bdx * bdx + bdy * bdy) * (adx * cdy - cdx * ady) \
+					+ (cdx * cdx + cdy * cdy) * (adx * bdy - bdx * ady)
+				if det > 0.000001:
+					tris[ti0] = [u_idx, opp0, opp1]
+					tris[ti1] = [v_idx, opp1, opp0]
+					flipped = true
+					break
+
 	return tris
 
 static func _point_in_triangle(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> bool:
