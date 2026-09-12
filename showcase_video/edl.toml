@@ -162,9 +162,9 @@ caption = { label = "Select", text = "Face, edge and vertex modes", at = 0.2, du
 id = "21-edit-loop"
 source = "edit:edit/edge_loop"
 region = "viewport_ui"
-at = -3.6
-dur = 3.6
-caption = { label = "Select", text = "Shift+alt-click selects an edge ring — then move it", at = 0.2, dur = 3.2 }
+at = -3.5
+dur = 3.5
+caption = { label = "Select", text = "Alt+click selects an edge loop — then move it", at = 0.2, dur = 3.2 }
 
 [[clip]]
 id = "22-edit-move"

@@ -253,7 +253,7 @@ func test_subdivide_face_topology():
 	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
 	assert_true(result["ok"], "Subdivide succeeds: " + str(result.get("error", "")))
 	assert_eq(data.faces.size(), 9, "6 - 1 + 4 sub-quads")
-	assert_eq(data.positions.size(), 33, "24 + 4 subquad midpoints + 1 center + 4 neighbor midpoints")
+	assert_eq(data.positions.size(), 40, "20 untouched + 16 subquads (position privacy) + 4 neighbor midpoints")
 	assert_eq(data.shared_vertices.size(), 13, "8 + 4 + 1")
 	for fi in result["new_face_ids"]:
 		assert_gt(_face_normal(data, fi).dot(Vector3.UP), 0.99, "Sub-quads stay +Y")

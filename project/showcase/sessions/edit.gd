@@ -198,26 +198,27 @@ func _select() -> void:
 ## cube's valence-3 corners stop immediately; the loop is shown where it
 ## exists, on the loop cut beat's own new edges.)
 func _edge_loop() -> void:
-	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "steel", Vector3.ZERO, 0.38, 34.0, 24.0)
+	var cube := PBMeshData.create_cube(2.0)
+	PBMeshOps.insert_edge_loop(cube, PackedInt32Array([2]))
+	obj = await _fresh("DemoCube", cube, "steel", Vector3.ZERO, 0.38, 34.0, 24.0)
 	var f := d.framing_node(obj, 0.38, 34.0, 24.0)
 	await d.click_button("edge")
-	# The box sits on the ground, so a corner click at (±1, 1, ±1) is the middle
-	# of a vertical edge.
+	# Click the horizontal edge loop across the front face at (0.0, 1.0, 1.0)
 	await d.orbit_glide(f["center"], 34.0, 44.0, 24.0, f["dist"],
-		Vector3(1.0, 1.0, 1.0), 24, f["aim"])
-	await d.click(Vector2.INF, 14, ["alt", "shift"])
+		Vector3(0.0, 1.0, 1.0), 24, f["aim"])
+	await d.click(Vector2.INF, 14, ["alt"])
 	var sel = d.plugin.editor.selection
 	d.check(sel.selected_edges.size() == 4,
-		"shift+alt+click expanded the edge to its ring (%d edges)" % sel.selected_edges.size())
-	# Check that the whole ring is captured for moving
+		"alt+click expanded the edge to its loop (%d edges)" % sel.selected_edges.size())
+	# Check that the whole loop is captured for moving
 	var moved: int = await d.off(func():
 		return d.element_editor().element_indices(obj.pb_mesh_data, d.subgizmo_ids()[0]).size())
-	d.check(moved >= 8, "the ring's corners follow the seed's drag (%d positions)" % moved)
+	d.check(moved >= 8, "the loop's corners follow the seed's drag (%d positions)" % moved)
 	# Pause so the yellow highlight across the whole loop is vividly seen on the dark texture
 	await d.frames(20)
-	# Move the selection so the entire edge loop visibly moves together
-	await d.move_selection(Vector3(0.35, 0.0, 0.35), 36)
-	await d.cam_swing(f["center"] + Vector3(0.18, 0.0, 0.18), 44.0, 72.0, 24.0, 32.0, f["dist"], 40, 1, f["aim"])
+	# Move the selection so the entire edge loop visibly moves, deforming the cube waist
+	await d.move_selection(Vector3(0.0, 0.45, 0.0), 36)
+	await d.cam_swing(f["center"] + Vector3(0.0, 0.2, 0.0), 44.0, 72.0, 24.0, 32.0, f["dist"], 40, 1, f["aim"])
 	await d.click_button("face")
 
 ## Face manipulation on a doorway: the SIMPLE case first (a side quad), then

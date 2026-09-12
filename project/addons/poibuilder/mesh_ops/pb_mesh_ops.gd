@@ -235,9 +235,13 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 			[pv[3], m[3], center, m[2]],
 		]
 		for quad: Array in quads:
+			var qa := _dup_position(mesh_data, quad[0], Vector3.ZERO)
+			var qb := _dup_position(mesh_data, quad[1], Vector3.ZERO)
+			var qc := _dup_position(mesh_data, quad[2], Vector3.ZERO)
+			var qd := _dup_position(mesh_data, quad[3], Vector3.ZERO)
 			var f := PBFace.new(PackedInt32Array([
-				quad[0], quad[1], quad[2],
-				quad[2], quad[3], quad[0],
+				qa, qb, qc,
+				qc, qd, qa,
 			]))
 			f.submesh_index = face.submesh_index
 			f.uv_scale = face.uv_scale
