@@ -433,4 +433,91 @@ func test_uv_panel_buttons_have_svg_icons():
 	assert_not_null(panel._btn_texel_set.icon, "Texel set button must have icon")
 	assert_not_null(panel._btn_export_png.icon, "Export PNG button must have icon")
 
+
+func test_stitched_coincident_vertices_selected_and_move_together():
+	var canvas := PBUvCanvas.new()
+	canvas.size = Vector2(800, 600)
+	canvas.zoom = 300.0
+
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	# Auto-stitch Face 0 and Face 2 along their shared 3D edge
+	var ok := PBUvOps.auto_stitch(cube, 0, 2)
+	assert_true(ok, "auto_stitch must succeed")
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	canvas.active_mesh = mesh
+	canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
+
+	# Vertex 1 on Face 0 and Vertex 8 on Face 2 are now stitched together
+	var v1_uv := cube.textures0[1]
+	var v8_uv := cube.textures0[8]
+	assert_almost_eq(v1_uv.x, v8_uv.x, 0.0001, "Stitched vertices must share UV X")
+	assert_almost_eq(v1_uv.y, v8_uv.y, 0.0001, "Stitched vertices must share UV Y")
+
+	# Clicking vertex 1 must select BOTH coincident sewn vertices
+	var v1_screen := canvas.uv_to_screen(v1_uv)
+	canvas._handle_left_press(v1_screen, false)
+	canvas._handle_left_release(v1_screen)
+
+	assert_true(canvas.selected_verts.has(1), "Vertex 1 must be selected")
+	assert_true(canvas.selected_verts.has(8), "Vertex 8 (coincident sewn vertex) must also be selected")
+	assert_gte(canvas.selected_verts.size(), 2, "Both faces' corners must be selected together")
+
+	# Move vertices via gizmo
+	canvas._gizmo_drag_snapshot_uvs = canvas.get_uv_array().duplicate()
+	canvas._gizmo_affected_indices = canvas.get_selected_vertex_indices()
+	canvas.gizmo.begin_drag(PBUvGizmo.HandleType.MOVE_CENTER, v1_screen, canvas)
+	var t := canvas.gizmo.apply_drag(v1_screen + Vector2(40, 50), canvas, false, false)
+	canvas._apply_gizmo_transform(t)
+	canvas.gizmo.commit_drag()
+
+	# Assert that both vertices moved in lockstep and remain joined
+	var new_v1 := cube.textures0[1]
+	var new_v8 := cube.textures0[8]
+	assert_almost_eq(new_v1.x, new_v8.x, 0.0001, "After move, vertex 1 and 8 must remain joined at same X")
+	assert_almost_eq(new_v1.y, new_v8.y, 0.0001, "After move, vertex 1 and 8 must remain joined at same Y")
+	assert_gt(v1_uv.distance_to(new_v1), 0.1, "Joined vertices must have moved together")
+
+	mesh.free()
+	canvas.free()
+
+class MockPlugin:
+	extends RefCounted
+	var last_selected_subgizmo_id: int = -999
+	func select_subgizmo_element(_mesh: PBMesh, id: int) -> void:
+		last_selected_subgizmo_id = id
+
+func test_bidirectional_vertex_selection_sync_with_3d():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	var mock_plugin := MockPlugin.new()
+	var editor := PBEditor.new()
+	editor.active_mesh = mesh
+	editor.selection.set_mesh_data(cube)
+	panel.editor = editor
+	panel.plugin = mock_plugin
+
+	# 1. Select vertex 0 in UV editor canvas
+	panel.canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
+	var v0_uv: Vector2 = cube.textures0[0]
+	var v0_screen: Vector2 = panel.canvas.uv_to_screen(v0_uv)
+	panel.canvas._handle_left_press(v0_screen, false)
+	panel.canvas._handle_left_release(v0_screen)
+
+	# Verify 3D editor selection was updated
+	var expected_sv: int = cube.get_shared_vertex_index(0)
+	assert_eq(editor.select_mode, PBEditor.SelectMode.VERTEX, "3D editor must switch to VERTEX mode")
+	assert_true(editor.selection.is_vertex_selected(expected_sv), "3D editor selection must have shared vertex selected")
+	assert_eq(mock_plugin.last_selected_subgizmo_id, expected_sv, "Plugin select_subgizmo_element must be called with shared vertex id")
+
+	mesh.free()
 	panel.free()

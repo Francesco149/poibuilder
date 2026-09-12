@@ -108,7 +108,7 @@ var _is_floating: bool = false
 var active_mesh: PBMesh = null:
 	set = set_active_mesh
 var editor: PBEditor = null
-
+var plugin: Object = null
 var _syncing_selection: bool = false
 
 # ==============================================================================
@@ -462,37 +462,62 @@ func set_active_mesh(mesh: PBMesh) -> void:
 		canvas.set_active_mesh(mesh)
 	_update_status()
 
-## Synchronizes external 3D selection (e.g. from PBEditor / PBSelection) into 2D UV canvas.
-func sync_selection_from_3d(selected_face_indices: Array) -> void:
-	if canvas == null:
+func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> void:
+	if canvas == null or active_mesh == null or active_mesh.pb_mesh_data == null or selection == null:
+		return
+	if _syncing_selection:
 		return
 	_syncing_selection = true
 
-	canvas.selected_faces.clear()
-	for fi in selected_face_indices:
-		canvas.selected_faces[int(fi)] = true
+	var mesh_data := active_mesh.pb_mesh_data
+
+	match select_mode:
+		PBEditor.SelectMode.VERTEX:
+			canvas.selected_faces.clear()
+			canvas.selected_edges.clear()
+			canvas.selected_verts.clear()
+			canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
+			for sv_idx in selection.selected_vertices:
+				if sv_idx >= 0 and sv_idx < mesh_data.shared_vertices.size():
+					var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
+					if sv != null:
+						for vi in sv.indices:
+							canvas.selected_verts[vi] = true
+
+		PBEditor.SelectMode.EDGE:
+			canvas.selected_faces.clear()
+			canvas.selected_verts.clear()
+			canvas.selected_edges.clear()
+			canvas.select_mode = PBUvCanvas.SelectMode.EDGE
+			for edge in selection.selected_edges:
+				if edge != null:
+					canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
+
+		PBEditor.SelectMode.FACE:
+			canvas.selected_verts.clear()
+			canvas.selected_edges.clear()
+			canvas.selected_faces.clear()
+			canvas.select_mode = PBUvCanvas.SelectMode.FACE
+			for fi in selection.selected_faces:
+				canvas.selected_faces[int(fi)] = true
+
+	canvas.refresh_from_mesh()
+	_syncing_selection = false
+	_update_status()
+
+func sync_selection_from_3d(selected_face_indices: Array) -> void:
+	if canvas == null or active_mesh == null or active_mesh.pb_mesh_data == null:
+		return
+	if _syncing_selection:
+		return
+	_syncing_selection = true
 
 	canvas.selected_verts.clear()
 	canvas.selected_edges.clear()
+	canvas.selected_faces.clear()
 
-	# Populate mode selection from 3D selected faces
-	if active_mesh and active_mesh.pb_mesh_data:
-		if canvas.select_mode == PBUvCanvas.SelectMode.VERTEX:
-			for fi in selected_face_indices:
-				var f_idx: int = int(fi)
-				if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
-					var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
-					for v in face.get_distinct_indexes():
-						canvas.selected_verts[v] = true
-			canvas.selected_faces.clear()
-		elif canvas.select_mode == PBUvCanvas.SelectMode.EDGE:
-			for fi in selected_face_indices:
-				var f_idx: int = int(fi)
-				if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
-					var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
-					for edge in face.get_edges():
-						canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
-			canvas.selected_faces.clear()
+	for fi in selected_face_indices:
+		canvas.selected_faces[int(fi)] = true
 
 	canvas.refresh_from_mesh()
 	_syncing_selection = false
@@ -504,17 +529,74 @@ func _on_canvas_selection_changed() -> void:
 	_update_status()
 	uv_selection_changed.emit()
 
-	# Synchronize selected faces back to 3D scene ONLY if in Face or Island mode
-	if editor != null and active_mesh != null and editor.selection != null:
-		if canvas.select_mode == PBUvCanvas.SelectMode.FACE or canvas.select_mode == PBUvCanvas.SelectMode.ISLAND:
-			if editor.select_mode == PBEditor.SelectMode.FACE:
-				_syncing_selection = true
-				var face_list: Array = canvas.selected_faces.keys()
-				var packed := PackedInt32Array()
-				for fi in face_list:
-					packed.append(int(fi))
-				editor.selection.set_faces(packed)
-				_syncing_selection = false
+	if editor == null or active_mesh == null or active_mesh.pb_mesh_data == null or editor.selection == null:
+		return
+
+	var mesh_data := active_mesh.pb_mesh_data
+	_syncing_selection = true
+
+	match canvas.select_mode:
+		PBUvCanvas.SelectMode.VERTEX:
+			var sv_set: Dictionary = {}
+			for vi in canvas.selected_verts:
+				var sv: int = mesh_data.get_shared_vertex_index(vi)
+				if sv >= 0:
+					sv_set[sv] = true
+			var sv_packed := PackedInt32Array()
+			for sv in sv_set:
+				sv_packed.append(sv)
+
+			if editor.select_mode != PBEditor.SelectMode.VERTEX and not sv_packed.is_empty():
+				editor.select_mode = PBEditor.SelectMode.VERTEX
+
+			editor.selection.set_vertices(sv_packed)
+			if plugin != null and plugin.has_method("select_subgizmo_element"):
+				if not sv_packed.is_empty():
+					plugin.select_subgizmo_element(active_mesh, sv_packed[0])
+				else:
+					plugin.select_subgizmo_element(active_mesh, -1)
+
+		PBUvCanvas.SelectMode.EDGE:
+			var edges_to_sel: Array[PBEdge] = []
+			for pair: Vector2i in canvas.selected_edges:
+				edges_to_sel.append(PBEdge.new(pair.x, pair.y))
+
+			if editor.select_mode != PBEditor.SelectMode.EDGE and not edges_to_sel.is_empty():
+				editor.select_mode = PBEditor.SelectMode.EDGE
+
+			editor.selection.set_edges(edges_to_sel)
+			if plugin != null and plugin.has_method("select_subgizmo_element"):
+				if not edges_to_sel.is_empty():
+					var common_edges := mesh_data.get_common_edges()
+					var common := mesh_data.get_common_edge(edges_to_sel[0])
+					var found_id := -1
+					if common != null:
+						for eid in range(common_edges.size()):
+							if common_edges[eid].equals(common):
+								found_id = eid
+								break
+					plugin.select_subgizmo_element(active_mesh, found_id)
+				else:
+					plugin.select_subgizmo_element(active_mesh, -1)
+
+		PBUvCanvas.SelectMode.FACE, PBUvCanvas.SelectMode.ISLAND:
+			var face_list: Array = canvas.selected_faces.keys()
+			var packed := PackedInt32Array()
+			for fi in face_list:
+				packed.append(int(fi))
+
+			if editor.select_mode != PBEditor.SelectMode.FACE and not packed.is_empty():
+				editor.select_mode = PBEditor.SelectMode.FACE
+
+			editor.selection.set_faces(packed)
+			if plugin != null and plugin.has_method("select_subgizmo_element"):
+				if not packed.is_empty():
+					plugin.select_subgizmo_element(active_mesh, packed[0])
+				else:
+					plugin.select_subgizmo_element(active_mesh, -1)
+
+	_syncing_selection = false
+
 func _update_status() -> void:
 	if _lbl_status == null:
 		return

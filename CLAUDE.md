@@ -2705,6 +2705,23 @@ v0.9.84 round complete ✓ — UV gizmo undo reset, selection mode isolation & S
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
 - Version bump 0.9.83 -> 0.9.84 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.85 round complete ✓ — Bidirectional 3D/2D Selection Synchronization & Stitched Coincident Vertex Welding:
+- BIDIRECTIONAL 3D/2D SELECTION SYNCHRONIZATION:
+  * Selecting a vertex in the UV canvas immediately switches the 3D editor to `VERTEX` mode, updates `editor.selection.set_vertices()`, highlights the corresponding vertex dot in bright yellow in the 3D viewport, and attaches the 3D transform gizmo to it via `plugin.select_subgizmo_element()`.
+  * Selecting an edge in the UV canvas switches the 3D editor to `EDGE` mode, selects and highlights the 3D edge in yellow, and sets the 3D subgizmo selection.
+  * Selecting a face in the UV canvas switches the 3D editor to `FACE` mode and highlights the 3D face.
+  * Symmetrically, selecting a vertex, edge, or face in the 3D viewport immediately synchronizes to the UV canvas via `sync_selection_from_3d_state()`, highlights the element in yellow in 2D, and centers the 2D transform gizmo on it.
+  * Bidirectional feedback loops are prevented via explicit re-entrancy protection (`_syncing_selection` guards in both directions).
+- STITCHED / SEWN VERTEX JOINING:
+  * Root cause of stitched faces appearing "unjoined" when moving vertices: `_handle_left_press` in `SelectMode.VERTEX` only picked one face's vertex index, ignoring coincident vertices of stitched/sewn neighbors sharing that exact UV position and 3D corner.
+  * Implemented `get_coincident_uv_vertices()` and `get_coincident_uv_edges()` in `PBUvCanvas`: selecting a vertex or edge on a stitched boundary selects all coincident vertices/edges sharing that UV coordinate and 3D position.
+  * Moving a stitched vertex or edge with the 2D transform gizmo now moves all coincident corners in lockstep, keeping stitched faces completely joined without seam tearing.
+  * `PBUvOps.rebuild_shared_textures()` is automatically invoked by `sew_uvs()` and `auto_stitch()`, updating `mesh_data.shared_textures` groups and invalidating lookup caches.
+- TESTS & VERIFICATION:
+  * 877/877 GUT unit tests passing (+2 regression tests in `test_pb_uv_ops.gd`, 16,269 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
+- Version bump 0.9.84 -> 0.9.85 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

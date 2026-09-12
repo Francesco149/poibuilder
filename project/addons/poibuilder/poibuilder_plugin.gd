@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.84"
+const VERSION := "0.9.85"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -221,6 +221,7 @@ func _enter_tree():
 	# Dedicated 2D UV Editor Panel (Bottom dock)
 	uv_editor_panel = PBUvEditorPanel.new()
 	uv_editor_panel.editor = editor
+	uv_editor_panel.plugin = self
 	if Engine.is_editor_hint():
 		_uv_bottom_button = add_control_to_bottom_panel(uv_editor_panel, "UV Editor")
 	uv_editor_panel.pop_out_toggled.connect(_on_uv_pop_out_toggled)
@@ -1248,11 +1249,26 @@ func _sync_uv_editor_selection() -> void:
 	if uv_editor_panel.active_mesh != editor.active_mesh:
 		uv_editor_panel.active_mesh = editor.active_mesh
 	if editor.active_mesh != null and editor.selection != null:
-		var sel_faces: Array = []
-		for fi in editor.selection.selected_faces:
-			sel_faces.append(fi)
-		uv_editor_panel.sync_selection_from_3d(sel_faces)
+		if uv_editor_panel.has_method("sync_selection_from_3d_state"):
+			uv_editor_panel.sync_selection_from_3d_state(editor.select_mode, editor.selection)
+		else:
+			var sel_faces: Array = []
+			for fi in editor.selection.selected_faces:
+				sel_faces.append(fi)
+			uv_editor_panel.sync_selection_from_3d(sel_faces)
 
+## Programmatically selects a subgizmo element (vertex common_idx, common_edge id, or face index) on `mesh`.
+func select_subgizmo_element(mesh: PBMesh, id: int) -> void:
+	if mesh == null:
+		return
+	var gizmo := gizmo_plugin.gizmo_for_node(mesh)
+	if gizmo != null:
+		if id >= 0:
+			var xf := gizmo_plugin.element_editor.get_subgizmo_transform(mesh.pb_mesh_data, mesh, id)
+			mesh.set_subgizmo_selection(gizmo, id, xf)
+		else:
+			mesh.clear_subgizmo_selection()
+	mesh.update_gizmos()
 ## Moves Inspector and other standard docks from DockSlotRightUL to DockSlotRightUR,
 ## leaving DockSlotRightUL exclusively for PoiBuilder's Material & UV dock.
 func _setup_ideal_dock_layout() -> void:

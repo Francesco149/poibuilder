@@ -515,6 +515,57 @@ func get_selected_vertex_indices() -> Array[int]:
 								result.append(v_idx)
 	return result
 
+## Returns all vertex indices that share both the UV coordinate and 3D position of `v_idx` (sewn / stitched vertices).
+func get_coincident_uv_vertices(v_idx: int) -> Array[int]:
+	var result: Array[int] = [v_idx]
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return result
+	var mesh_data := active_mesh.pb_mesh_data
+	var uvs := get_uv_array()
+	if v_idx < 0 or v_idx >= uvs.size() or v_idx >= mesh_data.positions.size():
+		return result
+
+	var target_uv := uvs[v_idx]
+	var target_pos := mesh_data.positions[v_idx]
+
+	for i in range(uvs.size()):
+		if i == v_idx or i >= mesh_data.positions.size():
+			continue
+		if uvs[i].distance_squared_to(target_uv) < 0.000001:
+			if mesh_data.positions[i].distance_squared_to(target_pos) < 0.0001:
+				result.append(i)
+
+	return result
+
+## Returns all edges that share both UV endpoints and 3D endpoints with `edge` (sewn / stitched edges).
+func get_coincident_uv_edges(edge: Vector2i) -> Array[Vector2i]:
+	var result: Array[Vector2i] = [edge]
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return result
+	var mesh_data := active_mesh.pb_mesh_data
+	var uvs := get_uv_array()
+	if edge.x >= uvs.size() or edge.y >= uvs.size() or edge.x >= mesh_data.positions.size() or edge.y >= mesh_data.positions.size():
+		return result
+
+	var ea_v1 := get_coincident_uv_vertices(edge.x)
+	var ea_v2 := get_coincident_uv_vertices(edge.y)
+
+	var v1_set: Dictionary = {}
+	for v in ea_v1:
+		v1_set[v] = true
+	var v2_set: Dictionary = {}
+	for v in ea_v2:
+		v2_set[v] = true
+
+	for face in mesh_data.faces:
+		for fe in face.get_edges():
+			if (v1_set.has(fe.a) and v2_set.has(fe.b)) or (v1_set.has(fe.b) and v2_set.has(fe.a)):
+				var pe := Vector2i(mini(fe.a, fe.b), maxi(fe.a, fe.b))
+				if not result.has(pe):
+					result.append(pe)
+
+	return result
+
 func _update_gizmo_pivot() -> void:
 	if gizmo == null:
 		return
@@ -755,29 +806,46 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 				hit = true
 				selected_faces.clear()
 				selected_edges.clear()
+				var coin := get_coincident_uv_vertices(hover_vert)
 				if is_shift:
-					if selected_verts.has(hover_vert):
-						selected_verts.erase(hover_vert)
+					var any_sel := false
+					for v in coin:
+						if selected_verts.has(v):
+							any_sel = true
+							break
+					if any_sel:
+						for v in coin:
+							selected_verts.erase(v)
 					else:
-						selected_verts[hover_vert] = true
+						for v in coin:
+							selected_verts[v] = true
 				else:
 					selected_verts.clear()
-					selected_verts[hover_vert] = true
+					for v in coin:
+						selected_verts[v] = true
 
 		SelectMode.EDGE:
 			if hover_edge.x >= 0:
 				hit = true
 				selected_faces.clear()
 				selected_verts.clear()
+				var coin_edges := get_coincident_uv_edges(hover_edge)
 				if is_shift:
-					if selected_edges.has(hover_edge):
-						selected_edges.erase(hover_edge)
+					var any_sel := false
+					for e in coin_edges:
+						if selected_edges.has(e):
+							any_sel = true
+							break
+					if any_sel:
+						for e in coin_edges:
+							selected_edges.erase(e)
 					else:
-						selected_edges[hover_edge] = true
+						for e in coin_edges:
+							selected_edges[e] = true
 				else:
 					selected_edges.clear()
-					selected_edges[hover_edge] = true
-
+					for e in coin_edges:
+						selected_edges[e] = true
 		SelectMode.FACE:
 			if hover_face >= 0:
 				hit = true

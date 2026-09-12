@@ -402,6 +402,7 @@ static func sew_uvs(mesh_data: PBMeshData, vertex_indices: Array, max_distance: 
 			mesh_data.textures1 = target_arr
 		else:
 			mesh_data.textures0 = target_arr
+			rebuild_shared_textures(mesh_data)
 
 	return welded_count
 
@@ -586,9 +587,39 @@ static func auto_stitch(mesh_data: PBMeshData, anchor_face_idx: int, target_face
 		mesh_data.textures1 = target_arr
 	else:
 		mesh_data.textures0 = target_arr
+		rebuild_shared_textures(mesh_data)
 
 	return true
 
+
+## Rebuilds the mesh_data.shared_textures array by finding all vertex pairs that are coincident in 3D and in UV space.
+static func rebuild_shared_textures(mesh_data: PBMeshData) -> void:
+	if mesh_data == null:
+		return
+	mesh_data.shared_textures.clear()
+	var uvs := mesh_data.textures0
+	var vc: int = mesh_data.positions.size()
+	if uvs.size() != vc:
+		return
+
+	var visited: Dictionary = {}
+	for i in range(vc - 1):
+		if visited.has(i):
+			continue
+		var group: PackedInt32Array = [i]
+		var p_i: Vector3 = mesh_data.positions[i]
+		var uv_i: Vector2 = uvs[i]
+		for j in range(i + 1, vc):
+			if visited.has(j):
+				continue
+			if mesh_data.positions[j].distance_squared_to(p_i) < 0.0001:
+				if uvs[j].distance_squared_to(uv_i) < 0.000001:
+					group.append(j)
+					visited[j] = true
+		if group.size() > 1:
+			visited[i] = true
+			mesh_data.shared_textures.append(PBSharedVertex.new(group))
+	mesh_data.invalidate_shared_texture_lookup()
 # ==============================================================================
 # Texel Density Utilities
 # ==============================================================================

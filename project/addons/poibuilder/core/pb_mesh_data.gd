@@ -128,6 +128,10 @@ func get_shared_vertex_lookup() -> Dictionary:
 		_shared_vertex_lookup_valid = true
 	return _shared_vertex_lookup
 
+## Returns the shared vertex group index for the given local vertex index (-1 if none).
+func get_shared_vertex_index(local_vertex_idx: int) -> int:
+	return get_shared_vertex_lookup().get(local_vertex_idx, -1)
+
 ## Returns the shared texture lookup dictionary (vertex_index -> group_index).
 ## Lazy-cached; rebuilt when invalidated.
 func get_shared_texture_lookup() -> Dictionary:
