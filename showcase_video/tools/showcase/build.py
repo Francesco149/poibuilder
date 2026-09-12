@@ -241,7 +241,8 @@ def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
                                     (proj.width, proj.height),
                                     src.first_frame, src.out_frames,
                                     clicks_for(src, clip),
-                                    (fit.x, fit.y, fit.box_w, fit.box_h))
+                                    (fit.x, fit.y, fit.box_w, fit.box_h),
+                                    fit.mode)
         plan.zoom_span = src.span_src
         overlay_dir = BAKE / "overlays" / draw.slug(clip.id)
         n = overlay.render_sequence(plan, overlay_dir, workers=workers)

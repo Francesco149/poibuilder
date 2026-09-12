@@ -107,7 +107,9 @@ func _drag_create(shape_id: StringName, a: Vector3, b: Vector3, height: float) -
 	await d.arm_shape(shape_id)
 	await d.drag(d.w2s(a), d.w2s(b), 34)
 	var got: float = await d.height_drag_to(height)
-	d.check(absf(got - height) < 0.06, "%s height drag reached %.2f m (%.2f)" % [
+	# One grid step of slack: the height stage snaps, so a 3.0 m target can land
+	# on 3.0 or 3.2 depending on which side the pointer stopped.
+	d.check(absf(got - height) <= 0.21, "%s height drag reached %.2f m (%.2f)" % [
 		String(shape_id), height, got])
 	await d.click()
 
@@ -168,9 +170,19 @@ func _surfaces() -> void:
 func _stairs() -> void:
 	await d.off(func():
 		_clear_shapes())
-	var f := _spot(-2.0, -3.0, 2.0, 3.0, 3.6, 30.0, 26.0)
+	# Framed a little wider than the others: this beat drags from the NEAR corner
+	# to the FAR one (so the stairs climb away from the camera), and at the
+	# tighter framing the far corner projected outside the viewport — the drag's
+	# release never reached the plugin and the beat built nothing.
+	var f := _spot(-2.8, -3.8, 2.8, 3.8, 3.6, 30.0, 26.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(6)
+	# The stairs climb along their facing, which this drag puts toward +Z, and the
+	# cameras below sit on the -Z side to look at the fronts of the treads (the
+	# first version framed them from +Z, i.e. straight at the staircase's back).
+	# Do NOT flip this drag to "climb away": pressing at the near corner and
+	# releasing at the far one left the release outside the viewport, and the beat
+	# then built nothing at all.
 	await _drag_create(&"stair", Vector3(-1.6, 0.0, -2.4), Vector3(1.6, 0.0, 2.4), 3.0)
 	await d.frames(8)
 	d.check(d.plugin.tool_overlay.params_open, "parameter modal opened for the stairs")
@@ -186,9 +198,9 @@ func _stairs() -> void:
 		stairs = made
 		# A step's-eye view: the staircase is only readable as steps from the
 		# side, low down, where each tread and riser stands proud of the next.
-		var f2 := d.framing_node(made, 0.62, 72.0, 12.0)
+		var f2 := d.framing_node(made, 0.66, 206.0, 14.0)
 		await d.cam_at_polar(f2["center"], f2["az"], f2["elev"], f2["dist"], f2["aim"])
-		await d.cam_swing(f2["center"], 72.0, 46.0, 12.0, 24.0, float(f2["dist"]) * 0.94, 44, 1, f2["aim"])
+		await d.cam_swing(f2["center"], 206.0, 230.0, 14.0, 26.0, float(f2["dist"]) * 0.94, 44, 1, f2["aim"])
 
 func _door() -> void:
 	await d.off(func():
@@ -196,7 +208,10 @@ func _door() -> void:
 	var f := _spot(-2.2, -3.0, 2.2, 3.0, 3.6, 26.0, 22.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(6)
-	await _drag_create(&"door", Vector3(-1.8, 0.0, -2.6), Vector3(1.8, 0.0, 0.4), 3.0)
+	# Drag the footprint ALONG an axis: the doorway's facing is chosen across the
+	# base rect's dominant side, and a world-aligned drag is what puts its front
+	# (+Z) toward the camera instead of edge-on, where it reads as a cube.
+	await _drag_create(&"door", Vector3(-1.8, 0.0, -1.7), Vector3(1.8, 0.0, -0.7), 3.0)
 	await d.frames(8)
 	d.check(d.plugin.tool_overlay.params_open, "parameter modal opened for the door")
 	await d.overlay_param_check("arched", true)
@@ -207,21 +222,21 @@ func _door() -> void:
 	if shapes.size() > 0:
 		made = shapes[0]
 		_tint(made, "slate")
-		var f2 := d.framing_node(made, 0.66, 24.0, 14.0)
+		var f2 := d.framing_node(made, 0.7, 16.0, 12.0)
 		await d.cam_at_polar(f2["center"], f2["az"], f2["elev"], f2["dist"], f2["aim"])
-		await d.cam_swing(f2["center"], 24.0, -12.0, 14.0, 22.0, float(f2["dist"]) * 0.96, 44, 1, f2["aim"])
+		await d.cam_swing(f2["center"], 16.0, -18.0, 12.0, 20.0, float(f2["dist"]) * 0.96, 44, 1, f2["aim"])
 
 ## Re-editing a placed shape: the stairs' parameters are reopened and the step
 ## count doubled, watched from the low side angle where every new tread appears.
 func _edit_params() -> void:
-	await d.off(func():
-		EditorInterface.get_selection().clear()
-		EditorInterface.get_selection().add_node(stairs))
 	if stairs == null:
 		d.check(false, "the stairs from the previous beat are still in the scene")
 		return
+	await d.off(func():
+		EditorInterface.get_selection().clear()
+		EditorInterface.get_selection().add_node(stairs))
 	var before: int = int(stairs.pb_mesh_data.shape_params.get("steps", 0))
-	var f := d.framing_node(stairs, 0.62, 68.0, 14.0)
+	var f := d.framing_node(stairs, 0.66, 202.0, 13.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(6)
 	await d.click_button("edit_params", 16)
@@ -233,4 +248,4 @@ func _edit_params() -> void:
 	await d.overlay_button("ApplyParams", 16)
 	var after: int = int(stairs.pb_mesh_data.shape_params.get("steps", 0))
 	d.check(after > before, "step count applied (%d -> %d steps)" % [before, after])
-	await d.cam_swing(f["center"], 68.0, 40.0, 14.0, 26.0, float(f["dist"]) * 0.94, 40, 1, f["aim"])
+	await d.cam_swing(f["center"], 202.0, 178.0, 13.0, 24.0, float(f["dist"]) * 0.94, 40, 1, f["aim"])
