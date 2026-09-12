@@ -270,19 +270,20 @@ func test_placement_basis_aligns_with_the_surface():
 func test_facing_follows_the_dominant_drag_dimension():
 	var creator := _armed_creator()
 	_begin_base(creator, Vector3.ZERO)
-	creator.update_base(Vector3(2, 0, 0.2))  # dominant +X step
+	creator.update_base(Vector3(2, 0, 0.2))  # dominant +X rect
 	assert_almost_eq(absf(creator.facing.normalized().dot(Vector3.RIGHT)), 1.0, 0.001,
 		"The facing arrow follows the dominant drag dimension")
 	assert_gt(creator.facing.dot(Vector3.RIGHT), 0.0,
 		"The arrow points away from the drag start")
-	# A lateral step bigger than the dead zone re-points it.
-	creator.update_base(Vector3(2.1, 0, 1.5))  # this step is dominated by +Z
+	# Dragging the SAME rect until the other axis dominates re-points the arrow
+	# (the rect's aspect decides; the base drag is never read as a "nudge").
+	creator.update_base(Vector3(2.1, 0, 3.5))
 	assert_almost_eq(absf(creator.facing.normalized().dot(Vector3.BACK)), 1.0, 0.001,
-		"A dominant lateral step re-points the arrow")
+		"Once the other axis dominates, the arrow follows it")
 	# Tiny steps never flip it (dead zone).
-	creator.update_base(Vector3(2.1, 0, 1.52))
+	creator.update_base(Vector3(2.1, 0, 3.52))
 	assert_almost_eq(creator.facing.normalized().dot(Vector3.BACK), 1.0, 0.001,
-		"Sub-dead-zone nudges keep the facing stable")
+		"Sub-dead-zone rect changes keep the facing stable")
 
 func test_stairs_facing_biased_along_longer_dimension():
 	var creator := _armed_creator(&"stair")
@@ -313,21 +314,38 @@ func test_door_facing_biased_parallel_to_shorter_dimension():
 		"Door facing naturally points parallel to the shorter dimension (+X)")
 
 
-func test_door_facing_can_be_nudged_into_tunnel():
+## REGRESSION (showcase map act): an ordinary drag out of a 4 x 1 m wall
+## footprint walked the door's facing 90 degrees mid-drag. The drag grows the
+## rect along X, the door faces along Z, so every frame's motion is
+## perpendicular to the facing — indistinguishable from the old "nudge" rule,
+## which fired and swapped the extents: the doorway came out 1 m wide with its
+## frame legs clamped over the opening, i.e. a plain slab in the middle of the
+## courtyard. The facing must follow the rect's aspect and nothing else.
+func test_dragging_a_door_along_its_width_never_rotates_it():
 	var creator := _armed_creator(&"door")
 	_begin_base(creator, Vector3.ZERO)
-	# Drag 3m along X, 1m along Z: natural facing is along Z (shorter)
-	creator.update_base(Vector3(3.0, 0, 1.0))
-	assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
-		"Initially door faces along the shorter dimension (+Z)")
-	# Deliberate lateral nudge along X (> deadzone):
-	creator.update_base(Vector3(3.2, 0, 1.0))
-	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
-		"Deliberate lateral nudge rotates door to face along longer dimension (+X, tunnel)")
-	# Sub-dead-zone movement does NOT snap it back (nudge persists):
-	creator.update_base(Vector3(3.22, 0, 1.02))
-	assert_almost_eq(absf(creator.facing.dot(Vector3.RIGHT)), 1.0, 0.001,
-		"Nudge persists across subsequent frames without snapping back")
+	for t in [0.25, 0.5, 0.75, 1.0]:
+		creator.update_base(Vector3(4.0 * t, 0, 1.0 * t))
+		assert_almost_eq(absf(creator.facing.dot(Vector3.BACK)), 1.0, 0.001,
+			"The door keeps facing across its width for the whole drag (t=%.2f)" % t)
+		assert_almost_eq(creator.values["width"], maxf(0.1, 4.0 * t), 0.0001,
+			"width follows the extent across the facing (t=%.2f)" % t)
+		assert_almost_eq(creator.values["depth"], maxf(0.1, 1.0 * t), 0.0001,
+			"depth follows the thin extent (t=%.2f)" % t)
+	creator.end_base()
+	creator.update_height_point(Vector3(0, 4.0, 0))
+	var data := creator.build_data()
+	var aabb := AABB(data.positions[0], Vector3.ZERO)
+	for p in data.positions:
+		aabb = aabb.expand(p)
+	assert_almost_eq(aabb.size.x, 4.0, 0.001, "the doorway spans the 4 m drag")
+	assert_almost_eq(aabb.size.z, 1.0, 0.001, "the doorway is one wall deep")
+	# ...and the opening is a doorway, not a slab: the two frame legs together
+	# leave most of the 4 m width open.
+	var open_w: float = 4.0 - 2.0 * float(creator.values["leg_width"])
+	assert_gt(open_w, 2.0, "the opening stays wide (%.2f m)" % open_w)
+
+
 func test_facing_hysteresis_prevents_ping_pong_near_square():
 	var creator := _armed_creator(&"door")
 	_begin_base(creator, Vector3.ZERO)
@@ -358,10 +376,10 @@ func test_lock_direction_preserves_facing_during_drag():
 	assert_eq(creator.facing, locked_facing,
 		"Facing must stay strictly locked while lock_direction is true")
 
-	# Lateral nudge also ignored while locked
+	# A further step along the same axis is ignored while locked
 	creator.update_base(Vector3(3.0, 0, 5.5))
 	assert_eq(creator.facing, locked_facing,
-		"Nudges are ignored while lock_direction is true")
+		"Facing is ignored while lock_direction is true")
 
 	# Unlock direction (simulating releasing Ctrl)
 	creator.lock_direction = false
@@ -643,3 +661,53 @@ func test_creator_cursor_extents_text_xyz():
 	c.end_base()
 	c.update_height_point(Vector3(0.0, 1.8, 0.0))
 	assert_eq(c.get_cursor_extents_text(), "(4.00, 2.50, 1.80)", "Height phase shows (X, Y, Z)")
+
+# ==============================================================================
+# Stand-off planes: world-aligned in-plane axes (v0.9.79)
+# ==============================================================================
+
+## REGRESSION (showcase map act): a plane drawn on a wall took its in-plane
+## axes from the DRAG, so the sheet's V axis (its texture flow) ran sideways
+## along the wall and the pool's ran across the floor instead of away from the
+## wall — "the scrolling textures flow the wrong way". A plane's axes come from
+## the world now: V points DOWN on a wall, +Z on a floor, which is the shipped
+## map's own convention for its water sheets and pool.
+func test_plane_flow_axis_points_down_a_wall_and_back_on_a_floor():
+	assert_eq(PBShapeParams.plane_flow_axis(Vector3.UP), Vector3.BACK,
+		"A floor plane flows along +Z (away from the wall behind it)")
+	assert_eq(PBShapeParams.plane_flow_axis(Vector3.DOWN), Vector3.BACK,
+		"A ceiling plane flows along +Z too")
+	assert_eq(PBShapeParams.plane_flow_axis(Vector3.BACK), Vector3.DOWN,
+		"A wall plane flows DOWN the wall")
+	assert_eq(PBShapeParams.plane_flow_axis(Vector3.RIGHT), Vector3.DOWN)
+
+func test_plane_on_a_wall_stands_v_down():
+	var creator := _armed_creator(&"plane")
+	# A wall at z = 0 facing the courtyard (+Z), the map act's sheet footprint.
+	_begin_base(creator, Vector3(3.5, 0.1, 0.0), Vector3.BACK)
+	creator.update_base(Vector3(5.5, 4.3, 0.0))
+	creator.end_base()
+	assert_almost_eq(creator.values["width"], 2.0, 0.0001, "the drag's width is the sheet's width")
+	assert_almost_eq(creator.values["depth"], 4.2, 0.0001, "the drag's height is the sheet's depth")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	assert_almost_eq(xf.basis.z.dot(Vector3.DOWN), 1.0, 0.001,
+		"The sheet's V axis runs DOWN the wall (falling water falls)")
+	assert_almost_eq(absf(xf.basis.y.dot(Vector3.BACK)), 1.0, 0.001,
+		"The sheet's normal is the wall's normal")
+	assert_almost_eq(xf.basis.x.dot(Vector3.RIGHT), 1.0, 0.001,
+		"...and its U axis runs along the wall")
+
+func test_plane_on_a_floor_keeps_world_axes():
+	var creator := _armed_creator(&"plane")
+	_begin_base(creator, Vector3(2.7, 0.0, -5.0), Vector3.UP)
+	creator.update_base(Vector3(6.3, 0.0, -1.8))
+	creator.end_base()
+	assert_almost_eq(creator.values["width"], 3.6, 0.0001)
+	assert_almost_eq(creator.values["depth"], 3.2, 0.0001)
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	assert_almost_eq(xf.basis.x.dot(Vector3.RIGHT), 1.0, 0.001)
+	assert_almost_eq(xf.basis.y.dot(Vector3.UP), 1.0, 0.001)
+	assert_almost_eq(xf.basis.z.dot(Vector3.BACK), 1.0, 0.001,
+		"The floor pool's flow axis runs +Z, away from the wall it was drawn against")

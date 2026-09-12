@@ -89,16 +89,9 @@ var base_end: Vector3 = Vector3.ZERO
 
 ## Last surface point seen (drag steps are measured against it).
 var _last_point: Vector3 = Vector3.ZERO
-## Steps smaller than this don't re-point the facing arrow (dead zone).
-## Set to 0.08m to absorb hand tremors while allowing responsive lateral nudging.
+## Steps smaller than this don't re-point the facing arrow (dead zone): the
+## rect's aspect must be clearly one way before the arrow turns.
 const FACING_DEAD_ZONE := 0.08
-
-## True if the user explicitly nudged the facing direction away from the shape's
-## natural dimension bias (e.g. turning a door into a tunnel). Persists across
-## frames until explicitly nudged back or reset.
-var _user_nudged: bool = false
-var _nudged_axis: Vector3 = Vector3.ZERO
-var _has_initial_base: bool = false
 
 ## When true (e.g. while holding Ctrl), the facing direction is locked to its
 ## current vector and will not be recomputed or flipped during mouse drag.
@@ -205,15 +198,20 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 	v_size = 0.0
 	height = 0.0
 	_u_locked = false
-	_user_nudged = false
-	_nudged_axis = Vector3.ZERO
-	_has_initial_base = false
 	base_end = press
 	_last_point = press
 	# At rest the forward arrow sits along v (perpendicular to the drag seed)
 	# so the initial extent mapping matches "u → width, v → depth"; the first
 	# significant movement re-points it via the heuristic.
 	facing = plane_normal.cross(u_dir).normalized()
+	# The stand-off plane is the exception: its in-plane axes come from the
+	# WORLD (V down a wall, +Z on a floor), not from the drag, because its
+	# texture flow rides those axes — see PBShapeParams.plane_flow_axis. The
+	# axis is locked here so the drag below cannot re-point it.
+	if PBShapeParams.world_aligned_in_plane(shape_id):
+		facing = PBShapeParams.plane_flow_axis(plane_normal)
+		u_dir = plane_normal.cross(facing).normalized()
+		_u_locked = true
 	_apply_drag_extents()
 
 ## Updates the base rect from a point ON the captured plane. Height-driven
@@ -243,7 +241,7 @@ func update_base(point_on_plane: Vector3) -> void:
 	v_size = absf(along_v)
 	rect_center = base_start + snapped_drag * 0.5
 	base_end = base_start + snapped_drag
-	_update_facing(base_end, v_dir)
+	_update_facing(base_end)
 	_apply_drag_extents()
 
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
@@ -340,38 +338,44 @@ func reset() -> void:
 	u_size = 0.0
 	v_size = 0.0
 	_u_locked = false
-	_user_nudged = false
-	_nudged_axis = Vector3.ZERO
-	_has_initial_base = false
 	facing = Vector3.ZERO
 	lock_direction = false
 	show_height_plane = false
 	_last_point = Vector3.ZERO
 	preview_node = null
 
-## Facing-arrow heuristic:
-## 1. Biased towards the dimension that makes sense for the shape:
-##    - Doors: parallel to the shorter dimension (opening spans width, depth is thickness).
-##    - Stairs: along the longer dimension (steps rise along the longer run).
-##    - Other shapes: follows dominant drag / nudge direction.
-## 2. Nudging:
-##    - Moving the mouse across the natural axis by >= FACING_DEAD_ZONE turns on
-##      _user_nudged and flips the facing (e.g. creating a door tunnel).
-##    - The nudge PERSISTS so the shape does not immediately snap back on the next frame.
-##    - Sub-dead-zone mouse tremors (< 0.08m) are ignored, eliminating ping-pong.
-func _update_facing(point: Vector3, v_dir: Vector3) -> void:
-	if lock_direction:
+## Facing-arrow rule: the base rect's ASPECT decides, in the surface's own
+## frame, snapped to the nearest world axis on a cardinal surface:
+##    - Doors: parallel to the SHORTER dimension (the opening spans the width,
+##      the depth is the wall thickness).
+##    - Stairs: along the LONGER dimension (the steps rise along the run).
+##    - Other shapes: along the longer dimension.
+## The sign points away from the drag start.
+##
+## THERE IS NO LATERAL "NUDGE" WHILE THE RECT IS BEING DRAGGED, and there cannot
+## be one: for a shape that faces ACROSS its dominant extent (a door), the drag
+## that grows the rect IS motion along the facing's perpendicular, i.e. every
+## frame of an ordinary drag is indistinguishable from a deliberate nudge. The
+## old heuristic read that motion as one and flipped the doorway 90 degrees
+## mid-drag ("the doorway faces the wrong way", and — because the extents are
+## mapped through the facing — a 4x1 m opening came out 1 m wide with its
+## frame legs clamped shut: a plain slab). To orient a doorway the other way,
+## drag the rect the other way (the sign follows the drag) or draw the rect
+## with the aspect you want.
+func _update_facing(point: Vector3) -> void:
+	if lock_direction or PBShapeParams.world_aligned_in_plane(shape_id):
 		_last_point = point
 		return
 	var step := _project_on_plane(point - _last_point, plane_normal)
 	_last_point = point
-	var step_len := step.length()
 	var cum := point - base_start
+	var v_dir := plane_normal.cross(u_dir).normalized()
 
 	var prefers_shorter := PBShapeParams.facing_prefers_shorter(shape_id)
 	var is_stair := shape_id == &"stair" or shape_id == &"curved_stair"
 
-	# 1. Determine natural axis from base rect dimensions (with hysteresis)
+	# Determine the natural axis from the base rect's dimensions (with
+	# hysteresis, so a near-square rect does not ping-pong).
 	var longer_is_u: bool
 	if absf(u_size - v_size) >= FACING_DEAD_ZONE:
 		longer_is_u = u_size >= v_size
@@ -380,38 +384,14 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 
 	var longer_dir := u_dir if longer_is_u else v_dir
 	var shorter_dir := v_dir if longer_is_u else u_dir
-	var natural_axis := shorter_dir if prefers_shorter else longer_dir
+	var chosen_axis := shorter_dir if prefers_shorter else longer_dir
 	# A shape with a facing (door, stairs) gets its facing axis snapped to the
 	# nearest WORLD axis on a cardinal surface. Without this the axis is picked in
 	# the DRAG's own frame, which is camera-relative: the same doorway came out
 	# facing sideways or forward depending only on where the camera happened to
 	# be, and a sideways doorway reads as a plain cube from the courtyard.
 	if (prefers_shorter or is_stair) and PBGrid.is_cardinal(plane_normal):
-		natural_axis = _world_axis_near(natural_axis)
-
-	# 2. Check for deliberate lateral nudge (moving perpendicular to current facing)
-	# A nudge only triggers AFTER the initial base rectangle has been established.
-	if not _has_initial_base:
-		if u_size >= MIN_EXTENT or v_size >= MIN_EXTENT:
-			_has_initial_base = true
-	elif facing.length_squared() > 0.5 and step_len >= FACING_DEAD_ZONE:
-		var current_axis := facing.normalized()
-		var lateral := plane_normal.cross(current_axis).normalized()
-		var d_lat := absf(step.dot(lateral))
-		var d_curr := absf(step.dot(current_axis))
-		if d_lat > d_curr and d_lat >= FACING_DEAD_ZONE:
-			_user_nudged = true
-			_nudged_axis = lateral
-	var chosen_axis: Vector3
-	if _user_nudged and _nudged_axis.length_squared() > 0.5:
-		# If user deliberately nudges back towards natural axis, clear the override
-		if step_len >= FACING_DEAD_ZONE and absf(step.dot(natural_axis)) > absf(step.dot(_nudged_axis)):
-			_user_nudged = false
-			chosen_axis = natural_axis
-		else:
-			chosen_axis = _nudged_axis
-	else:
-		chosen_axis = natural_axis
+		chosen_axis = _world_axis_near(chosen_axis)
 
 	var toward := cum.dot(chosen_axis)
 	var sign_val: float = signf(toward) if toward != 0.0 else signf(step.dot(chosen_axis))

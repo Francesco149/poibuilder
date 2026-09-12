@@ -106,6 +106,14 @@ else counts as evidence:
     in, replace the bare URL on its own line.
   - Everything downstream of the capture is Pillow + ffmpeg: restyle a caption
     or re-time a cut without re-rendering the editor.
+  - `tools/showcase/cursor_check.py` verifies the drawn cursor: it drives a
+    marker through each clip's REAL filtergraph and compares it with the mapper
+    the renderer itself uses (`overlay.point_mapper` off `build.overlay_plan` —
+    the mapper and the check share one construction so they cannot drift; that
+    was the bug: the renderer's call site had dropped the clips' `into` box and
+    `contain` mode while the check built a correct mapper of its own). Segment
+    stamps hash the pipeline's own sources too, so a tool fix re-bakes the
+    clips it affects.
 - `.pi/ORIENTATION.md` — Sub-agent worker orientation
 
 ## Reference Repos
@@ -282,11 +290,14 @@ v0.9.0 round complete ✓ (sign-off fixes + ProBuilder creation UX)
   and can never re-orient the gizmo.
 - Hover is CYAN, selection YELLOW (faces, edges, vertices); the EDGE-mode
   base wireframe is a thinner cyan stroke (half offset, one stack pair).
-- Edge-loop select (#14): alt+click or double-click an edge selects its
-  whole ring. The ENGINE selection stays the seed id (script API is
-  single-id); PBElementEditor.selected_loops expands it for dragging,
-  highlight, and the PBSelection mirror. Two rapid PLAIN clicks = double
-  click; a plain re-click drops the loop.
+- Edge selection spreads (#14, ProBuilder's own gesture pair): alt+click or
+  double-click selects the edge LOOP (the end-to-end chain through 4-valence
+  corners — the edges a loop cut CREATES); shift+alt+click or shift+double-click
+  selects the edge RING (the parallel edges crossed by the quad strip — what a
+  loop cut CONSUMES). The ENGINE selection stays the seed id (script API is
+  single-id); PBElementEditor.selected_loops expands it for dragging, highlight,
+  and the PBSelection mirror. Two rapid PLAIN clicks = double click; a plain
+  re-click drops the spread.
 - Drag gestures (PBElementEditor.DragGesture, decided once at drag begin
   from tool+shift):
   - SCALE without shift = UNIFORM_SCALE (locked aspect ratio; the factor is
@@ -2281,7 +2292,10 @@ v0.9.22 round complete ✓ (flat clean creation arrow, loosened bias & door tunn
   projected sideways at angles as an ugly sticking-out spike. Removed all vertical fins;
   the arrow is now a completely flat, crisp, solid 2D decal (solid triangular arrowhead +
   solid rectangular shaft) lying flush in the surface plane with clean 1px border outlines.
-- LOOSENED BIAS & DOOR TUNNEL NUDGING: `FACING_DEAD_ZONE` tuned to 0.08m (8cm), and
+- LOOSENED BIAS & DOOR TUNNEL NUDGING (RETIRED in v0.9.79 — the rule could not
+  tell an ordinary drag from a deliberate nudge for a shape that faces across
+  its dominant extent, and it is what built the showcase's doorway as a slab;
+  see the v0.9.79 entry): `FACING_DEAD_ZONE` tuned to 0.08m (8cm), and
   distinguished base rect establishment from post-creation nudging via `_has_initial_base`.
   Doors naturally default to doorway orientation (facing shorter wall thickness), but
   deliberately nudging across the arrow by > 0.08m rotates it into a tunnel (facing the
@@ -2340,6 +2354,94 @@ physics-reproduced headlessly — "stuck the moment I touch them"):
   pollutes naive pixel counts).
 - Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
   plugin.cfg).
+
+v0.9.79 round complete ✓ — the third review round. Four plugin bugs the film
+exposed, the painted water's flow direction, and the beats rebuilt around them.
+- MERGED FACES KEEP THEIR OWN UVs. `merge_faces` fan-triangulated the region on
+  the REMOVED faces' positions, and those are not always free: a subdivision
+  leaves its mid-point positions SHARED between the pieces either side of the
+  cut, while UVs live in a per-position array that every rebuild re-projects. So
+  the moment the merged n-gon MOVED, the next refresh wrote a neighbour's
+  projection over the shared corners and the face went to diagonal stripes (the
+  merge beat's report). The merged face now DUPLICATES every corner
+  (`_dup_position` — the position-privacy invariant) and inherits the first
+  source face's material slot and auto-UV settings; the op's weld rebuild
+  re-connects the copies by coincidence, so it still drags as part of the mesh.
+- DOORS AND ARCHES NEVER READ THEIR OWN DRAG AS A "NUDGE". The facing
+  heuristic's lateral-nudge rule ("a step perpendicular to the facing re-points
+  it", meant to rotate a door into a tunnel) cannot tell intent for a shape that
+  faces ACROSS its dominant extent: the courtyard doorway's 4x1 m footprint
+  flipped 90 degrees mid-drag, swapped width and depth, and — since the door
+  clamps its frame legs to the width — closed the opening into a slab. That is
+  the "the doorway faces the wrong way" report, twice. The base rect's ASPECT
+  decides the facing now, full stop (the sign still follows the drag, Ctrl still
+  locks it); `arch` joins `door` in facing across its dominant extent (its arc
+  lies in the local XY plane, exactly like a door's opening) and both draw the
+  facing arrow.
+- ALT+CLICK IS THE EDGE LOOP, SHIFT+ALT+CLICK IS THE EDGE RING (ProBuilder's
+  own gesture pair). The plugin had ONE gesture for both and it was the ring,
+  which is why the loop cut beat's payoff deformed the whole cube: the ring of a
+  cut edge runs over the top and under the bottom (6 edges on a mid-cut box),
+  while the cut's own four edges are a genuine LOOP (their corners are the
+  4-valence vertices the cut created). `PBTopology.get_edge_loop` already
+  existed — the gestures now pick the right walk (`edge_loop_ids` /
+  `edge_ring_ids`).
+- A STAND-OFF PLANE'S IN-PLANE AXES COME FROM THE WORLD, NOT FROM THE DRAG.
+  A plane's V axis is its texture's flow axis, and the placement basis used to
+  take its in-plane orientation from the drag direction — so on a wall the
+  sheet's V ran HORIZONTALLY (the waterfall flowed sideways) and on the floor
+  the pool's ran across instead of away from the wall ("the scrolling textures
+  flow the wrong way, possibly the placement orientation": it was). The rule is
+  now fixed and world-aligned (`PBShapeParams.plane_flow_axis`): V DOWN on a
+  wall or slope, +Z on a floor/ceiling — byte-for-byte the shipped map's own
+  convention (`make_water_sheet` / `make_water_floor`), so a sheet built through
+  the creation flow animates exactly like the one the device plays. The paint
+  act's hand-built sheet was ALSO upside down (it stood the plane up with
+  `rotation_degrees = (-90,0,0)`, leaving V up, so its negative speed climbed);
+  it is +90 now.
+- THE CURSOR OVERLAY WAS MAPPED BY A CALL SITE THAT HAD DROPPED THE CLIP'S BOX.
+  `draw.make_mapper` learned `contain` + the `into` offset in the last round,
+  but `overlay.render_frame` kept calling it with the crop and a full-frame
+  cover box — so every letterboxed clip (all three paint clips, the toolbar cut,
+  the HUD card) drew the pointer up to 124 px from where the editor's own brush
+  ring sat ("the mouse is offset in the splatting clip"). The mapper now comes
+  from `overlay.point_mapper(plan)`, built by `build.overlay_plan` — the same
+  constructor the bake uses — and `cursor_check` calls that path, so the check
+  can no longer pass while the renderer is wrong (verified: dropping the old
+  call site back in makes the check report 114/124 px on the paint clips and
+  0 on full-frame ones).
+- SEGMENT STAMPS NOW HASH THE PIPELINE'S OWN SOURCE (draw/overlay/ffmpeg/edl):
+  a stamp that cannot see a code change keeps the master on the old overlays
+  until the files are deleted by hand — the same staleness the frame-signature
+  fix closed for re-recorded takes.
+- THE BEATS: loop cut orbits all four sides before selecting the loop its cut
+  made and MOVING it (a ring move deformed the cube); knife extrudes the FAR
+  half so the raised block does not stand between the lens and the cut; the
+  merge-crease beat stands the prism on a PLINTH (the column elongates as the
+  merged roof is dragged up, and the plinth is asserted not to move), slows the
+  two slope clicks down and runs 9 s instead of 2.4; the inset beat drags the
+  inset over 84 frames with a settle either side, so the ring is seen being
+  made; the edge-ring beat uses the new shift+alt gesture.
+- THE MAP ACT BUILDS THE SHIPPED MAP'S NUMBERS. Its off-grid pieces (waterfall
+  wall 2.5..6.5, stairs -5.75..-3.25, east ramp) are drawn UNSNAPPED — the grid
+  quantised a 4 m wall into 3.8 — and every water sheet's stand-off is placed
+  CLOSED-LOOP: the plugin reads the pointer back along the surface normal, so
+  `height_drag_to` now walks the pointer to the closed-form position for the
+  target (a 6 cm stand-off is a couple of pixels at a beat's framing and the old
+  pixel-step loop could not resolve it; the pool came back 0.00 and the sheets
+  landed IN the wall — the striped z-fighting band across the wet stone). New
+  checks: the core/pool/foam footprints against the map's own AABBs and a
+  "floats clear of the floor" assertion.
+- THE RENDER HARNESS NO LONGER INHERITS PLUGIN STATE BETWEEN RUNS. The editor
+  home it reuses caches EditorSettings, and the plugin persists its grid
+  settings there — so a beat that turns snapping off (the map act does, once per
+  water sheet) left it off for the NEXT session, which is how the courtyard wall
+  came out 3.8 m in one render and 4.0 m in the next, and why the toolbar read
+  "Grid 0.2m (snap off)" on camera through every creation beat. Each session
+  now starts from `ShowcaseUtil.fresh_grid`, and `_place` sets the grid state
+  from the piece's own flag instead of inheriting whatever was left behind.
+- Suite: 842/842.
+- Version bump 0.9.78 -> 0.9.79 (plugin, editor, plugin.cfg).
 
 v0.9.78 round complete ✓ — the showcase video reworked from the first
 review, plus the plugin bugs the rework exposed. The video is BUILT FROM DATA
