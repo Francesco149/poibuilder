@@ -66,6 +66,7 @@ else counts as evidence:
 
 ## Key Documents
 
+- `ROADMAP.md` — Phased feature gap implementation plan (ProBuilder & UniBuilder parity: 2D UV Editor, 3D texture tool, bevel, bridge, connect, fill hole, advanced selection, booleans, trims)
 - `SPECIFICATION.md` — Complete ProBuilder spec (201 sections, 711 citations)
 - `UNITY-GODOT-MAPPING.md` — Unity→Godot API mapping reference
 - `IMPLEMENTATION.md` — Phased implementation plan + mandatory verification gates

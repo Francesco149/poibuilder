@@ -140,14 +140,15 @@ workflow.
       + a compact, draggable, collapsible overlay panel
 - [x] **Node transforms respected throughout**; half-size manipulator gizmo by default
 
-**Remaining future roadmap:**
+**Remaining future roadmap (see [ROADMAP.md](ROADMAP.md) for full session breakdown):**
 
-- [ ] Additional mesh ops: bevel edges, connect edges, bridge faces, fill hole,
-      mirror geometry
-- [ ] Mirror / symmetry mode and array/duplicate tooling
-- [ ] Soft selection and proportional editing
-- [ ] Comfort on large meshes (>10k faces)
-- [ ] UX hardening, documentation, and general polish
+- [ ] **Dedicated 2D UV Editor Panel**: Canvas, navigation, texture underlay, wireframe, selection sync, 2D transforms, seams & projections (Sessions 1–2)
+- [ ] **In-Scene 3D Viewport Texture Tool ("Material Mode")**: Live 3D surface planar gizmo to slide, scale, and rotate textures directly on geometry (Session 3)
+- [ ] **Core Modeling Ops**: Bevel/chamfer edges & faces with multi-segment rounding, bridge open boundary edges, connect, collapse, fill hole (Sessions 4–5)
+- [ ] **Advanced Selection & Snapping Suite**: Grow/shrink with angle limit, select coplanar, select similar, hold `V` vertex snapping across meshes, proportional soft selection (Session 6)
+- [ ] **Object-Level Tools**: Merge objects, mirror across local planes, convert standard MeshInstance3D to PoiBuilder, pivot tools (Session 7)
+- [ ] **CSG Booleans & Smoothing Groups**: Manifold boolean union/subtract/intersect, smoothing group assignment (1..30) with auto-smooth angles (Session 8)
+- [ ] **Architectural Trims**: Skirting, cornice, and dado rail wall sweep tools with mitred corners (Session 9)
 ## How this project is built
 
 The unusual part: **PoiBuilder is developed almost entirely by AI coding
