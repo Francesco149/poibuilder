@@ -201,10 +201,10 @@ var _drag_ids: PackedInt32Array = PackedInt32Array()
 ## adjacent faces.
 var pick_side_faces: Dictionary = {}
 
-## Edge-loop selection (alt+click / double-click on an edge): engine edge id
-## → the ids of ALL common edges in its ring. Selected ids expand to their
-## loop for dragging, highlight, and the PBSelection mirror; a plain click
-## (no alt) drops back to the single edge.
+## Edge spread selection (alt+click = the edge LOOP, shift+alt+click = the edge
+## RING): engine edge id → the ids of every common edge in that walk. Selected
+## ids expand to their spread for dragging, highlight, and the PBSelection
+## mirror; a plain click (no alt) drops back to the single edge.
 var selected_loops: Dictionary = {}
 
 ## Double-click tracking for the click path only (hover never reaches it).
@@ -590,42 +590,60 @@ static func _point_in_frustum(point: Vector3, planes: Array[Plane]) -> bool:
 # ==============================================================================
 
 ## Call from the CLICK path only (engine _subgizmos_intersect_ray) after an
-## EDGE-mode pick. When the click asks for a loop (alt held, or a
-## double-click on the same edge — two rapid PLAIN clicks), records and
-## returns the ring ids; a plain click returns empty and drops any loop
-## recorded for `id`.
-func record_edge_click(mesh_data: PBMeshData, id: int, alt_held: bool) -> PackedInt32Array:
+## EDGE-mode pick. The gesture is ProBuilder's:
+##   - alt+click (or a double-click on the same edge) → the edge LOOP: the chain
+##     of edges running END TO END through 4-valence corners.
+##   - shift+alt+click (or shift+double-click) → the edge RING: the parallel
+##     edges crossed by the quad strip perpendicular to the seed (the loop cut's
+##     input).
+## Both are recorded and returned as common-edge ids; a plain click returns
+## empty and drops any expansion recorded for `id`.
+func record_edge_click(mesh_data: PBMeshData, id: int, alt_held: bool, ring_held := false) -> PackedInt32Array:
 	if mesh_data == null or id < 0:
 		return PackedInt32Array()
+	if not alt_held:
+		ring_held = false          # shift alone is the engine's add-to-selection
 	var now := Time.get_ticks_msec()
 	var double_click := id == _last_click_id and not alt_held and not _last_click_alt \
 		and now - _last_click_msec <= DOUBLE_CLICK_MS
 	_last_click_msec = now
 	_last_click_id = id
-	_last_click_alt = alt_held
+	_last_click_alt = alt_held or double_click
 	if not alt_held and not double_click:
 		selected_loops.erase(id)
 		return PackedInt32Array()
-	var loop := edge_loop_ids(mesh_data, id)
-	if loop.size() > 1:
-		selected_loops[id] = loop
-		return loop
+	var spread := edge_ring_ids(mesh_data, id) if ring_held else edge_loop_ids(mesh_data, id)
+	if spread.size() > 1:
+		selected_loops[id] = spread
+		return spread
 	return PackedInt32Array()
 
-## All common-edge ids in the ring through common edge `id` (seed included).
-## Rings can close early at non-quad faces (PBTopology.get_edge_ring walks
-## quads only) — whatever the walk returns is the selection.
+## All common-edge ids in the edge LOOP through common edge `id` (seed
+## included). The loop runs end to end and stops wherever a vertex has a
+## valence other than 4 (a cube corner, a boundary), which is why a plain cube
+## returns just the seed and a subdivided band returns the whole chain.
 func edge_loop_ids(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 	var edges := mesh_data.get_common_edges()
 	if id < 0 or id >= edges.size():
 		return PackedInt32Array()
-	var ring := PBTopology.get_edge_ring(mesh_data, [edges[id]])
+	return _spread_ids(mesh_data, edges, PBTopology.get_edge_loop(mesh_data, [edges[id]]))
+
+## All common-edge ids in the edge RING through common edge `id` (seed
+## included). Rings cross quads only, so they stop at fans and n-gons.
+func edge_ring_ids(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
+	var edges := mesh_data.get_common_edges()
+	if id < 0 or id >= edges.size():
+		return PackedInt32Array()
+	return _spread_ids(mesh_data, edges, PBTopology.get_edge_ring(mesh_data, [edges[id]]))
+
+## Maps a walk's PBEdge results back onto common-edge ids.
+func _spread_ids(mesh_data: PBMeshData, edges: Array[PBEdge], spread: Array[PBEdge]) -> PackedInt32Array:
 	var lookup := mesh_data.get_shared_vertex_lookup()
 	var id_of_key := {}
 	for i in range(edges.size()):
 		id_of_key[_edge_key(lookup, edges[i].a, edges[i].b)] = i
 	var ids := PackedInt32Array()
-	for e in ring:
+	for e in spread:
 		var eid: int = id_of_key.get(_edge_key(lookup, e.a, e.b), -1)
 		if eid >= 0:
 			ids.append(eid)

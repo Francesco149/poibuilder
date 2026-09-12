@@ -194,16 +194,17 @@ static func needs_params_modal(shape_id: StringName) -> bool:
 ## door's front face is its local +Z.
 static func facing_direction(shape_id: StringName) -> Vector3:
 	match shape_id:
-		&"stair", &"curved_stair", &"door":
+		&"stair", &"curved_stair", &"door", &"arch":
 			return Vector3(0, 0, 1)
 	return Vector3.ZERO
 
 ## True when the shape's facing naturally aligns with the shorter base dimension
-## (e.g. doors: opening spans the longer dimension, depth/facing is the shorter
-## wall thickness). False when facing aligns with the longer dimension
-## (e.g. stairs: run/steps climb along the longer dimension).
+## (doors and arches: the opening spans the longer dimension, the depth/facing
+## is the shorter wall thickness — the arc of an arch lies in the shape's local
+## XY plane, exactly like a door's opening). False when facing aligns with the
+## longer dimension (stairs: run/steps climb along the longer dimension).
 static func facing_prefers_shorter(shape_id: StringName) -> bool:
-	return shape_id == &"door"
+	return shape_id == &"door" or shape_id == &"arch"
 
 ## Backward-compatible alias for facing_prefers_shorter.
 static func facing_across_dominant(shape_id: StringName) -> bool:
@@ -230,6 +231,29 @@ static func height_drag_param(shape_id: StringName) -> Dictionary:
 ## ProBuilder's negative-height "grow below the surface" behavior.
 static func stays_on_surface(shape_id: StringName) -> bool:
 	return height_drags_offset(shape_id) or not height_drag_param(shape_id).is_empty()
+
+## True for shapes whose IN-PLANE orientation is fixed by the WORLD rather than
+## by the drag: a stand-off plane is a sheet of something (falling water, a
+## sign, a poster) and its texture axes have to be predictable — a sheet laid
+## out along the drag's own direction put the waterfall's V axis HORIZONTAL on
+## a wall and the pool's sideways on the floor, so the water ran sideways
+## instead of falling and the churn ran across instead of away from the wall
+## (the "scrolling textures flowing the wrong way" report from the map act).
+static func world_aligned_in_plane(shape_id: StringName) -> bool:
+	return shape_id == &"plane"
+
+## The in-plane direction such a shape's V axis (its texture flow, local +Z)
+## runs: DOWN on a wall or a slope, +Z (BACK) on a floor or a ceiling. This is
+## the shipped showcase map's own convention — its water sheets run down the
+## wall, its pool and foam run away from the wall — so a sheet built through
+## the creation flow animates exactly like the one the device plays.
+static func plane_flow_axis(normal: Vector3) -> Vector3:
+	var n := normal.normalized()
+	var down := Vector3.DOWN
+	var projected: Vector3 = down - n * n.dot(down)
+	if projected.length_squared() < 0.0001:
+		return Vector3.BACK
+	return projected.normalized()
 
 ## True when the creation height drag displaces the shape along the surface
 ## normal instead of resizing it — i.e. the third dimension is a STAND-OFF, not

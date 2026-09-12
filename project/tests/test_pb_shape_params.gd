@@ -162,7 +162,9 @@ func test_facing_direction_only_for_asymmetric_shapes():
 	assert_eq(PBShapeParams.facing_direction(&"curved_stair"), Vector3(0, 0, 1))
 	assert_eq(PBShapeParams.facing_direction(&"door"), Vector3(0, 0, 1),
 		"The door's front face is its local +Z")
-	for symmetric in [&"cube", &"sphere", &"torus", &"arch", &"cylinder", &"cone",
+	assert_eq(PBShapeParams.facing_direction(&"arch"), Vector3(0, 0, 1),
+		"The arch's depth runs along its local +Z, like a door's opening")
+	for symmetric in [&"cube", &"sphere", &"torus", &"cylinder", &"cone",
 			&"pipe", &"prism", &"plane", &"sprite"]:
 		assert_eq(PBShapeParams.facing_direction(symmetric), Vector3.ZERO,
 			"Symmetric shapes have no facing arrow: %s" % symmetric)

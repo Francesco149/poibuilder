@@ -407,14 +407,38 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 		if cycle.is_empty():
 			return _fail("Merge faces: region boundary is not a clean cycle (holes?)")
 
-		# Fan-triangulate the ordered loop; single face owns the loop's raw
-		# positions exclusively (they belonged to the removed faces).
+		# Fan-triangulate the ordered loop, on FRESHLY DUPLICATED corners. The
+		# cycle's own positions are not free to take: they are also used by the
+		# neighbours the removed faces were welded to (a subdivision leaves its
+		# mid-point positions shared between the pieces either side of the cut),
+		# and UVs live in a PER-POSITION array — a merged face reusing them
+		# rendered with whichever neighbour's projection was written last, which
+		# is the "merged face goes diagonal" report. Duplicating restores the
+		# position-privacy invariant; the weld rebuild at the end of the op
+		# re-connects the copies by coincidence, so the face still moves as part
+		# of the mesh.
+		var dup := PackedInt32Array()
+		for i in cycle:
+			dup.append(_dup_position(mesh_data, i, Vector3.ZERO))
 		var face := PBFace.new(PackedInt32Array())
 		var idxs := PackedInt32Array()
-		for i in range(1, cycle.size() - 1):
-			idxs.append_array(PackedInt32Array([cycle[0], cycle[i], cycle[i + 1]]))
+		for i in range(1, dup.size() - 1):
+			idxs.append_array(PackedInt32Array([dup[0], dup[i], dup[i + 1]]))
 		face.set_indexes(idxs)
-		face.submesh_index = mesh_data.faces[region[0]].submesh_index
+		# The merged face replaces its pieces, so it wears their look: the first
+		# piece's material slot and auto-UV settings (a fresh face would reset a
+		# face whose tiling the author had set, and the merged area would jump).
+		var source: PBFace = mesh_data.faces[region[0]]
+		face.submesh_index = source.submesh_index
+		face.uv_offset = source.uv_offset
+		face.uv_rotation = source.uv_rotation
+		face.uv_scale = source.uv_scale
+		face.uv_use_world_space = source.uv_use_world_space
+		face.uv_flip_u = source.uv_flip_u
+		face.uv_flip_v = source.uv_flip_v
+		face.uv_swap_uv = source.uv_swap_uv
+		face.uv_fill = source.uv_fill
+		face.uv_anchor = source.uv_anchor
 		merged_faces.append(face)
 		for fi in region:
 			removed[fi] = true

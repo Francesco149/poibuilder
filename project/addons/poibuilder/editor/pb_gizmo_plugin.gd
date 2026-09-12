@@ -275,10 +275,12 @@ func _subgizmos_intersect_ray(gizmo, camera: Camera3D, screen_pos: Vector2) -> i
 			logger.info("pick", "shift-press on selected %s id=%d suppressed (kept selection for the drag; toggle-off is disabled)" % [
 				PBEditor.SelectMode.keys()[editor.select_mode], id])
 		return -1
-	# Alt+click / double-click on an edge selects its whole loop (the engine
-	# selection stays the single seed id; dragging/highlighting expand it).
+	# Alt+click / double-click on an edge selects its whole LOOP; shift+alt+click
+	# (or shift+double-click) selects its RING (the engine selection stays the
+	# single seed id; dragging/highlighting expand it).
 	if id >= 0 and editor != null and editor.select_mode == PBEditor.SelectMode.EDGE:
-		element_editor.record_edge_click(node.pb_mesh_data, id, Input.is_key_pressed(KEY_ALT))
+		element_editor.record_edge_click(node.pb_mesh_data, id,
+			Input.is_key_pressed(KEY_ALT), Input.is_key_pressed(KEY_SHIFT))
 	return id
 
 func _subgizmos_intersect_frustum(gizmo, camera: Camera3D, frustum_planes: Array) -> PackedInt32Array:
