@@ -144,10 +144,24 @@ static func calculate_face_uvs(mesh_data: PBMeshData, face: PBFace) -> Dictionar
 	# absolute object-space point and never slides relative to the object.
 	if not face.uv_use_world_space:
 		var anchor: Vector3 = mesh_data.get_texture_anchor() if mesh_data != null else Vector3.ZERO
-		var anchor_uv := Vector2(u_axis.dot(anchor), v_axis.dot(anchor))
+		var ax := absf(normal.x)
+		var ay := absf(normal.y)
+		var az := absf(normal.z)
+		const EPS := 0.0001
+		var anchor_proj := anchor
+		if (ax - ay > EPS) and (ax - az > EPS):
+			var ref_x: float = mesh_data.positions[indices[0]].x
+			anchor_proj = Vector3(ref_x, anchor.y, anchor.z)
+		elif (ay - az > EPS):
+			var ref_y: float = mesh_data.positions[indices[0]].y
+			anchor_proj = Vector3(anchor.x, ref_y, anchor.z)
+		else:
+			var ref_z: float = mesh_data.positions[indices[0]].z
+			anchor_proj = Vector3(anchor.x, anchor.y, ref_z)
+
+		var anchor_uv := Vector2(u_axis.dot(anchor_proj), v_axis.dot(anchor_proj))
 		for i in range(raw_uvs.size()):
 			raw_uvs[i] -= anchor_uv
-
 	var scale: Vector2 = face.uv_scale
 	var rotation: float = face.uv_rotation
 	var rot_rad: float = deg_to_rad(rotation)

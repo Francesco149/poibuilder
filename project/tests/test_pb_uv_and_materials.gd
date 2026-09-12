@@ -201,6 +201,77 @@ func test_subdivided_face_inherits_uv_settings():
 		assert_eq(f.uv_scale, Vector2(3.0, 3.0), "Face %d must inherit uv_scale" % fid)
 		assert_eq(f.uv_offset, Vector2(0.25, 0.5), "Face %d must inherit uv_offset" % fid)
 		assert_eq(f.uv_rotation, 15.0, "Face %d must inherit uv_rotation" % fid)
+
+func test_recipe_subdivided_quads_seam_uv_alignment():
+	# Recreates the user's recipe:
+	# 1. Cube size 1.0
+	var cube := PBMeshData.create_cube(1.0)
+
+	# 2. Move one upper edge in a bit to create a shallow slope at the top face
+	var lookup := cube.get_shared_vertex_lookup()
+	var moved_grps: Dictionary = {}
+	for i in range(cube.positions.size()):
+		var p := cube.positions[i]
+		if absf(p.y - 0.5) < 0.001 and absf(p.z - (-0.5)) < 0.001:
+			moved_grps[lookup[i]] = true
+
+	for grp in moved_grps:
+		for pos_idx in cube.shared_vertices[grp].indices:
+			cube.positions[pos_idx].z += 0.3
+
+	# 3. Subdivide top face into 4 quads
+	var sub_res := PBMeshOps.subdivide_faces(cube, PackedInt32Array([4]))
+	assert_true(sub_res["ok"])
+	lookup = cube.get_shared_vertex_lookup()
+
+	# 4. Pull out the middle verts to create pointy overhangs
+	for i in range(cube.positions.size()):
+		var p := cube.positions[i]
+		if absf(p.y - 0.5) < 0.01:
+			if absf(p.x - (-0.5)) < 0.01 and absf(p.z - 0.15) < 0.05:
+				var grp: int = lookup[i]
+				for pos_idx in cube.shared_vertices[grp].indices:
+					cube.positions[pos_idx].x -= 0.3
+			elif absf(p.x - 0.5) < 0.01 and absf(p.z - 0.15) < 0.05:
+				var grp: int = lookup[i]
+				for pos_idx in cube.shared_vertices[grp].indices:
+					cube.positions[pos_idx].x += 0.3
+			elif absf(p.z - 0.5) < 0.01 and absf(p.x) < 0.01:
+				var grp: int = lookup[i]
+				for pos_idx in cube.shared_vertices[grp].indices:
+					cube.positions[pos_idx].z += 0.3
+			elif absf(p.z - (-0.2)) < 0.01 and absf(p.x) < 0.01:
+				var grp: int = lookup[i]
+				for pos_idx in cube.shared_vertices[grp].indices:
+					cube.positions[pos_idx].z -= 0.3
+
+	# 5. Pull up one of the 4 quadrants on the top face
+	var q_face: PBFace = cube.faces[0]
+	for idx in q_face.get_distinct_indexes():
+		cube.positions[idx].y += 0.4
+
+	# Refresh UVs
+	PBUv.refresh_mesh_uvs(cube)
+
+	# Verify that coincident/seam vertices across adjacent top quads have matching UVs
+	lookup = cube.get_shared_vertex_lookup()
+	var top_face_ids := PackedInt32Array([0, 1, 2, 3])
+	for i in range(top_face_ids.size()):
+		var fa: PBFace = cube.faces[top_face_ids[i]]
+		for j in range(i + 1, top_face_ids.size()):
+			var fb: PBFace = cube.faces[top_face_ids[j]]
+			for ia in fa.get_distinct_indexes():
+				var ga: int = lookup.get(ia, -1)
+				for ib in fb.get_distinct_indexes():
+					var gb: int = lookup.get(ib, -1)
+					if ga >= 0 and ga == gb:
+						# Coincident seam vertex: UVs must match!
+						var uva: Vector2 = cube.textures0[ia]
+						var uvb: Vector2 = cube.textures0[ib]
+						assert_almost_eq(uva.x, uvb.x, 0.001,
+							"Seam vertex (grp %d) UV.x must match across adjacent quads %d and %d" % [ga, i, j])
+						assert_almost_eq(uva.y, uvb.y, 0.001,
+							"Seam vertex (grp %d) UV.y must match across adjacent quads %d and %d" % [ga, i, j])
 # ==============================================================================
 # 3. Tiling, Scale & 45-Degree Diagonal
 # ==============================================================================
