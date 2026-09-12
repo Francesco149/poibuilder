@@ -597,3 +597,117 @@ func test_cmd_mesh_op_undo_manager_registration():
 	assert_eq(fake.do_object, cmd)
 	assert_eq(fake.do_method, "do_it")
 	assert_eq(fake.undo_method, "undo_it")
+
+func test_delaunay_refine_2d_pentagon_split_midpoint():
+	var pts := PackedVector2Array([
+		Vector2(0, 0), Vector2(2, 0), Vector2(2, 1), Vector2(1, 1), Vector2(0, 1)
+	])
+	var tris := PBShapeComplex._triangulate_2d(pts)
+	assert_eq(tris.size(), 3, "Pentagon triangulates into 3 triangles")
+
+	var count_touching_tm := 0
+	var has_bad_diagonal := false
+	for tri in tris:
+		if 3 in tri:
+			count_touching_tm += 1
+		var t0: int = tri[0]
+		var t1: int = tri[1]
+		var t2: int = tri[2]
+		var e1 := Vector2i(mini(t0, t1), maxi(t0, t1))
+		var e2 := Vector2i(mini(t1, t2), maxi(t1, t2))
+		var e3 := Vector2i(mini(t2, t0), maxi(t2, t0))
+		if e1 == Vector2i(1, 4) or e2 == Vector2i(1, 4) or e3 == Vector2i(1, 4):
+			has_bad_diagonal = true
+
+	assert_eq(count_touching_tm, 3, "All 3 triangles must touch split midpoint (ProBuilder parity)")
+	assert_false(has_bad_diagonal, "Must not contain asymmetric diagonal crossing the face (TL to BR)")
+
+func test_delaunay_refine_2d_pentagon_house_preserves_crease():
+	var pts := PackedVector2Array([
+		Vector2(-1, 0), Vector2(1, 0), Vector2(1, 2), Vector2(0, 3), Vector2(-1, 2)
+	])
+	var tris := PBShapeComplex._triangulate_2d(pts)
+	assert_eq(tris.size(), 3, "House pentagon triangulates into 3 triangles")
+
+	var has_crease_edge := false
+	for tri in tris:
+		var t0: int = tri[0]
+		var t1: int = tri[1]
+		var t2: int = tri[2]
+		var e1 := Vector2i(mini(t0, t1), maxi(t0, t1))
+		var e2 := Vector2i(mini(t1, t2), maxi(t1, t2))
+		var e3 := Vector2i(mini(t2, t0), maxi(t2, t0))
+		if e1 == Vector2i(2, 4) or e2 == Vector2i(2, 4) or e3 == Vector2i(2, 4):
+			has_crease_edge = true
+	assert_true(has_crease_edge, "Delaunay triangulation must preserve horizontal crease between wall and roof")
+
+func test_subdivided_face_moving_midpoint_vertex_pinches_symmetrically():
+	var data := _cube()
+	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
+	assert_true(result["ok"])
+
+	var lookup := data.get_shared_vertex_lookup()
+	var back_face: PBFace = null
+	for f in data.faces:
+		var n: Vector3 = _face_normal(data, data.faces.find(f))
+		if n.dot(Vector3(0, 0, 1)) > 0.9:
+			back_face = f
+			break
+	assert_not_null(back_face, "Found neighbor back face (+Z)")
+	assert_eq(back_face.get_indexes().size(), 9, "Neighbor back face (+Z) is triangulated into 3 triangles (9 indices)")
+	var top_mid_idx := -1
+	for idx in back_face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if absf(p.z - 0.5) < 0.001 and absf(p.y - 0.5) < 0.001 and absf(p.x) < 0.001:
+			top_mid_idx = idx
+			break
+	assert_gt(top_mid_idx, -1, "Found top-mid vertex on back face")
+
+	var idxs := back_face.get_indexes()
+	var tris_touching_mid := 0
+	for i in range(0, idxs.size(), 3):
+		if idxs[i] == top_mid_idx or idxs[i + 1] == top_mid_idx or idxs[i + 2] == top_mid_idx:
+			tris_touching_mid += 1
+	assert_eq(tris_touching_mid, 3, "All 3 triangles in neighbor face must connect to top-mid vertex")
+
+	var grp: int = lookup[top_mid_idx]
+	for pos_idx in data.shared_vertices[grp].indices:
+		data.positions[pos_idx] += Vector3(0.0, 0.0, 0.4)
+	_assert_watertight(data, "subdivided cube with top-mid moved outward")
+
+func test_subdivided_face_moving_middle_edge_up_preserves_uvs_without_diagonal_stripes():
+	var data := _cube()
+	var result := PBMeshOps.subdivide_faces(data, PackedInt32Array([4]))
+	assert_true(result["ok"])
+
+	var top_quad_ids: Array = []
+	for fid in range(data.faces.size()):
+		var n: Vector3 = _face_normal(data, fid)
+		if n.dot(Vector3.UP) > 0.9:
+			top_quad_ids.append(fid)
+	assert_eq(top_quad_ids.size(), 4, "4 top quads created")
+
+	var lookup := data.get_shared_vertex_lookup()
+	var moved_grps: Dictionary = {}
+	for qid: int in top_quad_ids:
+		var face: PBFace = data.faces[qid]
+		for idx in face.get_distinct_indexes():
+			var p: Vector3 = data.positions[idx]
+			if absf(p.y - 0.5) < 0.001 and absf(p.x) < 0.001:
+				moved_grps[lookup[idx]] = true
+
+	for grp in moved_grps:
+		for pos_idx in data.shared_vertices[grp].indices:
+			data.positions[pos_idx].y += 0.5
+
+	for qid: int in top_quad_ids:
+		var normal: Vector3 = _face_normal(data, qid)
+		var basis := PBUv.get_planar_basis(normal)
+		var u: Vector3 = basis["u"]
+		var v: Vector3 = basis["v"]
+
+		assert_gt(absf(u.x), 0.65, "Quad %d U must be aligned with world X-slope" % qid)
+		assert_lt(absf(u.z), 0.1, "Quad %d U must have negligible Z component" % qid)
+		assert_gt(absf(v.z), 0.8, "Quad %d V must be aligned with world Z" % qid)
+		assert_lt(absf(v.x), 0.1, "Quad %d V must have negligible X component" % qid)
+		assert_almost_eq(u.dot(v), 0.0, 0.001, "Quad %d U and V must be orthogonal" % qid)

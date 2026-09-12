@@ -198,22 +198,26 @@ func _select() -> void:
 ## cube's valence-3 corners stop immediately; the loop is shown where it
 ## exists, on the loop cut beat's own new edges.)
 func _edge_loop() -> void:
-	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "brick", Vector3.ZERO, 0.38, 34.0, 24.0)
+	obj = await _fresh("DemoCube", PBMeshData.create_cube(2.0), "steel", Vector3.ZERO, 0.38, 34.0, 24.0)
 	var f := d.framing_node(obj, 0.38, 34.0, 24.0)
 	await d.click_button("edge")
 	# The box sits on the ground, so a corner click at (±1, 1, ±1) is the middle
 	# of a vertical edge.
 	await d.orbit_glide(f["center"], 34.0, 44.0, 24.0, f["dist"],
 		Vector3(1.0, 1.0, 1.0), 24, f["aim"])
-	await d.click(Vector2.INF, 12, ["alt", "shift"])
+	await d.click(Vector2.INF, 14, ["alt", "shift"])
 	var sel = d.plugin.editor.selection
 	d.check(sel.selected_edges.size() == 4,
 		"shift+alt+click expanded the edge to its ring (%d edges)" % sel.selected_edges.size())
-	# The expansion is live: the whole ring moves with a drag of the seed.
+	# Check that the whole ring is captured for moving
 	var moved: int = await d.off(func():
 		return d.element_editor().element_indices(obj.pb_mesh_data, d.subgizmo_ids()[0]).size())
 	d.check(moved >= 8, "the ring's corners follow the seed's drag (%d positions)" % moved)
-	await d.swing_framing(d.framing_node(obj, 0.38, 44.0, 24.0), 34, 14.0, -3.0)
+	# Pause so the yellow highlight across the whole loop is vividly seen on the dark texture
+	await d.frames(20)
+	# Move the selection so the entire edge loop visibly moves together
+	await d.move_selection(Vector3(0.35, 0.0, 0.35), 36)
+	await d.cam_swing(f["center"] + Vector3(0.18, 0.0, 0.18), 44.0, 72.0, 24.0, 32.0, f["dist"], 40, 1, f["aim"])
 	await d.click_button("face")
 
 ## Face manipulation on a doorway: the SIMPLE case first (a side quad), then

@@ -123,6 +123,84 @@ func test_planar_basis_sloped_surface():
 	assert_almost_eq(u.dot(normal), 0.0, 0.001, "U and Normal must be orthogonal")
 	assert_almost_eq(v.dot(normal), 0.0, 0.001, "V and Normal must be orthogonal")
 
+
+func test_planar_basis_cardinal_slopes_maintain_grid_alignment():
+	# Z-slopes (facing +Z or -Z): U is horizontal (along X), V runs up the slope
+	var z_slopes: Array[Vector3] = [
+		Vector3(0, 1, 1).normalized(),   # facing +Z / +Y
+		Vector3(0, 1, -1).normalized(),  # facing -Z / +Y
+	]
+	for n in z_slopes:
+		var basis := PBUv.get_planar_basis(n)
+		var u: Vector3 = basis["u"]
+		var v: Vector3 = basis["v"]
+		assert_almost_eq(u.y, 0.0, 0.001, "For Z-slope %s, U must be horizontal" % str(n))
+		assert_gt(v.y, 0.0, "For Z-slope %s, V must point up the slope (v.y > 0)" % str(n))
+		assert_almost_eq(u.dot(v), 0.0, 0.001, "U and V must be orthogonal for %s" % str(n))
+		assert_almost_eq(u.dot(n), 0.0, 0.001, "U and N must be orthogonal for %s" % str(n))
+		assert_almost_eq(v.dot(n), 0.0, 0.001, "V and N must be orthogonal for %s" % str(n))
+
+	# X-slopes (facing +X or -X): V is horizontal (along Z), U runs up the slope
+	var x_slopes: Array[Vector3] = [
+		Vector3(1, 1, 0).normalized(),   # facing +X / +Y
+		Vector3(-1, 1, 0).normalized(),  # facing -X / +Y
+	]
+	for n in x_slopes:
+		var basis := PBUv.get_planar_basis(n)
+		var u: Vector3 = basis["u"]
+		var v: Vector3 = basis["v"]
+		assert_almost_eq(v.y, 0.0, 0.001, "For X-slope %s, V must be horizontal" % str(n))
+		assert_gt(absf(u.y), 0.0, "For X-slope %s, U must tilt along the slope" % str(n))
+		assert_almost_eq(u.dot(v), 0.0, 0.001, "U and V must be orthogonal for %s" % str(n))
+		assert_almost_eq(u.dot(n), 0.0, 0.001, "U and N must be orthogonal for %s" % str(n))
+		assert_almost_eq(v.dot(n), 0.0, 0.001, "V and N must be orthogonal for %s" % str(n))
+
+func test_planar_basis_dominant_y_mild_tilts_prevent_diagonal_stripes():
+	# Mild tilts on horizontal surfaces (lifting edges or vertices, non-planar quads)
+	var tilts: Array[Vector3] = [
+		Vector3(-0.4472, 0.8944, 0.0).normalized(), # pure X slope
+		Vector3(0.0, 0.8944, -0.4472).normalized(), # pure Z slope
+		Vector3(0.236, 0.943, -0.236).normalized(),  # compound non-planar tilt
+		Vector3(-0.236, 0.943, 0.236).normalized(),  # compound non-planar tilt
+	]
+	for n in tilts:
+		var basis := PBUv.get_planar_basis(n)
+		var u: Vector3 = basis["u"]
+		var v: Vector3 = basis["v"]
+		# Must stay aligned to grid axes rather than spinning to 45 degrees
+		assert_gt(absf(u.x), 0.8, "Tilt %s: U must be predominantly aligned with X" % str(n))
+		assert_lt(absf(u.z), 0.2, "Tilt %s: U must not have large Z component" % str(n))
+		assert_gt(absf(v.z), 0.8, "Tilt %s: V must be predominantly aligned with Z" % str(n))
+		assert_lt(absf(v.x), 0.2, "Tilt %s: V must not have large X component" % str(n))
+		assert_almost_eq(u.dot(v), 0.0, 0.001, "U and V must be orthogonal for %s" % str(n))
+
+func test_planar_basis_degenerate_or_inverted_normals():
+	# Zero or degenerate normal
+	var b0 := PBUv.get_planar_basis(Vector3.ZERO)
+	assert_eq(b0["u"], Vector3.RIGHT)
+	assert_eq(b0["v"], Vector3.BACK)
+
+	# Very tiny normal
+	var b_tiny := PBUv.get_planar_basis(Vector3(0.0, 0.0000001, 0.0))
+	assert_eq(b_tiny["u"], Vector3.RIGHT)
+	assert_eq(b_tiny["v"], Vector3.BACK)
+
+func test_subdivided_face_inherits_uv_settings():
+	var cube := PBMeshData.create_cube(1.0)
+	var top_face: PBFace = cube.faces[4]
+	top_face.uv_scale = Vector2(3.0, 3.0)
+	top_face.uv_offset = Vector2(0.25, 0.5)
+	top_face.uv_rotation = 15.0
+
+	var res := PBMeshOps.subdivide_faces(cube, PackedInt32Array([4]))
+	assert_true(res["ok"])
+
+	# All new cap faces must inherit the custom uv_scale, uv_offset, uv_rotation
+	for fid in res["new_face_ids"]:
+		var f: PBFace = cube.faces[fid]
+		assert_eq(f.uv_scale, Vector2(3.0, 3.0), "Face %d must inherit uv_scale" % fid)
+		assert_eq(f.uv_offset, Vector2(0.25, 0.5), "Face %d must inherit uv_offset" % fid)
+		assert_eq(f.uv_rotation, 15.0, "Face %d must inherit uv_rotation" % fid)
 # ==============================================================================
 # 3. Tiling, Scale & 45-Degree Diagonal
 # ==============================================================================

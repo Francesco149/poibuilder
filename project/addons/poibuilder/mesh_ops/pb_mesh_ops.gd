@@ -240,6 +240,15 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 				quad[2], quad[3], quad[0],
 			]))
 			f.submesh_index = face.submesh_index
+			f.uv_scale = face.uv_scale
+			f.uv_offset = face.uv_offset
+			f.uv_rotation = face.uv_rotation
+			f.uv_use_world_space = face.uv_use_world_space
+			f.uv_flip_u = face.uv_flip_u
+			f.uv_flip_v = face.uv_flip_v
+			f.uv_swap_uv = face.uv_swap_uv
+			f.uv_fill = face.uv_fill
+			f.uv_anchor = face.uv_anchor
 			new_faces.append(f)
 
 		removed[fi] = true
@@ -288,14 +297,11 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 				var new_mid := _dup_position_at(mesh_data, mid_pos, na)
 				new_cycle.append(new_mid)
 
-		# Triangulate planar n-gon into non-degenerate triangles
+		# Triangulate planar n-gon into non-degenerate triangles using robust planar basis
 		var norm := PBMath.normal_from_positions(mesh_data.positions, nface.get_indexes())
-		var u := norm.cross(Vector3.UP)
-		if u.length_squared() < 0.25:
-			u = norm.cross(Vector3.RIGHT)
-		u = u.normalized()
-		var v := norm.cross(u).normalized()
-
+		var basis := PBUv.get_planar_basis(norm)
+		var u: Vector3 = basis["u"]
+		var v: Vector3 = basis["v"]
 		var pts2d := PackedVector2Array()
 		for idx in new_cycle:
 			var p: Vector3 = mesh_data.positions[idx]
@@ -337,10 +343,20 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 
 		var new_nface := PBFace.new(face_idxs)
 		new_nface.submesh_index = nface.submesh_index
+		new_nface.uv_scale = nface.uv_scale
+		new_nface.uv_offset = nface.uv_offset
+		new_nface.uv_rotation = nface.uv_rotation
+		new_nface.uv_use_world_space = nface.uv_use_world_space
+		new_nface.uv_flip_u = nface.uv_flip_u
+		new_nface.uv_flip_v = nface.uv_flip_v
+		new_nface.uv_swap_uv = nface.uv_swap_uv
+		new_nface.uv_fill = nface.uv_fill
+		new_nface.uv_anchor = nface.uv_anchor
 		updated_neighbor_faces.append(new_nface)
 		removed[nfi] = true
 	var res := _replace_faces(mesh_data, removed, new_faces, updated_neighbor_faces)
 	res["new_face_ids"] = res["cap_face_ids"]
+	PBUv.refresh_mesh_uvs(mesh_data)
 	return res
 ## Deletes the selected faces and compacts away now-orphaned vertices.
 static func delete_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Dictionary:
