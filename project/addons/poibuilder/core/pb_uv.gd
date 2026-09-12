@@ -200,6 +200,23 @@ static func refresh_mesh_uvs(mesh_data: PBMeshData, force_all: bool = false) -> 
 			if idx >= 0 and idx < vc:
 				mesh_data.textures0[idx] = face_uvs[idx]
 
+## Re-projects ONE face's UVs from its own planar basis and writes them into
+## the mesh. Used by the mesh ops that BUILD a face out of other faces (merge):
+## the new n-gon would otherwise inherit its corners' old UVs, which fan out
+## into diagonal stripes as soon as it is moved.
+static func apply_face_uvs(mesh_data: PBMeshData, face: PBFace, force := false) -> void:
+	if mesh_data == null or face == null:
+		return
+	if face.manual_uv and not force:
+		return
+	var vc: int = mesh_data.positions.size()
+	if mesh_data.textures0.size() != vc:
+		mesh_data.textures0.resize(vc)
+	var uvs := calculate_face_uvs(mesh_data, face)
+	for idx: int in uvs:
+		if idx >= 0 and idx < vc:
+			mesh_data.textures0[idx] = uvs[idx]
+
 ## Configures the face for 45-degree diagonal tiling so that the texture width
 ## matches the grid diagonal (sqrt(1+1) = sqrt(2) on a 1m grid).
 static func set_face_45_degree_diagonal(face: PBFace) -> void:

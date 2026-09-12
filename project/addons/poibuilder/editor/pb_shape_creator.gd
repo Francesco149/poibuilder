@@ -381,6 +381,13 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 	var longer_dir := u_dir if longer_is_u else v_dir
 	var shorter_dir := v_dir if longer_is_u else u_dir
 	var natural_axis := shorter_dir if prefers_shorter else longer_dir
+	# A shape with a facing (door, stairs) gets its facing axis snapped to the
+	# nearest WORLD axis on a cardinal surface. Without this the axis is picked in
+	# the DRAG's own frame, which is camera-relative: the same doorway came out
+	# facing sideways or forward depending only on where the camera happened to
+	# be, and a sideways doorway reads as a plain cube from the courtyard.
+	if (prefers_shorter or is_stair) and PBGrid.is_cardinal(plane_normal):
+		natural_axis = _world_axis_near(natural_axis)
 
 	# 2. Check for deliberate lateral nudge (moving perpendicular to current facing)
 	# A nudge only triggers AFTER the initial base rectangle has been established.
@@ -410,6 +417,14 @@ func _update_facing(point: Vector3, v_dir: Vector3) -> void:
 	var sign_val: float = signf(toward) if toward != 0.0 else signf(step.dot(chosen_axis))
 	facing = chosen_axis * (sign_val if sign_val != 0.0 else 1.0)
 
+
+## Nearest world XZ axis to `axis` (used to keep a facing off diagonals).
+func _world_axis_near(axis: Vector3) -> Vector3:
+	var fx := absf(axis.x)
+	var fz := absf(axis.z)
+	if fx < 0.0001 and fz < 0.0001:
+		return axis
+	return Vector3.RIGHT if fx >= fz else Vector3.BACK
 
 ## Returns a human-readable readout of the shape's live extents during placement
 ## (e.g. "W: 4.00m  D: 2.00m  H: 2.50m" or "Radius: 1.00m  Height: 2.00m").

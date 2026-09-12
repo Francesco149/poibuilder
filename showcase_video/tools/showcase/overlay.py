@@ -40,12 +40,16 @@ class OverlayPlan:
     zoom_span: int = 0
     frame_style: str = ""
     frame_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
+    # "cover" or "contain" — part of the mapping, because a letterboxed clip
+    # scales to FIT its box while a covering one scales to FILL it.
+    fit_mode: str = "cover"
 
 
 def plan_overlay(clip: Clip, session: Session | None, shot, crop: tuple[int, int, int, int],
                  out_size: tuple[int, int], first: int, frames: int,
                  clicks: list[tuple[int, int, int]],
-                 frame_rect: tuple[int, int, int, int] = (0, 0, 0, 0)) -> OverlayPlan:
+                 frame_rect: tuple[int, int, int, int] = (0, 0, 0, 0),
+                 fit_mode: str = "cover") -> OverlayPlan:
     return OverlayPlan(
         session_dir=str(session.root) if session is not None else "",
         shot_dir=shot.directory if shot is not None else "",
@@ -61,6 +65,7 @@ def plan_overlay(clip: Clip, session: Session | None, shot, crop: tuple[int, int
         clicks=clicks,
         frame_style=clip.frame,
         frame_rect=frame_rect,
+        fit_mode=fit_mode,
     )
 
 
@@ -105,8 +110,14 @@ def render_frame(plan: OverlayPlan, index: int, cursors: list[tuple[int, int]]) 
         canvas.alpha_composite(layer, (int(x), int(y + slide)))
 
     if plan.cursor:
-        cx, cy = cursors[index] if index < len(cursors) else (0, 0)
-        px, py = map_pt(float(cx), float(cy), index * plan.speed)
+        wx, wy = cursors[index] if index < len(cursors) else (0, 0)
+        rx, ry, rw, rh = plan.region
+        # A click recorded OUTSIDE the clip's crop (a toolbar click on a clip that
+        # only shows the viewport) has no pixel to sit on: drawing it anyway put a
+        # stray cursor on the frame's edge.
+        if not (rx <= wx < rx + rw and ry <= wy < ry + rh):
+            return canvas
+        px, py = map_pt(float(wx), float(wy), index * plan.speed)
         if -80 < px < W + 80 and -80 < py < H + 80:
             click = 0.0
             for (cf, _x, _y) in plan.clicks:

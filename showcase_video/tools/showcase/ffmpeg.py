@@ -161,17 +161,24 @@ def fit_filter(fit: Fit) -> list[str]:
     return parts
 
 
-def zoom_filter(zoom: list[float], span: int) -> str:
-    """A slow push-in/pull-out that keeps the stream's own size.
+def zoom_filter(zoom: list[float], span: int, size: tuple[int, int], fps: int) -> str:
+    """A slow push-in/pull-out.
 
-    ``crop`` re-evaluates its size expressions every frame (they are timeline
-    options), which is the cheapest way to animate a scale-and-centre; zoompan
-    would also work but quantises the window to whole pixels and judders.
+    WHY NOT THE OBVIOUS crop: ``crop`` evaluates its SIZE expressions (w/h) once,
+    at init, and only x/y per frame, so the ``crop=w='iw/(z0+d*n)'`` this used to
+    emit produced a FROZEN crop at the start value — every "slow push-in" in the
+    timeline was silently a static shot (found by tools/showcase/cursor_check.py,
+    which drives a marker through the real filtergraph). ``scale`` ignores
+    ``eval=frame`` in this build and stays frozen too. ``zoompan`` is the filter
+    that does animate a zoom; ``d=1`` emits one output frame per input frame and
+    ``s`` keeps the stream at the size the rest of the chain expects.
     """
     z0, z1 = float(zoom[0]), float(zoom[1])
     d = (z1 - z0) / max(span, 1)
-    return (f"crop=w='iw/({z0:.6f}+({d:.8f})*n)':h='ih/({z0:.6f}+({d:.8f})*n)'"
-            f":x='(iw-ow)/2':y='(ih-oh)/2'")
+    w, h = size
+    return (f"zoompan=z='{z0:.6f}+({d:.8f})*on':d=1"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":s={w}x{h}:fps={fps}")
 
 
 def grade_filter(grade: dict) -> str:
@@ -220,7 +227,9 @@ def clip_filter(
     if zoom and abs(float(zoom[1]) - float(zoom[0])) > 1e-4:
         # The crop expressions count SOURCE frames, so the zoom span is the
         # clip's source span (out_frames * speed), not its output length.
-        chain.append(zoom_filter(zoom, max((zoom_span or out_frames) - 1, 1)))
+        rw, rh = (region[2], region[3]) if region else (0, 0)
+        chain.append(zoom_filter(zoom, max((zoom_span or out_frames) - 1, 1),
+                                 (rw, rh) if rw and rh else (out_frames, out_frames), fps))
     chain.extend(fit_filter(fit))
     chain.append("setsar=1")
     if grade:

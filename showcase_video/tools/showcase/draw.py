@@ -111,9 +111,33 @@ def cursor_sprite(height: int = 46) -> Image.Image:
     return img.resize((img.width // ss, img.height // ss), Image.LANCZOS)
 
 
+_HOTSPOTS: dict[tuple[int, int], tuple[int, int]] = {}
+
+
 def cursor_hotspot(sprite: Image.Image) -> tuple[int, int]:
-    """Pixel offset of the arrow's tip inside the sprite."""
-    return (int(sprite.width * 0.28), int(sprite.height * 0.19))
+    """Pixel offset of the arrow's TIP inside the sprite.
+
+    MEASURED from the sprite, not guessed: this used to be a pair of magic
+    fractions (0.28/0.19 of the sprite's size), which placed the drawn cursor
+    about 8 px up and left of the point that was actually clicked — the
+    "the mouse is consistently offset" report. Scanning once per sprite size
+    keeps it correct if the art ever changes.
+    """
+    key = sprite.size
+    if key not in _HOTSPOTS:
+        alpha = sprite.getchannel("A")
+        w, h = sprite.size
+        found = (0, 0)
+        for y in range(h):
+            for x in range(w):
+                if alpha.getpixel((x, y)) > 40:
+                    found = (x, y)
+                    break
+            else:
+                continue
+            break
+        _HOTSPOTS[key] = found
+    return _HOTSPOTS[key]
 
 
 def draw_cursor(base: Image.Image, pos: tuple[float, float], height: int = 46,
@@ -313,29 +337,41 @@ def card_background(size: int, height: int, title: str, sub: str,
 # ---------------------------------------------------------------------------
 
 def make_mapper(crop: tuple[int, int, int, int], out_size: tuple[int, int],
-                zoom: tuple[float, float] | None, span: int):
-    """Maps a window-space point to output pixels, matching the ffmpeg chain.
+                zoom: tuple[float, float] | None, span: int,
+                frame_rect: tuple[int, int, int, int] = (0, 0, 0, 0),
+                fit_mode: str = "cover"):
+    """Maps a window-space point to output pixels, mirroring the ffmpeg chain.
 
-    Mirrors, in order: the region crop, the animated centre crop (``zoom``) and
-    the scale-to-cover of the output frame. ``i`` is a SOURCE frame offset and
+    The chain is, in order: the region crop, the animated centre crop (``zoom``)
+    and the fit into the clip's box inside the output frame — ``cover`` (scale
+    to fill, centre-crop the overflow) or ``contain`` (scale to fit, pad). The
+    box's own offset matters too: a clip placed with ``into`` does not start at
+    0,0, and a mapper that assumed it did put the drawn cursor off by the box's
+    offset on exactly the clips that used it. ``i`` is a SOURCE frame offset and
     ``span`` the number of source frames the clip walks, because that is what
     the crop expression in the filtergraph counts.
     """
     cx, cy, cw, ch = crop
     W, H = out_size
     z0, z1 = (zoom or (1.0, 1.0))
+    bx, by, bw, bh = frame_rect if frame_rect != (0, 0, 0, 0) else (0, 0, W, H)
 
     def f(x: float, y: float, i: float) -> tuple[float, float]:
         z = z0 + (z1 - z0) * (i / max(span - 1, 1))
         w, h = cw / z, ch / z
         ox, oy = cx + (cw - w) / 2.0, cy + (ch - h) / 2.0
-        scale = max(W / w, H / h)
-        px = (x - ox - w / 2.0) * scale + W / 2.0
-        py = (y - oy - h / 2.0) * scale + H / 2.0
+        u, v = x - ox - w / 2.0, y - oy - h / 2.0
+        if fit_mode == "contain":
+            scale = min(bw / w, bh / h)
+            px = bx + (bw - w * scale) / 2.0 + u * scale + w * scale / 2.0
+            py = by + (bh - h * scale) / 2.0 + v * scale + h * scale / 2.0
+        else:
+            scale = max(bw / w, bh / h)
+            px = bx + u * scale + bw / 2.0
+            py = by + v * scale + bh / 2.0
         return px, py
 
     return f
-
 
 # ---------------------------------------------------------------------------
 # frames (rounded device / inset styling around placed content)

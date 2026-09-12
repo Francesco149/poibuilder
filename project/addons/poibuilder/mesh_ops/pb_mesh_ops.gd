@@ -423,7 +423,16 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 	if not any_merged:
 		return _fail("Merge faces: no edge-adjacent faces in selection")
 
-	return _replace_faces(mesh_data, removed, merged_faces, [])
+	var result := _replace_faces(mesh_data, removed, merged_faces, [])
+	if not result.get("ok", false):
+		return result
+	# Re-project the merged faces' UVs: a corner keeps the UV it had in the piece
+	# it came from, so a merged n-gon fan-triangulates into diagonal stripes the
+	# moment it moves (the showcase's checkerboard made that obvious).
+	for fid in result.get("cap_face_ids", PackedInt32Array()):
+		if fid >= 0 and fid < mesh_data.faces.size():
+			PBUv.apply_face_uvs(mesh_data, mesh_data.faces[fid])
+	return result
 
 ## Welds (merges) the selected shared-vertex groups: every position in the
 ## selected groups snaps to their common centroid and the groups collapse

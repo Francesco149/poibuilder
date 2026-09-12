@@ -457,17 +457,18 @@ captions = [
 ]
 
 [[clip]]
-id = "71-psp-mist"
+id = "71-psp-emitters"
 kind = "video"
 file = "psp-day.mp4"
-# The impact point: the mist emitter is the whole visual, and the HUD line
-# above it reads "Parts: 46" — the per-map budget, in one draw.
+# The handheld camera is panning from the fall toward the courtyard here, and
+# what fills this window is the emitters FIRING (with "Parts: 46" on the HUD) —
+# the caption says that rather than promising a mist close-up it does not have.
 at = 5.0
 dur = 2.6
 cursor = false
 grade = { temperature = 4200, mix = 0.8, saturation = 0.88, contrast = 1.10, brightness = -0.02 }
 captions = [
-  { label = "Particles", text = "Mist at the fall — emitters are a format feature", at = 0.25, dur = 2.2, pos = "bc" },
+  { label = "Particles", text = "Emitters firing — 46 particles, one draw", at = 0.25, dur = 2.2, pos = "bc" },
 ]
 
 [[clip]]
@@ -493,7 +494,7 @@ dur = 2.6
 cursor = false
 grade = { temperature = 4200, mix = 0.8, saturation = 0.88, contrast = 1.10, brightness = -0.02 }
 captions = [
-  { label = "Hardware", text = "Animated water on the same device", at = 0.25, dur = 2.2, pos = "bc" },
+  { label = "Hardware", text = "The fall, its pool and the wet stone", at = 0.25, dur = 2.2, pos = "bc" },
 ]
 
 [[clip]]
@@ -513,8 +514,8 @@ captions = [
 id = "75-psp-hud"
 kind = "video"
 file = "psp-day.mp4"
-at = 14.6
-dur = 2.0
+at = 14.2
+dur = 4.0
 crop = [462, 220, 1096, 190]
 into = [100, 258, 1096, 190]
 fit = "contain"

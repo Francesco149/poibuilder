@@ -314,11 +314,14 @@ func _waterfall() -> void:
 		Vector2(1.2, 0.5))
 	_keep("FallCore", core)
 	# the pool on the floor, spreading away from the wall
-	var pool := await _plane("FallPool", Vector3(2.7, 0.0, -5.0), Vector3(6.3, 0.0, -1.8), 0.04,
+	var pool := await _plane("FallPool", Vector3(2.7, 0.0, -5.0), Vector3(6.3, 0.0, -1.8), 0.06,
 		TestMapShowcaseBuilder.water_material("FallPool_Mat", WATER_POOL, Vector2(0.02, -0.03), true),
 		Vector2(0.55, 0.55))
 	_keep("FallPool", pool)
-	var foam := await _plane("FallFoam", Vector3(3.1, 0.0, -5.0), Vector3(5.9, 0.0, -3.4), 0.06,
+	# The foam sits ON the pool and they overlap in plan: 2 cm apart they fought
+	# for depth on camera, which is what the striped band across the wet floor
+	# was. 12 cm is the smallest separation that stays clear at grazing angles.
+	var foam := await _plane("FallFoam", Vector3(3.1, 0.0, -5.0), Vector3(5.9, 0.0, -3.4), 0.18,
 		TestMapShowcaseBuilder.water_material("FallFoam_Mat", WATER_FOAM, Vector2(0.0, -0.30), true),
 		Vector2(0.5, 0.9))
 	_keep("FallFoam", foam)
