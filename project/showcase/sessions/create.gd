@@ -145,8 +145,10 @@ func _surfaces() -> void:
 	await _drag_create(&"cube", wall_pt + Vector3(-0.9, -0.8, 0.0), wall_pt + Vector3(0.9, 0.8, 0.0), 1.4)
 	var on_wall := _created()
 	d.check(on_wall.size() == 2, "the wall drag created a second shape (%d)" % on_wall.size())
+	var wall_shape: PBMesh = null
 	for n in on_wall:
 		if n != made:
+			wall_shape = n
 			_tint(n, "brick")
 			await d.frames(8)
 	# 3. the sloped face: the prism's incline, which the drag follows in its own
@@ -160,10 +162,9 @@ func _surfaces() -> void:
 	d.check(all.size() == 3, "the slope drag created a third shape (%d)" % all.size())
 	var slope_shape: PBMesh = null
 	for n in all:
-		if n != made:
+		if n != made and n != wall_shape:
+			slope_shape = n
 			_tint(n, "moss")
-			if n.global_position.y > 0.3:
-				slope_shape = n
 	d.check(slope_shape != null, "the third shape sits ON the slope, not on the floor")
 	await d.frames(8)
 	await d.frames(8)

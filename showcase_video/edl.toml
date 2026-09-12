@@ -105,19 +105,19 @@ caption = { label = "Create", text = "Drag on any surface — the floor first", 
 id = "11-create-wall"
 source = "create:create/surfaces"
 region = "viewport_ui"
-at = 5.2
-dur = 3.2
+at = 5.0
+dur = 2.1
 zoom = [1.0, 1.18]
-caption = { label = "Create", text = "…the same drag on a wall: it grows along the normal", at = 0.2, dur = 2.8 }
+caption = { label = "Create", text = "…the same drag on a wall: it grows along the normal", at = 0.2, dur = 1.8 }
 
 [[clip]]
 id = "12-create-slope"
 source = "create:create/surfaces"
 region = "viewport_ui"
-at = 8.5
-dur = 2.5
+at = 7.1
+dur = 2.3
 zoom = [1.0, 1.18]
-caption = { label = "Create", text = "…and on a slope", at = 0.2, dur = 2.2 }
+caption = { label = "Create", text = "…and on a slope", at = 0.2, dur = 2.0 }
 
 [[clip]]
 id = "13-create-stairs"
@@ -230,9 +230,9 @@ caption = { label = "Edit", text = "Merge coplanar faces, then move them as one"
 id = "27b-edit-merge-ngon"
 source = "edit:edit/merge_ngon"
 region = "viewport_ui"
-at = -9.0
-dur = 9.0
-caption = { label = "Edit", text = "Merge across a crease — one bent n-gon, and the column grows", at = 0.3, dur = 8.4 }
+at = -6.5
+dur = 6.5
+caption = { label = "Edit", text = "Merge across a crease — one bent n-gon", at = 0.3, dur = 5.8 }
 
 [[clip]]
 id = "28-edit-weld"
@@ -427,7 +427,7 @@ caption = { label = "The map", text = "Particle emitters — brazier flames, mis
 id = "67-map-export"
 source = "map:map/export"
 region = "viewport_ui"
-at = -3.0
+at = 0.2
 dur = 3.0
 caption = { label = "The map", text = "One click to a retro .pbm map", at = 0.2, dur = 2.6 }
 

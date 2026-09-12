@@ -2355,6 +2355,48 @@ physics-reproduced headlessly — "stuck the moment I touch them"):
 - Version bump convention applied (0.9.28 -> 0.9.29 in plugin, editor,
   plugin.cfg).
 
+v0.9.80 round complete ✓ — showcase video review fixes, ear-clipped merged faces, combined bent n-gon, and stray sticker root cause:
+- EAR-CLIPPED MERGED FACES (THE "merge coplanar faces" TEXTURE BUG):
+  `merge_faces` previously fan-triangulated the boundary cycle from `dup[0]`.
+  When boundary vertices were collinear (the middle vertices along an edge
+  created by subdivide, loop cuts, or knife cuts), the fan formed 0-area
+  degenerate triangles with (0,0,0) normals that corrupted vertex normals to
+  (0,0,-1) and distorted texture projections on the merged face into diagonal
+  stripes. Replaced with 2D ear clipping (`PBShapeComplex._triangulate_2d`),
+  eliminating degenerate triangles and restoring a uniform square checkerboard.
+- COMBINED CUBE+PRISM FOR BENT N-GON: `_merge_nonplanar` rebuilt around a single
+  2-manifold house mesh (`ShowcaseUtil.create_house`). The beat enters vertex mode,
+  moves the roof's front apex inward along Z to tilt the front gable triangle at a
+  shallow angle, merges the triangle with the front quad across the crease, and
+  showcases moving the resulting bent n-gon as one piece. `edl.toml` caption
+  shortened to "Merge across a crease — one bent n-gon".
+- ORANGE CUBE PRESERVED: in `_surfaces` (`create.gd`), the slope cube tint loop
+  previously re-tinted all non-floor shapes, turning the wall cube green ("moss").
+  Tracking `wall_shape` preserves the wall cube's "brick" tint so only the new
+  slope cube is green.
+- EMBEDDED EXPORT DIALOG VISIBLE ON SCREEN: `ConfirmationDialog` in Godot 4 was
+  rendering as an OS-level X11 subwindow outside the root viewport framebuffer
+  captured by `win.get_texture().get_image()`. Setting `win.gui_embed_subwindows = true`
+  embeds dialogs inside the root viewport. `_export()` in `map.gd` displays Retro
+  Engine settings and `.pbm` path, clicks Export, and `edl.toml` clip `67-map-export`
+  starts at `at = 0.2, dur = 3.0` so the export window is clearly visible.
+- STRAY WATERFALL STICKER ROOT CAUSE: `_paint()` left `paint_controller.mode` in
+  `Mode.STAMP`. The subsequent click on the export OK button at (500, 494) passed
+  through to the 3D viewport, where `_forward_3d_gui_input` intercepted it and
+  stamped the active "HELLO WORLD" texture onto `FallWall` in the background.
+  Fixed by exiting stamp mode at the end of `_paint()`, guarding `_forward_3d_gui_input`
+  against stamping when dialogs are visible, resetting `mode = Mode.NONE` on export
+  requests, and cleaning up any stray container.
+- REGENERATED RETRO MAP ACT & TEASER: full `map` session re-rendered with fixed
+  archway opening, waterfall sheets, painted path, particles, visible export window,
+  and night lighting, eliminating the stray sticker and outdated geometry from
+  `05-teaser-night`, `65-map-paint`, `66-map-particles`, `67-map-export`, and
+  `68-map-night`.
+- WALL/SLOPE DRAG TRANSITION: adjusted `11-create-wall` to `at = 5.0, dur = 2.1`
+  and `12-create-slope` to `at = 7.1, dur = 2.3`, cutting before the cursor moves
+  to the menu and eliminating the duplicate slope drag.
+- Version bump 0.9.79 -> 0.9.80 (plugin, editor, plugin.cfg).
+
 v0.9.79 round complete ✓ — the third review round. Four plugin bugs the film
 exposed, the painted water's flow direction, and the beats rebuilt around them.
 - MERGED FACES KEEP THEIR OWN UVs. `merge_faces` fan-triangulated the region on
