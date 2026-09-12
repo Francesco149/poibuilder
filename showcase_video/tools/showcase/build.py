@@ -363,7 +363,7 @@ def encode_readme(master: Path, out: Path, proj: edl.Project) -> Path:
     ffmpeg.run([ffmpeg.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
                 "-i", str(master),
                 "-vf", f"scale={proj.readme_width}:{proj.readme_height}:flags=lanczos",
-                "-c:v", "libx264", "-crf", "26", "-preset", "slower",
+                "-c:v", "libx264", "-crf", "29", "-preset", "slower",
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                 "-an", str(out)])
     return out
