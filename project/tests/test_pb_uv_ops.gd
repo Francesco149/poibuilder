@@ -309,3 +309,128 @@ func test_panel_operations_toolbar_and_undo():
 
 	mesh.free()
 	panel.free()
+
+func test_gizmo_pivot_resets_on_undo():
+	var canvas := PBUvCanvas.new()
+	canvas.size = Vector2(800, 600)
+	canvas.zoom = 300.0
+
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	canvas.active_mesh = mesh
+	canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
+
+	# Select vertex 0
+	canvas.selected_verts[0] = true
+	canvas._update_gizmo_pivot()
+
+	var orig_uv: Vector2 = cube.textures0[0]
+	assert_almost_eq(canvas.gizmo.pivot_uv.x, orig_uv.x, 0.001, "Gizmo pivot X must initially match vertex 0 UV")
+	assert_almost_eq(canvas.gizmo.pivot_uv.y, orig_uv.y, 0.001, "Gizmo pivot Y must initially match vertex 0 UV")
+
+	# Capture snapshot and move vertex via gizmo
+	var cmd := CmdMeshOp.new(cube, "Move UV", mesh)
+	canvas._gizmo_drag_snapshot_uvs = canvas.get_uv_array().duplicate()
+	canvas._gizmo_affected_indices = canvas.get_selected_vertex_indices()
+	var p_screen := canvas.uv_to_screen(orig_uv)
+	canvas.gizmo.begin_drag(PBUvGizmo.HandleType.MOVE_CENTER, p_screen, canvas)
+	var t := canvas.gizmo.apply_drag(p_screen + Vector2(60, 90), canvas, false, false)
+	canvas._apply_gizmo_transform(t)
+	canvas.gizmo.commit_drag()
+	canvas._update_gizmo_pivot()
+	cmd.capture_after()
+
+	# Verify vertex moved and pivot followed
+	var moved_uv: Vector2 = cube.textures0[0]
+	assert_gt(orig_uv.distance_to(moved_uv), 0.1, "Vertex UV must have moved")
+	assert_almost_eq(canvas.gizmo.pivot_uv.x, moved_uv.x, 0.001, "Gizmo pivot X must follow moved vertex")
+	assert_almost_eq(canvas.gizmo.pivot_uv.y, moved_uv.y, 0.001, "Gizmo pivot Y must follow moved vertex")
+
+	# Simulate Undo: apply before snapshot
+	cmd.undo_it()
+
+	# Verify gizmo pivot moved back to original position
+	var restored_uv: Vector2 = cube.textures0[0]
+	assert_almost_eq(restored_uv.x, orig_uv.x, 0.001, "Restored UV X must match original")
+	assert_almost_eq(restored_uv.y, orig_uv.y, 0.001, "Restored UV Y must match original")
+	assert_almost_eq(canvas.gizmo.pivot_uv.x, orig_uv.x, 0.001, "Gizmo pivot X must reset back to original on undo")
+	assert_almost_eq(canvas.gizmo.pivot_uv.y, orig_uv.y, 0.001, "Gizmo pivot Y must reset back to original on undo")
+
+	mesh.free()
+	canvas.free()
+
+func test_select_face_in_3d_then_select_single_vertex_in_uv_editor():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	# 1. Simulate selecting Face 0 in 3D face mode
+	panel.sync_selection_from_3d([0])
+	assert_true(panel.canvas.selected_faces.has(0), "Face 0 must be in selected_faces")
+
+	# 2. User switches to Vertex mode in UV editor
+	panel._btn_mode_vert.emit_signal("pressed")
+	assert_eq(panel.canvas.select_mode, PBUvCanvas.SelectMode.VERTEX, "Select mode must be VERTEX")
+	assert_true(panel.canvas.selected_faces.is_empty(), "selected_faces must be cleared upon entering VERTEX mode")
+	assert_gt(panel.canvas.selected_verts.size(), 0, "selected_verts must have been populated from face vertices")
+
+	# 3. User clicks on a single vertex (vertex 0)
+	var v0_uv: Vector2 = cube.textures0[0]
+	var v0_screen: Vector2 = panel.canvas.uv_to_screen(v0_uv)
+	panel.canvas._handle_left_press(v0_screen, false)
+	panel.canvas._handle_left_release(v0_screen)
+
+	# Verify that ONLY vertex 0 is selected
+	assert_eq(panel.canvas.selected_verts.size(), 1, "Exactly one vertex must be selected")
+	assert_true(panel.canvas.selected_verts.has(0), "Vertex 0 must be selected")
+	assert_true(panel.canvas.selected_faces.is_empty(), "selected_faces must remain empty so whole face is not yellow")
+	assert_almost_eq(panel.canvas.gizmo.pivot_uv.x, v0_uv.x, 0.001, "Gizmo pivot must be centered on the selected vertex")
+	assert_almost_eq(panel.canvas.gizmo.pivot_uv.y, v0_uv.y, 0.001, "Gizmo pivot must be centered on the selected vertex")
+
+	mesh.free()
+	panel.free()
+
+func test_uv_panel_buttons_have_svg_icons():
+	var panel := PBUvEditorPanel.new()
+
+	# Row 1 buttons have icons
+	assert_not_null(panel._btn_tool_move.icon, "Move tool button must have icon")
+	assert_not_null(panel._btn_tool_rot.icon, "Rotate tool button must have icon")
+	assert_not_null(panel._btn_tool_scale.icon, "Scale tool button must have icon")
+	assert_not_null(panel._btn_mode_face.icon, "Face mode button must have icon")
+	assert_not_null(panel._btn_mode_vert.icon, "Vertex mode button must have icon")
+	assert_not_null(panel._btn_mode_edge.icon, "Edge mode button must have icon")
+	assert_not_null(panel._btn_mode_island.icon, "Island mode button must have icon")
+	assert_not_null(panel._btn_frame_unit.icon, "Frame unit button must have icon")
+	assert_not_null(panel._btn_frame_sel.icon, "Frame selection button must have icon")
+	assert_not_null(panel._btn_snap_toggle.icon, "Snap toggle button must have icon")
+	assert_not_null(panel._btn_toggle_tex.icon, "Toggle texture button must have icon")
+	assert_not_null(panel._btn_toggle_tile.icon, "Toggle tile button must have icon")
+	assert_not_null(panel._btn_pop_out.icon, "Pop-out button must have icon")
+
+	# Row 2 operation buttons have icons
+	assert_not_null(panel._btn_mode_auto.icon, "Auto UV button must have icon")
+	assert_not_null(panel._btn_mode_manual.icon, "Manual UV button must have icon")
+	assert_not_null(panel._btn_proj_planar.icon, "Planar button must have icon")
+	assert_not_null(panel._btn_proj_box.icon, "Box button must have icon")
+	assert_not_null(panel._btn_proj_fit.icon, "Fit button must have icon")
+	assert_not_null(panel._btn_flip_u.icon, "Flip U button must have icon")
+	assert_not_null(panel._btn_flip_v.icon, "Flip V button must have icon")
+	assert_not_null(panel._btn_rot_ccw.icon, "Rotate CCW button must have icon")
+	assert_not_null(panel._btn_rot_cw.icon, "Rotate CW button must have icon")
+	assert_not_null(panel._btn_sew.icon, "Sew button must have icon")
+	assert_not_null(panel._btn_split.icon, "Split button must have icon")
+	assert_not_null(panel._btn_collapse.icon, "Collapse button must have icon")
+	assert_not_null(panel._btn_stitch.icon, "Stitch button must have icon")
+	assert_not_null(panel._btn_texel_get.icon, "Texel get button must have icon")
+	assert_not_null(panel._btn_texel_set.icon, "Texel set button must have icon")
+	assert_not_null(panel._btn_export_png.icon, "Export PNG button must have icon")
+
+	panel.free()

@@ -10,6 +10,29 @@
 class_name PBUvEditorPanel
 extends VBoxContainer
 
+
+const ICON_DIR := "res://addons/poibuilder/icons/"
+
+static func _load_icon(icon_name: String) -> Texture2D:
+	var path := ICON_DIR + icon_name
+	if ResourceLoader.exists(path):
+		return load(path)
+	return null
+
+func _create_icon_btn(name_id: String, icon_name: String, fallback_text: String, tip: String, toggle: bool = false) -> Button:
+	var btn := Button.new()
+	btn.name = name_id
+	var ico := _load_icon(icon_name)
+	if ico != null:
+		btn.icon = ico
+		btn.text = ""
+	else:
+		btn.text = fallback_text
+	btn.toggle_mode = toggle
+	btn.tooltip_text = tip
+	btn.flat = true
+	btn.custom_minimum_size = Vector2(24, 24)
+	return btn
 # ==============================================================================
 # Signals
 # ==============================================================================
@@ -101,7 +124,15 @@ func _init() -> void:
 
 func _ready() -> void:
 	_update_status()
+	if Engine.is_editor_hint():
+		var ur := EditorInterface.get_editor_undo_redo()
+		if ur and not ur.version_changed.is_connected(_on_undo_redo_version_changed):
+			ur.version_changed.connect(_on_undo_redo_version_changed)
 
+func _on_undo_redo_version_changed() -> void:
+	if canvas:
+		canvas.refresh_from_mesh()
+	_update_status()
 # ==============================================================================
 # UI Construction
 # ==============================================================================
@@ -116,10 +147,10 @@ func _build_ui() -> void:
 
 	# --- Tool Buttons (Move / Rotate / Scale) ---
 	_tool_group = ButtonGroup.new()
-	_btn_tool_move = _create_tool_btn("Move", PBUvGizmo.ToolMode.MOVE, "Move tool (W)")
+	_btn_tool_move = _create_tool_btn("Move", "icon_move.svg", PBUvGizmo.ToolMode.MOVE, "Move tool (W)")
 	_btn_tool_move.button_pressed = true
-	_btn_tool_rot = _create_tool_btn("Rotate", PBUvGizmo.ToolMode.ROTATE, "Rotate tool (E)")
-	_btn_tool_scale = _create_tool_btn("Scale", PBUvGizmo.ToolMode.SCALE, "Scale tool (R)")
+	_btn_tool_rot = _create_tool_btn("Rotate", "icon_rotate.svg", PBUvGizmo.ToolMode.ROTATE, "Rotate tool (E)")
+	_btn_tool_scale = _create_tool_btn("Scale", "icon_scale.svg", PBUvGizmo.ToolMode.SCALE, "Scale tool (R)")
 
 	_toolbar.add_child(_btn_tool_move)
 	_toolbar.add_child(_btn_tool_rot)
@@ -130,11 +161,11 @@ func _build_ui() -> void:
 	# --- Mode Buttons ---
 	_mode_group = ButtonGroup.new()
 
-	_btn_mode_face = _create_mode_btn("Face", PBUvCanvas.SelectMode.FACE, "Face selection mode")
+	_btn_mode_face = _create_mode_btn("Face", "icon_face.svg", PBUvCanvas.SelectMode.FACE, "Face selection mode")
 	_btn_mode_face.button_pressed = true
-	_btn_mode_vert = _create_mode_btn("Vertex", PBUvCanvas.SelectMode.VERTEX, "UV Vertex selection mode")
-	_btn_mode_edge = _create_mode_btn("Edge", PBUvCanvas.SelectMode.EDGE, "UV Edge selection mode")
-	_btn_mode_island = _create_mode_btn("Island", PBUvCanvas.SelectMode.ISLAND, "UV Island (connected shell) selection mode")
+	_btn_mode_vert = _create_mode_btn("Vertex", "icon_vertex.svg", PBUvCanvas.SelectMode.VERTEX, "UV Vertex selection mode")
+	_btn_mode_edge = _create_mode_btn("Edge", "icon_edge.svg", PBUvCanvas.SelectMode.EDGE, "UV Edge selection mode")
+	_btn_mode_island = _create_mode_btn("Island", "icon_island.svg", PBUvCanvas.SelectMode.ISLAND, "UV Island (connected shell) selection mode")
 
 	_toolbar.add_child(_btn_mode_face)
 	_toolbar.add_child(_btn_mode_vert)
@@ -144,32 +175,21 @@ func _build_ui() -> void:
 	_toolbar.add_child(_make_vsep())
 
 	# --- Framing ---
-	_btn_frame_unit = Button.new()
-	_btn_frame_unit.name = "FrameUnit"
-	_btn_frame_unit.text = "[0,1]"
-	_btn_frame_unit.tooltip_text = "Frame [0, 1] unit square"
+	_btn_frame_unit = _create_icon_btn("FrameUnit", "icon_uv_frame_unit.svg", "[0,1]", "Frame [0, 1] unit square")
 	_btn_frame_unit.pressed.connect(func(): if canvas: canvas.frame_unit_square())
 	_toolbar.add_child(_btn_frame_unit)
 
-	_btn_frame_sel = Button.new()
-	_btn_frame_sel.name = "FrameSel"
-	_btn_frame_sel.text = "⛶ Frame"
-	_btn_frame_sel.tooltip_text = "Frame Selection (F)"
+	_btn_frame_sel = _create_icon_btn("FrameSel", "icon_uv_frame_sel.svg", "⛶ Frame", "Frame Selection (F)")
 	_btn_frame_sel.pressed.connect(func(): if canvas: canvas.frame_selection())
 	_toolbar.add_child(_btn_frame_sel)
 
 	_toolbar.add_child(_make_vsep())
 
 	# --- Snapping ---
-	_btn_snap_toggle = Button.new()
-	_btn_snap_toggle.name = "SnapToggle"
-	_btn_snap_toggle.text = "Snap"
-	_btn_snap_toggle.toggle_mode = true
+	_btn_snap_toggle = _create_icon_btn("SnapToggle", "icon_uv_snap.svg", "Snap", "Toggle UV snapping to grid", true)
 	_btn_snap_toggle.button_pressed = true
-	_btn_snap_toggle.tooltip_text = "Toggle UV snapping to grid"
 	_btn_snap_toggle.toggled.connect(_on_snap_toggled)
 	_toolbar.add_child(_btn_snap_toggle)
-
 	_opt_snap_step = OptionButton.new()
 	_opt_snap_step.name = "SnapStep"
 	_opt_snap_step.tooltip_text = "UV Snap Grid Step"
@@ -186,21 +206,13 @@ func _build_ui() -> void:
 	_toolbar.add_child(_make_vsep())
 
 	# --- Texture Underlay & Tiling ---
-	_btn_toggle_tex = Button.new()
-	_btn_toggle_tex.name = "ToggleTex"
-	_btn_toggle_tex.text = "Texture"
-	_btn_toggle_tex.toggle_mode = true
+	_btn_toggle_tex = _create_icon_btn("ToggleTex", "icon_uv_texture.svg", "Texture", "Show active material texture underlay", true)
 	_btn_toggle_tex.button_pressed = true
-	_btn_toggle_tex.tooltip_text = "Show active material texture underlay"
 	_btn_toggle_tex.toggled.connect(func(on: bool): if canvas: canvas.show_texture = on)
 	_toolbar.add_child(_btn_toggle_tex)
 
-	_btn_toggle_tile = Button.new()
-	_btn_toggle_tile.name = "ToggleTile"
-	_btn_toggle_tile.text = "Tile"
-	_btn_toggle_tile.toggle_mode = true
+	_btn_toggle_tile = _create_icon_btn("ToggleTile", "icon_uv_tile.svg", "Tile", "Repeat texture underlay across UV space", true)
 	_btn_toggle_tile.button_pressed = false
-	_btn_toggle_tile.tooltip_text = "Repeat texture underlay across UV space"
 	_btn_toggle_tile.toggled.connect(func(on: bool): if canvas: canvas.show_texture_tiling = on)
 	_toolbar.add_child(_btn_toggle_tile)
 
@@ -252,10 +264,7 @@ func _build_ui() -> void:
 	_toolbar.add_child(_make_vsep())
 
 	# --- Pop-out Floating Window Button ---
-	_btn_pop_out = Button.new()
-	_btn_pop_out.name = "PopOutButton"
-	_btn_pop_out.text = "↗ Window"
-	_btn_pop_out.tooltip_text = "Pop out UV Editor into a floating window"
+	_btn_pop_out = _create_icon_btn("PopOutButton", "icon_uv_pop_out.svg", "↗ Window", "Pop out UV Editor into a floating window")
 	_btn_pop_out.pressed.connect(_toggle_pop_out)
 	_toolbar.add_child(_btn_pop_out)
 
@@ -271,17 +280,11 @@ func _build_ui() -> void:
 	lbl_mode.text = "Mode:"
 	_ops_toolbar.add_child(lbl_mode)
 
-	_btn_mode_auto = Button.new()
-	_btn_mode_auto.name = "BtnModeAuto"
-	_btn_mode_auto.text = "Auto"
-	_btn_mode_auto.tooltip_text = "Convert selected faces to Auto UV"
+	_btn_mode_auto = _create_icon_btn("BtnModeAuto", "icon_uv_auto.svg", "Auto", "Convert selected faces to Auto UV")
 	_btn_mode_auto.pressed.connect(func(): _execute_uv_op("Convert to Auto UV", func() -> bool: return PBUvOps.convert_to_auto(active_mesh.pb_mesh_data, _get_target_faces())))
 	_ops_toolbar.add_child(_btn_mode_auto)
 
-	_btn_mode_manual = Button.new()
-	_btn_mode_manual.name = "BtnModeManual"
-	_btn_mode_manual.text = "Manual"
-	_btn_mode_manual.tooltip_text = "Convert selected faces to Manual UV (freeze coordinates)"
+	_btn_mode_manual = _create_icon_btn("BtnModeManual", "icon_uv_manual.svg", "Manual", "Convert selected faces to Manual UV (freeze coordinates)")
 	_btn_mode_manual.pressed.connect(func(): _execute_uv_op("Convert to Manual UV", func() -> bool: return PBUvOps.convert_to_manual(active_mesh.pb_mesh_data, _get_target_faces())))
 	_ops_toolbar.add_child(_btn_mode_manual)
 
@@ -292,24 +295,15 @@ func _build_ui() -> void:
 	lbl_proj.text = "Project:"
 	_ops_toolbar.add_child(lbl_proj)
 
-	_btn_proj_planar = Button.new()
-	_btn_proj_planar.name = "BtnProjPlanar"
-	_btn_proj_planar.text = "Planar"
-	_btn_proj_planar.tooltip_text = "Planar project selected faces along average normal"
+	_btn_proj_planar = _create_icon_btn("BtnProjPlanar", "icon_uv_planar.svg", "Planar", "Planar project selected faces along average normal")
 	_btn_proj_planar.pressed.connect(func(): _execute_uv_op("Planar Project UVs", func() -> bool: return PBUvOps.planar_project(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_planar)
 
-	_btn_proj_box = Button.new()
-	_btn_proj_box.name = "BtnProjBox"
-	_btn_proj_box.text = "Box"
-	_btn_proj_box.tooltip_text = "Box project selected faces along dominant cardinal normal"
+	_btn_proj_box = _create_icon_btn("BtnProjBox", "icon_uv_box.svg", "Box", "Box project selected faces along dominant cardinal normal")
 	_btn_proj_box.pressed.connect(func(): _execute_uv_op("Box Project UVs", func() -> bool: return PBUvOps.box_project(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_box)
 
-	_btn_proj_fit = Button.new()
-	_btn_proj_fit.name = "BtnProjFit"
-	_btn_proj_fit.text = "Fit"
-	_btn_proj_fit.tooltip_text = "Fit selected UVs into [0, 1] bounds"
+	_btn_proj_fit = _create_icon_btn("BtnProjFit", "icon_uv_fit.svg", "Fit", "Fit selected UVs into [0, 1] bounds")
 	_btn_proj_fit.pressed.connect(func(): _execute_uv_op("Fit UVs", func() -> bool: return PBUvOps.fit_uvs(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_fit)
 
@@ -320,31 +314,19 @@ func _build_ui() -> void:
 	lbl_xform.text = "Transform:"
 	_ops_toolbar.add_child(lbl_xform)
 
-	_btn_flip_u = Button.new()
-	_btn_flip_u.name = "BtnFlipU"
-	_btn_flip_u.text = "Flip U"
-	_btn_flip_u.tooltip_text = "Flip UVs horizontally"
+	_btn_flip_u = _create_icon_btn("BtnFlipU", "icon_uv_flip_h.svg", "Flip U", "Flip UVs horizontally")
 	_btn_flip_u.pressed.connect(func(): _execute_uv_op("Flip UVs Horizontal", func() -> bool: return PBUvOps.flip_uvs(active_mesh.pb_mesh_data, _get_target_faces(), true, canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_flip_u)
 
-	_btn_flip_v = Button.new()
-	_btn_flip_v.name = "BtnFlipV"
-	_btn_flip_v.text = "Flip V"
-	_btn_flip_v.tooltip_text = "Flip UVs vertically"
+	_btn_flip_v = _create_icon_btn("BtnFlipV", "icon_uv_flip_v.svg", "Flip V", "Flip UVs vertically")
 	_btn_flip_v.pressed.connect(func(): _execute_uv_op("Flip UVs Vertical", func() -> bool: return PBUvOps.flip_uvs(active_mesh.pb_mesh_data, _get_target_faces(), false, canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_flip_v)
 
-	_btn_rot_ccw = Button.new()
-	_btn_rot_ccw.name = "BtnRotCCW"
-	_btn_rot_ccw.text = "↶ 90°"
-	_btn_rot_ccw.tooltip_text = "Rotate UVs 90 degrees CCW"
+	_btn_rot_ccw = _create_icon_btn("BtnRotCCW", "icon_uv_rot_ccw.svg", "↶ 90°", "Rotate UVs 90 degrees CCW")
 	_btn_rot_ccw.pressed.connect(func(): _execute_uv_op("Rotate UVs 90° CCW", func() -> bool: return PBUvOps.rotate_90(active_mesh.pb_mesh_data, _get_target_faces(), false, canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_rot_ccw)
 
-	_btn_rot_cw = Button.new()
-	_btn_rot_cw.name = "BtnRotCW"
-	_btn_rot_cw.text = "↷ 90°"
-	_btn_rot_cw.tooltip_text = "Rotate UVs 90 degrees CW"
+	_btn_rot_cw = _create_icon_btn("BtnRotCW", "icon_uv_rot_cw.svg", "↷ 90°", "Rotate UVs 90 degrees CW")
 	_btn_rot_cw.pressed.connect(func(): _execute_uv_op("Rotate UVs 90° CW", func() -> bool: return PBUvOps.rotate_90(active_mesh.pb_mesh_data, _get_target_faces(), true, canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_rot_cw)
 
@@ -355,31 +337,19 @@ func _build_ui() -> void:
 	lbl_seams.text = "Seams:"
 	_ops_toolbar.add_child(lbl_seams)
 
-	_btn_sew = Button.new()
-	_btn_sew.name = "BtnSew"
-	_btn_sew.text = "Sew"
-	_btn_sew.tooltip_text = "Sew proximate 3D coincident UV vertices"
+	_btn_sew = _create_icon_btn("BtnSew", "icon_uv_sew.svg", "Sew", "Sew proximate 3D coincident UV vertices")
 	_btn_sew.pressed.connect(func(): _execute_uv_op("Sew UVs", func() -> bool: return PBUvOps.sew_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), 0.05, canvas.uv_channel if canvas else 0) > 0))
 	_ops_toolbar.add_child(_btn_sew)
 
-	_btn_split = Button.new()
-	_btn_split.name = "BtnSplit"
-	_btn_split.text = "Split"
-	_btn_split.tooltip_text = "Split coincident UV vertices"
+	_btn_split = _create_icon_btn("BtnSplit", "icon_uv_split.svg", "Split", "Split coincident UV vertices")
 	_btn_split.pressed.connect(func(): _execute_uv_op("Split UVs", func() -> bool: return PBUvOps.split_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), Vector2(0.05, 0.05), canvas.uv_channel if canvas else 0) > 0))
 	_ops_toolbar.add_child(_btn_split)
 
-	_btn_collapse = Button.new()
-	_btn_collapse.name = "BtnCollapse"
-	_btn_collapse.text = "Collapse"
-	_btn_collapse.tooltip_text = "Collapse selected UV vertices to centroid"
+	_btn_collapse = _create_icon_btn("BtnCollapse", "icon_uv_collapse.svg", "Collapse", "Collapse selected UV vertices to centroid")
 	_btn_collapse.pressed.connect(func(): _execute_uv_op("Collapse UVs", func() -> bool: return PBUvOps.collapse_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_collapse)
 
-	_btn_stitch = Button.new()
-	_btn_stitch.name = "BtnStitch"
-	_btn_stitch.text = "Stitch"
-	_btn_stitch.tooltip_text = "Auto-stitch matching edge of 2 selected adjacent faces"
+	_btn_stitch = _create_icon_btn("BtnStitch", "icon_uv_stitch.svg", "Stitch", "Auto-stitch matching edge of 2 selected adjacent faces")
 	_btn_stitch.pressed.connect(_on_stitch_pressed)
 	_ops_toolbar.add_child(_btn_stitch)
 
@@ -390,10 +360,7 @@ func _build_ui() -> void:
 	lbl_texel.text = "Texel:"
 	_ops_toolbar.add_child(lbl_texel)
 
-	_btn_texel_get = Button.new()
-	_btn_texel_get.name = "BtnTexelGet"
-	_btn_texel_get.text = "Get"
-	_btn_texel_get.tooltip_text = "Sample texel density from selected face"
+	_btn_texel_get = _create_icon_btn("BtnTexelGet", "icon_uv_texel_get.svg", "Get", "Sample texel density from selected face")
 	_btn_texel_get.pressed.connect(_on_texel_get_pressed)
 	_ops_toolbar.add_child(_btn_texel_get)
 
@@ -408,20 +375,14 @@ func _build_ui() -> void:
 	_spin_texel.tooltip_text = "Target texel density in pixels per meter"
 	_ops_toolbar.add_child(_spin_texel)
 
-	_btn_texel_set = Button.new()
-	_btn_texel_set.name = "BtnTexelSet"
-	_btn_texel_set.text = "Set"
-	_btn_texel_set.tooltip_text = "Apply target texel density to selected faces"
+	_btn_texel_set = _create_icon_btn("BtnTexelSet", "icon_uv_texel_set.svg", "Set", "Apply target texel density to selected faces")
 	_btn_texel_set.pressed.connect(_on_texel_set_pressed)
 	_ops_toolbar.add_child(_btn_texel_set)
 
 	_ops_toolbar.add_child(_make_vsep())
 
 	# Export
-	_btn_export_png = Button.new()
-	_btn_export_png.name = "BtnExportPng"
-	_btn_export_png.text = "Export PNG"
-	_btn_export_png.tooltip_text = "Export UV template as a PNG image"
+	_btn_export_png = _create_icon_btn("BtnExportPng", "icon_uv_export.svg", "Export PNG", "Export UV template as a PNG image")
 	_btn_export_png.pressed.connect(_on_export_png_pressed)
 	_ops_toolbar.add_child(_btn_export_png)
 
@@ -441,26 +402,39 @@ func _build_ui() -> void:
 	canvas.tool_changed.connect(_on_canvas_tool_changed)
 	canvas_container.add_child(canvas)
 
-func _create_mode_btn(label: String, mode: PBUvCanvas.SelectMode, tip: String) -> Button:
+func _create_mode_btn(label: String, icon_name: String, mode: PBUvCanvas.SelectMode, tip: String) -> Button:
 	var btn := Button.new()
 	btn.name = "Mode" + label
-	btn.text = label
+	var ico := _load_icon(icon_name)
+	if ico != null:
+		btn.icon = ico
+		btn.text = ""
+	else:
+		btn.text = label
 	btn.toggle_mode = true
 	btn.button_group = _mode_group
 	btn.tooltip_text = tip
+	btn.flat = true
+	btn.custom_minimum_size = Vector2(24, 24)
 	btn.pressed.connect(func(): if canvas: canvas.select_mode = mode; _update_status())
 	return btn
 
-func _create_tool_btn(label: String, mode: PBUvGizmo.ToolMode, tip: String) -> Button:
+func _create_tool_btn(label: String, icon_name: String, mode: PBUvGizmo.ToolMode, tip: String) -> Button:
 	var btn := Button.new()
 	btn.name = "Tool" + label
-	btn.text = label
+	var ico := _load_icon(icon_name)
+	if ico != null:
+		btn.icon = ico
+		btn.text = ""
+	else:
+		btn.text = label
 	btn.toggle_mode = true
 	btn.button_group = _tool_group
 	btn.tooltip_text = tip
+	btn.flat = true
+	btn.custom_minimum_size = Vector2(24, 24)
 	btn.pressed.connect(func(): if canvas: canvas.transform_tool = mode)
 	return btn
-
 
 func _on_canvas_tool_changed(mode: PBUvGizmo.ToolMode) -> void:
 	match mode:
@@ -498,19 +472,27 @@ func sync_selection_from_3d(selected_face_indices: Array) -> void:
 	for fi in selected_face_indices:
 		canvas.selected_faces[int(fi)] = true
 
-	# Also mirror to vertices and edges if in those modes
-	if active_mesh and active_mesh.pb_mesh_data:
-		canvas.selected_verts.clear()
-		canvas.selected_edges.clear()
+	canvas.selected_verts.clear()
+	canvas.selected_edges.clear()
 
-		for fi in selected_face_indices:
-			var f_idx: int = int(fi)
-			if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
-				var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
-				for v in face.get_distinct_indexes():
-					canvas.selected_verts[v] = true
-				for edge in face.get_edges():
-					canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
+	# Populate mode selection from 3D selected faces
+	if active_mesh and active_mesh.pb_mesh_data:
+		if canvas.select_mode == PBUvCanvas.SelectMode.VERTEX:
+			for fi in selected_face_indices:
+				var f_idx: int = int(fi)
+				if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+					var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+					for v in face.get_distinct_indexes():
+						canvas.selected_verts[v] = true
+			canvas.selected_faces.clear()
+		elif canvas.select_mode == PBUvCanvas.SelectMode.EDGE:
+			for fi in selected_face_indices:
+				var f_idx: int = int(fi)
+				if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+					var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+					for edge in face.get_edges():
+						canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
+			canvas.selected_faces.clear()
 
 	canvas.refresh_from_mesh()
 	_syncing_selection = false
@@ -522,14 +504,17 @@ func _on_canvas_selection_changed() -> void:
 	_update_status()
 	uv_selection_changed.emit()
 
-	# Synchronize selected faces back to 3D scene if editor is present
+	# Synchronize selected faces back to 3D scene ONLY if in Face or Island mode
 	if editor != null and active_mesh != null and editor.selection != null:
-		var face_list: Array = canvas.selected_faces.keys()
-		if editor.select_mode == PBEditor.SelectMode.FACE:
-			var packed := PackedInt32Array()
-			for fi in face_list:
-				packed.append(int(fi))
-			editor.selection.set_faces(packed)
+		if canvas.select_mode == PBUvCanvas.SelectMode.FACE or canvas.select_mode == PBUvCanvas.SelectMode.ISLAND:
+			if editor.select_mode == PBEditor.SelectMode.FACE:
+				_syncing_selection = true
+				var face_list: Array = canvas.selected_faces.keys()
+				var packed := PackedInt32Array()
+				for fi in face_list:
+					packed.append(int(fi))
+				editor.selection.set_faces(packed)
+				_syncing_selection = false
 func _update_status() -> void:
 	if _lbl_status == null:
 		return

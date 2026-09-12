@@ -2686,6 +2686,25 @@ v0.9.83 round complete ✓ — Session 2: UV Editor Operations, 2D Transform Giz
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), covering toolbar, tool switching, and operation execution.
 - Version bump 0.9.82 -> 0.9.83 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.84 round complete ✓ — UV gizmo undo reset, selection mode isolation & SVG icon buttons:
+- GIZMO UNDO PIVOT RESET & MESH SIGNAL:
+  * Added `signal mesh_rebuilt` to `PBMesh` emitted on `rebuild()` and `rebuild_positions()`.
+  * `PBUvCanvas` connects to `active_mesh.mesh_rebuilt` and automatically refreshes UV coordinates and recalculates `gizmo.pivot_uv` whenever geometry or UV snapshots are restored.
+  * `PBUvEditorPanel` connects to `EditorUndoRedoManager.version_changed`, ensuring canvas refreshes immediately when Undo (`Ctrl+Z`) or Redo (`Ctrl+Y`) is triggered.
+  * `_update_gizmo_pivot()` explicitly branches on `select_mode`: single vertex selection pins `gizmo.pivot_uv` directly to `uvs[v_idx]`, so undoing a vertex translation immediately returns the gizmo to the original vertex coordinate with zero offset drift.
+- SELECTION MODE ISOLATION & LOOP PREVENTION:
+  * Root cause of vertex selection appearing broken after selecting a 3D face: (1) `sync_selection_from_3d()` previously populated `selected_faces` and left it filled when switching to vertex mode, causing `_draw()` to keep the entire face highlighted in bright yellow so individual vertex picks were visually masked; (2) `_on_canvas_selection_changed()` unconditionally synced `canvas.selected_faces` to the 3D scene, triggering an engine deselect/re-sync loop that immediately wiped the 2D vertex pick.
+  * Fixed in `PBUvCanvas`: `select_mode` setter now calls `_convert_selection_to_mode()`, clearing `selected_faces` when switching to vertex or edge mode.
+  * `_handle_left_press()` clears disjoint mode selections on element clicks (e.g. vertex picks clear `selected_faces` and `selected_edges`), ensuring only the clicked vertex is highlighted.
+  * `_on_canvas_selection_changed()` only syncs face selections back to the 3D scene when `canvas.select_mode` is `FACE` or `ISLAND`, completely isolating vertex and edge UV picking from 3D face selection feedback loops.
+- 23 CRISP 16x16 SVG ICONS ACROSS THE UV PANEL:
+  * Authored 23 clean SVG icons (`viewBox="0 0 16 16"`, `#e0e0e0` stroke/fill) in `addons/poibuilder/icons/`: Move, Rotate, Scale, Face, Vertex, Edge, Island, Frame Unit `[0,1]`, Frame Sel `⛶`, Snap, Texture Underlay, Tile, Pop-out Window, Auto UV, Manual UV, Planar, Box, Fit, Flip H, Flip V, Rot CCW, Rot CW, Sew, Split, Collapse, Stitch, Texel Get, Texel Set, and Export PNG.
+  * Replaced clunky text buttons in `PBUvEditorPanel` with compact, flat icon buttons (`_create_icon_btn`), retaining rich descriptive tooltips.
+- TESTS & VERIFICATION:
+  * 875/875 GUT unit tests passing (+3 regression tests in `test_pb_uv_ops.gd`, 16,257 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
+- Version bump 0.9.83 -> 0.9.84 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

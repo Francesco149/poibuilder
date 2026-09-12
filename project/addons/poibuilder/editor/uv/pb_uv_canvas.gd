@@ -99,8 +99,9 @@ var select_mode: SelectMode = SelectMode.FACE:
 			hover_vert = -1
 			hover_edge = Vector2i(-1, -1)
 			hover_face = -1
+			_convert_selection_to_mode(val)
+			_update_gizmo_pivot()
 			queue_redraw()
-
 ## Target UV channel to display and edit.
 var uv_channel: UvChannel = UvChannel.UV1:
 	set(val):
@@ -232,11 +233,18 @@ func _ready() -> void:
 func set_active_mesh(mesh: PBMesh) -> void:
 	if active_mesh == mesh:
 		return
+	if active_mesh != null and active_mesh.has_signal("mesh_rebuilt") and active_mesh.mesh_rebuilt.is_connected(_on_active_mesh_rebuilt):
+		active_mesh.mesh_rebuilt.disconnect(_on_active_mesh_rebuilt)
 	active_mesh = mesh
+	if active_mesh != null and active_mesh.has_signal("mesh_rebuilt") and not active_mesh.mesh_rebuilt.is_connected(_on_active_mesh_rebuilt):
+		active_mesh.mesh_rebuilt.connect(_on_active_mesh_rebuilt)
 	_update_preview_texture()
 	clear_selection()
 	queue_redraw()
 
+func _on_active_mesh_rebuilt() -> void:
+	if not _is_gizmo_dragging:
+		refresh_from_mesh()
 func refresh_from_mesh() -> void:
 	_update_preview_texture()
 	_update_gizmo_pivot()
@@ -510,20 +518,75 @@ func get_selected_vertex_indices() -> Array[int]:
 func _update_gizmo_pivot() -> void:
 	if gizmo == null:
 		return
-	var bounds := get_selection_bounds()
-	if bounds.size.x > 0.00001 or bounds.size.y > 0.00001:
-		gizmo.pivot_uv = bounds.get_center()
-	elif not selected_verts.is_empty():
-		var uvs := get_uv_array()
-		var v_idx: int = selected_verts.keys()[0]
-		if v_idx >= 0 and v_idx < uvs.size():
-			gizmo.pivot_uv = uvs[v_idx]
-	elif not selected_edges.is_empty():
-		var uvs := get_uv_array()
-		var e: Vector2i = selected_edges.keys()[0]
-		if e.x >= 0 and e.x < uvs.size() and e.y >= 0 and e.y < uvs.size():
-			gizmo.pivot_uv = (uvs[e.x] + uvs[e.y]) * 0.5
+	var uvs := get_uv_array()
+	if uvs.is_empty():
+		return
 
+	if select_mode == SelectMode.VERTEX and not selected_verts.is_empty():
+		if selected_verts.size() == 1:
+			var v_idx: int = selected_verts.keys()[0]
+			if v_idx >= 0 and v_idx < uvs.size():
+				gizmo.pivot_uv = uvs[v_idx]
+				return
+		var min_p := Vector2(INF, INF)
+		var max_p := Vector2(-INF, -INF)
+		for v_idx: int in selected_verts:
+			if v_idx >= 0 and v_idx < uvs.size():
+				min_p = min_p.min(uvs[v_idx])
+				max_p = max_p.max(uvs[v_idx])
+		gizmo.pivot_uv = (min_p + max_p) * 0.5
+		return
+	elif select_mode == SelectMode.EDGE and not selected_edges.is_empty():
+		var min_p := Vector2(INF, INF)
+		var max_p := Vector2(-INF, -INF)
+		for edge: Vector2i in selected_edges:
+			for v_idx in [edge.x, edge.y]:
+				if v_idx >= 0 and v_idx < uvs.size():
+					min_p = min_p.min(uvs[v_idx])
+					max_p = max_p.max(uvs[v_idx])
+		gizmo.pivot_uv = (min_p + max_p) * 0.5
+		return
+	elif not selected_faces.is_empty():
+		var bounds := get_selection_bounds()
+		if bounds.size.x > 0.00001 or bounds.size.y > 0.00001:
+			gizmo.pivot_uv = bounds.get_center()
+		elif active_mesh and active_mesh.pb_mesh_data:
+			var f_idx: int = selected_faces.keys()[0]
+			if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+				var f: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+				var distinct := f.get_distinct_indexes()
+				if not distinct.is_empty() and distinct[0] < uvs.size():
+					gizmo.pivot_uv = uvs[distinct[0]]
+
+func _convert_selection_to_mode(new_mode: SelectMode) -> void:
+	match new_mode:
+		SelectMode.VERTEX:
+			if not selected_faces.is_empty() and active_mesh and active_mesh.pb_mesh_data:
+				for fi in selected_faces:
+					var f_idx: int = int(fi)
+					if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+						var f: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+						for v in f.get_distinct_indexes():
+							selected_verts[v] = true
+			elif not selected_edges.is_empty():
+				for edge: Vector2i in selected_edges:
+					selected_verts[edge.x] = true
+					selected_verts[edge.y] = true
+			selected_faces.clear()
+			selected_edges.clear()
+		SelectMode.EDGE:
+			if not selected_faces.is_empty() and active_mesh and active_mesh.pb_mesh_data:
+				for fi in selected_faces:
+					var f_idx: int = int(fi)
+					if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+						var f: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+						for e in f.get_edges():
+							selected_edges[Vector2i(mini(e.a, e.b), maxi(e.a, e.b))] = true
+			selected_faces.clear()
+			selected_verts.clear()
+		SelectMode.FACE, SelectMode.ISLAND:
+			selected_verts.clear()
+			selected_edges.clear()
 func _apply_gizmo_transform(t: Dictionary) -> void:
 	if active_mesh == null or active_mesh.pb_mesh_data == null or _gizmo_affected_indices.is_empty():
 		return
@@ -690,6 +753,8 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		SelectMode.VERTEX:
 			if hover_vert >= 0:
 				hit = true
+				selected_faces.clear()
+				selected_edges.clear()
 				if is_shift:
 					if selected_verts.has(hover_vert):
 						selected_verts.erase(hover_vert)
@@ -702,6 +767,8 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		SelectMode.EDGE:
 			if hover_edge.x >= 0:
 				hit = true
+				selected_faces.clear()
+				selected_verts.clear()
 				if is_shift:
 					if selected_edges.has(hover_edge):
 						selected_edges.erase(hover_edge)
@@ -714,6 +781,8 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		SelectMode.FACE:
 			if hover_face >= 0:
 				hit = true
+				selected_verts.clear()
+				selected_edges.clear()
 				if is_shift:
 					if selected_faces.has(hover_face):
 						selected_faces.erase(hover_face)
@@ -726,6 +795,8 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		SelectMode.ISLAND:
 			if hover_face >= 0:
 				hit = true
+				selected_verts.clear()
+				selected_edges.clear()
 				var island := _get_uv_island(hover_face)
 				if is_shift:
 					for fi in island:
@@ -737,7 +808,6 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 					selected_faces.clear()
 					for fi in island:
 						selected_faces[fi] = true
-
 	if hit:
 		_update_preview_texture()
 		queue_redraw()

@@ -6,6 +6,9 @@
 class_name PBMesh
 extends MeshInstance3D
 
+## Emitted when the mesh geometry has been compiled to an ArrayMesh.
+signal mesh_rebuilt
+
 # ==============================================================================
 # Collider Enums & Exported Properties
 # ==============================================================================
@@ -115,6 +118,7 @@ func rebuild() -> void:
 	_needs_rebuild = false
 	_update_collider()
 	_refresh_stamps()
+	mesh_rebuilt.emit()
 ## Fast-path rebuild for position-only edits (active element dragging).
 ## Reuses precompiled submesh index buffers since topology and material
 ## assignments do not change during vertex movement.
@@ -126,6 +130,7 @@ func rebuild_positions() -> void:
 	mesh = pb_mesh_data.to_array_mesh(null, true)
 	_needs_rebuild = false
 	_refresh_stamps()
+	mesh_rebuilt.emit()
 
 const STAMP_CONTAINER_NAME := "PBStamps"
 
