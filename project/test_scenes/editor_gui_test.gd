@@ -1403,6 +1403,28 @@ func _run() -> void:
 						await _frames(2)
 						if plugin.uv_editor_panel.canvas != null:
 							_pass("UV-EDITOR: uv canvas active and responsive")
+							var pnl: PBUvEditorPanel = plugin.uv_editor_panel
+							if pnl._ops_toolbar != null and pnl._btn_mode_manual != null and pnl._btn_proj_fit != null:
+								_pass("UV-EDITOR: operations toolbar and projection buttons exist")
+								# Test tool switching
+								pnl._btn_tool_rot.pressed.emit()
+								if pnl.canvas.transform_tool == PBUvGizmo.ToolMode.ROTATE:
+									_pass("UV-EDITOR: Rotate tool button switched canvas transform tool")
+								else:
+									_fail("UV-EDITOR: transform tool did not switch to ROTATE")
+								pnl._btn_tool_move.pressed.emit()
+								# Test Fit UVs button on active mesh
+								pnl.canvas.selected_faces[0] = true
+								pnl._btn_proj_fit.pressed.emit()
+								var uvs: PackedVector2Array = pnl.canvas.get_uv_array()
+								var f0_verts: PackedInt32Array = target_b.pb_mesh_data.faces[0].get_distinct_indexes()
+								var fb: Rect2 = PBUvOps.get_uv_bounds(uvs, f0_verts)
+								if is_equal_approx(fb.size.x, 1.0) and is_equal_approx(fb.size.y, 1.0):
+									_pass("UV-EDITOR: Fit UVs operation executed and normalized face bounds to 1.0")
+								else:
+									_fail("UV-EDITOR: Fit UVs bounds width not 1.0 (got %f)" % fb.size.x)
+							else:
+								_fail("UV-EDITOR: operations toolbar or buttons missing")
 						else:
 							_fail("UV-EDITOR: canvas is null")
 					else:

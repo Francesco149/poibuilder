@@ -25,6 +25,9 @@ signal uv_modified(action_name: String)
 ## Emitted when the canvas zoom or pan changes.
 signal view_changed(zoom: float, pan: Vector2)
 
+## Emitted when the active 2D transform tool (Move, Rotate, Scale) changes.
+signal tool_changed(tool_mode: PBUvGizmo.ToolMode)
+
 # ==============================================================================
 # Constants & Enums
 # ==============================================================================
@@ -130,10 +133,40 @@ var grid_snap_step: float = 0.125: # 1/8 default
 	set(val):
 		if val > 0.0001:
 			grid_snap_step = val
+			if gizmo:
+				gizmo.grid_snap_step = val
 			queue_redraw()
 
-var snap_enabled: bool = true
+var snap_enabled: bool = true:
+	set(val):
+		snap_enabled = val
+		if gizmo:
+			gizmo.snap_enabled = val
 
+## 2D Transform gizmo instance for manipulating selected UVs
+var gizmo: PBUvGizmo = PBUvGizmo.new()
+
+## Active 2D transform tool (Move, Rotate, Scale)
+var transform_tool: PBUvGizmo.ToolMode:
+	get:
+		return gizmo.tool_mode if gizmo != null else PBUvGizmo.ToolMode.MOVE
+	set(val):
+		if gizmo != null and gizmo.tool_mode != val:
+			gizmo.tool_mode = val
+			tool_changed.emit(val)
+			queue_redraw()
+
+## Optional UndoRedoManager reference
+var undo_redo: Object = null:
+	get:
+		if _undo_redo != null:
+			return _undo_redo
+		if Engine.is_editor_hint():
+			return EditorInterface.get_editor_undo_redo()
+		return null
+	set(val):
+		_undo_redo = val
+var _undo_redo: Object = null
 # ==============================================================================
 # Target Mesh Data
 # ==============================================================================
@@ -171,6 +204,12 @@ var _marquee_add: bool = false
 
 var _space_held: bool = false
 
+
+# Gizmo drag interaction state
+var _is_gizmo_dragging: bool = false
+var _gizmo_drag_snapshot_uvs: PackedVector2Array = PackedVector2Array()
+var _gizmo_drag_snapshot_mesh: PBMeshData = null
+var _gizmo_affected_indices: Array[int] = []
 # ==============================================================================
 # Lifecycle
 # ==============================================================================
@@ -200,6 +239,7 @@ func set_active_mesh(mesh: PBMesh) -> void:
 
 func refresh_from_mesh() -> void:
 	_update_preview_texture()
+	_update_gizmo_pivot()
 	queue_redraw()
 
 func _update_preview_texture() -> void:
@@ -348,6 +388,18 @@ func _gui_input(event: InputEvent) -> void:
 			select_all()
 			accept_event()
 			return
+		if not key_event.pressed and key_event.keycode == KEY_W:
+			transform_tool = PBUvGizmo.ToolMode.MOVE
+			accept_event()
+			return
+		if not key_event.pressed and key_event.keycode == KEY_E:
+			transform_tool = PBUvGizmo.ToolMode.ROTATE
+			accept_event()
+			return
+		if not key_event.pressed and key_event.keycode == KEY_R:
+			transform_tool = PBUvGizmo.ToolMode.SCALE
+			accept_event()
+			return
 
 	# Mouse wheel zooming
 	if event is InputEventMouseButton:
@@ -394,6 +446,14 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 			return
 
+		if _is_gizmo_dragging:
+			var t := gizmo.apply_drag(mm.position, self, mm.shift_pressed, mm.ctrl_pressed)
+			if not t.is_empty():
+				_apply_gizmo_transform(t)
+			queue_redraw()
+			accept_event()
+			return
+
 		if _is_marquee:
 			_marquee_current = mm.position
 			queue_redraw()
@@ -413,6 +473,117 @@ func _zoom_at(pivot_screen: Vector2, factor: float) -> void:
 	zoom = new_zoom
 	var new_screen := uv_to_screen(anchor_uv)
 	pan_offset += pivot_screen - new_screen
+
+func has_selection() -> bool:
+	return not selected_faces.is_empty() or not selected_verts.is_empty() or not selected_edges.is_empty()
+
+func get_selected_vertex_indices() -> Array[int]:
+	var result: Array[int] = []
+	var seen: Dictionary = {}
+	var uvs := get_uv_array()
+	if uvs.is_empty():
+		return result
+
+	match select_mode:
+		SelectMode.VERTEX:
+			for v_idx: int in selected_verts:
+				if v_idx >= 0 and v_idx < uvs.size():
+					seen[v_idx] = true
+					result.append(v_idx)
+		SelectMode.EDGE:
+			for edge: Vector2i in selected_edges:
+				for v_idx: int in [edge.x, edge.y]:
+					if v_idx >= 0 and v_idx < uvs.size() and not seen.has(v_idx):
+						seen[v_idx] = true
+						result.append(v_idx)
+		SelectMode.FACE, SelectMode.ISLAND:
+			if active_mesh and active_mesh.pb_mesh_data:
+				for f_idx: int in selected_faces:
+					if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+						var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+						for v_idx in face.get_distinct_indexes():
+							if v_idx >= 0 and v_idx < uvs.size() and not seen.has(v_idx):
+								seen[v_idx] = true
+								result.append(v_idx)
+	return result
+
+func _update_gizmo_pivot() -> void:
+	if gizmo == null:
+		return
+	var bounds := get_selection_bounds()
+	if bounds.size.x > 0.00001 or bounds.size.y > 0.00001:
+		gizmo.pivot_uv = bounds.get_center()
+	elif not selected_verts.is_empty():
+		var uvs := get_uv_array()
+		var v_idx: int = selected_verts.keys()[0]
+		if v_idx >= 0 and v_idx < uvs.size():
+			gizmo.pivot_uv = uvs[v_idx]
+	elif not selected_edges.is_empty():
+		var uvs := get_uv_array()
+		var e: Vector2i = selected_edges.keys()[0]
+		if e.x >= 0 and e.x < uvs.size() and e.y >= 0 and e.y < uvs.size():
+			gizmo.pivot_uv = (uvs[e.x] + uvs[e.y]) * 0.5
+
+func _apply_gizmo_transform(t: Dictionary) -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null or _gizmo_affected_indices.is_empty():
+		return
+
+	var mesh_data: PBMeshData = active_mesh.pb_mesh_data
+	var target_arr: PackedVector2Array = mesh_data.textures1 if uv_channel == UvChannel.UV2 else mesh_data.textures0
+	var vc: int = mesh_data.positions.size()
+	if target_arr.size() != vc:
+		target_arr.resize(vc)
+
+	PBUvOps._ensure_faces_manual_for_vertices(mesh_data, _gizmo_affected_indices)
+
+	var t_type: String = t.get("type", "")
+	match t_type:
+		"move":
+			var delta: Vector2 = t.get("delta", Vector2.ZERO)
+			for vi in _gizmo_affected_indices:
+				if vi >= 0 and vi < _gizmo_drag_snapshot_uvs.size() and vi < target_arr.size():
+					target_arr[vi] = _gizmo_drag_snapshot_uvs[vi] + delta
+		"rotate":
+			var angle_deg: float = t.get("angle", 0.0)
+			var pivot: Vector2 = t.get("pivot", Vector2.ZERO)
+			var rad := deg_to_rad(angle_deg)
+			for vi in _gizmo_affected_indices:
+				if vi >= 0 and vi < _gizmo_drag_snapshot_uvs.size() and vi < target_arr.size():
+					var orig := _gizmo_drag_snapshot_uvs[vi]
+					target_arr[vi] = pivot + (orig - pivot).rotated(rad)
+		"scale":
+			var scale_factor: Vector2 = t.get("scale", Vector2.ONE)
+			var pivot: Vector2 = t.get("pivot", Vector2.ZERO)
+			for vi in _gizmo_affected_indices:
+				if vi >= 0 and vi < _gizmo_drag_snapshot_uvs.size() and vi < target_arr.size():
+					var orig := _gizmo_drag_snapshot_uvs[vi]
+					target_arr[vi] = pivot + Vector2((orig.x - pivot.x) * scale_factor.x, (orig.y - pivot.y) * scale_factor.y)
+
+	if uv_channel == UvChannel.UV2:
+		mesh_data.textures1 = target_arr
+	else:
+		mesh_data.textures0 = target_arr
+
+	active_mesh.rebuild()
+
+func _commit_gizmo_drag() -> void:
+	if not _is_gizmo_dragging:
+		return
+	_is_gizmo_dragging = false
+	gizmo.commit_drag()
+	_update_gizmo_pivot()
+
+	if active_mesh and active_mesh.pb_mesh_data and _gizmo_drag_snapshot_mesh:
+		var cmd := CmdMeshOp.new(active_mesh.pb_mesh_data, "Transform UVs", active_mesh)
+		cmd.before = _gizmo_drag_snapshot_mesh
+		cmd.capture_after()
+		var ur: Object = undo_redo
+		if ur != null:
+			cmd.add_to_undo_manager(ur)
+		_gizmo_drag_snapshot_mesh = null
+
+	uv_modified.emit("Transform UVs")
+	queue_redraw()
 
 func _update_hover(mouse_pos: Vector2) -> void:
 	var old_h_v := hover_vert
@@ -464,6 +635,9 @@ func _update_hover(mouse_pos: Vector2) -> void:
 	if old_h_v != hover_vert or old_h_e != hover_edge or old_h_f != hover_face:
 		queue_redraw()
 
+	if has_selection() and not _is_panning and not _is_marquee:
+		if gizmo and gizmo.update_hover(mouse_pos, self):
+			queue_redraw()
 # ==============================================================================
 # Selection Logic
 # ==============================================================================
@@ -475,6 +649,7 @@ func clear_selection() -> void:
 	queue_redraw()
 	selection_changed.emit()
 
+	_update_gizmo_pivot()
 func select_all() -> void:
 	var uvs := get_uv_array()
 	if uvs.is_empty() or active_mesh == null or active_mesh.pb_mesh_data == null:
@@ -494,10 +669,22 @@ func select_all() -> void:
 
 	queue_redraw()
 	selection_changed.emit()
+	_update_gizmo_pivot()
 
 func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 	_update_hover(mouse_pos)
 
+	if has_selection() and not is_shift:
+		var gizmo_hit := gizmo.hit_test(mouse_pos, self)
+		if gizmo_hit != PBUvGizmo.HandleType.NONE:
+			_is_gizmo_dragging = true
+			_gizmo_drag_snapshot_uvs = get_uv_array().duplicate()
+			_gizmo_affected_indices = get_selected_vertex_indices()
+			if active_mesh and active_mesh.pb_mesh_data:
+				_gizmo_drag_snapshot_mesh = PBCommand.copy_mesh_data(active_mesh.pb_mesh_data)
+			gizmo.begin_drag(gizmo_hit, mouse_pos, self)
+			queue_redraw()
+			return
 	var hit := false
 	match select_mode:
 		SelectMode.VERTEX:
@@ -555,6 +742,7 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		_update_preview_texture()
 		queue_redraw()
 		selection_changed.emit()
+		_update_gizmo_pivot()
 	else:
 		# Start marquee selection
 		_is_marquee = true
@@ -565,12 +753,16 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 			clear_selection()
 
 func _handle_left_release(mouse_pos: Vector2) -> void:
+	if _is_gizmo_dragging:
+		_commit_gizmo_drag()
+		return
+
 	if _is_marquee:
 		_is_marquee = false
 		_marquee_current = mouse_pos
 		_apply_marquee_selection()
+		_update_gizmo_pivot()
 		queue_redraw()
-
 func _handle_double_click(mouse_pos: Vector2, is_shift: bool) -> void:
 	_update_hover(mouse_pos)
 	if hover_face >= 0:
@@ -582,6 +774,7 @@ func _handle_double_click(mouse_pos: Vector2, is_shift: bool) -> void:
 		_update_preview_texture()
 		queue_redraw()
 		selection_changed.emit()
+		_update_gizmo_pivot()
 
 func _apply_marquee_selection() -> void:
 	var rect := Rect2(_marquee_start, _marquee_current - _marquee_start).abs()
@@ -629,6 +822,7 @@ func _apply_marquee_selection() -> void:
 
 	_update_preview_texture()
 	selection_changed.emit()
+	_update_gizmo_pivot()
 
 func _get_uv_island(seed_face_idx: int) -> Array[int]:
 	var result: Array[int] = []
@@ -732,6 +926,10 @@ func _draw() -> void:
 		var rect := Rect2(_marquee_start, _marquee_current - _marquee_start).abs()
 		draw_rect(rect, COLOR_MARQUEE_FILL)
 		draw_rect(rect, COLOR_MARQUEE_BORDER, false, 1.0)
+
+	# 7. 2D Transform Gizmo
+	if has_selection() and not _is_marquee:
+		gizmo.draw(self)
 
 func _draw_grid() -> void:
 	var tl_uv := screen_to_uv(Vector2.ZERO)

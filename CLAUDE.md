@@ -2656,6 +2656,36 @@ v0.9.82 round complete ✓ — Session 1: 2D UV Editor Panel Base (canvas, navig
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
 - Version bump 0.9.81 -> 0.9.82 (poibuilder_plugin.gd, pb_editor.gd, plugin.cfg).
 
+v0.9.83 round complete ✓ — Session 2: UV Editor Operations, 2D Transform Gizmo, Snapping, Seams & Projections:
+- CORE UV OPERATIONS LIBRARY (`PBUvOps` in `editor/uv/pb_uv_ops.gd`):
+  * Mode conversion: `convert_to_manual` (freezes coordinates into `textures0`, sets `manual_uv = true`), `convert_to_auto` (restores dynamic projection), and `get_uv_mode` (`"Auto"`, `"Manual"`, `"Mixed"`, `"NoSelection"`).
+  * 2D Transformations: `translate_uvs` (delta translation with automatic manual mode conversion), `rotate_uvs` (rotation around arbitrary pivot by degrees), `scale_uvs` (per-axis or uniform scaling around pivot), `flip_uvs` (horizontal and vertical reflection across selection center), and `rotate_90` (90° CW/CCW).
+  * Projections: `fit_uvs` (normalizes selection bounds into $[0, 1]$ unit square), `planar_project` (planar projection along average face normal, lower-left aligned to $(0, 0)$), and `box_project` (independent dominant cardinal axis projection per face).
+  * Seams & Topology: `sew_uvs` (welds proximate coincident 3D vertices in UV space within configurable distance), `split_uvs` (separates coincident UV coordinates with displacement offset), `collapse_uvs` (collapses all selected UVs to geometric centroid), and `auto_stitch` (aligns and welds matching UV edges of adjacent 3D faces with scaling, rotation, and translation).
+  * Utilities: `sample_texel_density` and `normalize_texel_density` (calculates 3D area vs 2D UV area and scales UVs to match target pixels-per-meter), and `export_uv_template` (renders UV wireframe directly to an `Image` with Bresenham line rasterization and exports to PNG).
+- 2D TRANSFORM GIZMO (`PBUvGizmo` in `editor/uv/pb_uv_gizmo.gd`):
+  * Interactive 2D viewport transform gizmo with Move, Rotate, and Scale tool modes:
+    - Move: Center free-2D handle square, horizontal U-axis red arrow, vertical V-axis green arrow.
+    - Rotate: Circular dial with angle tracking indicator and 15° detent angle snapping.
+    - Scale: Center uniform scale box, U-axis scale box, V-axis scale box with Shift-uniform override.
+  * Full grid snapping and proximity snapping support.
+  * Integrated directly into `PBUvCanvas`: draws at the selection pivot, hit-tests on mouse down, applies live interactive dragging with 60 FPS real-time ArrayMesh rebuild updates in the 3D viewport, and commits undo actions via `CmdMeshOp` on release.
+  * Keyboard hotkeys in canvas: `W` (Move), `E` (Rotate), `R` (Scale).
+- OPERATIONS TOOLBAR & PANEL UI (`PBUvEditorPanel` in `editor/uv/pb_uv_editor_panel.gd`):
+  * Tool buttons on top toolbar: `Move (W)`, `Rotate (E)`, `Scale (R)`.
+  * Dedicated secondary operations toolbar row (`_ops_toolbar`):
+    - Mode Conversion: `[Auto]` / `[Manual]`
+    - Projections: `[Planar]` / `[Box]` / `[Fit]`
+    - Quick Transforms: `[Flip U]` / `[Flip V]` / `[↶ 90°]` / `[↷ 90°]`
+    - Seams: `[Sew]` / `[Split]` / `[Collapse]` / `[Stitch]`
+    - Texel Density: `[Get]` / `SpinBox` (px/m) / `[Set]`
+    - Export: `[Export PNG]`
+  * Robust Undo/Redo integration: every operation wrapped in `CmdMeshOp` with full snapshot swap and 3D scene rebuild.
+- TESTS & VERIFICATION:
+  * 872/872 GUT unit tests passing (+13 tests in `test_pb_uv_ops.gd`, 16,210 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), covering toolbar, tool switching, and operation execution.
+- Version bump 0.9.82 -> 0.9.83 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

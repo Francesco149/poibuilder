@@ -134,7 +134,7 @@ graph TD
 
 ---
 
-### Session 2: UV Editor Operations — 2D Transforms, Snapping, Seams & Projections
+### Session 2: UV Editor Operations — 2D Transforms, Snapping, Seams & Projections (Complete ✓)
 - **Goal**: Add interactive 2D manipulation gizmos and core UV actions inside the 2D UV Editor canvas.
 - **Files**:
   - `editor/uv/pb_uv_gizmo.gd`: 2D transform handles (Move, Rotate, Scale) with grid snapping and proximity snapping.

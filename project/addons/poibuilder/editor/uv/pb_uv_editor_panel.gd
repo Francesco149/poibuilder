@@ -48,6 +48,35 @@ var _opt_snap_step: OptionButton
 var _btn_pop_out: Button
 var _lbl_status: Label
 
+# Tool buttons
+var _btn_tool_move: Button
+var _btn_tool_rot: Button
+var _btn_tool_scale: Button
+var _tool_group: ButtonGroup
+
+# Operations toolbar controls
+var _ops_toolbar: HBoxContainer
+var _btn_mode_auto: Button
+var _btn_mode_manual: Button
+var _btn_proj_planar: Button
+var _btn_proj_box: Button
+var _btn_proj_fit: Button
+var _btn_flip_u: Button
+var _btn_flip_v: Button
+var _btn_rot_ccw: Button
+var _btn_rot_cw: Button
+var _btn_sew: Button
+var _btn_split: Button
+var _btn_collapse: Button
+var _btn_stitch: Button
+var _spin_texel: SpinBox
+var _btn_texel_get: Button
+var _btn_texel_set: Button
+var _btn_export_png: Button
+
+## Optional UndoRedoManager reference for headless tests
+var undo_redo: Object = null
+
 # Floating window instance
 var _floating_window: Window = null
 var _is_floating: bool = false
@@ -84,6 +113,19 @@ func _build_ui() -> void:
 	_toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_toolbar.add_theme_constant_override("separation", 6)
 	add_child(_toolbar)
+
+	# --- Tool Buttons (Move / Rotate / Scale) ---
+	_tool_group = ButtonGroup.new()
+	_btn_tool_move = _create_tool_btn("Move", PBUvGizmo.ToolMode.MOVE, "Move tool (W)")
+	_btn_tool_move.button_pressed = true
+	_btn_tool_rot = _create_tool_btn("Rotate", PBUvGizmo.ToolMode.ROTATE, "Rotate tool (E)")
+	_btn_tool_scale = _create_tool_btn("Scale", PBUvGizmo.ToolMode.SCALE, "Scale tool (R)")
+
+	_toolbar.add_child(_btn_tool_move)
+	_toolbar.add_child(_btn_tool_rot)
+	_toolbar.add_child(_btn_tool_scale)
+
+	_toolbar.add_child(_make_vsep())
 
 	# --- Mode Buttons ---
 	_mode_group = ButtonGroup.new()
@@ -217,7 +259,175 @@ func _build_ui() -> void:
 	_btn_pop_out.pressed.connect(_toggle_pop_out)
 	_toolbar.add_child(_btn_pop_out)
 
-	# 2. Canvas Container
+	# 2. Operations Toolbar Row
+	_ops_toolbar = HBoxContainer.new()
+	_ops_toolbar.name = "OpsToolbar"
+	_ops_toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_ops_toolbar.add_theme_constant_override("separation", 5)
+	add_child(_ops_toolbar)
+
+	# Mode Conversion
+	var lbl_mode := Label.new()
+	lbl_mode.text = "Mode:"
+	_ops_toolbar.add_child(lbl_mode)
+
+	_btn_mode_auto = Button.new()
+	_btn_mode_auto.name = "BtnModeAuto"
+	_btn_mode_auto.text = "Auto"
+	_btn_mode_auto.tooltip_text = "Convert selected faces to Auto UV"
+	_btn_mode_auto.pressed.connect(func(): _execute_uv_op("Convert to Auto UV", func() -> bool: return PBUvOps.convert_to_auto(active_mesh.pb_mesh_data, _get_target_faces())))
+	_ops_toolbar.add_child(_btn_mode_auto)
+
+	_btn_mode_manual = Button.new()
+	_btn_mode_manual.name = "BtnModeManual"
+	_btn_mode_manual.text = "Manual"
+	_btn_mode_manual.tooltip_text = "Convert selected faces to Manual UV (freeze coordinates)"
+	_btn_mode_manual.pressed.connect(func(): _execute_uv_op("Convert to Manual UV", func() -> bool: return PBUvOps.convert_to_manual(active_mesh.pb_mesh_data, _get_target_faces())))
+	_ops_toolbar.add_child(_btn_mode_manual)
+
+	_ops_toolbar.add_child(_make_vsep())
+
+	# Projections
+	var lbl_proj := Label.new()
+	lbl_proj.text = "Project:"
+	_ops_toolbar.add_child(lbl_proj)
+
+	_btn_proj_planar = Button.new()
+	_btn_proj_planar.name = "BtnProjPlanar"
+	_btn_proj_planar.text = "Planar"
+	_btn_proj_planar.tooltip_text = "Planar project selected faces along average normal"
+	_btn_proj_planar.pressed.connect(func(): _execute_uv_op("Planar Project UVs", func() -> bool: return PBUvOps.planar_project(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_proj_planar)
+
+	_btn_proj_box = Button.new()
+	_btn_proj_box.name = "BtnProjBox"
+	_btn_proj_box.text = "Box"
+	_btn_proj_box.tooltip_text = "Box project selected faces along dominant cardinal normal"
+	_btn_proj_box.pressed.connect(func(): _execute_uv_op("Box Project UVs", func() -> bool: return PBUvOps.box_project(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_proj_box)
+
+	_btn_proj_fit = Button.new()
+	_btn_proj_fit.name = "BtnProjFit"
+	_btn_proj_fit.text = "Fit"
+	_btn_proj_fit.tooltip_text = "Fit selected UVs into [0, 1] bounds"
+	_btn_proj_fit.pressed.connect(func(): _execute_uv_op("Fit UVs", func() -> bool: return PBUvOps.fit_uvs(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_proj_fit)
+
+	_ops_toolbar.add_child(_make_vsep())
+
+	# Transforms
+	var lbl_xform := Label.new()
+	lbl_xform.text = "Transform:"
+	_ops_toolbar.add_child(lbl_xform)
+
+	_btn_flip_u = Button.new()
+	_btn_flip_u.name = "BtnFlipU"
+	_btn_flip_u.text = "Flip U"
+	_btn_flip_u.tooltip_text = "Flip UVs horizontally"
+	_btn_flip_u.pressed.connect(func(): _execute_uv_op("Flip UVs Horizontal", func() -> bool: return PBUvOps.flip_uvs(active_mesh.pb_mesh_data, _get_target_faces(), true, canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_flip_u)
+
+	_btn_flip_v = Button.new()
+	_btn_flip_v.name = "BtnFlipV"
+	_btn_flip_v.text = "Flip V"
+	_btn_flip_v.tooltip_text = "Flip UVs vertically"
+	_btn_flip_v.pressed.connect(func(): _execute_uv_op("Flip UVs Vertical", func() -> bool: return PBUvOps.flip_uvs(active_mesh.pb_mesh_data, _get_target_faces(), false, canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_flip_v)
+
+	_btn_rot_ccw = Button.new()
+	_btn_rot_ccw.name = "BtnRotCCW"
+	_btn_rot_ccw.text = "↶ 90°"
+	_btn_rot_ccw.tooltip_text = "Rotate UVs 90 degrees CCW"
+	_btn_rot_ccw.pressed.connect(func(): _execute_uv_op("Rotate UVs 90° CCW", func() -> bool: return PBUvOps.rotate_90(active_mesh.pb_mesh_data, _get_target_faces(), false, canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_rot_ccw)
+
+	_btn_rot_cw = Button.new()
+	_btn_rot_cw.name = "BtnRotCW"
+	_btn_rot_cw.text = "↷ 90°"
+	_btn_rot_cw.tooltip_text = "Rotate UVs 90 degrees CW"
+	_btn_rot_cw.pressed.connect(func(): _execute_uv_op("Rotate UVs 90° CW", func() -> bool: return PBUvOps.rotate_90(active_mesh.pb_mesh_data, _get_target_faces(), true, canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_rot_cw)
+
+	_ops_toolbar.add_child(_make_vsep())
+
+	# Seams & Topology
+	var lbl_seams := Label.new()
+	lbl_seams.text = "Seams:"
+	_ops_toolbar.add_child(lbl_seams)
+
+	_btn_sew = Button.new()
+	_btn_sew.name = "BtnSew"
+	_btn_sew.text = "Sew"
+	_btn_sew.tooltip_text = "Sew proximate 3D coincident UV vertices"
+	_btn_sew.pressed.connect(func(): _execute_uv_op("Sew UVs", func() -> bool: return PBUvOps.sew_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), 0.05, canvas.uv_channel if canvas else 0) > 0))
+	_ops_toolbar.add_child(_btn_sew)
+
+	_btn_split = Button.new()
+	_btn_split.name = "BtnSplit"
+	_btn_split.text = "Split"
+	_btn_split.tooltip_text = "Split coincident UV vertices"
+	_btn_split.pressed.connect(func(): _execute_uv_op("Split UVs", func() -> bool: return PBUvOps.split_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), Vector2(0.05, 0.05), canvas.uv_channel if canvas else 0) > 0))
+	_ops_toolbar.add_child(_btn_split)
+
+	_btn_collapse = Button.new()
+	_btn_collapse.name = "BtnCollapse"
+	_btn_collapse.text = "Collapse"
+	_btn_collapse.tooltip_text = "Collapse selected UV vertices to centroid"
+	_btn_collapse.pressed.connect(func(): _execute_uv_op("Collapse UVs", func() -> bool: return PBUvOps.collapse_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_collapse)
+
+	_btn_stitch = Button.new()
+	_btn_stitch.name = "BtnStitch"
+	_btn_stitch.text = "Stitch"
+	_btn_stitch.tooltip_text = "Auto-stitch matching edge of 2 selected adjacent faces"
+	_btn_stitch.pressed.connect(_on_stitch_pressed)
+	_ops_toolbar.add_child(_btn_stitch)
+
+	_ops_toolbar.add_child(_make_vsep())
+
+	# Texel Density
+	var lbl_texel := Label.new()
+	lbl_texel.text = "Texel:"
+	_ops_toolbar.add_child(lbl_texel)
+
+	_btn_texel_get = Button.new()
+	_btn_texel_get.name = "BtnTexelGet"
+	_btn_texel_get.text = "Get"
+	_btn_texel_get.tooltip_text = "Sample texel density from selected face"
+	_btn_texel_get.pressed.connect(_on_texel_get_pressed)
+	_ops_toolbar.add_child(_btn_texel_get)
+
+	_spin_texel = SpinBox.new()
+	_spin_texel.name = "SpinTexel"
+	_spin_texel.min_value = 16.0
+	_spin_texel.max_value = 4096.0
+	_spin_texel.step = 1.0
+	_spin_texel.value = 256.0
+	_spin_texel.suffix = "px/m"
+	_spin_texel.custom_minimum_size = Vector2(90, 20)
+	_spin_texel.tooltip_text = "Target texel density in pixels per meter"
+	_ops_toolbar.add_child(_spin_texel)
+
+	_btn_texel_set = Button.new()
+	_btn_texel_set.name = "BtnTexelSet"
+	_btn_texel_set.text = "Set"
+	_btn_texel_set.tooltip_text = "Apply target texel density to selected faces"
+	_btn_texel_set.pressed.connect(_on_texel_set_pressed)
+	_ops_toolbar.add_child(_btn_texel_set)
+
+	_ops_toolbar.add_child(_make_vsep())
+
+	# Export
+	_btn_export_png = Button.new()
+	_btn_export_png.name = "BtnExportPng"
+	_btn_export_png.text = "Export PNG"
+	_btn_export_png.tooltip_text = "Export UV template as a PNG image"
+	_btn_export_png.pressed.connect(_on_export_png_pressed)
+	_ops_toolbar.add_child(_btn_export_png)
+
+	# 3. Canvas Container
+
+
 	var canvas_container := PanelContainer.new()
 	canvas_container.name = "CanvasContainer"
 	canvas_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -228,6 +438,7 @@ func _build_ui() -> void:
 	canvas.name = "UvCanvas"
 	canvas.selection_changed.connect(_on_canvas_selection_changed)
 	canvas.view_changed.connect(_on_canvas_view_changed)
+	canvas.tool_changed.connect(_on_canvas_tool_changed)
 	canvas_container.add_child(canvas)
 
 func _create_mode_btn(label: String, mode: PBUvCanvas.SelectMode, tip: String) -> Button:
@@ -240,6 +451,25 @@ func _create_mode_btn(label: String, mode: PBUvCanvas.SelectMode, tip: String) -
 	btn.pressed.connect(func(): if canvas: canvas.select_mode = mode; _update_status())
 	return btn
 
+func _create_tool_btn(label: String, mode: PBUvGizmo.ToolMode, tip: String) -> Button:
+	var btn := Button.new()
+	btn.name = "Tool" + label
+	btn.text = label
+	btn.toggle_mode = true
+	btn.button_group = _tool_group
+	btn.tooltip_text = tip
+	btn.pressed.connect(func(): if canvas: canvas.transform_tool = mode)
+	return btn
+
+
+func _on_canvas_tool_changed(mode: PBUvGizmo.ToolMode) -> void:
+	match mode:
+		PBUvGizmo.ToolMode.MOVE:
+			if _btn_tool_move: _btn_tool_move.button_pressed = true
+		PBUvGizmo.ToolMode.ROTATE:
+			if _btn_tool_rot: _btn_tool_rot.button_pressed = true
+		PBUvGizmo.ToolMode.SCALE:
+			if _btn_tool_scale: _btn_tool_scale.button_pressed = true
 func _make_vsep() -> VSeparator:
 	var sep := VSeparator.new()
 	sep.custom_minimum_size = Vector2(0, 18)
@@ -303,25 +533,146 @@ func _on_canvas_selection_changed() -> void:
 func _update_status() -> void:
 	if _lbl_status == null:
 		return
-	if active_mesh == null:
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
 		_lbl_status.text = "No mesh selected"
 		return
 
 	if canvas == null:
 		return
 
+	var mode_str := PBUvOps.get_uv_mode(active_mesh.pb_mesh_data, canvas.selected_faces.keys())
+
+	var sel_text := ""
 	match canvas.select_mode:
 		PBUvCanvas.SelectMode.VERTEX:
 			var c := canvas.selected_verts.size()
-			_lbl_status.text = "%d UV Vertices selected" % c if c > 0 else "0 Vertices selected"
+			sel_text = "%d Vertices" % c if c > 0 else "0 Vertices"
 		PBUvCanvas.SelectMode.EDGE:
 			var c := canvas.selected_edges.size()
-			_lbl_status.text = "%d UV Edges selected" % c if c > 0 else "0 Edges selected"
+			sel_text = "%d Edges" % c if c > 0 else "0 Edges"
 		PBUvCanvas.SelectMode.FACE, PBUvCanvas.SelectMode.ISLAND:
 			var c := canvas.selected_faces.size()
-			_lbl_status.text = "%d Faces selected" % c if c > 0 else "0 Faces selected"
+			sel_text = "%d Faces" % c if c > 0 else "0 Faces"
 
-# ==============================================================================
+	_lbl_status.text = "Mode: %s | %s selected" % [mode_str, sel_text]
+
+func _get_undo_redo() -> Object:
+	if undo_redo != null:
+		return undo_redo
+	if Engine.is_editor_hint():
+		return EditorInterface.get_editor_undo_redo()
+	return null
+
+func _get_target_faces() -> Array:
+	if canvas == null or active_mesh == null or active_mesh.pb_mesh_data == null:
+		return []
+	if not canvas.selected_faces.is_empty():
+		return canvas.selected_faces.keys()
+	if not canvas.selected_verts.is_empty() or not canvas.selected_edges.is_empty():
+		var sel_verts := canvas.get_selected_vertex_indices()
+		var v_set: Dictionary = {}
+		for v in sel_verts:
+			v_set[v] = true
+		var faces: Array = []
+		for fi in range(active_mesh.pb_mesh_data.faces.size()):
+			var f: PBFace = active_mesh.pb_mesh_data.faces[fi]
+			for idx in f.get_distinct_indexes():
+				if v_set.has(idx):
+					faces.append(fi)
+					break
+		return faces
+	# Default to all faces if nothing selected
+	var all_faces: Array = []
+	for fi in range(active_mesh.pb_mesh_data.faces.size()):
+		all_faces.append(fi)
+	return all_faces
+
+func _get_target_vertices() -> Array:
+	if canvas == null or active_mesh == null or active_mesh.pb_mesh_data == null:
+		return []
+	var sel_verts := canvas.get_selected_vertex_indices()
+	if not sel_verts.is_empty():
+		return sel_verts
+	var all_verts: Array = []
+	for vi in range(active_mesh.pb_mesh_data.positions.size()):
+		all_verts.append(vi)
+	return all_verts
+
+func _execute_uv_op(action_name: String, op_callable: Callable) -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return
+
+	var cmd := CmdMeshOp.new(active_mesh.pb_mesh_data, action_name, active_mesh)
+	var res = op_callable.call()
+	if res != false:
+		cmd.capture_after()
+		var ur := _get_undo_redo()
+		if ur != null:
+			cmd.add_to_undo_manager(ur)
+		else:
+			active_mesh.rebuild()
+		if canvas:
+			canvas.refresh_from_mesh()
+		_update_status()
+		uv_selection_changed.emit()
+
+func _on_stitch_pressed() -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null or canvas == null:
+		return
+	var faces := _get_target_faces()
+	if faces.size() < 2:
+		return
+	var f0: int = int(faces[0])
+	var f1: int = int(faces[1])
+	_execute_uv_op("Auto-Stitch UVs", func() -> bool:
+		return PBUvOps.auto_stitch(active_mesh.pb_mesh_data, f0, f1, canvas.uv_channel if canvas else 0)
+	)
+
+func _on_texel_get_pressed() -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null or canvas == null or _spin_texel == null:
+		return
+	var target_faces := _get_target_faces()
+	if target_faces.is_empty():
+		return
+	var f_idx: int = int(target_faces[0])
+	if f_idx >= 0 and f_idx < active_mesh.pb_mesh_data.faces.size():
+		var face: PBFace = active_mesh.pb_mesh_data.faces[f_idx]
+		var d := PBUvOps.sample_texel_density(active_mesh.pb_mesh_data, face, Vector2(512, 512), canvas.uv_channel)
+		if d > 0.0:
+			_spin_texel.value = roundf(d)
+
+func _on_texel_set_pressed() -> void:
+	if _spin_texel == null:
+		return
+	_execute_uv_op("Normalize Texel Density", func() -> bool:
+		return PBUvOps.normalize_texel_density(
+			active_mesh.pb_mesh_data,
+			_get_target_faces(),
+			_spin_texel.value,
+			Vector2(512, 512),
+			canvas.uv_channel if canvas else 0
+		) > 0
+	)
+
+func _on_export_png_pressed() -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return
+	var dir := "res://exports"
+	DirAccess.make_dir_recursive_absolute(dir)
+	var path := dir + "/uv_template.png"
+	var err := PBUvOps.export_uv_template(
+		active_mesh.pb_mesh_data,
+		path,
+		1024,
+		Color.WHITE,
+		Color.BLACK,
+		false,
+		false,
+		[],
+		canvas.uv_channel if canvas else 0
+	)
+	if err == OK:
+		print("[PB/uv] Exported UV template to %s" % path)
 # Toolbar Handlers
 # ==============================================================================
 
