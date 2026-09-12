@@ -163,6 +163,35 @@ def _even(v: int) -> int:
     return max(2, int(v) - (int(v) % 2))
 
 
+def _shot_signature(frames_dir: Path) -> list:
+    """Count, total bytes and newest mtime of a shot's frames.
+
+    The frame COUNT alone is not a signature: a re-record that lands on the same
+    number of frames — the takes are deterministic, so this happens constantly —
+    left the old segment in place and the master kept showing the PREVIOUS
+    render. That is how the arch-facing and water-depth fixes failed to reach the
+    film until every stamp was deleted by hand.
+    """
+    total = 0
+    newest = 0.0
+    count = 0
+    try:
+        entries = list(frames_dir.iterdir())
+    except OSError:
+        return [0, 0, 0]
+    for f in entries:
+        if f.suffix != ".png":
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        count += 1
+        total += st.st_size
+        newest = max(newest, st.st_mtime)
+    return [count, total, int(newest)]
+
+
 def fingerprint(clip: edl.Clip, proj: edl.Project, src: Source) -> str:
     """A hash of everything that decides what a segment looks like.
 
@@ -182,6 +211,8 @@ def fingerprint(clip: edl.Clip, proj: edl.Project, src: Source) -> str:
     }
     if src.shot is not None:
         payload["shot"] = [src.shot.directory, src.shot.frames]
+        if src.session is not None:
+            payload["frames"] = _shot_signature(src.session.frames_dir(src.shot))
     elif clip.kind == "video":
         f = resolve_media(clip.file)
         if f.exists():
