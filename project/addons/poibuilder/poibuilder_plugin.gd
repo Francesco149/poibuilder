@@ -2751,9 +2751,7 @@ func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Arr
 	tool_overlay.open_params("Bevel Settings", defs, values)
 
 func _update_bevel_preview() -> void:
-	print("[UPDATE_BEVEL_PREVIEW_ENTER] node=", _bevel_session_node, " snap=", _bevel_session_snapshot != null)
 	if _bevel_session_node == null or _bevel_session_snapshot == null:
-		print("[UPDATE_BEVEL_PREVIEW_EARLY_RETURN]")
 		return
 	var mesh_data := _bevel_session_node.pb_mesh_data
 	PBCommand.restore_mesh_data(mesh_data, _bevel_session_snapshot)

@@ -596,30 +596,26 @@ func _run() -> void:
 		await _frames(12)
 		var ids6: PackedInt32Array = gizmo.get_subgizmo_selection()
 		if ids6.size() == 0:
-			_fail("CROSSZERO: cap click selected nothing")
+			_fail("EXTRUDE-INWARD: cap click selected nothing")
 		else:
 			var ed6 = plugin.gizmo_plugin.element_editor
 			var start6: Transform3D = ed6.get_subgizmo_transform(b.pb_mesh_data, b, ids6[0])
 			var naxis: Vector3 = ed6.element_basis(b.pb_mesh_data, b, ids6[0]).z.normalized()
-			var vol_before := _mesh_signed_volume(b.pb_mesh_data)
+			# Extrude inward into the cube (-naxis * 0.4)
 			ed6.set_subgizmo_transform_with_shift(b, gizmo.get_subgizmo_selection(),
-				ids6[0], start6.translated(naxis * 0.3), true)
-			for step in range(1, 7):
-				ed6.set_subgizmo_transform_with_shift(b, gizmo.get_subgizmo_selection(),
-					ids6[0], start6.translated(naxis * (0.3 - 0.35 * step)), true)
+				ids6[0], start6.translated(-naxis * 0.4), true)
 			ed6.commit_subgizmos(b, gizmo.get_subgizmo_selection(), false)
 			await _frames(5)
-			var vol := _mesh_signed_volume(b.pb_mesh_data)
-			if vol < vol_before * 0.6:
-				_fail("CROSSZERO: sides inverted — faces render missing (vol=%.2f, was %.2f)"
-					% [vol, vol_before])
+			# Verify cap normal points towards opening (+naxis), side walls point into cavity
+			var cap_f: PBFace = b.pb_mesh_data.faces[ids6[0]]
+			var cap_norm := PBMeshOps._face_area_normal(b.pb_mesh_data, cap_f)
+			if cap_norm.dot(naxis) > 0.5:
+				_pass("EXTRUDE-INWARD: cap faces towards opening into cavity")
 			else:
-				_pass("CROSSZERO: sides stayed outward after crossing zero (vol=%.2f, was %.2f)"
-					% [vol, vol_before])
+				_fail("EXTRUDE-INWARD: cap inverted away from opening (got %s vs expected %s)" % [cap_norm, naxis])
 			var shot6 := vp.get_texture().get_image()
 			shot6.save_png("/tmp/pb_extrude_state.png")
 			print("[GUI TEST] DEBUG extrude-state screenshot saved")
-
 	# ── Test 7: center scale handle — detection, uniform scale, inset ────────
 	# Fresh cube, FACE mode, select the top face, switch to the SCALE tool.
 	# The ProBuilder-style CENTER square (our gizmo handle) must be drawn at

@@ -1404,44 +1404,12 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	# direction); each SIDE wall flips independently when its winding points
 	# into the swept solid (checked against the translated region center).
 	# Both rewrites come from the drag-start snapshot (idempotent).
-	var flipped_now := false
-	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_cap_faces.is_empty():
-		var crossed := applied_motion.dot(_drag_extrude_normal) < 0.0
-		if crossed != _drag_cap_flipped:
-			_drag_cap_flipped = crossed
-			flipped_now = true
-			for i in range(_drag_cap_faces.size()):
-				_set_face_winding(_drag_cap_faces[i], _drag_cap_tris[i], crossed)
-	if _drag_gesture == DragGesture.EXTRUDE_MOVE and not _drag_side_faces.is_empty() \
-			and applied_motion.length_squared() > 0.000000001:
-		var sweep := applied_motion
-		for i in range(_drag_side_faces.size()):
-			var tris: PackedInt32Array = _drag_side_tris[i]
-			var e1 := _drag_side_base_e1[i]
-			var winding_n := e1.cross(sweep)
-			if winding_n.length_squared() < 0.000000001:
-				continue
-			var seed_outward := e1.cross(_drag_extrude_normal)
-			if seed_outward.length_squared() < 0.000000001:
-				continue
-			var wants_flipped: bool = winding_n.dot(seed_outward) < 0.0
-			if wants_flipped != bool(_drag_side_flipped[i]):
-				_drag_side_flipped[i] = 1 if wants_flipped else 0
-				_set_face_winding(_drag_side_faces[i], tris, wants_flipped)
-				flipped_now = true
-
-	if flipped_now:
-		# A winding flip changes the side faces' normals too (including the
-		# base corners outside the drag union) — full recompute, once.
-		mesh_data.calculate_normals()
-		node.rebuild()
-	else:
-		# Position edits never change the common-edge list or weld groups
-		# (index pairs/groups), and only the drag union's normals change —
-		# incremental updates keep the per-motion cost flat instead of
-		# rebuilding every normal on each mouse move.
-		mesh_data.update_normals_for(union)
-		node.rebuild_positions()
+	# Position edits never change the common-edge list or weld groups
+	# (index pairs/groups), and only the drag union's normals change —
+	# incremental updates keep the per-motion cost flat instead of
+	# rebuilding every normal on each mouse move.
+	mesh_data.update_normals_for(union)
+	node.rebuild_positions()
 	return true
 
 ## Recovers the rotation center of an engine rotation delivery

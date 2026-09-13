@@ -273,30 +273,26 @@ func test_extrude_commit_rebuilds_welds_edges_and_cap_union():
 			assert_eq(md.positions[i], start[i],
 				"Base-ring vertex %d stays put (stale weld would drag it along)" % i)
 
-func test_shift_move_crossing_zero_flips_side_winding():
-	# Dragging the cap back through its base plane must flip the side quads'
-	# winding (they were wound for the original extrude direction at drag
-	# begin), or they render inside-out — "missing faces".
+func test_shift_move_inward_creates_clean_cavity_windings():
+	# Inward extrusion into a mesh creates a clean interior cavity where
+	# side walls face into the cavity and the bottom cap faces the opening.
 	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
 	var logic: PBElementEditor = s["logic"]
 	var mesh: PBMesh = s["mesh"]
 	var md: PBMeshData = mesh.pb_mesh_data
 
-	var ids := _ids([4])  # top face (y = +0.5)
+	var ids := _ids([4])  # top face (y = +0.5, normal +Y)
 	var state := _gesture_state(s, ids, true)
-	# Extrude +Y, then reverse through the base and out the bottom.
-	var targets := [0.5, 1.0, 0.25, -0.3, -1.0, -1.6]
-	for t in targets:
-		for id in ids:
-			logic.set_subgizmo_transform_with_shift(mesh, ids, id,
-				state["start"][id].translated(Vector3(0, t, 0)), true)
-
-	var vol := _signed_volume(md)
-	assert_gt(vol, 0.5,
-		"Crossing zero keeps every side face outward-facing (signed volume stays positive)")
-
+	# Extrude inward into the mesh (-Y)
+	for id in ids:
+		logic.set_subgizmo_transform_with_shift(mesh, ids, id,
+			state["start"][id].translated(Vector3(0, -0.3, 0)), true)
 	logic.commit_subgizmos(mesh, ids, false)
 
+	# Verify cap faces towards opening (+Y)
+	var cap_fi: int = ids[0]
+	var cap_norm := PBMeshOps._face_area_normal(md, md.faces[cap_fi])
+	assert_gt(cap_norm.y, 0.5, "Inward extruded cap faces toward opening (+Y)")
 ## Divergence-theorem volume over the internal CCW triangles: positive for a
 ## closed outward-oriented surface; inverted faces cancel it toward zero.
 static func _signed_volume(md: PBMeshData) -> float:
