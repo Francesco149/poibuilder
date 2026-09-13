@@ -521,3 +521,130 @@ func test_bidirectional_vertex_selection_sync_with_3d():
 
 	mesh.free()
 	panel.free()
+
+func test_uv_box_unwrap_non_overlapping():
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var ok := PBUvOps.unwrap_box(cube, [0, 1, 2, 3, 4, 5])
+	assert_true(ok, "unwrap_box must return true")
+
+	# Check that all 6 faces are manual_uv
+	for fi in range(6):
+		assert_true(cube.faces[fi].manual_uv, "Face %d must be manual_uv" % fi)
+
+	# Verify none of the 6 face UV bounds overlap with each other
+	var face_bounds: Array[Rect2] = []
+	for fi in range(6):
+		var f_verts := cube.faces[fi].get_distinct_indexes()
+		var fb := PBUvOps.get_uv_bounds(cube.textures0, f_verts)
+		face_bounds.append(fb)
+		assert_gte(fb.position.x, -0.01, "Face %d min X must be >= 0" % fi)
+		assert_gte(fb.position.y, -0.01, "Face %d min Y must be >= 0" % fi)
+		assert_lte(fb.end.x, 1.01, "Face %d max X must be <= 1" % fi)
+		assert_lte(fb.end.y, 1.01, "Face %d max Y must be <= 1" % fi)
+
+	for i in range(5):
+		for j in range(i + 1, 6):
+			var r1 := face_bounds[i].grow(-0.005)
+			var r2 := face_bounds[j].grow(-0.005)
+			assert_false(r1.intersects(r2), "Face %d and Face %d must not overlap in unwrapped UV layout" % [i, j])
+
+func test_export_uv_template_with_offset_islands():
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	# Displace Face 0 far outside [0, 1] to simulate scattered layout
+	var f0_verts := cube.faces[0].get_distinct_indexes()
+	PBUvOps.translate_uvs(cube, f0_verts, Vector2(2.5, 3.0))
+
+	var test_path := "user://test_uv_template_offset.png"
+	var err := PBUvOps.export_uv_template(cube, test_path, 256, Color.WHITE, Color.BLACK, false)
+	assert_eq(err, OK, "export_uv_template with offset UVs must succeed")
+	assert_true(FileAccess.file_exists(test_path), "Exported template with offset UVs must exist on disk")
+
+	DirAccess.remove_absolute(test_path)
+
+func test_click_off_in_vertex_mode_stays_in_vertex_mode():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	var editor := PBEditor.new()
+	editor.active_mesh = mesh
+	editor.selection.set_mesh_data(cube)
+	panel.editor = editor
+
+	# 1. Start in Face mode in 3D
+	editor.select_mode = PBEditor.SelectMode.FACE
+	panel.sync_selection_from_3d_state(editor.select_mode, editor.selection)
+
+	# 2. Click Vertex mode in UV editor
+	panel._btn_mode_vert.emit_signal("pressed")
+	assert_eq(panel.canvas.select_mode, PBUvCanvas.SelectMode.VERTEX, "UV canvas must be in VERTEX mode")
+	assert_eq(editor.select_mode, PBEditor.SelectMode.VERTEX, "3D editor must switch to VERTEX mode")
+	assert_true(panel._btn_mode_vert.button_pressed, "Vertex button must be visually pressed")
+
+	# 3. Click off on empty canvas space to deselect
+	var empty_pos := Vector2(20, 20)
+	panel.canvas._handle_left_press(empty_pos, false)
+	panel.canvas._handle_left_release(empty_pos)
+
+	# 4. Must STAY in Vertex mode!
+	assert_eq(panel.canvas.select_mode, PBUvCanvas.SelectMode.VERTEX, "UV canvas must STAY in VERTEX mode after clicking off")
+	assert_eq(editor.select_mode, PBEditor.SelectMode.VERTEX, "3D editor must STAY in VERTEX mode after clicking off")
+	assert_true(panel._btn_mode_vert.button_pressed, "Vertex button must STAY visually pressed")
+
+	mesh.free()
+	panel.free()
+
+func test_stitched_faces_move_together_in_face_mode():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	# Auto-stitch Face 0 and Face 2 along shared edge
+	var ok := PBUvOps.auto_stitch(cube, 0, 2)
+	assert_true(ok, "auto_stitch must succeed")
+
+	# Vertex 1 on Face 0 and Vertex 8 on Face 2 are stitched together
+	var v1_orig: Vector2 = cube.textures0[1]
+	var v8_orig: Vector2 = cube.textures0[8]
+	assert_almost_eq(v1_orig.x, v8_orig.x, 0.0001, "Stitched vertices must share X initially")
+	assert_almost_eq(v1_orig.y, v8_orig.y, 0.0001, "Stitched vertices must share Y initially")
+
+	# Select Face 0 in UV canvas
+	panel.canvas.select_mode = PBUvCanvas.SelectMode.FACE
+	panel.canvas.selected_faces[0] = true
+
+	# Affected indices must include Face 2's coincident vertex (8)
+	var affected := panel.canvas.get_selected_vertex_indices()
+	assert_true(affected.has(1), "Affected indices must contain vertex 1")
+	assert_true(affected.has(8), "Affected indices must contain sewn vertex 8 from adjacent face")
+
+	# Drag Move gizmo
+	panel.canvas._gizmo_drag_snapshot_uvs = panel.canvas.get_uv_array().duplicate()
+	panel.canvas._gizmo_affected_indices = affected
+	var p_screen := panel.canvas.uv_to_screen(panel.canvas.gizmo.pivot_uv)
+	panel.canvas.gizmo.begin_drag(PBUvGizmo.HandleType.MOVE_CENTER, p_screen, panel.canvas)
+	var t := panel.canvas.gizmo.apply_drag(p_screen + Vector2(50, 70), panel.canvas, false, false)
+	panel.canvas._apply_gizmo_transform(t)
+	panel.canvas.gizmo.commit_drag()
+
+	# Assert both vertices remained joined at identical coordinates
+	var new_v1: Vector2 = cube.textures0[1]
+	var new_v8: Vector2 = cube.textures0[8]
+	assert_almost_eq(new_v1.x, new_v8.x, 0.0001, "Vertex 1 and 8 must remain joined at same X")
+	assert_almost_eq(new_v1.y, new_v8.y, 0.0001, "Vertex 1 and 8 must remain joined at same Y")
+	assert_gt(v1_orig.distance_to(new_v1), 0.1, "Stitched vertices must have moved together")
+
+	mesh.free()
+	panel.free()

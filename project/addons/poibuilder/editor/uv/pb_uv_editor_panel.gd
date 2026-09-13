@@ -77,13 +77,15 @@ var _btn_tool_rot: Button
 var _btn_tool_scale: Button
 var _tool_group: ButtonGroup
 
-# Operations toolbar controls
+# Toolbar controls (3 rows)
+var _grid_toolbar: HBoxContainer
 var _ops_toolbar: HBoxContainer
 var _btn_mode_auto: Button
 var _btn_mode_manual: Button
 var _btn_proj_planar: Button
 var _btn_proj_box: Button
 var _btn_proj_fit: Button
+var _btn_proj_unwrap: Button
 var _btn_flip_u: Button
 var _btn_flip_v: Button
 var _btn_rot_ccw: Button
@@ -138,35 +140,32 @@ func _on_undo_redo_version_changed() -> void:
 # ==============================================================================
 
 func _build_ui() -> void:
-	# 1. Top Toolbar Row
+	# 1. Row 1: Tools & Navigation Toolbar
 	_toolbar = HBoxContainer.new()
 	_toolbar.name = "Toolbar"
 	_toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_toolbar.add_theme_constant_override("separation", 6)
 	add_child(_toolbar)
 
-	# --- Tool Buttons (Move / Rotate / Scale) ---
+	# Tools (Move / Rotate / Scale)
 	_tool_group = ButtonGroup.new()
 	_btn_tool_move = _create_tool_btn("Move", "icon_move.svg", PBUvGizmo.ToolMode.MOVE, "Move tool (W)")
 	_btn_tool_move.button_pressed = true
 	_btn_tool_rot = _create_tool_btn("Rotate", "icon_rotate.svg", PBUvGizmo.ToolMode.ROTATE, "Rotate tool (E)")
 	_btn_tool_scale = _create_tool_btn("Scale", "icon_scale.svg", PBUvGizmo.ToolMode.SCALE, "Scale tool (R)")
-
 	_toolbar.add_child(_btn_tool_move)
 	_toolbar.add_child(_btn_tool_rot)
 	_toolbar.add_child(_btn_tool_scale)
 
 	_toolbar.add_child(_make_vsep())
 
-	# --- Mode Buttons ---
+	# Modes (Face / Vertex / Edge / Island)
 	_mode_group = ButtonGroup.new()
-
 	_btn_mode_face = _create_mode_btn("Face", "icon_face.svg", PBUvCanvas.SelectMode.FACE, "Face selection mode")
 	_btn_mode_face.button_pressed = true
 	_btn_mode_vert = _create_mode_btn("Vertex", "icon_vertex.svg", PBUvCanvas.SelectMode.VERTEX, "UV Vertex selection mode")
 	_btn_mode_edge = _create_mode_btn("Edge", "icon_edge.svg", PBUvCanvas.SelectMode.EDGE, "UV Edge selection mode")
 	_btn_mode_island = _create_mode_btn("Island", "icon_island.svg", PBUvCanvas.SelectMode.ISLAND, "UV Island (connected shell) selection mode")
-
 	_toolbar.add_child(_btn_mode_face)
 	_toolbar.add_child(_btn_mode_vert)
 	_toolbar.add_child(_btn_mode_edge)
@@ -174,7 +173,7 @@ func _build_ui() -> void:
 
 	_toolbar.add_child(_make_vsep())
 
-	# --- Framing ---
+	# Framing ([0, 1] / Frame Selection)
 	_btn_frame_unit = _create_icon_btn("FrameUnit", "icon_uv_frame_unit.svg", "[0,1]", "Frame [0, 1] unit square")
 	_btn_frame_unit.pressed.connect(func(): if canvas: canvas.frame_unit_square())
 	_toolbar.add_child(_btn_frame_unit)
@@ -185,57 +184,7 @@ func _build_ui() -> void:
 
 	_toolbar.add_child(_make_vsep())
 
-	# --- Snapping ---
-	_btn_snap_toggle = _create_icon_btn("SnapToggle", "icon_uv_snap.svg", "Snap", "Toggle UV snapping to grid", true)
-	_btn_snap_toggle.button_pressed = true
-	_btn_snap_toggle.toggled.connect(_on_snap_toggled)
-	_toolbar.add_child(_btn_snap_toggle)
-	_opt_snap_step = OptionButton.new()
-	_opt_snap_step.name = "SnapStep"
-	_opt_snap_step.tooltip_text = "UV Snap Grid Step"
-	_opt_snap_step.add_item("1/32 (0.03125)", 0)
-	_opt_snap_step.add_item("1/16 (0.0625)", 1)
-	_opt_snap_step.add_item("1/8 (0.125)", 2)
-	_opt_snap_step.add_item("1/4 (0.25)", 3)
-	_opt_snap_step.add_item("1/2 (0.5)", 4)
-	_opt_snap_step.add_item("1.0 (1.0)", 5)
-	_opt_snap_step.selected = 2 # 1/8 default
-	_opt_snap_step.item_selected.connect(_on_snap_step_selected)
-	_toolbar.add_child(_opt_snap_step)
-
-	_toolbar.add_child(_make_vsep())
-
-	# --- Texture Underlay & Tiling ---
-	_btn_toggle_tex = _create_icon_btn("ToggleTex", "icon_uv_texture.svg", "Texture", "Show active material texture underlay", true)
-	_btn_toggle_tex.button_pressed = true
-	_btn_toggle_tex.toggled.connect(func(on: bool): if canvas: canvas.show_texture = on)
-	_toolbar.add_child(_btn_toggle_tex)
-
-	_btn_toggle_tile = _create_icon_btn("ToggleTile", "icon_uv_tile.svg", "Tile", "Repeat texture underlay across UV space", true)
-	_btn_toggle_tile.button_pressed = false
-	_btn_toggle_tile.toggled.connect(func(on: bool): if canvas: canvas.show_texture_tiling = on)
-	_toolbar.add_child(_btn_toggle_tile)
-
-	var lbl_op := Label.new()
-	lbl_op.text = "Opacity:"
-	lbl_op.tooltip_text = "Texture underlay opacity"
-	_toolbar.add_child(lbl_op)
-
-	_slider_opacity = HSlider.new()
-	_slider_opacity.name = "OpacitySlider"
-	_slider_opacity.custom_minimum_size = Vector2(60, 16)
-	_slider_opacity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_slider_opacity.min_value = 0.0
-	_slider_opacity.max_value = 1.0
-	_slider_opacity.step = 0.05
-	_slider_opacity.value = 0.6
-	_slider_opacity.tooltip_text = "Texture underlay opacity"
-	_slider_opacity.value_changed.connect(func(val: float): if canvas: canvas.texture_opacity = val)
-	_toolbar.add_child(_slider_opacity)
-
-	_toolbar.add_child(_make_vsep())
-
-	# --- UV Channel Selector ---
+	# UV Channel Selector
 	var lbl_chan := Label.new()
 	lbl_chan.text = "Channel:"
 	_toolbar.add_child(lbl_chan)
@@ -254,7 +203,7 @@ func _build_ui() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_toolbar.add_child(spacer)
 
-	# --- Status readout ---
+	# Status readout
 	_lbl_status = Label.new()
 	_lbl_status.name = "StatusLabel"
 	_lbl_status.text = "No selection"
@@ -263,12 +212,93 @@ func _build_ui() -> void:
 
 	_toolbar.add_child(_make_vsep())
 
-	# --- Pop-out Floating Window Button ---
+	# Pop-out Window
 	_btn_pop_out = _create_icon_btn("PopOutButton", "icon_uv_pop_out.svg", "↗ Window", "Pop out UV Editor into a floating window")
 	_btn_pop_out.pressed.connect(_toggle_pop_out)
 	_toolbar.add_child(_btn_pop_out)
 
-	# 2. Operations Toolbar Row
+	# 2. Row 2: Grid, Texture & Texel Density Toolbar
+	_grid_toolbar = HBoxContainer.new()
+	_grid_toolbar.name = "GridToolbar"
+	_grid_toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_grid_toolbar.add_theme_constant_override("separation", 5)
+	add_child(_grid_toolbar)
+
+	# Snapping
+	_btn_snap_toggle = _create_icon_btn("SnapToggle", "icon_uv_snap.svg", "Snap", "Toggle UV snapping to grid", true)
+	_btn_snap_toggle.button_pressed = true
+	_btn_snap_toggle.toggled.connect(_on_snap_toggled)
+	_grid_toolbar.add_child(_btn_snap_toggle)
+
+	_opt_snap_step = OptionButton.new()
+	_opt_snap_step.name = "SnapStep"
+	_opt_snap_step.tooltip_text = "UV Snap Grid Step"
+	_opt_snap_step.add_item("1/32 (0.03125)", 0)
+	_opt_snap_step.add_item("1/16 (0.0625)", 1)
+	_opt_snap_step.add_item("1/8 (0.125)", 2)
+	_opt_snap_step.add_item("1/4 (0.25)", 3)
+	_opt_snap_step.add_item("1/2 (0.5)", 4)
+	_opt_snap_step.add_item("1.0 (1.0)", 5)
+	_opt_snap_step.selected = 2
+	_opt_snap_step.item_selected.connect(_on_snap_step_selected)
+	_grid_toolbar.add_child(_opt_snap_step)
+
+	_grid_toolbar.add_child(_make_vsep())
+
+	# Texture Underlay & Tiling
+	_btn_toggle_tex = _create_icon_btn("ToggleTex", "icon_uv_texture.svg", "Texture", "Show active material texture underlay", true)
+	_btn_toggle_tex.button_pressed = true
+	_btn_toggle_tex.toggled.connect(func(on: bool): if canvas: canvas.show_texture = on)
+	_grid_toolbar.add_child(_btn_toggle_tex)
+
+	_btn_toggle_tile = _create_icon_btn("ToggleTile", "icon_uv_tile.svg", "Tile", "Repeat texture underlay across UV space", true)
+	_btn_toggle_tile.button_pressed = false
+	_btn_toggle_tile.toggled.connect(func(on: bool): if canvas: canvas.show_texture_tiling = on)
+	_grid_toolbar.add_child(_btn_toggle_tile)
+
+	var lbl_op := Label.new()
+	lbl_op.text = "Opacity:"
+	_grid_toolbar.add_child(lbl_op)
+
+	_slider_opacity = HSlider.new()
+	_slider_opacity.name = "OpacitySlider"
+	_slider_opacity.custom_minimum_size = Vector2(60, 16)
+	_slider_opacity.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_slider_opacity.min_value = 0.0
+	_slider_opacity.max_value = 1.0
+	_slider_opacity.step = 0.05
+	_slider_opacity.value = 0.6
+	_slider_opacity.tooltip_text = "Texture underlay opacity"
+	_slider_opacity.value_changed.connect(func(val: float): if canvas: canvas.texture_opacity = val)
+	_grid_toolbar.add_child(_slider_opacity)
+
+	_grid_toolbar.add_child(_make_vsep())
+
+	# Texel Density
+	var lbl_texel := Label.new()
+	lbl_texel.text = "Texel:"
+	_grid_toolbar.add_child(lbl_texel)
+
+	_btn_texel_get = _create_icon_btn("BtnTexelGet", "icon_uv_texel_get.svg", "Get", "Sample texel density from selected face")
+	_btn_texel_get.pressed.connect(_on_texel_get_pressed)
+	_grid_toolbar.add_child(_btn_texel_get)
+
+	_spin_texel = SpinBox.new()
+	_spin_texel.name = "SpinTexel"
+	_spin_texel.min_value = 16.0
+	_spin_texel.max_value = 4096.0
+	_spin_texel.step = 1.0
+	_spin_texel.value = 256.0
+	_spin_texel.suffix = "px/m"
+	_spin_texel.custom_minimum_size = Vector2(180, 24)
+	_spin_texel.tooltip_text = "Target texel density in pixels per meter"
+	_grid_toolbar.add_child(_spin_texel)
+
+	_btn_texel_set = _create_icon_btn("BtnTexelSet", "icon_uv_texel_set.svg", "Set", "Apply target texel density to selected faces")
+	_btn_texel_set.pressed.connect(_on_texel_set_pressed)
+	_grid_toolbar.add_child(_btn_texel_set)
+
+	# 3. Row 3: Operations Toolbar Row
 	_ops_toolbar = HBoxContainer.new()
 	_ops_toolbar.name = "OpsToolbar"
 	_ops_toolbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -276,10 +306,6 @@ func _build_ui() -> void:
 	add_child(_ops_toolbar)
 
 	# Mode Conversion
-	var lbl_mode := Label.new()
-	lbl_mode.text = "Mode:"
-	_ops_toolbar.add_child(lbl_mode)
-
 	_btn_mode_auto = _create_icon_btn("BtnModeAuto", "icon_uv_auto.svg", "Auto", "Convert selected faces to Auto UV")
 	_btn_mode_auto.pressed.connect(func(): _execute_uv_op("Convert to Auto UV", func() -> bool: return PBUvOps.convert_to_auto(active_mesh.pb_mesh_data, _get_target_faces())))
 	_ops_toolbar.add_child(_btn_mode_auto)
@@ -291,10 +317,6 @@ func _build_ui() -> void:
 	_ops_toolbar.add_child(_make_vsep())
 
 	# Projections
-	var lbl_proj := Label.new()
-	lbl_proj.text = "Project:"
-	_ops_toolbar.add_child(lbl_proj)
-
 	_btn_proj_planar = _create_icon_btn("BtnProjPlanar", "icon_uv_planar.svg", "Planar", "Planar project selected faces along average normal")
 	_btn_proj_planar.pressed.connect(func(): _execute_uv_op("Planar Project UVs", func() -> bool: return PBUvOps.planar_project(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_planar)
@@ -307,13 +329,13 @@ func _build_ui() -> void:
 	_btn_proj_fit.pressed.connect(func(): _execute_uv_op("Fit UVs", func() -> bool: return PBUvOps.fit_uvs(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_fit)
 
+	_btn_proj_unwrap = _create_icon_btn("BtnProjUnwrap", "icon_uv_unwrap.svg", "Unwrap", "Unwrap selected faces into clean non-overlapping UV layout")
+	_btn_proj_unwrap.pressed.connect(func(): _execute_uv_op("Unwrap UVs", func() -> bool: return PBUvOps.unwrap_box(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
+	_ops_toolbar.add_child(_btn_proj_unwrap)
+
 	_ops_toolbar.add_child(_make_vsep())
 
 	# Transforms
-	var lbl_xform := Label.new()
-	lbl_xform.text = "Transform:"
-	_ops_toolbar.add_child(lbl_xform)
-
 	_btn_flip_u = _create_icon_btn("BtnFlipU", "icon_uv_flip_h.svg", "Flip U", "Flip UVs horizontally")
 	_btn_flip_u.pressed.connect(func(): _execute_uv_op("Flip UVs Horizontal", func() -> bool: return PBUvOps.flip_uvs(active_mesh.pb_mesh_data, _get_target_faces(), true, canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_flip_u)
@@ -333,10 +355,6 @@ func _build_ui() -> void:
 	_ops_toolbar.add_child(_make_vsep())
 
 	# Seams & Topology
-	var lbl_seams := Label.new()
-	lbl_seams.text = "Seams:"
-	_ops_toolbar.add_child(lbl_seams)
-
 	_btn_sew = _create_icon_btn("BtnSew", "icon_uv_sew.svg", "Sew", "Sew proximate 3D coincident UV vertices")
 	_btn_sew.pressed.connect(func(): _execute_uv_op("Sew UVs", func() -> bool: return PBUvOps.sew_uvs(active_mesh.pb_mesh_data, _get_target_vertices(), 0.05, canvas.uv_channel if canvas else 0) > 0))
 	_ops_toolbar.add_child(_btn_sew)
@@ -355,46 +373,17 @@ func _build_ui() -> void:
 
 	_ops_toolbar.add_child(_make_vsep())
 
-	# Texel Density
-	var lbl_texel := Label.new()
-	lbl_texel.text = "Texel:"
-	_ops_toolbar.add_child(lbl_texel)
-
-	_btn_texel_get = _create_icon_btn("BtnTexelGet", "icon_uv_texel_get.svg", "Get", "Sample texel density from selected face")
-	_btn_texel_get.pressed.connect(_on_texel_get_pressed)
-	_ops_toolbar.add_child(_btn_texel_get)
-
-	_spin_texel = SpinBox.new()
-	_spin_texel.name = "SpinTexel"
-	_spin_texel.min_value = 16.0
-	_spin_texel.max_value = 4096.0
-	_spin_texel.step = 1.0
-	_spin_texel.value = 256.0
-	_spin_texel.suffix = "px/m"
-	_spin_texel.custom_minimum_size = Vector2(90, 20)
-	_spin_texel.tooltip_text = "Target texel density in pixels per meter"
-	_ops_toolbar.add_child(_spin_texel)
-
-	_btn_texel_set = _create_icon_btn("BtnTexelSet", "icon_uv_texel_set.svg", "Set", "Apply target texel density to selected faces")
-	_btn_texel_set.pressed.connect(_on_texel_set_pressed)
-	_ops_toolbar.add_child(_btn_texel_set)
-
-	_ops_toolbar.add_child(_make_vsep())
-
 	# Export
 	_btn_export_png = _create_icon_btn("BtnExportPng", "icon_uv_export.svg", "Export PNG", "Export UV template as a PNG image")
 	_btn_export_png.pressed.connect(_on_export_png_pressed)
 	_ops_toolbar.add_child(_btn_export_png)
 
-	# 3. Canvas Container
-
-
+	# 4. Canvas Container
 	var canvas_container := PanelContainer.new()
 	canvas_container.name = "CanvasContainer"
 	canvas_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	canvas_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(canvas_container)
-
 	canvas = PBUvCanvas.new()
 	canvas.name = "UvCanvas"
 	canvas.selection_changed.connect(_on_canvas_selection_changed)
@@ -417,7 +406,15 @@ func _create_mode_btn(label: String, icon_name: String, mode: PBUvCanvas.SelectM
 	btn.tooltip_text = tip
 	btn.flat = true
 	btn.custom_minimum_size = Vector2(24, 24)
-	btn.pressed.connect(func(): if canvas: canvas.select_mode = mode; _update_status())
+	btn.pressed.connect(func():
+		if canvas:
+			canvas.select_mode = mode
+		if editor and not _syncing_selection:
+			_syncing_selection = true
+			editor.select_mode = _pb_mode_for_canvas_mode(mode)
+			_syncing_selection = false
+		_update_status()
+	)
 	return btn
 
 func _create_tool_btn(label: String, icon_name: String, mode: PBUvGizmo.ToolMode, tip: String) -> Button:
@@ -456,6 +453,20 @@ func _on_canvas_select_mode_changed(mode: PBUvCanvas.SelectMode) -> void:
 			if _btn_mode_face: _btn_mode_face.button_pressed = true
 		PBUvCanvas.SelectMode.ISLAND:
 			if _btn_mode_island: _btn_mode_island.button_pressed = true
+	if editor and not _syncing_selection:
+		_syncing_selection = true
+		editor.select_mode = _pb_mode_for_canvas_mode(mode)
+		_syncing_selection = false
+
+func _pb_mode_for_canvas_mode(mode: PBUvCanvas.SelectMode) -> int:
+	match mode:
+		PBUvCanvas.SelectMode.VERTEX:
+			return PBEditor.SelectMode.VERTEX
+		PBUvCanvas.SelectMode.EDGE:
+			return PBEditor.SelectMode.EDGE
+		PBUvCanvas.SelectMode.FACE, PBUvCanvas.SelectMode.ISLAND:
+			return PBEditor.SelectMode.FACE
+	return PBEditor.SelectMode.OBJECT
 func _make_vsep() -> VSeparator:
 	var sep := VSeparator.new()
 	sep.custom_minimum_size = Vector2(0, 18)

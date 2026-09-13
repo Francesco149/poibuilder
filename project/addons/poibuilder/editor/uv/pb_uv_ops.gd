@@ -362,6 +362,150 @@ static func box_project(mesh_data: PBMeshData, face_indices: Array, channel: int
 
 	return true
 
+## Unwraps selected faces into a clean, non-overlapping UV layout.
+## For 6-sided boxes or cubes, produces a canonical cross unwrap.
+## For arbitrary meshes, packs faces non-overlapping into a grid layout in [0, 1].
+static func unwrap_box(mesh_data: PBMeshData, face_indices: Array, channel: int = 0) -> bool:
+	if mesh_data == null or face_indices.is_empty():
+		return false
+
+	var target_arr: PackedVector2Array = mesh_data.textures1 if channel == 1 else mesh_data.textures0
+	var vc: int = mesh_data.positions.size()
+	if target_arr.size() != vc:
+		target_arr.resize(vc)
+
+	_ensure_faces_manual(mesh_data, face_indices)
+
+	var cardinal_faces: Dictionary = {}
+	for fi in face_indices:
+		var f_idx: int = int(fi)
+		if f_idx >= 0 and f_idx < mesh_data.faces.size():
+			var face: PBFace = mesh_data.faces[f_idx]
+			var n := PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
+			var an := n.abs()
+			var axis_key := ""
+			if an.x >= an.y and an.x >= an.z:
+				axis_key = "+X" if n.x > 0 else "-X"
+			elif an.y >= an.x and an.y >= an.z:
+				axis_key = "+Y" if n.y > 0 else "-Y"
+			else:
+				axis_key = "+Z" if n.z > 0 else "-Z"
+
+			if not cardinal_faces.has(axis_key):
+				cardinal_faces[axis_key] = f_idx
+
+	if cardinal_faces.size() == 6 and face_indices.size() == 6:
+		# Canonical cross layout in [0, 1] with 4 columns and 3 rows:
+		# Cell size: 1/4 = 0.25 on U, 1/3 = 0.3333 on V
+		# col 0: -X (Left) at (0, 1/3)
+		# col 1: -Z (Front) at (1/4, 1/3), +Y (Top) at (1/4, 2/3), -Y (Bottom) at (1/4, 0)
+		# col 2: +X (Right) at (2/4, 1/3)
+		# col 3: +Z (Back) at (3/4, 1/3)
+		var cell_w := 0.24
+		var cell_h := 0.31
+		var pad_u := (0.25 - cell_w) * 0.5
+		var pad_v := (1.0 / 3.0 - cell_h) * 0.5
+
+		var layout_slots := {
+			"-X": Vector2(0.0 * 0.25 + pad_u, 1.0 * (1.0 / 3.0) + pad_v),
+			"-Z": Vector2(1.0 * 0.25 + pad_u, 1.0 * (1.0 / 3.0) + pad_v),
+			"+X": Vector2(2.0 * 0.25 + pad_u, 1.0 * (1.0 / 3.0) + pad_v),
+			"+Z": Vector2(3.0 * 0.25 + pad_u, 1.0 * (1.0 / 3.0) + pad_v),
+			"+Y": Vector2(1.0 * 0.25 + pad_u, 2.0 * (1.0 / 3.0) + pad_v),
+			"-Y": Vector2(1.0 * 0.25 + pad_u, 0.0 * (1.0 / 3.0) + pad_v),
+		}
+
+		for axis_key in cardinal_faces:
+			var fi: int = cardinal_faces[axis_key]
+			var face: PBFace = mesh_data.faces[fi]
+			var n := PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
+			var basis := PBUv.get_planar_basis(n)
+			var u_axis: Vector3 = basis["u"]
+			var v_axis: Vector3 = basis["v"]
+
+			var face_verts := face.get_distinct_indexes()
+			var min_u := INF
+			var min_v := INF
+			var max_u := -INF
+			var max_v := -INF
+
+			for v in face_verts:
+				if v >= 0 and v < vc:
+					var p: Vector3 = mesh_data.positions[v]
+					var uv := Vector2(u_axis.dot(p), v_axis.dot(p))
+					target_arr[v] = uv
+					min_u = minf(min_u, uv.x)
+					min_v = minf(min_v, uv.y)
+					max_u = maxf(max_u, uv.x)
+					max_v = maxf(max_v, uv.y)
+
+			var span_u := maxf(0.001, max_u - min_u)
+			var span_v := maxf(0.001, max_v - min_v)
+			var slot_pos: Vector2 = layout_slots[axis_key]
+
+			for v in face_verts:
+				if v >= 0 and v < vc:
+					var norm_u := (target_arr[v].x - min_u) / span_u
+					var norm_v := (target_arr[v].y - min_v) / span_v
+					target_arr[v] = slot_pos + Vector2(norm_u * cell_w, norm_v * cell_h)
+	else:
+		var n_faces := face_indices.size()
+		var cols := int(ceilf(sqrt(float(n_faces))))
+		var rows := int(ceilf(float(n_faces) / float(cols)))
+		var col_w := 1.0 / float(cols)
+		var row_h := 1.0 / float(rows)
+		var pad_w := col_w * 0.05
+		var pad_h := row_h * 0.05
+		var inner_w := col_w - pad_w * 2.0
+		var inner_h := row_h - pad_h * 2.0
+
+		for i in range(n_faces):
+			var fi: int = int(face_indices[i])
+			if fi < 0 or fi >= mesh_data.faces.size():
+				continue
+			var face: PBFace = mesh_data.faces[fi]
+			var n := PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
+			var basis := PBUv.get_planar_basis(n)
+			var u_axis: Vector3 = basis["u"]
+			var v_axis: Vector3 = basis["v"]
+
+			var face_verts := face.get_distinct_indexes()
+			var min_u := INF
+			var min_v := INF
+			var max_u := -INF
+			var max_v := -INF
+
+			for v in face_verts:
+				if v >= 0 and v < vc:
+					var p: Vector3 = mesh_data.positions[v]
+					var uv := Vector2(u_axis.dot(p), v_axis.dot(p))
+					target_arr[v] = uv
+					min_u = minf(min_u, uv.x)
+					min_v = minf(min_v, uv.y)
+					max_u = maxf(max_u, uv.x)
+					max_v = maxf(max_v, uv.y)
+
+			var span_u := maxf(0.001, max_u - min_u)
+			var span_v := maxf(0.001, max_v - min_v)
+
+			var c_idx := i % cols
+			var r_idx := i / cols
+			var slot_pos := Vector2(float(c_idx) * col_w + pad_w, float(r_idx) * row_h + pad_h)
+
+			for v in face_verts:
+				if v >= 0 and v < vc:
+					var norm_u := (target_arr[v].x - min_u) / span_u
+					var norm_v := (target_arr[v].y - min_v) / span_v
+					target_arr[v] = slot_pos + Vector2(norm_u * inner_w, norm_v * inner_h)
+
+	if channel == 1:
+		mesh_data.textures1 = target_arr
+	else:
+		mesh_data.textures0 = target_arr
+
+	rebuild_shared_textures(mesh_data)
+	return true
+
 # ==============================================================================
 # Seams & Topology Tools (Sew, Split, Collapse, Auto-Stitch)
 # ==============================================================================
@@ -708,6 +852,31 @@ static func export_uv_template(mesh_data: PBMeshData, file_path: String, image_s
 	else:
 		faces_to_draw = mesh_data.faces
 
+	# Compute the bounding box of all UV coordinates to be drawn
+	var all_verts: Array[int] = []
+	for face: PBFace in faces_to_draw:
+		if face == null:
+			continue
+		for v in face.get_distinct_indexes():
+			if v < target_arr.size():
+				all_verts.append(v)
+
+	var bounds := get_uv_bounds(target_arr, all_verts)
+
+	# If bounds are within [0, 1], render standard [0, 1] space.
+	# If any UVs lie outside [0, 1], dynamically fit all UVs with 3% margin so nothing is clipped.
+	var uv_min := Vector2.ZERO
+	var uv_scale_span := 1.0
+
+	var fits_in_unit := bounds.position.x >= -0.01 and bounds.position.y >= -0.01 and bounds.end.x <= 1.01 and bounds.end.y <= 1.01
+	if not fits_in_unit and bounds.size.x > 0.0001 and bounds.size.y > 0.0001:
+		var pad := maxf(bounds.size.x, bounds.size.y) * 0.03
+		uv_min = bounds.position - Vector2(pad, pad)
+		var uv_max := bounds.end + Vector2(pad, pad)
+		uv_scale_span = maxf(uv_max.x - uv_min.x, uv_max.y - uv_min.y)
+		if uv_scale_span < 0.0001:
+			uv_scale_span = 1.0
+
 	var drawn_edges: Dictionary = {}
 	var max_coord := float(image_size - 1)
 
@@ -725,9 +894,11 @@ static func export_uv_template(mesh_data: PBMeshData, file_path: String, image_s
 			var uv1: Vector2 = target_arr[edge.a]
 			var uv2: Vector2 = target_arr[edge.b]
 
-			# Map [0, 1] to pixel space
-			var p1 := Vector2i(int(round(uv1.x * max_coord)), int(round(uv1.y * max_coord)))
-			var p2 := Vector2i(int(round(uv2.x * max_coord)), int(round(uv2.y * max_coord)))
+			var norm1 := (uv1 - uv_min) / uv_scale_span
+			var norm2 := (uv2 - uv_min) / uv_scale_span
+
+			var p1 := Vector2i(int(round(norm1.x * max_coord)), int(round(norm1.y * max_coord)))
+			var p2 := Vector2i(int(round(norm2.x * max_coord)), int(round(norm2.y * max_coord)))
 
 			_draw_line_on_image(img, p1, p2, line_color)
 

@@ -2736,6 +2736,25 @@ v0.9.86 round complete ✓ — 3D/2D Mode Feedback Loop Fix & Stitched Face Coin
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
 - Version bump 0.9.85 -> 0.9.86 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.87 round complete ✓ — UV Mode Persistence, 3-Row Compact Toolbar, Unfold/Unwrap & Template Layout Bounds:
+- SELECTION MODE PERSISTENCE ON CLICK-OFF:
+  * Root cause of clicking off in vertex mode reverting to face mode: when vertex mode was activated in the UV editor, the 3D editor's `select_mode` remained in `FACE` mode. On deselecting in 2D, the 3D editor synced its `FACE` mode back to the UV editor.
+  * Updated `_create_mode_btn()` and `_on_canvas_select_mode_changed()`: switching mode in the UV editor immediately updates `editor.select_mode` in the 3D editor (Vertex, Edge, Face) with `_syncing_selection` protection. Clicking off in vertex mode now stays firmly in vertex mode with `_btn_mode_vert` visually pressed.
+- 3-ROW BALANCED UV PANEL TOOLBAR (Fits 1080p Docks):
+  * Split the overcrowded toolbar into 3 clean, balanced horizontal rows (each < 550px wide, eliminating horizontal stretching and dock clipping):
+    - Row 1: Tools (Move, Rotate, Scale), Modes (Face, Vertex, Edge, Island), Framing (`[0,1]`, `[Frame]`), Channel selector, Status readout, Pop-out Window.
+    - Row 2: Snapping (`[Snap]`, step dropdown), Texture underlay (`[Texture]`, `[Tile]`), Opacity slider, Texel Density (`Texel:`, `[Get]`, `_spin_texel`, `[Set]`).
+    - Row 3: UV Mode (`[Auto]`, `[Manual]`), Projections (`[Planar]`, `[Box]`, `[Fit]`, `[Unwrap]`), Transforms (`[Flip U]`, `[Flip V]`, `[↶ 90°]`, `[↷ 90°]`), Seams (`[Sew]`, `[Split]`, `[Collapse]`, `[Stitch]`), Export (`[Export PNG]`).
+  * Doubled `_spin_texel` minimum width from 90px to 180px (`custom_minimum_size = Vector2(180, 24)`).
+- NON-OVERLAPPING UNWRAP & TEMPLATE LAYOUT BOUNDS:
+  * Root cause of exported template showing "a square with a few lines": (1) pristine cubes and box projections map all 6 faces to $[0, 1] \times [0, 1]$ directly overlapping; (2) `export_uv_template()` hardcoded pixel mapping to $[0, 1]$, discarding any faces or islands moved outside unit square.
+  * Implemented `PBUvOps.unwrap_box()` and `[Unwrap]` button (`icon_uv_unwrap.svg`): unfolds 6-sided boxes/cubes into a canonical non-overlapping cross layout in $[0, 1]$, and packs arbitrary meshes into clean non-overlapping grid layouts.
+  * Updated `PBUvOps.export_uv_template()`: dynamically measures the bounding box of all UV islands; if any islands extend outside $[0, 1]$, it maps the entire layout into the image with 3% padding so zero lines or islands are ever clipped away.
+- TESTS & VERIFICATION:
+  * 881/881 GUT unit tests passing (+4 regression tests in `test_pb_uv_ops.gd`, 16,331 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
+- Version bump 0.9.86 -> 0.9.87 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this
