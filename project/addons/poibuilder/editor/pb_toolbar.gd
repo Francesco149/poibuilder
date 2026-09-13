@@ -232,6 +232,7 @@ func _build_ui() -> void:
 	_sep_ops = _make_sep()
 	_make_op_button("Extrude", "extrude_faces", "Extrude selected faces/edges along their normal (Shift+Move does this live)", "icon_extrude.svg")
 	_make_op_button("Inset", "inset_faces", "Inset selected faces (Shift+Scale does this live)", "icon_inset.svg")
+	_make_op_button("Bevel", "bevel_edges", "Bevel selected edges or faces (Chamfer or fillet rounding)", "icon_bevel.svg")
 	_make_op_button("Knife", "knife_tool", "Knife: Cut faces by placing vertices (Enter to complete cut)", "icon_knife.svg")
 	_make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge", "icon_loop_cut.svg")
 	_make_op_button("Merge", "merge_faces", "Merge edge-adjacent selected faces into one n-gon", "icon_merge.svg")
@@ -423,7 +424,7 @@ func _update_row_layout() -> void:
 	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_ops: Array[Control] = [
 		_sep_ops,
-		_op_buttons["extrude_faces"], _op_buttons["inset_faces"],
+		_op_buttons["extrude_faces"], _op_buttons["inset_faces"], _op_buttons["bevel_edges"],
 		_op_buttons["knife_tool"], _op_buttons["insert_edge_loop"],
 		_op_buttons["merge_faces"], _op_buttons["subdivide_faces"],
 		_op_buttons["weld_vertices"], _op_buttons["detach_faces"],
@@ -589,6 +590,9 @@ func _on_selection_info_changed(_arg = null) -> void:
 			and not (in_edge and edges_selected)
 	if _op_buttons.has("inset_faces"):
 		_op_buttons["inset_faces"].disabled = not (in_face and faces_selected)
+	if _op_buttons.has("bevel_edges"):
+		_op_buttons["bevel_edges"].disabled = not (in_edge and edges_selected) \
+			and not (in_face and faces_selected)
 	if _op_buttons.has("knife_tool"):
 		_op_buttons["knife_tool"].disabled = editor == null or editor.active_mesh == null
 	if _op_buttons.has("insert_edge_loop"):

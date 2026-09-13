@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.88"
+const VERSION := "0.9.89"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1377,6 +1377,10 @@ func _on_drag_topology_committed(mesh: PBMesh) -> void:
 ## these buttons use the session defaults.
 const OP_EXTRUDE_DISTANCE := 0.25
 const OP_INSET_AMOUNT := 0.25
+const OP_BEVEL_AMOUNT := 0.2
+const OP_BEVEL_SEGMENTS := 1
+var op_bevel_amount: float = OP_BEVEL_AMOUNT
+var op_bevel_segments: int = OP_BEVEL_SEGMENTS
 
 ## Performs a mesh op from the toolbar on the current selection. Face-mode
 ## ops read the selected faces; edge extrude reads the selected edges. Undo
@@ -1429,6 +1433,13 @@ func _on_operation_requested(op_name: String) -> void:
 		"insert_edge_loop":
 			var loop_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
 			result = PBMeshOps.insert_edge_loop(mesh_data, loop_ids)
+		"bevel_edges":
+			var edge_ids: PackedInt32Array
+			if editor.select_mode == PBEditor.SelectMode.FACE:
+				edge_ids = PBMeshOps.face_perimeter_common_edge_ids(mesh_data, selection.selected_faces)
+			else:
+				edge_ids = PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+			result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
@@ -1505,6 +1516,7 @@ const OP_ACTION_NAMES := {
 	"insert_edge_loop": "Insert Edge Loop",
 	"weld_vertices": "Weld Vertices",
 	"knife_tool": "Knife Cut",
+	"bevel_edges": "Bevel Edges",
 }
 
 # ==============================================================================

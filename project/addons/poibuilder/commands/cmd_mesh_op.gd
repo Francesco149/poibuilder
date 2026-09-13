@@ -58,6 +58,12 @@ func undo_it() -> void:
 func add_to_undo_manager(undo: Object) -> void:
 	if undo == null:
 		return
+	if undo is UndoRedo:
+		undo.create_action(command_name)
+		undo.add_do_method(Callable(self, "do_it"))
+		undo.add_undo_method(Callable(self, "undo_it"))
+		undo.commit_action()
+		return
 	if undo is EditorUndoRedoManager and node != null and is_instance_valid(node):
 		undo.create_action(command_name, UndoRedo.MERGE_DISABLE, node)
 	else:

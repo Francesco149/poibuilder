@@ -52,6 +52,7 @@ const ACTIONS: Dictionary = {
 	# Alt defaults, the rest ship unbound but rebindable).
 	"op_extrude":      { "label": "Mesh Op: Extrude",         "keys": [[KEY_E, 0, 0, 1]] },
 	"op_inset":        { "label": "Mesh Op: Inset",           "keys": [[KEY_I, 0, 0, 1]] },
+	"op_bevel":        { "label": "Mesh Op: Bevel / Chamfer", "keys": [[KEY_B, 1, 0, 0]] },
 	"op_loop_cut":     { "label": "Mesh Op: Insert Edge Loop", "keys": [] },
 	"op_merge":        { "label": "Mesh Op: Merge Faces",     "keys": [] },
 	"op_subdivide":    { "label": "Mesh Op: Subdivide Faces", "keys": [] },
@@ -80,6 +81,7 @@ const OP_ACTION_TO_OPERATION: Dictionary = {
 	"op_detach": "detach_faces",
 	"op_delete": "delete_faces",
 	"op_knife": "knife_tool",
+	"op_bevel": "bevel_edges",
 }
 
 # ==============================================================================

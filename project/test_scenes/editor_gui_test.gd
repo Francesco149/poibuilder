@@ -1522,6 +1522,33 @@ func _run() -> void:
 				_fail("TEXTURE-MODE: editor select_mode not TEXTURE (got %d)" % (plugin.editor.select_mode if plugin.editor else -1))
 		else:
 			_fail("TEXTURE-MODE: toolbar button ModeTexture not found in Row2")
+
+		# ── Section: Bevel Button in Toolbar ──────────────────────────────
+		var btn_bevel: Button = plugin.toolbar._op_buttons.get("bevel_edges")
+		if btn_bevel != null:
+			_pass("BEVEL-OP: toolbar button OpBevel found in Row1")
+			var target_bevel := root.get_node_or_null("GuiTestB") as PBMesh
+			if target_bevel != null and target_bevel.pb_mesh_data != null:
+				sel.clear()
+				sel.add_node(target_bevel)
+				await _frames(3)
+				plugin.editor.select_mode = PBEditor.SelectMode.FACE
+				plugin.select_subgizmo_element(target_bevel, 0)
+				await _frames(3)
+				if not btn_bevel.disabled:
+					_pass("BEVEL-OP: bevel button is enabled when face is selected")
+					var f_before: int = target_bevel.pb_mesh_data.faces.size()
+					btn_bevel.pressed.emit()
+					await _frames(6)
+					var f_after: int = target_bevel.pb_mesh_data.faces.size()
+					if f_after > f_before:
+						_pass("BEVEL-OP: live bevel operation added bevel faces (%d -> %d)" % [f_before, f_after])
+					else:
+						_fail("BEVEL-OP: live bevel failed to increase face count (got %d vs before %d)" % [f_after, f_before])
+				else:
+					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
+		else:
+			_fail("BEVEL-OP: toolbar button OpBevel not found")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

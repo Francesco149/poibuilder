@@ -2777,6 +2777,26 @@ v0.9.88 round complete ✓ — Stock Cube Bowtie Seam Fix, UV Island 3D Selectio
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), including new Section 15 verifying Texture Mode button and mode switching in live editor.
 - Version bump 0.9.87 -> 0.9.88 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.89 round complete ✓ — Session 4: Core Modeling — Bevel & Chamfer (edge & face beveling, multi-segment fillets, watertight corner capping, and toolbar integration):
+- CORE BEVEL OPERATION (`PBMeshOps.bevel_edges`):
+  * Flat chamfer (`segments = 1`) and multi-segment circular arc fillets (`segments = 2..8`).
+  * Inward perpendicular edge shifting in face plane ($\vec{u} = \vec{n}_F \times \vec{t}$), corner linear intersection solving, and distance clamping against shortest incident edge.
+  * Generates $S$ bridge quads along each beveled edge with exact circular arc tangent interpolation (`_arc_interp`).
+  * Automated corner junction resolution: chains directed bridge and cut segments into closed cycles (`_chain_segments_into_cycles`) and caps corner holes with outward-oriented polygon faces (`_build_bevel_polygon_face`).
+  * Preserves position-privacy invariant via `_dup_position_at` and topology repair via `_rebuild_topology` (orphan compaction + weld groups rebuilt from 3D coincidence).
+- FACE-MODE PERIMETER BEVELING:
+  * Added `PBMeshOps.face_perimeter_common_edge_ids`: extracts perimeter boundary edges of the given face region and resolves them to common edge IDs.
+  * Selecting faces and clicking Bevel automatically bevels their perimeter edges into chamfered boundaries.
+- TOOLBAR & ACTION INTEGRATION:
+  * Added Bevel button to `PBToolbar` (`icon_bevel.svg`) in Row 1 next to Inset and Extrude, enabled for both edge and face selections.
+  * Registered `op_bevel` action in `PBActions` (`Ctrl+B`, `KEY_B` + Ctrl) mapped to `bevel_edges`.
+  * Added `OP_ACTION_NAMES["bevel_edges"] = "Bevel Edges"`, session defaults (`OP_BEVEL_AMOUNT = 0.2`, `OP_BEVEL_SEGMENTS = 1`), and undo/redo handling in `poibuilder_plugin.gd`.
+  * Upgraded `CmdMeshOp.add_to_undo_manager` to support both native `UndoRedo` (using `Callable`) and `EditorUndoRedoManager` (`object, method`), ensuring seamless undo/redo across test runners and editor.
+- TESTS & VERIFICATION:
+  * 894/894 GUT unit tests passing (+10 comprehensive tests in `test_pb_bevel.gd`, 16,411 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), asserting toolbar Bevel button existence, enabling on face selection, and live bevel operation execution.
+- Version bump 0.9.88 -> 0.9.89 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

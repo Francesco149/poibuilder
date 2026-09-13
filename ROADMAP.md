@@ -162,7 +162,7 @@ graph TD
 
 ---
 
-### Session 4: Core Modeling — Bevel & Chamfer
+### Session 4: Core Modeling — Bevel & Chamfer (Complete ✓)
 - **Goal**: Implement multi-segment edge and face beveling with smooth shading.
 - **Files**:
   - `mesh_ops/pb_mesh_ops.gd` (`bevel_edges`): Edge sliding, bridge face generation, corner vertex explosion, circular arc multi-segment rounding (1 to 8 segments), and corner hole caps.

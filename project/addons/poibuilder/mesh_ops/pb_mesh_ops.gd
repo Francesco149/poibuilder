@@ -748,6 +748,388 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 	return {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids,
 		"drag_positions": final_drag}
 
+## Bevels selected edges with a flat chamfer (segments = 1) or multi-segment circular arc fillet (segments = 2..8).
+## Shifts beveled edges inward across incident faces, generates bridge quads along the beveled edges,
+## and caps corner junctions with polygons/triangles.
+static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
+		amount: float, segments: int = 1) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Bevel edges: no mesh data")
+	if edge_ids.is_empty():
+		return _fail("Bevel edges: no edges selected")
+
+	segments = clampi(segments, 1, 8)
+	amount = maxf(amount, 0.0001)
+
+	var common_edges := mesh_data.get_common_edges()
+	var lookup := mesh_data.get_shared_vertex_lookup()
+
+	var selected_edge_keys := {}
+	for eid in edge_ids:
+		if eid < 0 or eid >= common_edges.size():
+			continue
+		var e := common_edges[eid]
+		var ca: int = lookup.get(e.a, e.a)
+		var cb: int = lookup.get(e.b, e.b)
+		selected_edge_keys[Vector2i(mini(ca, cb), maxi(ca, cb))] = true
+
+	if selected_edge_keys.is_empty():
+		return _fail("Bevel edges: no valid edges selected")
+
+	# 1. Map common edge keys to incident face loops
+	var edge_to_faces := {}
+	for fi in range(mesh_data.faces.size()):
+		var face := mesh_data.faces[fi]
+		if face == null:
+			continue
+		var loop := _ordered_loop(face)
+		if loop.is_empty():
+			continue
+		var N: int = loop.size()
+		for i in range(N):
+			var va: int = loop[i]
+			var vb: int = loop[(i + 1) % N]
+			var ca: int = lookup.get(va, va)
+			var cb: int = lookup.get(vb, vb)
+			var key := Vector2i(mini(ca, cb), maxi(ca, cb))
+			if not edge_to_faces.has(key):
+				edge_to_faces[key] = []
+			edge_to_faces[key].append({
+				"face_idx": fi,
+				"loop_idx": i,
+				"va": va,
+				"vb": vb,
+				"ca": ca,
+				"cb": cb,
+			})
+
+	# 2. Filter valid beveled edges (must have exactly 2 incident faces)
+	var valid_bevel_edges := {}
+	for key: Vector2i in selected_edge_keys:
+		if not edge_to_faces.has(key) or edge_to_faces[key].size() != 2:
+			continue
+		valid_bevel_edges[key] = edge_to_faces[key]
+
+	if valid_bevel_edges.is_empty():
+		return _fail("Bevel edges: cannot bevel open boundary edges")
+
+	# 3. Find touched common vertices
+	var touched_common_verts := {}
+	for key: Vector2i in valid_bevel_edges:
+		touched_common_verts[key.x] = true
+		touched_common_verts[key.y] = true
+
+	# 4. Distance clamping
+	var min_edge_len := INF
+	for c: int in touched_common_verts:
+		for fi in range(mesh_data.faces.size()):
+			var face := mesh_data.faces[fi]
+			if face == null:
+				continue
+			var loop := _ordered_loop(face)
+			var N: int = loop.size()
+			for i in range(N):
+				var va: int = loop[i]
+				var vb: int = loop[(i + 1) % N]
+				var ca: int = lookup.get(va, va)
+				var cb: int = lookup.get(vb, vb)
+				if ca == c or cb == c:
+					var l := mesh_data.positions[va].distance_to(mesh_data.positions[vb])
+					if l > 0.0001 and l < min_edge_len:
+						min_edge_len = l
+	var max_allowed: float = min_edge_len * 0.49
+	if amount > max_allowed:
+		amount = maxf(0.001, max_allowed)
+	if amount < 0.0005:
+		return _fail("Bevel edges: bevel distance exceeds available surface")
+
+	# 5. Rebuild modified faces
+	var new_faces: Array[PBFace] = []
+	var removed := {}
+	var rail_endpoints := {}
+	var corner_segments := {}
+
+	for fi in range(mesh_data.faces.size()):
+		var face := mesh_data.faces[fi]
+		if face == null:
+			continue
+		var loop := _ordered_loop(face)
+		var N: int = loop.size()
+		if N < 3:
+			continue
+
+		var face_touches_bevel := false
+		for i in range(N):
+			var vi: int = loop[i]
+			var ci: int = lookup.get(vi, vi)
+			if touched_common_verts.has(ci):
+				face_touches_bevel = true
+				break
+
+		if not face_touches_bevel:
+			continue
+
+		removed[fi] = true
+		var fn := _face_area_normal(mesh_data, face)
+
+		var new_loop_positions: Array[Vector3] = []
+		for i in range(N):
+			var vi: int = loop[i]
+			var v_prev: int = loop[(i - 1 + N) % N]
+			var v_next: int = loop[(i + 1) % N]
+			var ci: int = lookup.get(vi, vi)
+			var c_prev: int = lookup.get(v_prev, v_prev)
+			var c_next: int = lookup.get(v_next, v_next)
+			var key_prev := Vector2i(mini(ci, c_prev), maxi(ci, c_prev))
+			var key_next := Vector2i(mini(ci, c_next), maxi(ci, c_next))
+
+			var prev_beveled: bool = valid_bevel_edges.has(key_prev)
+			var next_beveled: bool = valid_bevel_edges.has(key_next)
+
+			var pos_i: Vector3 = mesh_data.positions[vi]
+			var d_prev: Vector3 = (mesh_data.positions[v_prev] - pos_i).normalized()
+			var d_next: Vector3 = (mesh_data.positions[v_next] - pos_i).normalized()
+
+			var u_prev: Vector3 = fn.cross(-d_prev).normalized()
+			var u_next: Vector3 = fn.cross(d_next).normalized()
+
+			if not touched_common_verts.has(ci):
+				new_loop_positions.append(pos_i)
+			elif prev_beveled and not next_beveled:
+				var sin_a: float = absf(d_next.dot(u_prev))
+				var step: float = amount / maxf(0.1, sin_a)
+				var pt: Vector3 = pos_i + d_next * step
+				new_loop_positions.append(pt)
+				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
+			elif not prev_beveled and next_beveled:
+				var sin_a: float = absf(d_prev.dot(u_next))
+				var step: float = amount / maxf(0.1, sin_a)
+				var pt: Vector3 = pos_i + d_prev * step
+				new_loop_positions.append(pt)
+				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
+			elif prev_beveled and next_beveled:
+				var pt: Vector3 = pos_i + u_prev * amount + u_next * amount
+				new_loop_positions.append(pt)
+				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
+				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
+			else:
+				var p_prev: Vector3 = pos_i + d_prev * amount
+				var p_next: Vector3 = pos_i + d_next * amount
+				new_loop_positions.append(p_prev)
+				new_loop_positions.append(p_next)
+				if not corner_segments.has(ci):
+					corner_segments[ci] = []
+				corner_segments[ci].append({"from": p_prev, "to": p_next})
+
+		var new_face := _build_bevel_polygon_face(mesh_data, new_loop_positions, face, fn)
+		if new_face != null:
+			new_faces.append(new_face)
+
+	# 6. Build bridge faces along beveled edges
+	var bridge_faces: Array[PBFace] = []
+	for key: Vector2i in valid_bevel_edges:
+		var entries: Array = valid_bevel_edges[key]
+		var e0: Dictionary = entries[0]
+		var e1: Dictionary = entries[1]
+		var fi0: int = e0["face_idx"]
+		var fi1: int = e1["face_idx"]
+		var ca: int = e0["ca"]
+		var cb: int = e0["cb"]
+
+		var r0_start: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi0, ca)
+		var r0_end: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi0, cb)
+		var r1_start: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi1, ca)
+		var r1_end: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi1, cb)
+
+		var n0 := _face_area_normal(mesh_data, mesh_data.faces[fi0])
+		var n1 := _face_area_normal(mesh_data, mesh_data.faces[fi1])
+
+		var rails_start: Array[Vector3] = []
+		var rails_end: Array[Vector3] = []
+		for s in range(segments + 1):
+			var t: float = float(s) / float(segments)
+			if segments == 1 or n0.is_equal_approx(n1):
+				rails_start.append(r0_start.lerp(r1_start, t))
+				rails_end.append(r0_end.lerp(r1_end, t))
+			else:
+				rails_start.append(_arc_interp(r0_start, r1_start, n0, n1, t))
+				rails_end.append(_arc_interp(r0_end, r1_end, n0, n1, t))
+
+		for s in range(segments):
+			var qs_start := rails_start[s]
+			var qs_end := rails_end[s]
+			var qnext_end := rails_end[s + 1]
+			var qnext_start := rails_start[s + 1]
+			var seg_normal := n0.lerp(n1, (float(s) + 0.5) / float(segments)).normalized()
+			var quad_pts := [qs_start, qs_end, qnext_end, qnext_start]
+			var bridge_face := _build_bevel_polygon_face(mesh_data, quad_pts, mesh_data.faces[fi0], seg_normal)
+			if bridge_face != null:
+				new_faces.append(bridge_face)
+				bridge_faces.append(bridge_face)
+
+			# At cb: directed edge is qs_end -> qnext_end
+			if not corner_segments.has(cb):
+				corner_segments[cb] = []
+			corner_segments[cb].append({"from": qs_end, "to": qnext_end})
+
+			# At ca: directed edge is qnext_start -> qs_start
+			if not corner_segments.has(ca):
+				corner_segments[ca] = []
+			corner_segments[ca].append({"from": qnext_start, "to": qs_start})
+
+	# 7. Build corner cap faces
+	var corner_faces: Array[PBFace] = []
+	for c: int in corner_segments:
+		var segs: Array = corner_segments[c]
+		var cycles := _chain_segments_into_cycles(segs)
+		for cycle: Array in cycles:
+			if cycle.size() >= 3:
+				var exp_n := Vector3.ZERO
+				for fi in range(mesh_data.faces.size()):
+					var f := mesh_data.faces[fi]
+					if f == null:
+						continue
+					for v in f.get_distinct_indexes():
+						if lookup.get(v, v) == c:
+							exp_n += _face_area_normal(mesh_data, f)
+				exp_n = exp_n.normalized()
+
+				var cap_pts: Array[Vector3] = []
+				for pt in cycle:
+					cap_pts.append(pt)
+				var cap_face := _build_bevel_polygon_face(mesh_data, cap_pts, mesh_data.faces[0], exp_n)
+				if cap_face != null:
+					new_faces.append(cap_face)
+					corner_faces.append(cap_face)
+
+	return _replace_faces(mesh_data, removed, new_faces, [])
+
+static func _record_rail_endpoint(dict: Dictionary, key: Vector2i, fi: int, c: int, pt: Vector3) -> void:
+	dict[Vector3i(key.x, key.y, c * 10000 + fi)] = pt
+
+static func _get_rail_endpoint(dict: Dictionary, key: Vector2i, fi: int, c: int) -> Vector3:
+	return dict.get(Vector3i(key.x, key.y, c * 10000 + fi), Vector3.ZERO)
+
+static func _chain_segments_into_cycles(segs: Array) -> Array:
+	if segs.is_empty():
+		return []
+	var remaining := segs.duplicate()
+	var cycles: Array = []
+	while not remaining.is_empty():
+		var first = remaining.pop_back()
+		var cycle: Array = [first["from"]]
+		var cur_to: Vector3 = first["to"]
+		var closed := false
+		var guard: int = remaining.size() + 2
+		while guard > 0:
+			guard -= 1
+			if cur_to.distance_to(cycle[0]) < 0.0005:
+				closed = true
+				break
+			var found_idx := -1
+			for i in range(remaining.size()):
+				if remaining[i]["from"].distance_to(cur_to) < 0.0005:
+					found_idx = i
+					break
+			if found_idx >= 0:
+				var next_seg = remaining[found_idx]
+				remaining.remove_at(found_idx)
+				cycle.append(cur_to)
+				cur_to = next_seg["to"]
+			else:
+				break
+		if closed and cycle.size() >= 3:
+			cycles.append(cycle)
+	return cycles
+
+static func _arc_interp(p0: Vector3, p1: Vector3, n0: Vector3, n1: Vector3, t: float) -> Vector3:
+	var diff_n := n0 - n1
+	var denom := diff_n.length_squared()
+	if denom < 0.001:
+		return p0.lerp(p1, t)
+	var diff_p := p0 - p1
+	var R := diff_p.dot(diff_n) / denom
+	var center := p0 - n0 * R
+	var v0 := p0 - center
+	var v1 := p1 - center
+	var angle := v0.angle_to(v1)
+	var axis := v0.cross(v1).normalized()
+	if axis.length_squared() < 0.5:
+		return p0.lerp(p1, t)
+	return center + v0.rotated(axis, angle * t)
+
+static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, template_face: PBFace, expected_normal: Vector3 = Vector3.ZERO) -> PBFace:
+	var n := pts.size()
+	if n < 3:
+		return null
+	var poly_2d := PackedVector2Array()
+	var basis_u: Vector3
+	var basis_v: Vector3
+	var normal: Vector3 = expected_normal
+	if normal.length_squared() < 0.1:
+		for i in range(n):
+			var cur: Vector3 = pts[i]
+			var nxt: Vector3 = pts[(i + 1) % n]
+			normal.x += (cur.y - nxt.y) * (cur.z + nxt.z)
+			normal.y += (cur.z - nxt.z) * (cur.x + nxt.x)
+			normal.z += (cur.x - nxt.x) * (cur.y + nxt.y)
+		normal = normal.normalized()
+
+	if absf(normal.y) < 0.99:
+		basis_u = Vector3.UP.cross(normal).normalized()
+	else:
+		basis_u = Vector3.RIGHT.cross(normal).normalized()
+	basis_v = normal.cross(basis_u).normalized()
+
+	var origin: Vector3 = pts[0]
+	for i in range(n):
+		var diff: Vector3 = pts[i] - origin
+		poly_2d.append(Vector2(diff.dot(basis_u), diff.dot(basis_v)))
+
+	var area := 0.0
+	for i in range(n):
+		var j := (i + 1) % n
+		area += poly_2d[i].x * poly_2d[j].y - poly_2d[j].x * poly_2d[i].y
+	if area < 0.0:
+		pts.reverse()
+		poly_2d = PackedVector2Array()
+		origin = pts[0]
+		for i in range(n):
+			var diff: Vector3 = pts[i] - origin
+			poly_2d.append(Vector2(diff.dot(basis_u), diff.dot(basis_v)))
+
+	var tris_2d: PackedInt32Array = Geometry2D.triangulate_polygon(poly_2d)
+	if tris_2d.is_empty():
+		tris_2d = PackedInt32Array()
+		for i in range(1, n - 1):
+			tris_2d.append(0)
+			tris_2d.append(i)
+			tris_2d.append(i + 1)
+
+	var pos_indices := PackedInt32Array()
+	var src_idx := template_face.get_indexes()[0] if template_face != null and template_face.get_indexes().size() > 0 else 0
+	for i in range(n):
+		var idx := _dup_position_at(mesh_data, pts[i], src_idx)
+		pos_indices.append(idx)
+
+	var face_indices := PackedInt32Array()
+	for tri_i in range(0, tris_2d.size(), 3):
+		face_indices.append(pos_indices[tris_2d[tri_i]])
+		face_indices.append(pos_indices[tris_2d[tri_i + 1]])
+		face_indices.append(pos_indices[tris_2d[tri_i + 2]])
+
+	var f := PBFace.new(face_indices)
+	if template_face != null:
+		f.submesh_index = template_face.submesh_index
+		f.uv_scale = template_face.uv_scale
+		f.uv_offset = template_face.uv_offset
+		f.uv_rotation = template_face.uv_rotation
+		f.uv_use_world_space = template_face.uv_use_world_space
+		f.uv_flip_u = template_face.uv_flip_u
+		f.uv_flip_v = template_face.uv_flip_v
+		f.uv_swap_uv = template_face.uv_swap_uv
+	return f
+
 # ==============================================================================
 # Selection helpers
 # ==============================================================================
@@ -763,6 +1145,25 @@ static func common_edge_ids(mesh_data: PBMeshData, edges: Array[PBEdge]) -> Pack
 	for edge in edges:
 		if edge != null:
 			wanted[_common_key(lookup, edge.a, edge.b)] = true
+	var common := mesh_data.get_common_edges()
+	for i in range(common.size()):
+		if wanted.has(_common_key(lookup, common[i].a, common[i].b)):
+			result.append(i)
+	return result
+
+## Maps perimeter boundary edges of the given face region to their ids in
+## get_common_edges().
+static func face_perimeter_common_edge_ids(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> PackedInt32Array:
+	var result := PackedInt32Array()
+	if mesh_data == null or face_ids.is_empty():
+		return result
+	var boundary_edges: Array = _region_boundary_edges(mesh_data, face_ids)
+	if boundary_edges.is_empty():
+		return result
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var wanted := {}
+	for be in boundary_edges:
+		wanted[_common_key(lookup, be.a, be.b)] = true
 	var common := mesh_data.get_common_edges()
 	for i in range(common.size()):
 		if wanted.has(_common_key(lookup, common[i].a, common[i].b)):
