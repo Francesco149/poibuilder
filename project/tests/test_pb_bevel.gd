@@ -298,3 +298,32 @@ func test_bevel_faces_multi_segment():
 	assert_eq(cube.faces.size(), 18, "Cube with 1 face beveled (seg=3) produces 18 faces")
 	_assert_watertight(cube, "Face bevel 3 segments")
 
+
+func test_bevel_inset_inward_extrusion_outer_edges():
+	var cube := PBMeshData.create_cube(2.0)
+	# Face 1 is back face (+Z)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
+	assert_true(inset_res["ok"], "Inset succeeds")
+	var inner_face_id: int = inset_res["cap_face_ids"][0]
+
+	var extrude_res := PBMeshOps.extrude_faces(cube, PackedInt32Array([inner_face_id]), -0.5)
+	assert_true(extrude_res["ok"], "Inward extrude succeeds")
+
+	# Find the 4 outer edges of the inward extrusion (at Z ≈ 1.0)
+	var common_edges := cube.get_common_edges()
+	var outer_edge_ids := PackedInt32Array()
+	for eid in range(common_edges.size()):
+		var e := common_edges[eid]
+		var pa := cube.positions[e.a]
+		var pb := cube.positions[e.b]
+		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
+			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
+				outer_edge_ids.append(eid)
+
+	assert_eq(outer_edge_ids.size(), 4, "Must find exactly 4 outer edges of inward extrusion")
+	for segs in [1, 2, 3, 4]:
+		var c_test := PBCommand.copy_mesh_data(cube)
+		var bevel_res := PBMeshOps.bevel_edges(c_test, outer_edge_ids, 0.1, segs)
+		assert_true(bevel_res.get("ok", false), "Beveling outer edges with segs=" + str(segs) + " should succeed: " + str(bevel_res.get("error", "")))
+		_assert_watertight(c_test, "Inset inward extrusion outer edge bevel segs=" + str(segs))
+		_assert_compiled_convention(c_test, false, "Inset inward extrusion outer edge bevel segs=" + str(segs))

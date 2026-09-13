@@ -1553,6 +1553,30 @@ func _run() -> void:
 						_fail("BEVEL-MODAL: live segments adjustment failed to increase face count (got %d vs %d)" % [f_seg2, f_after])
 					plugin._on_params_applied()
 					await _frames(3)
+					# Test edge beveling with segments=2 on inset/extruded cavity:
+					var test_cube := PBMeshData.create_cube(2.0)
+					var inset_res := PBMeshOps.inset_faces(test_cube, PackedInt32Array([1]), 0.3)
+					var inner_fid: int = inset_res["cap_face_ids"][0]
+					PBMeshOps.extrude_faces(test_cube, PackedInt32Array([inner_fid]), -0.5)
+					var c_edges := test_cube.get_common_edges()
+					var rim_edges := PackedInt32Array()
+					for eid in range(c_edges.size()):
+						var e := c_edges[eid]
+						var pa := test_cube.positions[e.a]
+						var pb := test_cube.positions[e.b]
+						if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
+							if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
+								rim_edges.append(eid)
+					var b_res := PBMeshOps.bevel_edges(test_cube, rim_edges, 0.1, 2)
+					var counts := PBMeshOps.edge_usage_counts(test_cube)
+					var bad_e := 0
+					for k in counts:
+						if counts[k] != 2:
+							bad_e += 1
+					if b_res.get("ok", false) and bad_e == 0:
+						_pass("BEVEL-EXTRUDE-RIM: beveling outer edges of inward extrusion with seg=2 is watertight (0 bad edges)")
+					else:
+						_fail("BEVEL-EXTRUDE-RIM: beveling outer edges of inward extrusion failed or has %d non-manifold edges" % bad_e)
 				else:
 					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
 		else:

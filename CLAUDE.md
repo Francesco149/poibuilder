@@ -2797,6 +2797,17 @@ v0.9.89 round complete ✓ — Session 4: Core Modeling — Bevel & Chamfer (edg
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), asserting toolbar Bevel button existence, enabling on face selection, and live bevel operation execution.
 - Version bump 0.9.88 -> 0.9.89 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.90 round complete ✓ — Bevel fillet arc endpoint convergence & mitered corner watertightness:
+- FILLET ARC ENDPOINT ALIGNMENT (`PBMeshOps._arc_interp` radius interpolation):
+  * Root cause of disconnected bevel strips, open boundary seams, and skybox bleed through bevel edges with `segments >= 2`: at mitered corners (e.g. around an inward extruded cavity or stepped profile), adjacent faces retract with different shift vectors (diagonal on the front frame vs orthogonal on the cavity side walls), so the endpoints $p_0$ and $p_1$ are at different distances from the arc center ($|v_0| \ne |v_1|$).
+  * `_arc_interp` previously rotated $v_0$ by `angle * t` preserving vector length $|v_0|$, which undershot $p_1$ by $(|v_1| - |v_0|)$ (e.g. ~4cm at default settings). At $t = 1.0$, the fillet quad ended at distance $|v_0|$ instead of reaching $p_1$, creating an open gap/slit of usage=1 edges across all 4 edges of the opening where sky/background bled through and Godot's backface culling made faces appear flipped/missing.
+  * Linearly interpolating the radius along the arc (`radius = (1.0 - t) * l0 + t * l1; return center + (v_rot / l0) * radius`) guarantees exact mathematical convergence to $p_1$ at $t = 1.0$, seamlessly welding the multi-segment fillet quads to the retracted cavity walls across all segment counts (1..8).
+- TESTS & VERIFICATION:
+  * Added `test_bevel_inset_inward_extrusion_outer_edges` in `tests/test_pb_bevel.gd` covering inset + inward extrusion rim edge beveling across segments 1, 2, 3, 4, confirming 100% watertightness (0 bad edges) and valid compiled conventions.
+  * Extended GUI test harness in `project/test_scenes/editor_gui_test.gd` asserting watertight beveling on extruded cavity rims in live editor under Xvfb.
+  * 901/901 GUT unit tests passing, 54/54 GUI harness assertions passing with 0 failures.
+- Version bump 0.9.89 -> 0.9.90 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

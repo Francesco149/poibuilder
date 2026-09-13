@@ -1073,12 +1073,17 @@ static func _arc_interp(p0: Vector3, p1: Vector3, n0: Vector3, n1: Vector3, t: f
 	var center := p0 - n0 * R
 	var v0 := p0 - center
 	var v1 := p1 - center
+	var l0 := v0.length()
+	var l1 := v1.length()
+	if l0 < 0.0001 or l1 < 0.0001:
+		return p0.lerp(p1, t)
 	var angle := v0.angle_to(v1)
 	var axis := v0.cross(v1).normalized()
 	if axis.length_squared() < 0.5:
 		return p0.lerp(p1, t)
-	return center + v0.rotated(axis, angle * t)
-
+	var v_rot := v0.rotated(axis, angle * t)
+	var radius := (1.0 - t) * l0 + t * l1
+	return center + (v_rot / l0) * radius
 static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, template_face: PBFace, expected_normal: Vector3 = Vector3.ZERO) -> PBFace:
 	var n := pts.size()
 	if n < 3:
