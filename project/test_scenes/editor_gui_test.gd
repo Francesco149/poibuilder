@@ -1531,10 +1531,12 @@ func _run() -> void:
 			if target_bevel != null and target_bevel.pb_mesh_data != null:
 				sel.clear()
 				sel.add_node(target_bevel)
-				await _frames(3)
-				plugin.editor.select_mode = PBEditor.SelectMode.FACE
-				plugin.select_subgizmo_element(target_bevel, 0)
-				await _frames(3)
+				await _frames(6)
+				await _press_and_release_key(KEY_K)
+				await _frames(6)
+				var face_center := _window_pos(vp, host, target_bevel.global_position + Vector3(0, 0, 0.5))
+				await _click(face_center)
+				await _frames(10)
 				if not btn_bevel.disabled:
 					_pass("BEVEL-OP: bevel button is enabled when face is selected")
 					var f_before: int = target_bevel.pb_mesh_data.faces.size()
@@ -1545,6 +1547,16 @@ func _run() -> void:
 						_pass("BEVEL-OP: live bevel operation added bevel faces (%d -> %d)" % [f_before, f_after])
 					else:
 						_fail("BEVEL-OP: live bevel failed to increase face count (got %d vs before %d)" % [f_after, f_before])
+					# Live parameter change test in modal: segments 1 -> 2
+					plugin._on_param_changed("segments", 2.0)
+					await _frames(3)
+					var f_seg2: int = target_bevel.pb_mesh_data.faces.size()
+					if f_seg2 > f_after:
+						_pass("BEVEL-MODAL: live segments adjustment subdivided bevel fillets (%d -> %d)" % [f_after, f_seg2])
+					else:
+						_fail("BEVEL-MODAL: live segments adjustment failed to increase face count (got %d vs %d)" % [f_seg2, f_after])
+					plugin._on_params_applied()
+					await _frames(3)
 				else:
 					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
 		else:

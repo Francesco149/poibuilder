@@ -736,6 +736,10 @@ func _on_selection_changed() -> void:
 	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
 		if _params_session_kind == "create" and pb_mesh == shape_creator.preview_node:
 			pass
+		elif _params_session_kind == "bevel" and pb_mesh == _bevel_session_node:
+			pass
+		elif _params_session_kind == "edit" and pb_mesh == _params_edit_node:
+			pass
 		else:
 			if logger:
 				logger.info("plugin", "Params session cancelled (selection changed)")
@@ -1377,7 +1381,7 @@ func _on_drag_topology_committed(mesh: PBMesh) -> void:
 ## these buttons use the session defaults.
 const OP_EXTRUDE_DISTANCE := 0.25
 const OP_INSET_AMOUNT := 0.25
-const OP_BEVEL_AMOUNT := 0.2
+const OP_BEVEL_AMOUNT := 0.1
 const OP_BEVEL_SEGMENTS := 1
 var op_bevel_amount: float = OP_BEVEL_AMOUNT
 var op_bevel_segments: int = OP_BEVEL_SEGMENTS
@@ -1472,14 +1476,20 @@ func _on_operation_requested(op_name: String) -> void:
 			if shortest_l < INF and eff_amount > shortest_l * 0.35:
 				eff_amount = maxf(0.01, snappedf(shortest_l * 0.25, 0.01))
 				op_bevel_amount = eff_amount
+			var pre_snapshot := PBCommand.copy_mesh_data(mesh_data)
+			var faces_to_bevel := selection.selected_faces.duplicate()
+			var edges_to_bevel := selection.selected_edges.duplicate()
 
 			if is_face_bevel:
-				result = PBMeshOps.bevel_faces(mesh_data, selection.selected_faces.duplicate(), eff_amount, op_bevel_segments)
+				result = PBMeshOps.bevel_faces(mesh_data, faces_to_bevel, eff_amount, op_bevel_segments)
 			else:
 				result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
 
-			if result.get("ok", false) and tool_overlay != null:
-				_start_bevel_modal(mesh, is_face_bevel, selection.selected_faces.duplicate(), selection.selected_edges.duplicate(), shortest_l, eff_amount, result.get("new_face_ids", PackedInt32Array()))
+			if result.get("ok", false):
+				_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
+				if tool_overlay != null:
+					_start_bevel_modal(mesh, is_face_bevel, faces_to_bevel, edges_to_bevel, shortest_l, eff_amount, result.get("new_face_ids", PackedInt32Array()), pre_snapshot)
+					return
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
@@ -2719,10 +2729,11 @@ func _on_params_canceled() -> void:
 
 	if tool_overlay != null:
 		tool_overlay.close_params()
-func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], shortest_l: float, eff_amount: float, new_face_ids: PackedInt32Array) -> void:
+
+func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], shortest_l: float, eff_amount: float, new_face_ids: PackedInt32Array, pre_snapshot: PBMeshData) -> void:
 	_params_session_kind = "bevel"
 	_bevel_session_node = mesh
-	_bevel_session_snapshot = PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	_bevel_session_snapshot = pre_snapshot
 	_bevel_session_is_face_bevel = is_face_bevel
 	_bevel_session_faces = faces
 	_bevel_session_edges = edges
@@ -2740,7 +2751,9 @@ func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Arr
 	tool_overlay.open_params("Bevel Settings", defs, values)
 
 func _update_bevel_preview() -> void:
+	print("[UPDATE_BEVEL_PREVIEW_ENTER] node=", _bevel_session_node, " snap=", _bevel_session_snapshot != null)
 	if _bevel_session_node == null or _bevel_session_snapshot == null:
+		print("[UPDATE_BEVEL_PREVIEW_EARLY_RETURN]")
 		return
 	var mesh_data := _bevel_session_node.pb_mesh_data
 	PBCommand.restore_mesh_data(mesh_data, _bevel_session_snapshot)
@@ -2752,7 +2765,6 @@ func _update_bevel_preview() -> void:
 		if _bevel_session_mode == PBEditor.SelectMode.FACE and _bevel_session_faces.size() == _bevel_session_snapshot.faces.size():
 			edge_ids = PBMeshOps.face_edges_common_ids(mesh_data, _bevel_session_faces)
 		result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
-
 	if result.get("ok", false):
 		_bevel_session_last_new_faces = result.get("new_face_ids", PackedInt32Array())
 		if not _bevel_session_last_new_faces.is_empty():
