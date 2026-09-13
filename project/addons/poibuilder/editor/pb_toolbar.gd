@@ -99,6 +99,7 @@ var _btn_object: Button
 var _btn_vertex: Button
 var _btn_edge: Button
 var _btn_face: Button
+var _btn_texture: Button
 var _btn_space: Button
 var _btn_new_shape: MenuButton
 var _btn_ngon: Button
@@ -198,6 +199,8 @@ func _build_ui() -> void:
 	_btn_vertex = _create_mode_button("Vertex", PBEditor.SelectMode.VERTEX, "icon_vertex.svg")
 	_btn_edge = _create_mode_button("Edge", PBEditor.SelectMode.EDGE, "icon_edge.svg")
 	_btn_face = _create_mode_button("Face", PBEditor.SelectMode.FACE, "icon_face.svg")
+	_btn_texture = _create_mode_button("Texture", PBEditor.SelectMode.TEXTURE, "icon_texture_mode.svg")
+	_btn_texture.tooltip_text = "Texture / Material Mode (6) — transform UVs directly on 3D geometry"
 
 	# Orientation space
 	_sep_space = _make_sep()
@@ -415,7 +418,7 @@ func _update_row_layout() -> void:
 
 	var grp_header: Array[Control] = [_logo, _btn_split_rows]
 	var grp_tools: Array[Control] = [_sep_tools, _btn_move, _btn_rotate, _btn_scale]
-	var grp_modes: Array[Control] = [_sep_modes, _btn_object, _btn_vertex, _btn_edge, _btn_face]
+	var grp_modes: Array[Control] = [_sep_modes, _btn_object, _btn_vertex, _btn_edge, _btn_face, _btn_texture]
 	var grp_space: Array[Control] = [_sep_space, _btn_space]
 	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_ops: Array[Control] = [
@@ -443,6 +446,7 @@ func _update_row_layout() -> void:
 		_row2.add_child(_btn_vertex)
 		_row2.add_child(_btn_edge)
 		_row2.add_child(_btn_face)
+		_row2.add_child(_btn_texture)
 		for c in grp_space: _row2.add_child(c)
 		for c in grp_grid: _row2.add_child(c)
 		for c in grp_shapes: _row2.add_child(c)
@@ -496,7 +500,7 @@ func _create_mode_button(text: String, mode: PBEditor.SelectMode, icon_name: Str
 	btn.toggle_mode = true
 	btn.flat = true
 	btn.button_group = _mode_group
-	btn.tooltip_text = "%s select mode (%s)" % [text, ["", "H", "J", "K"][mode]]
+	btn.tooltip_text = "%s select mode (%s)" % [text, ["", "H", "J", "K", "6"][mode]]
 	btn.pressed.connect(_on_mode_button_pressed.bind(mode))
 	return btn
 
@@ -555,6 +559,7 @@ func _on_mode_changed(mode: PBEditor.SelectMode) -> void:
 	_btn_vertex.set_pressed_no_signal(mode == PBEditor.SelectMode.VERTEX)
 	_btn_edge.set_pressed_no_signal(mode == PBEditor.SelectMode.EDGE)
 	_btn_face.set_pressed_no_signal(mode == PBEditor.SelectMode.FACE)
+	_btn_texture.set_pressed_no_signal(mode == PBEditor.SelectMode.TEXTURE)
 
 func _on_tool_changed(tool: PBEditor.ToolMode) -> void:
 	_btn_move.set_pressed_no_signal(tool == PBEditor.ToolMode.MOVE)
@@ -640,7 +645,7 @@ func _on_shape_menu_pressed(id: int) -> void:
 ## its own mode; switching back to an element mode must always be possible).
 func set_editing_active(active: bool) -> void:
 	for btn: Button in [_btn_move, _btn_rotate, _btn_scale, _btn_space,
-			_btn_object, _btn_vertex, _btn_edge, _btn_face, _btn_uv_editor]:
+			_btn_object, _btn_vertex, _btn_edge, _btn_face, _btn_texture, _btn_uv_editor]:
 		btn.disabled = not active
 	# New Shape stays enabled: creation needs no editing context.
 	_on_selection_info_changed()

@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.87"
+const VERSION := "0.9.88"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -548,6 +548,10 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			if not pb_context:
 				return AFTER_GUI_INPUT_PASS
 			editor.select_mode = PBEditor.SelectMode.FACE
+		&"select_texture":
+			if not pb_context:
+				return AFTER_GUI_INPUT_PASS
+			editor.select_mode = PBEditor.SelectMode.TEXTURE
 		&"select_object":
 			if not pb_context:
 				return AFTER_GUI_INPUT_PASS
@@ -680,7 +684,7 @@ func _on_snap_selection_to_grid() -> void:
 							indices.append(idx)
 		PBEditor.SelectMode.EDGE:
 			indices = mesh_data.get_coincident_vertices_from_edges(editor.selection.selected_edges)
-		PBEditor.SelectMode.FACE:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			indices = mesh_data.get_coincident_vertices_from_faces(editor.selection.selected_faces)
 	if indices.is_empty():
 		return

@@ -1433,6 +1433,21 @@ func _run() -> void:
 					_fail("UV-EDITOR: uv_editor_panel is null")
 			else:
 				_fail("SPLAT-STAMP: target GuiTestB not found")
+
+	# ── 15. TEXTURE MODE GUI TEST ─────────────────────────────────────────────
+	if plugin.toolbar != null:
+		var btn_tex := plugin.toolbar.get_node_or_null("Row2/ModeTexture") as Button
+		if btn_tex != null:
+			_pass("TEXTURE-MODE: toolbar button ModeTexture exists in Row2")
+			btn_tex.button_pressed = true
+			btn_tex.pressed.emit()
+			await _frames(4)
+			if plugin.editor != null and plugin.editor.select_mode == PBEditor.SelectMode.TEXTURE:
+				_pass("TEXTURE-MODE: clicking ModeTexture switched editor to SelectMode.TEXTURE")
+			else:
+				_fail("TEXTURE-MODE: editor select_mode not TEXTURE (got %d)" % (plugin.editor.select_mode if plugin.editor else -1))
+		else:
+			_fail("TEXTURE-MODE: toolbar button ModeTexture not found in Row2")
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

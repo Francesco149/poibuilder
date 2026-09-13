@@ -414,7 +414,7 @@ func _redraw(gizmo) -> void:
 		return
 
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			_draw_selected_faces(gizmo, mesh_data)
 			_draw_hover_face(gizmo, mesh_data)
 		PBEditor.SelectMode.EDGE:
@@ -636,7 +636,10 @@ func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
 	if selected.is_empty():
 		return
-	var fill := element_editor.build_face_fill_mesh_multi(mesh_data, selected)
+	var expanded := element_editor.expand_face_ids(mesh_data, selected)
+	if expanded.is_empty():
+		return
+	var fill := element_editor.build_face_fill_mesh_multi(mesh_data, expanded)
 	if fill == null:
 		return
 	if _face_fill_material == null:
@@ -717,6 +720,9 @@ func _draw_vertex_dots(gizmo, mesh_data: PBMeshData) -> void:
 	var sel_set := {}
 	for s in sub_selected:
 		sel_set[s] = true
+	if editor != null and editor.selection != null and not editor.selection.selected_vertices.is_empty():
+		for s in editor.selection.selected_vertices:
+			sel_set[s] = true
 	var sv_count: int = mesh_data.shared_vertices.size()
 	for sv_idx in range(sv_count):
 		var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]

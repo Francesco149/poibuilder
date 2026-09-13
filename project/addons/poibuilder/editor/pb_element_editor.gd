@@ -207,6 +207,10 @@ var pick_side_faces: Dictionary = {}
 ## mirror; a plain click (no alt) drops back to the single edge.
 var selected_loops: Dictionary = {}
 
+## Multi-face selection groups (e.g. UV islands or programmatic multi-face selection):
+## seed face id -> PackedInt32Array of all face ids in that group.
+var selected_face_groups: Dictionary = {}
+
 ## Double-click tracking for the click path only (hover never reaches it).
 var _last_click_msec: int = -10000
 var _last_click_id: int = -1
@@ -217,12 +221,17 @@ var _last_click_alt: bool = false
 func reset_side_faces() -> void:
 	pick_side_faces.clear()
 	selected_loops.clear()
+	selected_face_groups.clear()
 	_last_click_msec = -10000
 	_last_click_id = -1
 	_last_click_alt = false
-
 ## The mesh node being dragged.
 var _drag_mesh: PBMesh = null
+
+## Texture Mode drag state
+var _drag_texture_snapshot: PackedVector2Array = PackedVector2Array()
+var _drag_texture_uv_center: Vector2 = Vector2.ZERO
+var _drag_texture_face_ids: PackedInt32Array = PackedInt32Array()
 
 ## Last emitted drag values, for on-demand dock refresh.
 var _last_drag_active: bool = false
@@ -269,8 +278,8 @@ func element_indices(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 			for eid in expand_edge_ids(mesh_data, PackedInt32Array([id])):
 				edge_objs.append(edges[eid])
 			return mesh_data.get_coincident_vertices_from_edges(edge_objs)
-		PBEditor.SelectMode.FACE:
-			return mesh_data.get_coincident_vertices_from_faces(PackedInt32Array([id]))
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			return mesh_data.get_coincident_vertices_from_faces(expand_face_ids(mesh_data, PackedInt32Array([id])))
 		_:
 			return PackedInt32Array()
 
@@ -296,12 +305,21 @@ func element_origin(mesh_data: PBMeshData, id: int) -> Vector3:
 			if edge.a < 0 or edge.a >= positions.size() or edge.b < 0 or edge.b >= positions.size():
 				return Vector3.ZERO
 			return (positions[edge.a] + positions[edge.b]) * 0.5
-		PBEditor.SelectMode.FACE:
-			if id >= mesh_data.faces.size():
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			var fids := expand_face_ids(mesh_data, PackedInt32Array([id]))
+			if fids.size() > 1:
+				var sum := Vector3.ZERO
+				var count: int = 0
+				for fid in fids:
+					if fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+						for idx in mesh_data.faces[fid].get_distinct_indexes():
+							if idx >= 0 and idx < positions.size():
+								sum += positions[idx]
+								count += 1
+				return sum / float(count) if count > 0 else Vector3.ZERO
+			if id >= mesh_data.faces.size() or mesh_data.faces[id] == null:
 				return Vector3.ZERO
 			var face: PBFace = mesh_data.faces[id]
-			if face == null:
-				return Vector3.ZERO
 			var indices := face.get_distinct_indexes()
 			if indices.is_empty():
 				return Vector3.ZERO
@@ -329,11 +347,14 @@ func element_basis(mesh_data: PBMeshData, node: PBMesh, id: int) -> Basis:
 		PBEditor.OrientationSpace.OBJECT:
 			return Basis.IDENTITY
 		PBEditor.OrientationSpace.ELEMENT:
+			if editor != null and editor.select_mode == PBEditor.SelectMode.TEXTURE:
+				if id >= 0 and id < mesh_data.faces.size() and mesh_data.faces[id] != null:
+					var face_normal := PBMath.normal_from_positions(mesh_data.positions, mesh_data.faces[id].get_indexes())
+					var basis_dict := PBUv.get_planar_basis(face_normal)
+					return Basis(basis_dict["u"], basis_dict["v"], face_normal.normalized())
 			var side: int = pick_side_faces.get(id, -1)
 			if side is int and side >= 0 and side < mesh_data.faces.size() \
 					and mesh_data.faces[side] != null:
-				# ProBuilder UX: orient by the normal of the face the element
-				# was selected FROM (its visible side), not an average.
 				var side_normal := PBMath.normal_from_positions(
 					mesh_data.positions, mesh_data.faces[side].get_indexes())
 				return _basis_from_normal(side_normal)
@@ -358,8 +379,7 @@ func _element_local_basis(mesh_data: PBMeshData, id: int) -> Basis:
 	var face_indexes: Array = []
 
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
-			if id < mesh_data.faces.size() and mesh_data.faces[id] != null:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 				face_indexes.append(id)
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
@@ -432,9 +452,8 @@ func pick_ray(mesh_data: PBMeshData, mesh_transform: Transform3D,
 	var ray_dir: Vector3 = camera.project_ray_normal(screen_pos)
 	var id: int = -1
 	var hit_dist: float = INF
-
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			var res := PBPicking.pick_face(mesh_data, mesh_transform, ray_origin, ray_dir)
 			id = res.face_index
 			hit_dist = res.distance
@@ -496,7 +515,7 @@ func pick_frustum(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		planes.append(p as Plane)
 
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			for fi in range(mesh_data.faces.size()):
 				var origin := mesh_transform * element_origin(mesh_data, fi)
 				if not _point_in_frustum(origin, planes):
@@ -669,6 +688,35 @@ func expand_edge_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt3
 					out.append(lid)
 	return out
 
+## Sets a multi-face selection group represented by `seed_id`.
+func set_selected_face_group(seed_id: int, all_face_ids: PackedInt32Array) -> void:
+	selected_face_groups.clear()
+	if seed_id >= 0 and not all_face_ids.is_empty():
+		selected_face_groups[seed_id] = all_face_ids.duplicate()
+
+## Clears any multi-face selection groups.
+func clear_selected_face_groups() -> void:
+	selected_face_groups.clear()
+
+## Expands engine-selected face ids through recorded face groups (stable order, deduplicated).
+func expand_face_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt32Array:
+	if selected_face_groups.is_empty() or ids.is_empty():
+		return ids
+	var out := PackedInt32Array()
+	var seen := {}
+	for fid in ids:
+		var group: PackedInt32Array = selected_face_groups.get(fid, PackedInt32Array())
+		if group.is_empty():
+			if not seen.has(fid):
+				seen[fid] = true
+				out.append(fid)
+		else:
+			for gfid in group:
+				if not seen.has(gfid):
+					seen[gfid] = true
+					out.append(gfid)
+	return out
+
 static func _edge_key(lookup: Dictionary, a: int, b: int) -> Vector2i:
 	var ca: int = lookup.get(a, a)
 	var cb: int = lookup.get(b, b)
@@ -753,6 +801,9 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_last_rel_valid = false
 	for id in ids:
 		_drag_start_xf[id] = get_subgizmo_transform(mesh_data, node, id)
+	if editor != null and editor.select_mode == PBEditor.SelectMode.TEXTURE:
+		_begin_texture_drag(node, ids)
+		return
 
 	# Topology-creating gestures undo via whole-mesh snapshots — capture the
 	# pre-op state before mutating.
@@ -1015,6 +1066,121 @@ func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 					})
 					break
 
+
+## Begins a texture manipulation drag gesture in 3D viewport (Material Mode / Texture Tool).
+## Converts target faces to manual UV mode so coordinates are baked into textures0 with zero jump,
+## and snapshots original UV coordinates and face centroids.
+func _begin_texture_drag(node: PBMesh, ids: PackedInt32Array) -> void:
+	var mesh_data: PBMeshData = node.pb_mesh_data
+	if mesh_data == null:
+		return
+	_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
+	_drag_texture_face_ids = expand_face_ids(mesh_data, ids)
+	if _drag_texture_face_ids.is_empty() and _drag_latest_id >= 0:
+		_drag_texture_face_ids = PackedInt32Array([_drag_latest_id])
+	PBUvOps._ensure_faces_manual(mesh_data, _drag_texture_face_ids)
+	_drag_texture_snapshot = mesh_data.textures0.duplicate()
+
+	# Compute UV center of selected faces
+	var uvs := mesh_data.textures0
+	var sum := Vector2.ZERO
+	var count: int = 0
+	for fid in _drag_texture_face_ids:
+		if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+			for vi in mesh_data.faces[fid].get_distinct_indexes():
+				if vi >= 0 and vi < uvs.size():
+					sum += uvs[vi]
+					count += 1
+	_drag_texture_uv_center = sum / float(count) if count > 0 else Vector2(0.5, 0.5)
+
+## Applies in-scene 3D texture translation, rotation, or scaling to target faces.
+func _apply_texture_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> bool:
+	var target_faces := _drag_texture_face_ids
+	if target_faces.is_empty():
+		target_faces = expand_face_ids(mesh_data, ids)
+	if target_faces.is_empty():
+		return false
+
+	var uvs := mesh_data.textures0.duplicate()
+
+	# Center-handle uniform scale
+	if _center_has_start and editor != null and editor.tool_mode == PBEditor.ToolMode.SCALE:
+		var s := _center_factor
+		for fid in target_faces:
+			if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+				for vi in mesh_data.faces[fid].get_distinct_indexes():
+					if vi >= 0 and vi < _drag_texture_snapshot.size() and vi < uvs.size():
+						var orig: Vector2 = _drag_texture_snapshot[vi]
+						var diff: Vector2 = orig - _drag_texture_uv_center
+						uvs[vi] = _drag_texture_uv_center + diff * s
+		mesh_data.textures0 = uvs
+		node.rebuild()
+		_emit_drag_update(true, Vector3.ZERO, Vector3.ZERO, Vector3(s, s, s))
+		return true
+
+	if _drag_latest_id == -1 or not _drag_start_xf.has(_drag_latest_id) or not _drag_pending.has(_drag_latest_id):
+		return false
+
+	var rel: Transform3D = _drag_pending[_drag_latest_id] * _drag_start_xf[_drag_latest_id].affine_inverse()
+	var face_basis: Basis = element_basis(mesh_data, node, _drag_latest_id)
+	var local_rel_origin: Vector3 = face_basis.inverse() * rel.origin
+	var local_rel_basis: Basis = face_basis.inverse() * rel.basis * face_basis
+
+	match editor.tool_mode:
+		PBEditor.ToolMode.MOVE:
+			var delta := Vector2(-local_rel_origin.x, -local_rel_origin.y)
+			if grid != null and grid.enabled:
+				var s: float = grid.step()
+				delta.x = roundf(delta.x / s) * s
+				delta.y = roundf(delta.y / s) * s
+
+			for fid in target_faces:
+				if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+					for vi in mesh_data.faces[fid].get_distinct_indexes():
+						if vi >= 0 and vi < _drag_texture_snapshot.size() and vi < uvs.size():
+							uvs[vi] = _drag_texture_snapshot[vi] + delta
+
+			mesh_data.textures0 = uvs
+			node.rebuild()
+			_emit_drag_update(true, Vector3(delta.x, delta.y, 0), Vector3.ZERO, Vector3.ONE)
+			return true
+
+		PBEditor.ToolMode.ROTATE:
+			var angle: float = local_rel_basis.get_euler().z
+			if grid != null and grid.enabled:
+				angle = deg_to_rad(roundf(rad_to_deg(angle) / grid.rotate_step) * grid.rotate_step)
+
+			for fid in target_faces:
+				if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+					for vi in mesh_data.faces[fid].get_distinct_indexes():
+						if vi >= 0 and vi < _drag_texture_snapshot.size() and vi < uvs.size():
+							var orig: Vector2 = _drag_texture_snapshot[vi]
+							var diff: Vector2 = orig - _drag_texture_uv_center
+							uvs[vi] = _drag_texture_uv_center + diff.rotated(-angle)
+
+			mesh_data.textures0 = uvs
+			node.rebuild()
+			_emit_drag_update(true, Vector3.ZERO, Vector3(0, 0, rad_to_deg(angle)), Vector3.ONE)
+			return true
+
+		PBEditor.ToolMode.SCALE:
+			var sx: float = local_rel_basis.x.length()
+			var sy: float = local_rel_basis.y.length()
+
+			for fid in target_faces:
+				if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
+					for vi in mesh_data.faces[fid].get_distinct_indexes():
+						if vi >= 0 and vi < _drag_texture_snapshot.size() and vi < uvs.size():
+							var orig: Vector2 = _drag_texture_snapshot[vi]
+							var diff: Vector2 = orig - _drag_texture_uv_center
+							uvs[vi] = _drag_texture_uv_center + Vector2(diff.x * sx, diff.y * sy)
+
+			mesh_data.textures0 = uvs
+			node.rebuild()
+			_emit_drag_update(true, Vector3.ZERO, Vector3.ZERO, Vector3(sx, sy, 1.0))
+			return true
+
+	return false
 ## Applies the latest pending transform to ALL selected elements' vertices.
 ## Deliberately recomputes the full result from the drag-start snapshot every
 ## call: the engine calls set_subgizmo_transform once per selected id per
@@ -1023,6 +1189,8 @@ func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> bool:
 	if not drag_active or _drag_start_xf.is_empty():
 		return false
+	if editor != null and editor.select_mode == PBEditor.SelectMode.TEXTURE:
+		return _apply_texture_drag(node, mesh_data, ids)
 
 	var union: PackedInt32Array = _drag_union
 	if union.is_empty():
@@ -1410,6 +1578,9 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 	_center_pivot = pivot
 	_center_start_screen = start_screen
 	_center_has_start = true
+	if editor != null and editor.select_mode == PBEditor.SelectMode.TEXTURE:
+		_begin_texture_drag(node, ids)
+		return true
 
 	if inset:
 		_drag_gesture = DragGesture.CENTER_INSET
@@ -1472,6 +1643,34 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		return false
 	var mesh_data: PBMeshData = node.pb_mesh_data
+	if editor != null and editor.select_mode == PBEditor.SelectMode.TEXTURE:
+		if cancel:
+			if _drag_before_op != null:
+				PBCommand.restore_mesh_data(mesh_data, _drag_before_op)
+				mesh_data.invalidate_caches()
+				node.rebuild()
+			_reset_drag_state()
+			_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+			return false
+		if _drag_before_op != null:
+			var after := PBCommand.copy_mesh_data(mesh_data)
+			var before := _drag_before_op
+			mesh_data.shape_edited = true
+			_reset_drag_state()
+			_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+			if undo != null:
+				if undo is EditorUndoRedoManager:
+					undo.create_action("Transform Texture UVs", UndoRedo.MERGE_DISABLE, node)
+				else:
+					undo.create_action("Transform Texture UVs", UndoRedo.MERGE_DISABLE)
+				undo.add_do_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), after))
+				undo.add_undo_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), before))
+				undo.commit_action()
+			node.update_gizmos()
+			return true
+		_reset_drag_state()
+		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
+		return false
 
 	if cancel:
 		if drag_active:
@@ -1518,7 +1717,10 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		_reset_drag_state()
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		if undo != null:
-			undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
+			if undo is EditorUndoRedoManager:
+				undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
+			else:
+				undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
 			undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
 			undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
 			undo.commit_action()
@@ -1717,6 +1919,9 @@ func _reset_drag_state() -> void:
 	drag_mouse_active = false
 	_last_rel = Transform3D()
 	_last_rel_valid = false
+	_drag_texture_snapshot = PackedVector2Array()
+	_drag_texture_uv_center = Vector2.ZERO
+	_drag_texture_face_ids = PackedInt32Array()
 
 const TRANSFORM_ACTION_NAME := "Transform Elements"
 
@@ -1745,8 +1950,12 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 
 	var differs: bool = false
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
-			differs = not _int_arrays_equal(selection.selected_faces, engine_ids)
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			for seed in selected_face_groups.keys():
+				if not engine_ids.has(seed):
+					selected_face_groups.erase(seed)
+			var expanded := expand_face_ids(mesh_data, engine_ids)
+			differs = not _int_arrays_equal(selection.selected_faces, expanded)
 		PBEditor.SelectMode.VERTEX:
 			differs = not _int_arrays_equal(selection.selected_vertices, engine_ids)
 		PBEditor.SelectMode.EDGE:
@@ -1770,8 +1979,8 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		return false
 
 	match editor.select_mode:
-		PBEditor.SelectMode.FACE:
-			selection.set_faces(engine_ids)
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			selection.set_faces(expand_face_ids(mesh_data, engine_ids))
 		PBEditor.SelectMode.VERTEX:
 			selection.set_vertices(engine_ids)
 		PBEditor.SelectMode.EDGE:

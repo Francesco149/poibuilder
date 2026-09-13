@@ -520,7 +520,7 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 				if edge != null:
 					canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
 
-		PBEditor.SelectMode.FACE:
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			canvas.selected_verts.clear()
 			canvas.selected_edges.clear()
 			canvas.selected_faces.clear()
@@ -623,13 +623,18 @@ func _on_canvas_selection_changed() -> void:
 			if editor.select_mode != PBEditor.SelectMode.FACE and not packed.is_empty():
 				editor.select_mode = PBEditor.SelectMode.FACE
 
+			if plugin != null and plugin.gizmo_plugin != null and plugin.gizmo_plugin.element_editor != null:
+				if packed.size() > 1:
+					plugin.gizmo_plugin.element_editor.set_selected_face_group(packed[0], packed)
+				else:
+					plugin.gizmo_plugin.element_editor.clear_selected_face_groups()
+
 			editor.selection.set_faces(packed)
 			if plugin != null and plugin.has_method("select_subgizmo_element"):
 				if not packed.is_empty():
 					plugin.select_subgizmo_element(active_mesh, packed[0])
 				else:
 					plugin.select_subgizmo_element(active_mesh, -1)
-
 	_syncing_selection = false
 
 func _update_status() -> void:

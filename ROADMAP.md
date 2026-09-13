@@ -150,7 +150,7 @@ graph TD
 
 ---
 
-### Session 3: In-Scene 3D Viewport Texture Tool ("Material Mode")
+### Session 3: In-Scene 3D Viewport Texture Tool ("Material Mode") (Complete ✓)
 - **Goal**: Implement UniBuilder's "Material Mode" (`6` key) and ProBuilder's `TextureTool` in PoiBuilder.
 - **Files**:
   - `editor/pb_texture_tool.gd`: 3D viewport planar gizmo projected onto face surface.

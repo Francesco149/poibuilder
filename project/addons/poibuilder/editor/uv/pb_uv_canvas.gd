@@ -535,6 +535,8 @@ func get_selected_vertex_indices() -> Array[int]:
 	return result
 
 ## Returns all vertex indices that share both the UV coordinate and 3D position of `v_idx` (sewn / stitched vertices).
+## Two vertices are coincident/sewn if they belong to mesh_data.shared_textures or share a sewn 3D edge.
+## Isolated corner coincidences (unconnected in UV space) are NOT sewn and not joined.
 func get_coincident_uv_vertices(v_idx: int) -> Array[int]:
 	var result: Array[int] = [v_idx]
 	if active_mesh == null or active_mesh.pb_mesh_data == null:
@@ -544,17 +546,63 @@ func get_coincident_uv_vertices(v_idx: int) -> Array[int]:
 	if v_idx < 0 or v_idx >= uvs.size() or v_idx >= mesh_data.positions.size():
 		return result
 
+	# 1. Authoritative: check mesh_data.shared_textures
+	if not mesh_data.shared_textures.is_empty():
+		var lookup := mesh_data.get_shared_texture_lookup()
+		if lookup.has(v_idx):
+			var group_idx: int = lookup[v_idx]
+			if group_idx >= 0 and group_idx < mesh_data.shared_textures.size():
+				var sv: PBSharedVertex = mesh_data.shared_textures[group_idx]
+				if sv != null:
+					var out: Array[int] = []
+					for vi in sv.indices:
+						if vi >= 0 and vi < uvs.size():
+							out.append(vi)
+					return out
+		return result
+
+	# 2. If shared_textures is empty, only vertices sharing a full sewn edge
+	# (both 3D endpoints coincident in both 3D and UV space) are considered coincident.
 	var target_uv := uvs[v_idx]
 	var target_pos := mesh_data.positions[v_idx]
+	var f_v := _get_face_for_vertex(mesh_data, v_idx)
+	if f_v == null:
+		return result
 
 	for i in range(uvs.size()):
 		if i == v_idx or i >= mesh_data.positions.size():
 			continue
-		if uvs[i].distance_squared_to(target_uv) < 0.000001:
-			if mesh_data.positions[i].distance_squared_to(target_pos) < 0.0001:
+		if uvs[i].distance_squared_to(target_uv) < 0.000001 and mesh_data.positions[i].distance_squared_to(target_pos) < 0.0001:
+			var f_i := _get_face_for_vertex(mesh_data, i)
+			if f_i == null or f_i == f_v:
+				continue
+			var shares_sewn_edge := false
+			for e_v in f_v.get_edges():
+				var other_v: int = e_v.b if e_v.a == v_idx else (e_v.a if e_v.b == v_idx else -1)
+				if other_v == -1 or other_v >= uvs.size() or other_v >= mesh_data.positions.size():
+					continue
+				var p_ov: Vector3 = mesh_data.positions[other_v]
+				var uv_ov: Vector2 = uvs[other_v]
+				for e_i in f_i.get_edges():
+					var other_i: int = e_i.b if e_i.a == i else (e_i.a if e_i.b == i else -1)
+					if other_i == -1 or other_i >= uvs.size() or other_i >= mesh_data.positions.size():
+						continue
+					if mesh_data.positions[other_i].distance_squared_to(p_ov) < 0.0001:
+						if uvs[other_i].distance_squared_to(uv_ov) < 0.000001:
+							shares_sewn_edge = true
+							break
+				if shares_sewn_edge:
+					break
+			if shares_sewn_edge:
 				result.append(i)
 
 	return result
+
+func _get_face_for_vertex(mesh_data: PBMeshData, v: int) -> PBFace:
+	for face in mesh_data.faces:
+		if face != null and face.get_distinct_indexes().has(v):
+			return face
+	return null
 
 ## Returns all edges that share both UV endpoints and 3D endpoints with `edge` (sewn / stitched edges).
 func get_coincident_uv_edges(edge: Vector2i) -> Array[Vector2i]:
@@ -985,7 +1033,8 @@ func _get_uv_island(seed_face_idx: int) -> Array[int]:
 	var result: Array[int] = []
 	if active_mesh == null or active_mesh.pb_mesh_data == null:
 		return result
-	var faces := active_mesh.pb_mesh_data.faces
+	var mesh_data := active_mesh.pb_mesh_data
+	var faces := mesh_data.faces
 	if seed_face_idx < 0 or seed_face_idx >= faces.size():
 		return result
 
@@ -993,33 +1042,61 @@ func _get_uv_island(seed_face_idx: int) -> Array[int]:
 	if uvs.is_empty():
 		return [seed_face_idx]
 
-	# Build UV position adjacency graph
+	# Build UV edge adjacency graph.
+	# Two faces belong to the same UV island if they share a sewn edge in UV space
+	# (both 3D endpoints match in 3D and in UV space).
+	var edge_to_faces: Dictionary = {}
+
+	for fi in range(faces.size()):
+		var f: PBFace = faces[fi]
+		for e in f.get_edges():
+			if e.a >= uvs.size() or e.b >= uvs.size() or e.a >= mesh_data.positions.size() or e.b >= mesh_data.positions.size():
+				continue
+			var sv_a: int = mesh_data.get_shared_vertex_index(e.a)
+			var sv_b: int = mesh_data.get_shared_vertex_index(e.b)
+			if sv_a < 0: sv_a = e.a
+			if sv_b < 0: sv_b = e.b
+			var sv_min := mini(sv_a, sv_b)
+			var sv_max := maxi(sv_a, sv_b)
+
+			var q_a := _quantize_uv(uvs[e.a])
+			var q_b := _quantize_uv(uvs[e.b])
+			var q_min := q_a if (q_a.x < q_b.x or (q_a.x == q_b.x and q_a.y <= q_b.y)) else q_b
+			var q_max := q_b if q_min == q_a else q_a
+
+			var edge_key := "%d_%d_%d_%d_%d_%d" % [sv_min, sv_max, q_min.x, q_min.y, q_max.x, q_max.y]
+			if not edge_to_faces.has(edge_key):
+				edge_to_faces[edge_key] = []
+			edge_to_faces[edge_key].append(fi)
+
 	var visited := {}
 	var queue: Array[int] = [seed_face_idx]
 	visited[seed_face_idx] = true
-
-	# Pre-index face UV positions (quantized to 0.0001 for robust seam detection)
-	var uv_to_faces: Dictionary = {}
-	for fi in range(faces.size()):
-		var f: PBFace = faces[fi]
-		for idx in f.get_distinct_indexes():
-			if idx < uvs.size():
-				var key := _quantize_uv(uvs[idx])
-				if not uv_to_faces.has(key):
-					uv_to_faces[key] = []
-				uv_to_faces[key].append(fi)
 
 	while not queue.is_empty():
 		var curr_fi := queue.pop_front()
 		result.append(curr_fi)
 		var curr_face: PBFace = faces[curr_fi]
-		for idx in curr_face.get_distinct_indexes():
-			if idx < uvs.size():
-				var key := _quantize_uv(uvs[idx])
-				for neighbor_fi: int in uv_to_faces.get(key, []):
-					if not visited.has(neighbor_fi):
-						visited[neighbor_fi] = true
-						queue.append(neighbor_fi)
+		for e in curr_face.get_edges():
+			if e.a >= uvs.size() or e.b >= uvs.size() or e.a >= mesh_data.positions.size() or e.b >= mesh_data.positions.size():
+				continue
+			var sv_a: int = mesh_data.get_shared_vertex_index(e.a)
+			var sv_b: int = mesh_data.get_shared_vertex_index(e.b)
+			if sv_a < 0: sv_a = e.a
+			if sv_b < 0: sv_b = e.b
+			var sv_min := mini(sv_a, sv_b)
+			var sv_max := maxi(sv_a, sv_b)
+
+			var q_a := _quantize_uv(uvs[e.a])
+			var q_b := _quantize_uv(uvs[e.b])
+			var q_min := q_a if (q_a.x < q_b.x or (q_a.x == q_b.x and q_a.y <= q_b.y)) else q_b
+			var q_max := q_b if q_min == q_a else q_a
+
+			var edge_key := "%d_%d_%d_%d_%d_%d" % [sv_min, sv_max, q_min.x, q_min.y, q_max.x, q_max.y]
+			for neighbor_fi: int in edge_to_faces.get(edge_key, []):
+				if not visited.has(neighbor_fi):
+					visited[neighbor_fi] = true
+					queue.append(neighbor_fi)
 
 	return result
 

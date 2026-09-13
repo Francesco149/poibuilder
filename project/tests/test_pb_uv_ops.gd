@@ -646,5 +646,126 @@ func test_stitched_faces_move_together_in_face_mode():
 	assert_almost_eq(new_v1.y, new_v8.y, 0.0001, "Vertex 1 and 8 must remain joined at same Y")
 	assert_gt(v1_orig.distance_to(new_v1), 0.1, "Stitched vertices must have moved together")
 
+
+func test_stock_cube_faces_are_not_joined_in_uv():
+	var cube := PBShapeGenerators.create_box(Vector3.ONE)
+	var panel := PBUvEditorPanel.new()
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	# On a stock cube, corner (-0.5, -0.5, -0.5) has UV (0, 0) on Front (v1), Left (v8), and Bottom (v21).
+	# However, none of these faces share a sewn edge, so they must NOT be considered joined.
+	var coin := panel.canvas.get_coincident_uv_vertices(8)
+	assert_eq(coin.size(), 1, "Vertex 8 on Left face must not be joined to Front or Bottom on a stock cube")
+	assert_eq(coin[0], 8, "Vertex 8 must only be coincident with itself")
+
+	# In Island Mode on a stock cube, each face must be its own independent island
+	var island_0 := panel.canvas._get_uv_island(0)
+	assert_eq(island_0.size(), 1, "Face 0 on a stock cube must be its own island")
+	assert_eq(island_0[0], 0, "Island 0 must contain only Face 0")
+
+	# In Face Mode, selecting Face 2 (Left) and getting affected indices must ONLY contain Face 2's vertices
+	panel.canvas.select_mode = PBUvCanvas.SelectMode.FACE
+	panel.canvas.selected_faces[2] = true
+	var affected := panel.canvas.get_selected_vertex_indices()
+	assert_true(affected.has(8), "Affected indices must contain Face 2's vertex 8")
+	assert_false(affected.has(1), "Affected indices must NOT contain Face 0's vertex 1")
+	assert_false(affected.has(21), "Affected indices must NOT contain Face 5's vertex 21")
+
 	mesh.free()
 	panel.free()
+
+func test_uv_island_multi_face_3d_selection_sync():
+	var cube := PBShapeGenerators.create_box(Vector3.ONE)
+	var editor := PBEditor.new()
+	var element_editor := PBElementEditor.new()
+	element_editor.editor = editor
+
+	# Simulate selecting an island of faces [0, 1, 2]
+	var island_faces := PackedInt32Array([0, 1, 2])
+	element_editor.set_selected_face_group(island_faces[0], island_faces)
+
+	# expand_face_ids from the seed face 0 must expand to all faces in the island
+	var expanded := element_editor.expand_face_ids(cube, PackedInt32Array([0]))
+	assert_eq(expanded.size(), 3, "expand_face_ids must expand seed to all 3 island faces")
+	assert_true(expanded.has(0), "Expanded faces must contain face 0")
+	assert_true(expanded.has(1), "Expanded faces must contain face 1")
+	assert_true(expanded.has(2), "Expanded faces must contain face 2")
+
+	# mirror_engine_selection with engine_ids=[0] must preserve all 3 island faces
+	editor.select_mode = PBEditor.SelectMode.FACE
+	element_editor.mirror_engine_selection(editor.selection, cube, PackedInt32Array([0]))
+	assert_eq(editor.selection.selected_faces.size(), 3, "editor.selection must retain all 3 island faces")
+	assert_true(editor.selection.is_face_selected(0), "Face 0 must be selected in 3D")
+	assert_true(editor.selection.is_face_selected(1), "Face 1 must be selected in 3D")
+	assert_true(editor.selection.is_face_selected(2), "Face 2 must be selected in 3D")
+
+	# Selecting a different face [4] in engine selection must clear the previous group
+	element_editor.mirror_engine_selection(editor.selection, cube, PackedInt32Array([4]))
+	assert_eq(editor.selection.selected_faces.size(), 1, "Selecting face 4 must drop previous island group")
+	assert_true(editor.selection.is_face_selected(4), "Only face 4 must remain selected")
+
+func test_texture_mode_in_scene_gizmo_transforms():
+	var cube_data := PBShapeGenerators.create_box(Vector3.ONE)
+	PBUv.refresh_mesh_uvs(cube_data, true)
+	var node := PBMesh.new()
+	node.pb_mesh_data = cube_data
+	var editor := PBEditor.new()
+	editor.active_mesh = node
+	var element_editor := PBElementEditor.new()
+	element_editor.editor = editor
+
+	# 1. Selection mode and basis
+	editor.select_mode = PBEditor.SelectMode.TEXTURE
+	assert_true(editor.is_editing(), "TEXTURE mode must count as is_editing")
+	editor.tool_mode = PBEditor.ToolMode.MOVE
+
+	var f0_origin := element_editor.element_origin(cube_data, 0)
+	var f0_basis := element_editor.element_basis(cube_data, node, 0)
+	# Face 0 is Front (Z = -0.5)
+	assert_almost_eq(f0_origin.z, -0.5, 0.01, "Face 0 centroid z must be -0.5")
+	assert_almost_eq(f0_basis.z.z, -1.0, 0.01, "Face 0 normal basis z must point along normal -Z")
+
+	# 2. Translate UVs via Move Tool
+	var uvs_before := cube_data.textures0.duplicate()
+	var start_xf := element_editor.get_subgizmo_transform(cube_data, node, 0)
+	# Translate by 0.5m along face basis X (U axis)
+	var moved_xf := Transform3D(start_xf.basis, start_xf.origin + f0_basis.x * 0.5)
+	element_editor.set_subgizmo_transform(node, PackedInt32Array([0]), 0, moved_xf)
+
+	var f0_indices: PackedInt32Array = cube_data.faces[0].get_distinct_indexes()
+	var uv_diff := cube_data.textures0[f0_indices[0]] - uvs_before[f0_indices[0]]
+	assert_gt(uv_diff.length(), 0.1, "UV coordinates of Face 0 must translate when moved in 3D")
+	assert_true(cube_data.faces[0].manual_uv, "Face 0 must be converted to manual UV mode on drag")
+
+	# Other faces must remain untouched
+	var f1_indices: PackedInt32Array = cube_data.faces[1].get_distinct_indexes()
+	assert_eq(cube_data.textures0[f1_indices[0]], uvs_before[f1_indices[0]], "Face 1 UVs must remain unchanged")
+
+	# 3. Rotate UVs via Rotate Tool
+	element_editor.commit_subgizmos(node, PackedInt32Array([0]), false)
+	editor.tool_mode = PBEditor.ToolMode.ROTATE
+	var rot_start_xf := element_editor.get_subgizmo_transform(cube_data, node, 0)
+	var rotated_xf := Transform3D(rot_start_xf.basis.rotated(f0_basis.z, deg_to_rad(45)), rot_start_xf.origin)
+	var uvs_pre_rot := cube_data.textures0.duplicate()
+	element_editor.set_subgizmo_transform(node, PackedInt32Array([0]), 0, rotated_xf)
+
+	var uv_rot_diff := cube_data.textures0[f0_indices[0]] - uvs_pre_rot[f0_indices[0]]
+	assert_gt(uv_rot_diff.length(), 0.05, "UV coordinates of Face 0 must rotate when rotated in 3D")
+
+	# 4. Commit and Undo
+	var ur := UndoRedo.new()
+	element_editor.undo = ur
+	element_editor.commit_subgizmos(node, PackedInt32Array([0]), false)
+
+	# Undoing must restore pre-rotation UVs
+	ur.undo()
+	assert_almost_eq(cube_data.textures0[f0_indices[0]].x, uvs_pre_rot[f0_indices[0]].x, 0.001, "Undo must restore pre-rotation U")
+	assert_almost_eq(cube_data.textures0[f0_indices[0]].y, uvs_pre_rot[f0_indices[0]].y, 0.001, "Undo must restore pre-rotation V")
+
+	# Redoing must restore rotated UVs
+	ur.redo()
+	assert_almost_eq(cube_data.textures0[f0_indices[0]].x, uvs_pre_rot[f0_indices[0]].x + uv_rot_diff.x, 0.001, "Redo must restore rotated U")
+
+	node.free()

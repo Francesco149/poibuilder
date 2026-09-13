@@ -736,7 +736,7 @@ static func auto_stitch(mesh_data: PBMeshData, anchor_face_idx: int, target_face
 	return true
 
 
-## Rebuilds the mesh_data.shared_textures array by finding all vertex pairs that are coincident in 3D and in UV space.
+## Rebuilds the mesh_data.shared_textures array by finding all vertex pairs that are coincident in 3D and in UV space on sewn edges.
 static func rebuild_shared_textures(mesh_data: PBMeshData) -> void:
 	if mesh_data == null:
 		return
@@ -753,17 +753,45 @@ static func rebuild_shared_textures(mesh_data: PBMeshData) -> void:
 		var group: PackedInt32Array = [i]
 		var p_i: Vector3 = mesh_data.positions[i]
 		var uv_i: Vector2 = uvs[i]
+		var f_i := _get_face_for_vertex(mesh_data, i)
+		if f_i == null:
+			continue
+
 		for j in range(i + 1, vc):
 			if visited.has(j):
 				continue
 			if mesh_data.positions[j].distance_squared_to(p_i) < 0.0001:
 				if uvs[j].distance_squared_to(uv_i) < 0.000001:
-					group.append(j)
-					visited[j] = true
+					var f_j := _get_face_for_vertex(mesh_data, j)
+					if f_j == null or f_i == f_j:
+						continue
+					var shares_sewn_edge := false
+					for e_i in f_i.get_edges():
+						var o_i: int = e_i.b if e_i.a == i else (e_i.a if e_i.b == i else -1)
+						if o_i == -1 or o_i >= vc: continue
+						var p_oi: Vector3 = mesh_data.positions[o_i]
+						var uv_oi: Vector2 = uvs[o_i]
+						for e_j in f_j.get_edges():
+							var o_j: int = e_j.b if e_j.a == j else (e_j.a if e_j.b == j else -1)
+							if o_j == -1 or o_j >= vc: continue
+							if mesh_data.positions[o_j].distance_squared_to(p_oi) < 0.0001:
+								if uvs[o_j].distance_squared_to(uv_oi) < 0.000001:
+									shares_sewn_edge = true
+									break
+						if shares_sewn_edge: break
+					if shares_sewn_edge:
+						group.append(j)
+						visited[j] = true
 		if group.size() > 1:
 			visited[i] = true
 			mesh_data.shared_textures.append(PBSharedVertex.new(group))
 	mesh_data.invalidate_shared_texture_lookup()
+
+static func _get_face_for_vertex(mesh_data: PBMeshData, v: int) -> PBFace:
+	for face in mesh_data.faces:
+		if face != null and face.get_distinct_indexes().has(v):
+			return face
+	return null
 # ==============================================================================
 # Texel Density Utilities
 # ==============================================================================

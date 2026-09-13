@@ -214,7 +214,7 @@ func test_toolbar_initial_state():
 	# Items across rows: Logo, Split button, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face, sep, Space,
 	# sep, Grid, GridState, sep, 9 op buttons, sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
 	# sep, Material button, UV button, Settings button, sep, Export button.
-	assert_eq(tb.get_item_count(), 39, "Toolbar should have 39 items in default two-row mode")
+	assert_eq(tb.get_item_count(), 40, "Toolbar should have 40 items in default two-row mode")
 	assert_true(tb.two_rows, "Default layout should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in default two-row mode")
 	assert_not_null(tb._btn_export, "Export button should exist")
@@ -233,7 +233,7 @@ func test_toolbar_split_rows_toggle():
 	assert_true(tb.two_rows, "Initial state should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in two-row mode")
 	assert_eq(tb._row1.get_child_count(), 17, "Row 1 should contain logo, split button, tools (3+sep), ops (9+sep), and env")
-	assert_eq(tb._row2.get_child_count(), 22, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
+	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
 
 	# Toggle to 1 row
 	var received_splits: Array = []
@@ -242,14 +242,14 @@ func test_toolbar_split_rows_toggle():
 
 	assert_false(tb.two_rows, "two_rows property should be false in single-row mode")
 	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
-	assert_eq(tb._row1.get_child_count(), 40, "Row 1 should have all items in single-row mode")
+	assert_eq(tb._row1.get_child_count(), 41, "Row 1 should have all items in single-row mode")
 
 	# Toggle back to 2 rows via button
 	tb._btn_split_rows.button_pressed = true
 	assert_true(tb.two_rows, "two_rows property should be true after toggling button")
 	assert_true(tb._row2.visible, "Row 2 should be visible again")
 	assert_eq(tb._row1.get_child_count(), 17, "Row 1 should contain 17 items")
-	assert_eq(tb._row2.get_child_count(), 22, "Row 2 should contain 22 items")
+	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain 23 items")
 	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
 	assert_true(received_splits[0], "Emitted value should match button state")
 

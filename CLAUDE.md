@@ -2755,6 +2755,28 @@ v0.9.87 round complete ✓ — UV Mode Persistence, 3-Row Compact Toolbar, Unfol
   * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`).
 - Version bump 0.9.86 -> 0.9.87 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.88 round complete ✓ — Stock Cube Bowtie Seam Fix, UV Island 3D Selection Sync, & In-Scene 3D Viewport Texture Tool ("Material Mode" 6):
+- STOCK CUBE PINCHED BOWTIE FIX (UNSEWN CORNER COINCIDENCE ELIMINATED):
+  * Root cause of 3 faces joined by 1 vertex on a stock cube: `get_coincident_uv_vertices()` and `rebuild_shared_textures()` previously treated any vertices sharing identical 3D position and UV coordinates as "sewn", even when their adjacent edges had completely different UV coordinates and `mesh_data.shared_textures` was empty. On a stock cube, corner (-0.5, -0.5, -0.5) has UV (0, 0) on Front, Left, and Bottom by coincidence of independent planar projections; moving one face dragged that corner from the other two faces, stretching them into a 3-face non-manifold bowtie pinch.
+  * Fixed in `PBUvCanvas.get_coincident_uv_vertices()` and `PBUvOps.rebuild_shared_textures()`: two vertices are now coincident/sewn if and only if they belong to `mesh_data.shared_textures` OR share a full sewn edge (both 3D endpoints coincident in both 3D and UV space). Single isolated corner coincidences are never welded or grouped.
+  * `_get_uv_island()` now traverses faces connected by shared sewn edges in UV space (rather than single vertex coordinates), so the 6 faces on a stock cube are 6 independent UV islands.
+- UV ISLAND 3D VIEW SELECTION SYNCHRONIZATION:
+  * Root cause of island selection only showing 1 face in 3D: Godot's engine subgizmo API (`set_subgizmo_selection`) is single-ID. When selecting an island with multiple faces, `select_subgizmo_element(active_mesh, packed[0])` caused `mirror_engine_selection()` to overwrite `editor.selection.selected_faces` down to 1 face, and `_draw_selected_faces()` only drew the single subgizmo.
+  * Implemented `selected_face_groups: Dictionary` (seed -> all face IDs) and `expand_face_ids()` in `PBElementEditor` (matching the proven `selected_loops` architecture for edges).
+  * `PBUvEditorPanel._on_canvas_selection_changed()` sets the face group; `_draw_selected_faces()` draws the full expanded face group in bright yellow; `mirror_engine_selection()` preserves all faces in `editor.selection.selected_faces`; and `element_indices()` moves all faces together when dragged with the 3D gizmo.
+- IN-SCENE 3D VIEWPORT TEXTURE TOOL ("MATERIAL MODE" 6 / ProBuilder TextureTool parity):
+  * Added `SelectMode.TEXTURE` to `PBEditor.SelectMode`, hotkey `6` (`KEY_6`) registered in `PBActions`, and a dedicated mode button in `PBToolbar` (`icon_texture_mode.svg`).
+  * Planar gizmo directly on the face surface aligned to face tangent plane (X=U, Y=V, Z=Normal):
+    - Move tool (W): slides texture along U and V (1:1 lockstep with cursor).
+    - Rotate tool (E): turns texture around face normal with 15° snap detents (or relative to `grid.rotate_step`).
+    - Scale tool (R): stretches U and V, or center-handle scales uniformly.
+  * Auto-bakes auto-UV faces to manual mode on drag start with zero visual jump (`PBUvOps._ensure_faces_manual()`).
+  * Full Undo/Redo integration (`CmdMeshOp` / "Transform Texture UVs" compatible with both `EditorUndoRedoManager` and `UndoRedo`).
+- TESTS & VERIFICATION:
+  * 884/884 GUT unit tests passing (+3 regression tests in `test_pb_uv_ops.gd`, 16,358 total asserts).
+  * Real editor GUI test harness passing with 0 failures under Xvfb (`run_gui_tests.sh`), including new Section 15 verifying Texture Mode button and mode switching in live editor.
+- Version bump 0.9.87 -> 0.9.88 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

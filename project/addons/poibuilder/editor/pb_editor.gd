@@ -12,7 +12,7 @@ extends RefCounted
 
 ## Plugin version, shown in the dock and logged at startup so a stale build
 ## is immediately obvious when behavior "doesn't match" what was fixed.
-const PLUGIN_VERSION := "0.9.87"
+const PLUGIN_VERSION := "0.9.88"
 
 # ==============================================================================
 # Selection Mode
@@ -24,6 +24,7 @@ enum SelectMode {
 	VERTEX,   ## Select individual vertices
 	EDGE,     ## Select edges
 	FACE,     ## Select faces
+	TEXTURE,  ## UniBuilder Material Mode (6 key) / In-scene 3D Texture Tool
 }
 
 ## Coordinate space for the element transform gizmo axes.
