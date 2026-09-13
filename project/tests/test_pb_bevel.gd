@@ -327,3 +327,30 @@ func test_bevel_inset_inward_extrusion_outer_edges():
 		assert_true(bevel_res.get("ok", false), "Beveling outer edges with segs=" + str(segs) + " should succeed: " + str(bevel_res.get("error", "")))
 		_assert_watertight(c_test, "Inset inward extrusion outer edge bevel segs=" + str(segs))
 		_assert_compiled_convention(c_test, false, "Inset inward extrusion outer edge bevel segs=" + str(segs))
+
+func test_bevel_inset_inward_extrusion_single_rim_edge():
+	var cube := PBMeshData.create_cube(2.0)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
+	var inner_fid: int = inset_res["cap_face_ids"][0]
+	PBMeshOps.extrude_faces(cube, PackedInt32Array([inner_fid]), -0.5)
+
+	var c_edges := cube.get_common_edges()
+	var outer_edge_ids := PackedInt32Array()
+	for eid in range(c_edges.size()):
+		var e := c_edges[eid]
+		var pa := cube.positions[e.a]
+		var pb := cube.positions[e.b]
+		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
+			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
+				outer_edge_ids.append(eid)
+	for segs in [1, 2]:
+		var c_single := PBCommand.copy_mesh_data(cube)
+		var b_res := PBMeshOps.bevel_edges(c_single, PackedInt32Array([outer_edge_ids[0]]), 0.1, segs)
+		assert_true(b_res.get("ok", false), "Beveling single rim edge with segs=" + str(segs) + " should succeed")
+		_assert_watertight(c_single, "Single rim edge bevel segs=" + str(segs))
+		_assert_compiled_convention(c_single, false, "Single rim edge bevel segs=" + str(segs))
+
+	var c_single3 := PBCommand.copy_mesh_data(cube)
+	var b_res3 := PBMeshOps.bevel_edges(c_single3, PackedInt32Array([outer_edge_ids[0]]), 0.1, 3)
+	assert_true(b_res3.get("ok", false), "Beveling single rim edge with segs=3 should succeed")
+	_assert_watertight(c_single3, "Single rim edge bevel segs=3")

@@ -851,8 +851,21 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 	var removed := {}
 	var rail_endpoints := {}
 	var corner_segments := {}
+	var shared_edge_endpoints := {}
 
+	var face_has_beveled_edge := {}
+	for key: Vector2i in valid_bevel_edges:
+		for entry in valid_bevel_edges[key]:
+			face_has_beveled_edge[entry["face_idx"]] = true
+
+	var face_order: Array[int] = []
 	for fi in range(mesh_data.faces.size()):
+		face_order.append(fi)
+	face_order.sort_custom(func(fa: int, fb: int) -> bool:
+		return int(face_has_beveled_edge.has(fa)) > int(face_has_beveled_edge.has(fb))
+	)
+
+	for fi in face_order:
 		var face := mesh_data.faces[fi]
 		if face == null:
 			continue
@@ -906,6 +919,7 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				var pt: Vector3 = pos_i + d_next * step
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
+				shared_edge_endpoints[Vector3i(key_next.x, key_next.y, ci)] = pt
 			elif not prev_beveled and next_beveled:
 				var sin_a: float = absf(d_prev.dot(u_next))
 				var step: float = amount / maxf(0.1, sin_a)
@@ -914,6 +928,7 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				var pt: Vector3 = pos_i + d_prev * step
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
+				shared_edge_endpoints[Vector3i(key_prev.x, key_prev.y, ci)] = pt
 			elif prev_beveled and next_beveled:
 				var denom: float = 1.0 + u_prev.dot(u_next)
 				var shift_len: float = amount / maxf(0.2, denom)
@@ -928,10 +943,14 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
+				shared_edge_endpoints[Vector3i(key_prev.x, key_prev.y, ci)] = pt
+				shared_edge_endpoints[Vector3i(key_next.x, key_next.y, ci)] = pt
 			else:
-				var p_prev: Vector3 = pos_i + d_prev * amount
-				var p_next: Vector3 = pos_i + d_next * amount
+				var p_prev: Vector3 = shared_edge_endpoints.get(Vector3i(key_prev.x, key_prev.y, ci), pos_i + d_prev * amount)
+				var p_next: Vector3 = shared_edge_endpoints.get(Vector3i(key_next.x, key_next.y, ci), pos_i + d_next * amount)
+				var cut_pts: Array[Vector3] = []
 				if segments == 1:
+					cut_pts = [p_prev, p_next]
 					new_loop_positions.append(p_prev)
 					new_loop_positions.append(p_next)
 				else:
@@ -939,8 +958,13 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 					var norm_next := -d_prev
 					for s in range(segments + 1):
 						var t: float = float(s) / float(segments)
-						new_loop_positions.append(_arc_interp(p_prev, p_next, norm_prev, norm_next, t))
-
+						var pt := _arc_interp(p_prev, p_next, norm_prev, norm_next, t)
+						cut_pts.append(pt)
+						new_loop_positions.append(pt)
+				if not corner_segments.has(ci):
+					corner_segments[ci] = []
+				for s in range(cut_pts.size() - 1):
+					corner_segments[ci].append({"from": cut_pts[s + 1], "to": cut_pts[s]})
 		var new_face := _build_bevel_polygon_face(mesh_data, new_loop_positions, face, fn)
 		if new_face != null:
 			new_faces.append(new_face)
@@ -987,42 +1011,28 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				new_faces.append(bridge_face)
 				bridge_faces.append(bridge_face)
 
-			# Only add corner segments if this vertex is a multi-bevel junction (>= 2 beveled edges meet)
-			if vertex_beveled_count.get(cb, 0) >= 2:
-				if not corner_segments.has(cb):
-					corner_segments[cb] = []
-				corner_segments[cb].append({"from": qs_end, "to": qnext_end})
+			if not corner_segments.has(cb):
+				corner_segments[cb] = []
+			corner_segments[cb].append({"from": qs_end, "to": qnext_end})
 
-			if vertex_beveled_count.get(ca, 0) >= 2:
-				if not corner_segments.has(ca):
-					corner_segments[ca] = []
-				corner_segments[ca].append({"from": qnext_start, "to": qs_start})
+			if not corner_segments.has(ca):
+				corner_segments[ca] = []
+			corner_segments[ca].append({"from": qnext_start, "to": qs_start})
 
 	# 7. Build corner cap faces
 	var corner_faces: Array[PBFace] = []
 	for c: int in corner_segments:
-		var segs: Array = corner_segments[c]
+		var segs: Array = _cancel_opposite_segments(corner_segments[c])
 		var cycles := _chain_segments_into_cycles(segs)
 		for cycle: Array in cycles:
 			if cycle.size() >= 3:
-				var exp_n := Vector3.ZERO
-				for fi in range(mesh_data.faces.size()):
-					var f := mesh_data.faces[fi]
-					if f == null:
-						continue
-					for v in f.get_distinct_indexes():
-						if lookup.get(v, v) == c:
-							exp_n += _face_area_normal(mesh_data, f)
-				exp_n = exp_n.normalized()
-
 				var cap_pts: Array[Vector3] = []
 				for pt in cycle:
 					cap_pts.append(pt)
-				var cap_face := _build_bevel_polygon_face(mesh_data, cap_pts, mesh_data.faces[0], exp_n)
+				var cap_face := _build_bevel_polygon_face(mesh_data, cap_pts, mesh_data.faces[0], Vector3.ZERO)
 				if cap_face != null:
 					new_faces.append(cap_face)
 					corner_faces.append(cap_face)
-
 	return _replace_faces(mesh_data, removed, new_faces, [])
 
 static func _record_rail_endpoint(dict: Dictionary, key: Vector2i, fi: int, c: int, pt: Vector3) -> void:
@@ -1030,6 +1040,21 @@ static func _record_rail_endpoint(dict: Dictionary, key: Vector2i, fi: int, c: i
 
 static func _get_rail_endpoint(dict: Dictionary, key: Vector2i, fi: int, c: int) -> Vector3:
 	return dict.get(Vector3i(key.x, key.y, c * 10000 + fi), Vector3.ZERO)
+
+static func _cancel_opposite_segments(segs: Array) -> Array:
+	var active: Array = []
+	for s in segs:
+		var found_opp := -1
+		for i in range(active.size()):
+			var a: Dictionary = active[i]
+			if a["from"].distance_to(s["to"]) < 0.0005 and a["to"].distance_to(s["from"]) < 0.0005:
+				found_opp = i
+				break
+		if found_opp >= 0:
+			active.remove_at(found_opp)
+		else:
+			active.append(s)
+	return active
 
 static func _chain_segments_into_cycles(segs: Array) -> Array:
 	if segs.is_empty():
@@ -1143,7 +1168,6 @@ static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, templat
 		face_indices.append(pos_indices[tris_2d[tri_i]])
 		face_indices.append(pos_indices[tris_2d[tri_i + 1]])
 		face_indices.append(pos_indices[tris_2d[tri_i + 2]])
-
 	var f := PBFace.new(face_indices)
 	if template_face != null:
 		f.submesh_index = template_face.submesh_index
