@@ -380,6 +380,7 @@ func _element_local_basis(mesh_data: PBMeshData, id: int) -> Basis:
 
 	match editor.select_mode:
 		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			if id >= 0 and id < mesh_data.faces.size() and mesh_data.faces[id] != null:
 				face_indexes.append(id)
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
@@ -1688,12 +1689,14 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 			_reset_drag_state()
 			_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 			if undo != null:
-				if undo is EditorUndoRedoManager:
-					undo.create_action("Transform Texture UVs", UndoRedo.MERGE_DISABLE, node)
-				else:
+				if undo is UndoRedo:
 					undo.create_action("Transform Texture UVs", UndoRedo.MERGE_DISABLE)
-				undo.add_do_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), after))
-				undo.add_undo_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), before))
+					undo.add_do_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), after))
+					undo.add_undo_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), before))
+				else:
+					undo.create_action("Transform Texture UVs", UndoRedo.MERGE_DISABLE, node)
+					undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
+					undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
 				undo.commit_action()
 			node.update_gizmos()
 			return true
@@ -1746,12 +1749,14 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		_reset_drag_state()
 		_emit_drag_update(false, Vector3.ZERO, Vector3.ZERO, Vector3.ONE)
 		if undo != null:
-			if undo is EditorUndoRedoManager:
-				undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
-			else:
+			if undo is UndoRedo:
 				undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
-			undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
-			undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
+				undo.add_do_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), after))
+				undo.add_undo_method(Callable(self, "_restore_full_mesh").bind(node.get_instance_id(), before))
+			else:
+				undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
+				undo.add_do_method(self, "_restore_full_mesh", node.get_instance_id(), after)
+				undo.add_undo_method(self, "_restore_full_mesh", node.get_instance_id(), before)
 			undo.commit_action()
 			if logger != null:
 				logger.info("undo", "%s committed (topology)" % action_name)
@@ -1784,9 +1789,14 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 	mesh_data.shape_edited = true
 
 	if undo != null:
-		undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
-		undo.add_do_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), after)
-		undo.add_undo_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), before)
+		if undo is UndoRedo:
+			undo.create_action(action_name, UndoRedo.MERGE_DISABLE)
+			undo.add_do_method(Callable(self, "_apply_positions").bind(node.get_instance_id(), union.duplicate(), after))
+			undo.add_undo_method(Callable(self, "_apply_positions").bind(node.get_instance_id(), union.duplicate(), before))
+		else:
+			undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
+			undo.add_do_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), after)
+			undo.add_undo_method(self, "_apply_positions", node.get_instance_id(), union.duplicate(), before)
 		undo.commit_action()
 		if logger != null:
 			logger.info("undo", "%s committed: %d vertices" % [action_name, union.size()])

@@ -84,12 +84,26 @@ func _press_undo() -> void:
 	Input.parse_input_event(ev)
 	await _frames(2)
 	var up := InputEventKey.new()
-	ev.keycode = KEY_Z
-	ev.physical_keycode = KEY_Z
-	ev.ctrl_pressed = true
-	ev.pressed = false
+	up.keycode = KEY_Z
+	up.physical_keycode = KEY_Z
+	up.ctrl_pressed = true
+	up.pressed = false
 	Input.parse_input_event(up)
 
+func _press_redo() -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = KEY_Y
+	ev.physical_keycode = KEY_Y
+	ev.ctrl_pressed = true
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _frames(2)
+	var up := InputEventKey.new()
+	up.keycode = KEY_Y
+	up.physical_keycode = KEY_Y
+	up.ctrl_pressed = true
+	up.pressed = false
+	Input.parse_input_event(up)
 ## Count pixels whose RGB channels differ by more than 8 between two images.
 static func _img_diff(a: Image, b: Image) -> int:
 	if a == null or b == null or a.get_size() != b.get_size():
@@ -1444,6 +1458,66 @@ func _run() -> void:
 			await _frames(4)
 			if plugin.editor != null and plugin.editor.select_mode == PBEditor.SelectMode.TEXTURE:
 				_pass("TEXTURE-MODE: clicking ModeTexture switched editor to SelectMode.TEXTURE")
+
+				# Live editor Undo/Redo test on target_b
+				var target_b := root.get_node_or_null("GuiTestB") as PBMesh
+				if target_b != null and target_b.pb_mesh_data != null:
+					sel.clear()
+					sel.add_node(target_b)
+					plugin.editor.active_mesh = target_b
+					plugin.editor.tool_mode = PBEditor.ToolMode.MOVE
+					plugin.editor.select_mode = PBEditor.SelectMode.TEXTURE
+					await _frames(2)
+					var el_ed = plugin.gizmo_plugin.element_editor
+					var f0_idx: int = target_b.pb_mesh_data.faces[0].get_distinct_indexes()[0]
+					var uv_orig: Vector2 = target_b.pb_mesh_data.textures0[f0_idx]
+					var start_xf = el_ed.get_subgizmo_transform(target_b.pb_mesh_data, target_b, 0)
+					var f_basis = el_ed.element_basis(target_b.pb_mesh_data, target_b, 0)
+					var moved_xf = Transform3D(start_xf.basis, start_xf.origin + f_basis.x * 0.4)
+
+					el_ed.set_subgizmo_transform(target_b, PackedInt32Array([0]), 0, moved_xf)
+					var uv_moved: Vector2 = target_b.pb_mesh_data.textures0[f0_idx]
+					if uv_moved.distance_to(uv_orig) > 0.05:
+						_pass("TEXTURE-MODE: in-scene translation moved face UVs in live editor")
+					else:
+						_fail("TEXTURE-MODE: in-scene translation did not move face UVs")
+
+					var committed: bool = el_ed.commit_subgizmos(target_b, PackedInt32Array([0]), false)
+					await _frames(4)
+					if committed:
+						_pass("TEXTURE-MODE: commit_subgizmos committed cleanly to EditorUndoRedoManager")
+						# Test Undo in live editor via object history UndoRedo or shortcut
+						var ed_ur = EditorInterface.get_editor_undo_redo()
+						var obj_ur: UndoRedo = null
+						if ed_ur != null:
+							var hid: int = ed_ur.get_object_history_id(target_b)
+							obj_ur = ed_ur.get_history_undo_redo(hid)
+
+						if obj_ur != null:
+							obj_ur.undo()
+						else:
+							await _press_undo()
+						await _frames(6)
+
+						var uv_restored: Vector2 = target_b.pb_mesh_data.textures0[f0_idx]
+						if is_equal_approx(uv_restored.x, uv_orig.x) and is_equal_approx(uv_restored.y, uv_orig.y):
+							_pass("TEXTURE-MODE: undo in live editor restored original UV coordinates")
+						else:
+							_fail("TEXTURE-MODE: undo in live editor failed to restore UVs (got %s vs orig %s)" % [uv_restored, uv_orig])
+
+						if obj_ur != null:
+							obj_ur.redo()
+						else:
+							await _press_redo()
+						await _frames(6)
+
+						var uv_redone: Vector2 = target_b.pb_mesh_data.textures0[f0_idx]
+						if is_equal_approx(uv_redone.x, uv_moved.x) and is_equal_approx(uv_redone.y, uv_moved.y):
+							_pass("TEXTURE-MODE: redo in live editor reapplied transformed UV coordinates")
+						else:
+							_fail("TEXTURE-MODE: redo in live editor failed to reapply UVs (got %s vs %s)" % [uv_redone, uv_moved])
+					else:
+						_fail("TEXTURE-MODE: commit_subgizmos failed to commit")
 			else:
 				_fail("TEXTURE-MODE: editor select_mode not TEXTURE (got %d)" % (plugin.editor.select_mode if plugin.editor else -1))
 		else:
