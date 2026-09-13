@@ -815,9 +815,12 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 
 	# 3. Find touched common vertices
 	var touched_common_verts := {}
+	var vertex_beveled_count := {}
 	for key: Vector2i in valid_bevel_edges:
 		touched_common_verts[key.x] = true
 		touched_common_verts[key.y] = true
+		vertex_beveled_count[key.x] = vertex_beveled_count.get(key.x, 0) + 1
+		vertex_beveled_count[key.y] = vertex_beveled_count.get(key.y, 0) + 1
 
 	# 4. Distance clamping
 	var min_edge_len := INF
@@ -908,18 +911,23 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
 			elif prev_beveled and next_beveled:
-				var pt: Vector3 = pos_i + u_prev * amount + u_next * amount
+				var denom: float = 1.0 + u_prev.dot(u_next)
+				var pt: Vector3 = pos_i + (u_prev + u_next) * (amount / maxf(0.1, denom))
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
 			else:
 				var p_prev: Vector3 = pos_i + d_prev * amount
 				var p_next: Vector3 = pos_i + d_next * amount
-				new_loop_positions.append(p_prev)
-				new_loop_positions.append(p_next)
-				if not corner_segments.has(ci):
-					corner_segments[ci] = []
-				corner_segments[ci].append({"from": p_prev, "to": p_next})
+				if segments == 1:
+					new_loop_positions.append(p_prev)
+					new_loop_positions.append(p_next)
+				else:
+					var norm_prev := -d_next
+					var norm_next := -d_prev
+					for s in range(segments + 1):
+						var t: float = float(s) / float(segments)
+						new_loop_positions.append(_arc_interp(p_prev, p_next, norm_prev, norm_next, t))
 
 		var new_face := _build_bevel_polygon_face(mesh_data, new_loop_positions, face, fn)
 		if new_face != null:
@@ -967,15 +975,16 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 				new_faces.append(bridge_face)
 				bridge_faces.append(bridge_face)
 
-			# At cb: directed edge is qs_end -> qnext_end
-			if not corner_segments.has(cb):
-				corner_segments[cb] = []
-			corner_segments[cb].append({"from": qs_end, "to": qnext_end})
+			# Only add corner segments if this vertex is a multi-bevel junction (>= 2 beveled edges meet)
+			if vertex_beveled_count.get(cb, 0) >= 2:
+				if not corner_segments.has(cb):
+					corner_segments[cb] = []
+				corner_segments[cb].append({"from": qs_end, "to": qnext_end})
 
-			# At ca: directed edge is qnext_start -> qs_start
-			if not corner_segments.has(ca):
-				corner_segments[ca] = []
-			corner_segments[ca].append({"from": qnext_start, "to": qs_start})
+			if vertex_beveled_count.get(ca, 0) >= 2:
+				if not corner_segments.has(ca):
+					corner_segments[ca] = []
+				corner_segments[ca].append({"from": qnext_start, "to": qs_start})
 
 	# 7. Build corner cap faces
 	var corner_faces: Array[PBFace] = []

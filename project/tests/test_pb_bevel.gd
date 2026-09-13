@@ -195,3 +195,31 @@ func test_bevel_undo_redo():
 	ur.redo()
 	assert_eq(mesh.pb_mesh_data.faces.size(), 7, "Redo re-applies bevel with 7 faces")
 	_assert_watertight(mesh.pb_mesh_data, "Redo bevel")
+
+func test_bevel_single_edge_multi_segment_three():
+	# Regression test for Issue 1: Bevel 1 edge with segments = 3 must not leave open holes on end faces
+	var cube := _cube()
+	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 3)
+	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed")
+	assert_eq(cube.faces.size(), 9, "Single edge bevel with 3 segments produces 9 faces (6 - 1 + 3 bridge + 1)")
+	_assert_watertight(cube, "Single edge 3-segment fillet")
+	_assert_compiled_convention(cube, true, "Single edge 3-segment fillet")
+
+func test_bevel_twice_all_edges_watertight():
+	# Regression test for Issue 2: Selecting all edges of a beveled cube and beveling again must stay watertight
+	var cube := _cube()
+	var all_edges := PackedInt32Array()
+	for i in range(cube.get_common_edges().size()):
+		all_edges.append(i)
+	var res1 := PBMeshOps.bevel_edges(cube, all_edges, 0.15, 1)
+	assert_true(res1.get("ok", false), "First bevel all edges should succeed")
+	assert_eq(cube.faces.size(), 26, "First bevel produces 26 faces")
+	_assert_watertight(cube, "First full bevel")
+
+	var all_edges_2 := PackedInt32Array()
+	for i in range(cube.get_common_edges().size()):
+		all_edges_2.append(i)
+	var res2 := PBMeshOps.bevel_edges(cube, all_edges_2, 0.04, 1)
+	assert_true(res2.get("ok", false), "Second bevel all edges should succeed")
+	_assert_watertight(cube, "Second full bevel")
+

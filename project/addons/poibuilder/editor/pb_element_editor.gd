@@ -647,7 +647,6 @@ func edge_loop_ids(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 	if id < 0 or id >= edges.size():
 		return PackedInt32Array()
 	return _spread_ids(mesh_data, edges, PBTopology.get_edge_loop(mesh_data, [edges[id]]))
-
 ## All common-edge ids in the edge RING through common edge `id` (seed
 ## included). Rings cross quads only, so they stop at fans and n-gons.
 func edge_ring_ids(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
