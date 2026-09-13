@@ -2,39 +2,36 @@
 ##
 ## Runtime-safe, headless-testable; entry point is PBMeshOps.bevel_edges().
 ##
-## DESIGN — one shared point registry, topology by construction
+## DESIGN — duplicate the selected edges, connect the copies
 ## ------------------------------------------------------------
-## Every point the op creates exists EXACTLY ONCE and is referenced by index from
-## every face that touches it: a face corner's offset chain, a point where a
-## neighbouring face's offset crosses a shared edge, a bridge rail. Faces are
-## therefore welded by construction. The previous implementation recomputed
-## "the same" point independently per consumer (per-face rail endpoints fished
-## out of a dictionary whose miss value was Vector3.ZERO, corner caps rebuilt by
-## cancelling and re-chaining segments within a 0.5 mm tolerance) and relied on
-## the copies agreeing; when they did not, corners tore open and, because the
-## weld rebuild merges only EXACT coincidence, the result still counted as
-## watertight while showing a slit.
+## A bevel with `segments` = S is S parallel copies of each selected edge,
+## offset along the two incident faces and connected by quads. That is the
+## UniBuilder topology: the selected loop is duplicated S times and matching
+## verts are connected. No n-gon is stuck in the corner.
 ##
-## Geometry, per beveled vertex v:
-##   - each face at v rebuilds its corner into a CHAIN:
-##       * both of the face's edges at v beveled -> the two offset lines' MITER
-##         point (segments == 1) or a fillet arc of radius `amount` centred on v
-##         between the two offset points (segments >= 2),
-##       * exactly one beveled -> the point where that edge's offset line meets
-##         the other edge (which is at perpendicular distance `amount` from the
-##         beveled edge, matching the miter point's offset),
-##       * neither beveled -> the points a neighbour's offset placed on those
-##         edges, with v itself between them,
-##   - each beveled edge END gets a RAIL spanning from one incident face's chain
-##     end to the other's (a straight segment for a chamfer, the fillet's end
-##     ring for segments >= 2); the bridge quads interpolate between the rails,
-##   - the ring of chains and rails around v closes into a CAP face.
+## Every point the op creates exists EXACTLY ONCE as a record. Faces take their
+## own position copies (position-privacy: calculate_normals writes per position);
+## the weld rebuild reconnects coincident copies so dragging stays coherent.
 ##
-## The old case-C formula shifted the corner by `amount` along the diagonal,
-## i.e. only `amount * cos(45 deg)` perpendicular to each edge, while the
-## neighbouring face's corner shifted a full `amount` — the two faces of one
-## beveled edge disagreed about how far the edge moved. The miter intersection
-## fixes that: every boundary line is offset by exactly `amount`.
+## Per beveled vertex v, the number of selected edges at v decides the corner:
+##   - valence 2 (a loop corner): the two strips SHARE one straight rail of
+##     S segments from one offset point to the other. Intermediate rail points
+##     are keyed by their endpoints so both edges reference the same records.
+##     There is no corner face — the strips already close the mesh, the way
+##     S = 1 already did. A circular-arc rail was what made the two edges
+##     disagree and forced an n-gon cap to fill the gap.
+##   - valence 1 (a strip end): the end face cannot carry the off-plane rail
+##     intermediates, so a small cap still closes the termination.
+##   - valence 3+ (a cube corner with 3 beveled edges): the three rails bound
+##     a corner region that is capped.
+##
+## Face corners: both edges beveled → miter of the two offset lines (every
+## boundary is offset by exactly `amount`; the old diagonal shift was short
+## by cos(45°)). One edge beveled → offset line meets the other edge. Neither
+## → the points neighbours placed on those edges.
+##
+## An attempt that fails — or that closes with a folded seam — is rolled back
+## and retried at half the distance.
 @tool
 class_name PBMeshBevel
 extends RefCounted
@@ -167,8 +164,13 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 		# A point record is { label, pt, src }: `label` names the ONE position that
 		# this point gets (empty label = reuse the source position, i.e. a corner
 		# that stays where it is).
+		var bevel_count := {}
+		for bk: Vector2i in valid:
+			bevel_count[bk.x] = int(bevel_count.get(bk.x, 0)) + 1
+			bevel_count[bk.y] = int(bevel_count.get(bk.y, 0)) + 1
 		var corners := {}
 		var reg := {}    # edge key -> { vertex rep -> Array of point records (on that edge) }
+
 
 		for fi: int in loops:
 			var loop: PackedInt32Array = loops[fi]
@@ -227,11 +229,13 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					step = minf(step, edge_len * 0.45)
 					var q: Vector3 = pos_i + d_next * step
 					var rec: Dictionary = _reg_add(reg, k_next, vrep, _pt("c%d_%d" % [fi, i], q, vi), step)
-					if segments > 1:
-						# The fillet's ring ends before the corner: the face's boundary
-						# is split there, and the cap covers the rest.
+					# Extra fillet-end points only at strip terminations (valence
+					# != 2). On a closed loop they split the corner into a leftover
+					# n-gon; the two strips already share a straight rail.
+					if segments > 1 and int(bevel_count.get(vrep, 0)) != 2:
 						info["entries"].append(_pt("c%d_%d_r" % [fi, i], pos_i + d_prev * amt + u_prev * amt, vi))
 					info["entries"].append(rec)
+
 				elif eb_next:
 					var denom2 := d_prev.dot(u_next)
 					var step2 := amt / maxf(0.05, absf(denom2))
@@ -239,9 +243,10 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					step2 = minf(step2, edge_len2 * 0.45)
 					var q2: Vector3 = pos_i + d_prev * step2
 					var rec2: Dictionary = _reg_add(reg, k_prev, vrep, _pt("c%d_%d" % [fi, i], q2, vi), step2)
-					if segments > 1:
+					if segments > 1 and int(bevel_count.get(vrep, 0)) != 2:
 						info["entries"].append(_pt("c%d_%d_r" % [fi, i], pos_i + d_next * amt + u_next * amt, vi))
 					info["entries"].append(rec2)
+
 				else:
 					# This face has no beveled edge at the corner, but the corner is a
 					# beveled vertex: its boundary follows the points the neighbouring
@@ -320,6 +325,7 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 		# ---- 7. rails + bridges along each beveled edge ------------------------
 		var secondary: Array[PBFace] = []
 		var rails := {}     # Vector3i(key.x, key.y, vertex rep) -> Array of records (face A end -> face B end)
+		var rail_cache := {}
 		var detail_fail := ""
 		for k: Vector2i in valid:
 			var entries: Array = valid[k]
@@ -336,10 +342,14 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				var pts: Array = [end_a]
 				for s in range(1, segments):
 					var t := float(s) / float(segments)
-					var pt: Vector3 = PBMeshOps._arc_interp(end_a["pt"], end_b["pt"], n_fa, n_fb, t)
-					pts.append(_pt("r%d_%d_%d_%d" % [k.x, k.y, c, s], pt, int(end_a["src"])))
+					# Straight shared rail: both edges of a loop corner interpolate
+					# the same endpoints and must reuse the same records. An arc
+					# through each edge's own dihedral made the two rails miss,
+					# which is the "verts not aligned / not connected" report.
+					pts.append(_shared_rail_point(rail_cache, end_a, end_b, t, int(end_a["src"])))
 				pts.append(end_b)
 				rails[Vector3i(k.x, k.y, c)] = pts
+
 			if not detail_fail.is_empty():
 				break
 			# Bridge quads: rail A and rail B both run from fa's side to fb's side.
@@ -365,6 +375,10 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 
 		# ---- 8. vertex caps ----------------------------------------------------
 		for c: int in touched:
+			# A loop corner (exactly two beveled edges) is closed by the two
+			# strips sharing a rail. A cap there is the leftover n-gon.
+			if int(bevel_count.get(c, 0)) == 2:
+				continue
 			var cycle := _vertex_face_cycle(corners, loops, incidence, lookup, c)
 			if cycle.is_empty():
 				continue
@@ -447,6 +461,30 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 
 static func _pt(label: String, pt: Vector3, src: int) -> Dictionary:
 	return {"label": label, "pt": pt, "src": src, "idx": -1}
+
+## Intermediate rail point between two chain ends. Both edges of a valence-2
+## corner interpolate the same endpoints; they must share ONE record so the
+## strips actually meet (weld-by-coincidence is not enough if the coords
+## differ by an arc).
+static func _shared_rail_point(cache: Dictionary, end_a: Dictionary, end_b: Dictionary,
+		t: float, src: int) -> Dictionary:
+	var pa: Vector3 = end_a["pt"]
+	var pb: Vector3 = end_b["pt"]
+	var ka := _point_key(pa)
+	var kb := _point_key(pb)
+	var pt: Vector3 = pa.lerp(pb, t)
+	if ka > kb:
+		var tmp := ka
+		ka = kb
+		kb = tmp
+		t = 1.0 - t
+	var key := "%s|%s|%d" % [ka, kb, roundi(t * 1000.0)]
+	if cache.has(key):
+		return cache[key]
+	var rec := _pt("r" + key, pt, src)
+	cache[key] = rec
+	return rec
+
 
 static func _key(lookup: Dictionary, a: int, b: int) -> Vector2i:
 	var ca: int = lookup.get(a, a)

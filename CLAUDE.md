@@ -2898,6 +2898,25 @@ across four previous rounds):
 - Version bump 0.9.91 -> 0.9.93 across `poibuilder_plugin.gd`, `pb_editor.gd`,
   and `plugin.cfg`.
 
+v0.9.94 round complete ✓ — bevel loop corners are duplicated edge loops, not n-gons:
+- THE REPORT: cube → inset a face → extrude inward → bevel the extruded loop at
+  3 segments produced leftover n-gons at the corners (and a previous attempt
+  left verts unaligned/unconnected). UniBuilder does the simple thing: duplicate
+  the loop S times and connect matching verts, with a straight subdivided rail
+  through each corner.
+- CAUSE: multi-segment rails were circular arcs through each edge's own dihedral,
+  so the two edges of a loop corner missed each other; extra "fillet end" points
+  then split the corner and `_corner_patch` filled the gap with an n-gon.
+- FIX (`pb_bevel.gd`): valence-2 corners (a closed loop) share one STRAIGHT rail
+  of S segments, keyed by the endpoints so both strips reference the same
+  records; no corner cap. Valence-1 terminations still cap; valence-3+ cube
+  corners still cap (all-12-edge face counts unchanged).
+- LOCK: inset+extrude outer/inner rim, segments 1–4 → `14 + 4*S` faces, all
+  quads/tris, collinear `S+1`-point rail at each cube corner, watertight, no
+  tearing weld group. 908/908 GUT.
+- Version bump 0.9.93 -> 0.9.94.
+
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this
