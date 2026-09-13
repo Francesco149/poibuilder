@@ -2822,6 +2822,66 @@ v0.9.91 round complete ✓ — Shared miter rails across meeting bevel bridges (
   * 903/903 GUT tests passing (+1), 55/55 GUI harness assertions passing with 0 failures.
 - Version bump 0.9.90 -> 0.9.91 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
+v0.9.92 round complete ✓ — THE BEVEL REWRITTEN (the reported "inset, inward extrude,
+then bevel the outer edge loop" corner that was "not connected and not even aligned"
+across four previous rounds):
+- WHAT WAS ACTUALLY WRONG (two independent defects, both structural):
+  * The corner formula was off by cos(45 deg). At a corner whose two edges are
+    both beveled, the old code moved the corner `amount` along the DIAGONAL
+    (`normalize(u_prev + u_next) * amount`), i.e. only `amount * cos(45 deg)`
+    perpendicular to each edge, while the neighbouring face's corner (whose
+    other edge is not beveled) moved a full `amount`. The two faces of one
+    beveled edge therefore disagreed about how far the edge had moved — the
+    mismatch in the report. Now every boundary line is offset by exactly
+    `amount` (the miter intersection of the two offset lines).
+  * Rails and corner caps were RECONSTRUCTED from geometry: per-face rail
+    endpoints fished out of a dictionary whose miss value was `Vector3.ZERO`,
+    corner caps rebuilt by cancelling and re-chaining straight segments within a
+    0.5 mm tolerance. Anything that did not match to tolerance left a slit, and
+    because position welding only merges EXACT coincidence the result still
+    passed the watertight assertions ("not connected").
+- THE REWRITE (`mesh_ops/pb_bevel.gd`, class `PBMeshBevel`; `PBMeshOps.bevel_edges`
+  delegates). One shared POINT REGISTRY: every point the op creates exists once
+  as a record — a face corner's offset chain, a point a neighbour's offset placed
+  on a shared edge (coincident placements on the same edge reuse one record), a
+  bridge rail — and each face takes its OWN position copy of the records it uses.
+  The position-privacy invariant is preserved (flat normals are written per
+  position), and the weld rebuild reconnects the copies, which is what makes
+  dragging, moving and selecting coherent. Per beveled vertex the surface is: a
+  CHAIN per face (miter point when both of the face's edges move — the fillet's
+  corner sphere touches the face exactly there, so chamfers and fillets share it
+  — the offset line's intersection with the other edge when one moves, the
+  vertex's neighbouring edge points when neither does), a RAIL per beveled edge
+  end (the fillet's end ring for segments >= 2; fillet ring ENDPOINTS are
+  inserted as boundary points for case-B corners, which is what removes the old
+  retraced sliver caps), and a CAP closing the ring, triangulated as a centroid
+  FAN (ear-clipping a curved corner patch emitted triangles whose normals opposed
+  each other, which flat shading turns into dark facets).
+- SELF-CHECK + RETRY (the robustness guarantee): after a build the op verifies
+  that every seam that was fine before is still fine (used twice, opposite
+  directions), failing the attempt and retrying at half the distance, then
+  reporting. The distance clamp is the old `shortest incident edge * 0.38`; the
+  retry is what handles faces whose own offset lines would cross (a bevel wider
+  than the face is not representable — it now shrinks instead of shipping
+  non-manifold junk). Failure rolls the mesh back through a `PBCommand` snapshot,
+  so a refused bevel leaves the mesh byte-identical.
+- ALSO: `bevel_faces` (FACE-mode) validated its faces only AFTER marking them
+  removed — a hole face would have been dropped from the mesh; it now validates
+  first and reports a collapsed inset instead of silently skipping a face.
+- VERIFIED: a 288-case sweep (cube sizes 1/2 m x inset 0.1-0.3 x extrude depth
+  0.2/0.5 x amount 0.05-0.3 x segments 1-3 x outer/inner rim selection) — zero
+  failures, zero open or non-manifold edges, zero inverted or degenerate faces,
+  and TORN=0: moving EVERY weld group leaves the mesh intact, which is the
+  reported symptom expressed as a check. `tests/test_pb_bevel.gd` grew the
+  user-scenario regression (4 outer rim edges x segments 1-4, watertight + no
+  inverted faces + no tearing group), the uniform-offset assertion, and an
+  every-ring-edge case (12 edges, 3 beveled edges meeting at each corner).
+  906/906 GUT tests passing (16.5k asserts), GUI harness green including the
+  live editor bevel checks; `test_pb_bevel_sweep_all_shapes_stay_closed` keeps
+  the 288-case sweep in the suite (~9 s).
+- Version bump 0.9.91 -> 0.9.92 across `poibuilder_plugin.gd`, `pb_editor.gd`,
+  and `plugin.cfg`.
+
 ## Key Conventions
 
 - GENERATED ARTIFACTS ARE NEVER COMMITTED (mandatory): if a script in this

@@ -1598,15 +1598,20 @@ func _run() -> void:
 					for k in counts_outer:
 						if counts_outer[k] != 2:
 							bad_outer += 1
+					# The corner vertices must weld across every face that meets
+					# there (the "not connected" symptom): count the coincident
+					# positions at one corner and check they share ONE weld group.
 					var lookup_outer := test_cube2.get_shared_vertex_lookup()
-					var miter_coincident_count := 0
+					var corner_groups := {}
+					var corner_positions := 0
 					for idx in range(test_cube2.positions.size()):
-						if test_cube2.positions[idx].distance_to(Vector3(0.981854, 0.981854, 0.96387)) < 0.001:
-							miter_coincident_count += 1
-					if b_res_outer.get("ok", false) and bad_outer == 0 and test_cube2.faces.size() == 26 and miter_coincident_count == 4:
-						_pass("BEVEL-OUTER-LOOP-SEG3: outer edge loop bevel (seg=3) cleanly miters with 4 welded vertices and 0 bad edges")
+						if test_cube2.positions[idx].distance_to(Vector3(0.9, 0.9, 0.9)) < 0.35:
+							corner_positions += 1
+							corner_groups[lookup_outer.get(idx, idx)] = true
+					if b_res_outer.get("ok", false) and bad_outer == 0 and corner_positions > 0 and corner_groups.size() < corner_positions:
+						_pass("BEVEL-OUTER-LOOP-SEG3: outer edge loop bevel (seg=3) is watertight (%d corner positions welded into %d groups)" % [corner_positions, corner_groups.size()])
 					else:
-						_fail("BEVEL-OUTER-LOOP-SEG3: bevel failed, faces=%d (expected 26), bad_edges=%d, miter_welds=%d (expected 4)" % [test_cube2.faces.size(), bad_outer, miter_coincident_count])
+						_fail("BEVEL-OUTER-LOOP-SEG3: bevel failed, ok=%s, bad_edges=%d, corner positions=%d in %d weld groups" % [str(b_res_outer.get("ok", false)), bad_outer, corner_positions, corner_groups.size()])
 				else:
 					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
 		else:

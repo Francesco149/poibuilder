@@ -197,11 +197,13 @@ func test_bevel_undo_redo():
 	_assert_watertight(mesh.pb_mesh_data, "Redo bevel")
 
 func test_bevel_single_edge_multi_segment_three():
-	# Regression test for Issue 1: Bevel 1 edge with segments = 3 must not leave open holes on end faces
+	# Beveling one edge with segments = 3 must not leave open holes on the end faces.
+	# 6 - 4 (the two faces of the edge + the two end faces) + 4 rebuilt + 3 bridge
+	# quads + 2 corner caps = 11.
 	var cube := _cube()
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 3)
 	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed")
-	assert_eq(cube.faces.size(), 9, "Single edge bevel with 3 segments produces 9 faces (6 - 1 + 3 bridge + 1)")
+	assert_eq(cube.faces.size(), 11, "Single edge bevel with 3 segments produces 11 faces")
 	_assert_watertight(cube, "Single edge 3-segment fillet")
 	_assert_compiled_convention(cube, true, "Single edge 3-segment fillet")
 
@@ -356,54 +358,208 @@ func test_bevel_inset_inward_extrusion_single_rim_edge():
 	_assert_watertight(c_single3, "Single rim edge bevel segs=3")
 
 func test_reproduce_user_bevel_outer_edge_loop():
-	var elem_editor := PBElementEditor.new()
+	# The reported bug: inset a cube face, extrude it inward, select the outer
+	# edge loop of the inset and bevel it — the corner came out "not connected
+	# and not even aligned": the faces either side of a beveled edge disagreed
+	# about how far the edge had moved, and the corner geometry was rebuilt
+	# from separately computed copies that did not line up.
+	#
+	# What must hold afterwards, for every segment count:
+	#   - watertight and consistently wound (no duplicated or inverted surface),
+	#   - every weld group can be MOVED without tearing the mesh: that is the
+	#     "not connected" symptom, and it is what this test reproduces,
+	#   - every face offset from a beveled edge sits the same distance in.
 	var cube := PBMeshData.create_cube(2.0)
 	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
 	assert_true(inset_res["ok"], "Inset succeeds")
 	var inner_face_id: int = inset_res["cap_face_ids"][0]
+	assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([inner_face_id]), -0.5)["ok"], "Inward extrude succeeds")
 
-	var extrude_res := PBMeshOps.extrude_faces(cube, PackedInt32Array([inner_face_id]), -0.5)
-	assert_true(extrude_res["ok"], "Inward extrude succeeds")
+	# The four outer edges of the inset ring (both ends on the face's perimeter).
+	var hz := 1.0
+	var outer := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa := cube.positions[e.a]
+		var pb := cube.positions[e.b]
+		if absf(pa.z - hz) > 0.001 or absf(pb.z - hz) > 0.001:
+			continue
+		var on_outer_a: bool = absf(pa.x) > 0.99 or absf(pa.y) > 0.99
+		var on_outer_b: bool = absf(pb.x) > 0.99 or absf(pb.y) > 0.99
+		if on_outer_a and on_outer_b:
+			outer.append(eid)
+	assert_eq(outer.size(), 4, "The inset's outer edge loop has 4 edges")
 
-	# Find the 4 OUTER edges of the front face (at Z ≈ 1.0, on perimeter: abs(x) > 0.99 or abs(y) > 0.99)
-	var common_edges := cube.get_common_edges()
-	var perimeter_4_edges := PackedInt32Array([9, 13, 14, 15])
-	var c_perim := PBCommand.copy_mesh_data(cube)
-	var b_perim := PBMeshOps.bevel_edges(c_perim, perimeter_4_edges, 0.1, 3)
-	assert_true(b_perim.get("ok", false), "Beveling outer perimeter edges with segs=3 should succeed")
-	assert_eq(c_perim.faces.size(), 26, "4 beveled edges with shared miters: 26 faces (no degenerate corner caps)")
-	_assert_watertight(c_perim, "Outer perimeter edges bevel segs=3")
-	_assert_compiled_convention(c_perim, false, "Outer perimeter edges bevel segs=3")
+	for segs in [1, 2, 3, 4]:
+		var c := PBCommand.copy_mesh_data(cube)
+		var res := PBMeshOps.bevel_edges(c, outer, 0.1, segs)
+		assert_true(res.get("ok", false), "Bevel segs=%d succeeds: %s" % [segs, str(res.get("error", ""))])
+		_assert_watertight(c, "Inset outer loop bevel segs=%d" % segs)
+		assert_eq(_surface_defects(c), 0, "Inset outer loop bevel segs=%d has no inverted or degenerate faces" % segs)
+		assert_eq(_tearing_groups(c), 0, "Inset outer loop bevel segs=%d: no weld group tears the mesh when moved" % segs)
 
-	# Verify weld groups around corner (+1, +1, +1)
-	var lookup := c_perim.get_shared_vertex_lookup()
+func test_bevel_offsets_are_uniform_across_faces():
+	# Both faces of a beveled edge must be left the SAME distance from it. The
+	# old corner formula moved a corner by `amount` along the diagonal — only
+	# amount*cos(45 deg) perpendicular to each edge — while the neighbouring
+	# face's corner moved a full amount, so the two faces disagreed about how far
+	# the edge had moved and the corner opened up.
+	var cube := _cube()
+	var top_edges := PBMeshOps.face_perimeter_common_edge_ids(cube, PackedInt32Array([4]))
+	assert_true(PBMeshOps.bevel_edges(cube, top_edges, 0.2, 1).get("ok", false), "Top perimeter bevel succeeds")
+	# The beveled top face's boundary is exactly `amount` inside the old rim.
+	var top := -1
+	for fi in range(cube.faces.size()):
+		if PBMeshOps._face_area_normal(cube, cube.faces[fi]).normalized().dot(Vector3.UP) > 0.99:
+			top = fi
+			break
+	assert_gt(top, -1, "the beveled cube still has its top face")
+	var inset_boundary := 0
+	for v in cube.faces[top].get_indexes():
+		var p: Vector3 = cube.positions[v]
+		assert_true(absf(p.x) <= 0.301 and absf(p.z) <= 0.301, "top face vertex %s is inset by the bevel amount" % str(p))
+		if absf(absf(p.x) - 0.3) < 0.001:
+			inset_boundary += 1
+	assert_gt(inset_boundary, 0, "the top face's boundary sits on the offset line (0.5 - 0.2)")
+
+func test_bevel_clamps_amount_to_what_the_geometry_allows():
+	# A bevel wider than the face it runs along is not representable: the op has
+	# to shrink it rather than emit crossed offsets (which used to leave
+	# non-manifold junk behind).
+	var cube := PBMeshData.create_cube(1.0)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.2)
+	assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -0.4)["ok"], "extrude")
+	var hz := 0.5
+	var outer := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa := cube.positions[e.a]
+		var pb := cube.positions[e.b]
+		if absf(pa.z - hz) > 0.001 or absf(pb.z - hz) > 0.001:
+			continue
+		if absf(pa.x) > 0.49 or absf(pa.y) > 0.49 or absf(pb.x) > 0.49 or absf(pb.y) > 0.49:
+			outer.append(eid)
+	# 0.4 is far wider than the 0.2 ring: the op must still return a clean mesh.
+	var res := PBMeshOps.bevel_edges(cube, outer, 0.4, 3)
+	assert_true(res.get("ok", false), "An over-wide bevel still succeeds: %s" % str(res.get("error", "")))
+	_assert_watertight(cube, "Over-wide bevel")
+	assert_eq(_surface_defects(cube), 0, "Over-wide bevel has no inverted or degenerate faces")
+
+func test_bevel_sweep_all_shapes_stay_closed():
+	# The sweep that found the reported corner: cube sizes, inset widths, inward
+	# extrude depths, bevel distances, segment counts and both rim loops of the
+	# inset cavity. Every combination must come out closed, consistently wound
+	# and tear-free — one bad case is a corner that opens when a vertex is moved.
+	var cases := 0
+	for size in [1.0, 2.0]:
+		for inset in [0.1, 0.2, 0.3]:
+			for depth in [0.2, 0.5]:
+				for amount in [0.05, 0.1, 0.2, 0.3]:
+					for segs in [1, 2, 3]:
+						for inner in [false, true]:
+							cases += 1
+							var cube := PBMeshData.create_cube(size)
+							var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), inset)
+							PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -depth)
+							var hz: float = float(size) * 0.5
+							var ids := PackedInt32Array()
+							for eid in range(cube.get_common_edges().size()):
+								var e := cube.get_common_edges()[eid]
+								var pa := cube.positions[e.a]
+								var pb := cube.positions[e.b]
+								if absf(pa.z - hz) > 0.001 or absf(pb.z - hz) > 0.001:
+									continue
+								var a_outer: bool = absf(pa.x) > hz - 0.01 or absf(pa.y) > hz - 0.01
+								var b_outer: bool = absf(pb.x) > hz - 0.01 or absf(pb.y) > hz - 0.01
+								if a_outer == inner and b_outer == inner:
+									ids.append(eid)
+							assert_gt(ids.size(), 0, "case %d selected edges" % cases)
+							var tag: String = "s=%.1f inset=%.2f depth=%.2f amt=%.2f segs=%d %s" % [size, inset, depth, amount, segs, "inner" if inner else "outer"]
+							var res := PBMeshOps.bevel_edges(cube, ids, amount, segs)
+							assert_true(res.get("ok", false), "%s: %s" % [tag, str(res.get("error", ""))])
+							_assert_watertight(cube, tag)
+							assert_eq(_surface_defects(cube), 0, "%s: no inverted or degenerate faces" % tag)
+							assert_eq(_tearing_groups(cube), 0, "%s: no weld group tears the mesh" % tag)
+	assert_eq(cases, 288, "the sweep covers every combination")
+
+## Faces whose winding disagrees with their neighbours, or that have no area.
+func _surface_defects(data: PBMeshData) -> int:
+	var lookup := data.get_shared_vertex_lookup()
+	var dirs := {}
+	var defects := 0
+	for face in data.faces:
+		if face == null:
+			continue
+		var pts := PackedVector3Array()
+		for i in face.get_indexes():
+			pts.append(data.positions[i])
+		var area := 0.0
+		for t in range(pts.size() / 3):
+			area += (pts[t * 3 + 1] - pts[t * 3]).cross(pts[t * 3 + 2] - pts[t * 3]).length() * 0.5
+		if area < 0.000000001:
+			defects += 1
+			continue
+		for e in face.get_edges():
+			var ca: int = lookup.get(e.a, e.a)
+			var cb: int = lookup.get(e.b, e.b)
+			var k := Vector2i(mini(ca, cb), maxi(ca, cb))
+			if not dirs.has(k):
+				dirs[k] = []
+			dirs[k].append(Vector2i(ca, cb))
+	for k in dirs:
+		var ds: Array = dirs[k]
+		if ds.size() == 1:
+			defects += 1
+		elif ds.size() > 2:
+			defects += 1
+		elif ds[0].x == ds[1].x and ds[0].y == ds[1].y:
+			defects += 1
+	return defects
+
+## Moves every weld group in turn and counts the ones whose members are not all
+## connected: a group that tears the mesh open when moved is exactly the
+## "vertices are not connected" symptom.
+func _tearing_groups(data: PBMeshData) -> int:
+	var lookup := data.get_shared_vertex_lookup()
 	var groups := {}
-	for idx in range(c_perim.positions.size()):
-		var g: int = lookup.get(idx, idx)
+	for i in range(data.positions.size()):
+		var g: int = lookup.get(i, i)
 		if not groups.has(g):
 			groups[g] = []
-		groups[g].append(idx)
-
-	# Find group near (0.981854, 0.981854, 0.96387)
-	var miter_group := -1
+		groups[g].append(i)
+	var base := _surface_defects(data)
+	var delta := Vector3(0.037, -0.021, 0.013)
+	var torn := 0
 	for g in groups:
-		var pos: Vector3 = c_perim.positions[groups[g][0]]
-		if pos.distance_to(Vector3(0.981854, 0.981854, 0.96387)) < 0.001:
-			miter_group = g
-			break
-	assert_gt(miter_group, -1, "Must find miter rail vertex group")
-	assert_eq(groups[miter_group].size(), 4, "Miter rail vertex must weld across both meeting bevel bridges (4 coincident positions)")
+		var members: Array = groups[g]
+		for i in members:
+			data.positions[i] = data.positions[i] + delta
+		var after := _surface_defects(data)
+		for i in members:
+			data.positions[i] = data.positions[i] - delta
+		if after != base:
+			torn += 1
+	return torn
 
-	# Test moving this vertex with CmdMoveElements — all 4 vertices must move in lockstep
-	var move_delta := Vector3(0.2, 0.3, 0.1)
-	var move_cmd := CmdMoveElements.new()
-	var indices_to_move := PackedInt32Array()
-	for idx in groups[miter_group]:
-		indices_to_move.append(idx)
-	move_cmd.setup(c_perim, indices_to_move, move_delta)
-	move_cmd.do_it()
-
-	var moved_pos: Vector3 = c_perim.positions[groups[miter_group][0]]
-	for idx in groups[miter_group]:
-		assert_eq(c_perim.positions[idx], moved_pos, "All 4 vertices in miter group must move in lockstep")
-	_assert_watertight(c_perim, "After moving miter vertex: mesh must remain 100% watertight (no tears or open edges)")
+func test_bevel_every_ring_edge_resolves():
+	# Beveling EVERY edge of the inset ring quads (outer rim + inner rim + the
+	# radial edges) is the densest bevel this shape can take: three beveled edges
+	# meet at each corner, two of them on faces that keep their corner. It must
+	# still come out closed, consistently wound and tear-free.
+	var cube := PBMeshData.create_cube(2.0)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
+	assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -0.5)["ok"], "extrude")
+	var all_ring := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		if absf(cube.positions[e.a].z - 1.0) > 0.001 or absf(cube.positions[e.b].z - 1.0) > 0.001:
+			continue
+		all_ring.append(eid)
+	assert_eq(all_ring.size(), 12, "the ring quads carry 12 edges (4 outer, 4 radial, 4 inner)")
+	for segs in [1, 2, 3]:
+		var c := PBCommand.copy_mesh_data(cube)
+		var res := PBMeshOps.bevel_edges(c, all_ring, 0.1, segs)
+		assert_true(res.get("ok", false), "Every-ring-edge bevel segs=%d succeeds: %s" % [segs, str(res.get("error", ""))])
+		_assert_watertight(c, "Every ring edge segs=%d" % segs)
+		assert_eq(_surface_defects(c), 0, "Every ring edge segs=%d: no inverted or degenerate faces" % segs)
+		assert_eq(_tearing_groups(c), 0, "Every ring edge segs=%d: no weld group tears the mesh" % segs)
