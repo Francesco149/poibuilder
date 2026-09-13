@@ -970,6 +970,116 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 			new_faces.append(new_face)
 
 	# 6. Build bridge faces along beveled edges
+	# Precompute corner rails: edges meeting at corner c with matching endpoints share a miter rail.
+	var edge_ends_at_c := {}
+	for key: Vector2i in valid_bevel_edges:
+		var entries: Array = valid_bevel_edges[key]
+		var fi0: int = entries[0]["face_idx"]
+		var fi1: int = entries[1]["face_idx"]
+		var ca: int = entries[0]["ca"]
+		var cb: int = entries[0]["cb"]
+		var n0 := _face_area_normal(mesh_data, mesh_data.faces[fi0])
+		var n1 := _face_area_normal(mesh_data, mesh_data.faces[fi1])
+
+		for c in [ca, cb]:
+			if not edge_ends_at_c.has(c):
+				edge_ends_at_c[c] = []
+			var is_start: bool = (c == ca)
+			var r0 := _get_rail_endpoint(rail_endpoints, key, fi0, c)
+			var r1 := _get_rail_endpoint(rail_endpoints, key, fi1, c)
+			edge_ends_at_c[c].append({
+				"key": key,
+				"is_start": is_start,
+				"r0": r0,
+				"r1": r1,
+				"n0": n0,
+				"n1": n1,
+			})
+
+	var computed_rails := {}
+	for c: int in edge_ends_at_c:
+		var ends: Array = edge_ends_at_c[c]
+		var matched := {}
+		for i in range(ends.size()):
+			if matched.has(i):
+				continue
+			var e_i: Dictionary = ends[i]
+			var r0_i: Vector3 = e_i["r0"]
+			var r1_i: Vector3 = e_i["r1"]
+			var n0_i: Vector3 = e_i["n0"]
+			var n1_i: Vector3 = e_i["n1"]
+
+			var pair_idx := -1
+			var same_dir := true
+			for j in range(i + 1, ends.size()):
+				if matched.has(j):
+					continue
+				var e_j: Dictionary = ends[j]
+				var r0_j: Vector3 = e_j["r0"]
+				var r1_j: Vector3 = e_j["r1"]
+				if r0_i.distance_to(r0_j) < 0.001 and r1_i.distance_to(r1_j) < 0.001:
+					pair_idx = j
+					same_dir = true
+					break
+				elif r0_i.distance_to(r1_j) < 0.001 and r1_i.distance_to(r0_j) < 0.001:
+					pair_idx = j
+					same_dir = false
+					break
+
+			var pts: Array[Vector3] = []
+			if pair_idx >= 0:
+				matched[i] = true
+				matched[pair_idx] = true
+				var e_j: Dictionary = ends[pair_idx]
+				var n0_j: Vector3 = e_j["n0"]
+				var n1_j: Vector3 = e_j["n1"]
+
+				var n_start: Vector3
+				var n_end: Vector3
+				if same_dir:
+					n_start = (n0_i + n0_j)
+					n_end = (n1_i + n1_j)
+				else:
+					n_start = (n0_i + n1_j)
+					n_end = (n1_i + n0_j)
+
+				if n_start.length_squared() > 0.001:
+					n_start = n_start.normalized()
+				else:
+					n_start = n0_i
+				if n_end.length_squared() > 0.001:
+					n_end = n_end.normalized()
+				else:
+					n_end = n1_i
+
+				for s in range(segments + 1):
+					var t: float = float(s) / float(segments)
+					if segments == 1 or n_start.is_equal_approx(n_end):
+						pts.append(r0_i.lerp(r1_i, t))
+					else:
+						pts.append(_arc_interp(r0_i, r1_i, n_start, n_end, t))
+
+				var key_i := Vector3i(e_i["key"].x, e_i["key"].y, 0 if e_i["is_start"] else 1)
+				computed_rails[key_i] = pts
+
+				var key_j := Vector3i(e_j["key"].x, e_j["key"].y, 0 if e_j["is_start"] else 1)
+				if same_dir:
+					computed_rails[key_j] = pts
+				else:
+					var pts_rev: Array[Vector3] = []
+					for k in range(pts.size() - 1, -1, -1):
+						pts_rev.append(pts[k])
+					computed_rails[key_j] = pts_rev
+			else:
+				for s in range(segments + 1):
+					var t: float = float(s) / float(segments)
+					if segments == 1 or n0_i.is_equal_approx(n1_i):
+						pts.append(r0_i.lerp(r1_i, t))
+					else:
+						pts.append(_arc_interp(r0_i, r1_i, n0_i, n1_i, t))
+				var key_i := Vector3i(e_i["key"].x, e_i["key"].y, 0 if e_i["is_start"] else 1)
+				computed_rails[key_i] = pts
+
 	var bridge_faces: Array[PBFace] = []
 	for key: Vector2i in valid_bevel_edges:
 		var entries: Array = valid_bevel_edges[key]
@@ -980,30 +1090,18 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		var ca: int = e0["ca"]
 		var cb: int = e0["cb"]
 
-		var r0_start: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi0, ca)
-		var r0_end: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi0, cb)
-		var r1_start: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi1, ca)
-		var r1_end: Vector3 = _get_rail_endpoint(rail_endpoints, key, fi1, cb)
-
 		var n0 := _face_area_normal(mesh_data, mesh_data.faces[fi0])
 		var n1 := _face_area_normal(mesh_data, mesh_data.faces[fi1])
 
-		var rails_start: Array[Vector3] = []
-		var rails_end: Array[Vector3] = []
-		for s in range(segments + 1):
-			var t: float = float(s) / float(segments)
-			if segments == 1 or n0.is_equal_approx(n1):
-				rails_start.append(r0_start.lerp(r1_start, t))
-				rails_end.append(r0_end.lerp(r1_end, t))
-			else:
-				rails_start.append(_arc_interp(r0_start, r1_start, n0, n1, t))
-				rails_end.append(_arc_interp(r0_end, r1_end, n0, n1, t))
-
+		var key_start := Vector3i(key.x, key.y, 0)
+		var key_end := Vector3i(key.x, key.y, 1)
+		var rails_start: Array = computed_rails.get(key_start, [])
+		var rails_end: Array = computed_rails.get(key_end, [])
 		for s in range(segments):
-			var qs_start := rails_start[s]
-			var qs_end := rails_end[s]
-			var qnext_end := rails_end[s + 1]
-			var qnext_start := rails_start[s + 1]
+			var qs_start: Vector3 = rails_start[s]
+			var qs_end: Vector3 = rails_end[s]
+			var qnext_end: Vector3 = rails_end[s + 1]
+			var qnext_start: Vector3 = rails_start[s + 1]
 			var seg_normal := n0.lerp(n1, (float(s) + 0.5) / float(segments)).normalized()
 			var quad_pts := [qs_start, qs_end, qnext_end, qnext_start]
 			var bridge_face := _build_bevel_polygon_face(mesh_data, quad_pts, mesh_data.faces[fi0], seg_normal)

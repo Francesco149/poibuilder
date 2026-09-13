@@ -1577,6 +1577,36 @@ func _run() -> void:
 						_pass("BEVEL-EXTRUDE-RIM: beveling outer edges of inward extrusion with seg=2 is watertight (0 bad edges)")
 					else:
 						_fail("BEVEL-EXTRUDE-RIM: beveling outer edges of inward extrusion failed or has %d non-manifold edges" % bad_e)
+
+					# Test outer edge loop of inset with segments=3 (the user-reported bug)
+					var test_cube2 := PBMeshData.create_cube(2.0)
+					var inset_res2 := PBMeshOps.inset_faces(test_cube2, PackedInt32Array([1]), 0.3)
+					var inner_fid2: int = inset_res2["cap_face_ids"][0]
+					PBMeshOps.extrude_faces(test_cube2, PackedInt32Array([inner_fid2]), -0.5)
+					var c_edges2 := test_cube2.get_common_edges()
+					var outer_perim_edges := PackedInt32Array()
+					for eid in range(c_edges2.size()):
+						var e := c_edges2[eid]
+						var pa := test_cube2.positions[e.a]
+						var pb := test_cube2.positions[e.b]
+						if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
+							if (absf(pa.x) > 0.99 and absf(pb.x) > 0.99) or (absf(pa.y) > 0.99 and absf(pb.y) > 0.99):
+								outer_perim_edges.append(eid)
+					var b_res_outer := PBMeshOps.bevel_edges(test_cube2, outer_perim_edges, 0.1, 3)
+					var counts_outer := PBMeshOps.edge_usage_counts(test_cube2)
+					var bad_outer := 0
+					for k in counts_outer:
+						if counts_outer[k] != 2:
+							bad_outer += 1
+					var lookup_outer := test_cube2.get_shared_vertex_lookup()
+					var miter_coincident_count := 0
+					for idx in range(test_cube2.positions.size()):
+						if test_cube2.positions[idx].distance_to(Vector3(0.981854, 0.981854, 0.96387)) < 0.001:
+							miter_coincident_count += 1
+					if b_res_outer.get("ok", false) and bad_outer == 0 and test_cube2.faces.size() == 26 and miter_coincident_count == 4:
+						_pass("BEVEL-OUTER-LOOP-SEG3: outer edge loop bevel (seg=3) cleanly miters with 4 welded vertices and 0 bad edges")
+					else:
+						_fail("BEVEL-OUTER-LOOP-SEG3: bevel failed, faces=%d (expected 26), bad_edges=%d, miter_welds=%d (expected 4)" % [test_cube2.faces.size(), bad_outer, miter_coincident_count])
 				else:
 					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
 		else:

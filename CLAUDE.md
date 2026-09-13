@@ -2810,7 +2810,17 @@ v0.9.90 round complete ✓ — Bevel fillet arc endpoint convergence & corner ca
   * Added `test_bevel_inset_inward_extrusion_outer_edges` and `test_bevel_inset_inward_extrusion_single_rim_edge` in `tests/test_pb_bevel.gd` covering 4-edge loop, single rim edge, and ring beveling across segments 1, 2, 3, 4, confirming 100% watertightness (0 bad edges) and valid compiled conventions.
   * Extended GUI test harness in `project/test_scenes/editor_gui_test.gd` asserting watertight beveling on extruded cavity rims in live editor under Xvfb.
   * 902/902 GUT unit tests passing, 54/54 GUI harness assertions passing with 0 failures.
-- Version bump 0.9.89 -> 0.9.90 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
+v0.9.91 round complete ✓ — Shared miter rails across meeting bevel bridges (corner fillet alignment & welding):
+- MITER CORNER RAIL SHARING ACROSS BEVEL BRIDGES:
+  * Root cause of disconnected and misaligned vertices when beveling edges meeting at a miter (e.g. outer edge loop of an inset face, or perimeter edge loops): when two beveled edges meet at a corner sharing a face, both edges' bridge end rails connect the exact same two 3D endpoints (`P_outer` along the un-beveled outer seam, and `P_inner` on the shared face). However, `bevel_edges` previously computed the intermediate rail fillet points independently for each bridge using that bridge's own incident face normals (e.g. `n_top` vs `n_right`). Because the normals differed, one bridge curved in Y-Z while the other curved in X-Z, producing differing intermediate 3D coordinates along the corner (e.g. `(0.959, 0.996, 0.941)` vs `(0.996, 0.959, 0.941)`).
+  * Consequently, `_cancel_opposite_segments` could not cancel the mismatched segments, and `_chain_segments_into_cycles` created degenerate 6-gon slit faces across the gaps. The vertices of the two meeting bevel bridges landed in separate weld groups, so moving a vertex tore the mesh open and revealed that the two bevel strips were not connected and not aligned.
+  * Solution: Precompute corner rails across all beveled edges meeting at a common vertex `c`. When two edges share a miter (matching endpoint pair `{r0, r1}` within tolerance), they share the exact same miter rail computed with the combined/averaged surface normals at `r0` and `r1`.
+  * Result: Both bridges generate identical intermediate coordinates along the miter, opposite segments cancel out cleanly to zero in `_cancel_opposite_segments`, no degenerate corner cap polygons are created (face count drops from 30 to 26), and coincident vertices weld into shared groups so moving a corner vertex moves all 4 coincident positions in lockstep with zero tearing.
+- TESTS & VERIFICATION:
+  * Added `test_reproduce_user_bevel_outer_edge_loop` in `tests/test_pb_bevel.gd`: insets and inward extrudes a cube face, bevels the outer perimeter edge loop with `segments = 3`, verifies 26 faces (0 degenerate caps), confirms miter vertices weld into 4-position groups, and moves the miter vertex with `CmdMoveElements` asserting 100% watertightness and lockstep motion.
+  * Extended GUI test harness in `project/test_scenes/editor_gui_test.gd` with `BEVEL-OUTER-LOOP-SEG3` test passing in live editor under Xvfb.
+  * 903/903 GUT tests passing (+1), 55/55 GUI harness assertions passing with 0 failures.
+- Version bump 0.9.90 -> 0.9.91 across `poibuilder_plugin.gd`, `pb_editor.gd`, and `plugin.cfg`.
 
 ## Key Conventions
 

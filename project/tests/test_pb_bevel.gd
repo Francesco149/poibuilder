@@ -354,3 +354,56 @@ func test_bevel_inset_inward_extrusion_single_rim_edge():
 	var b_res3 := PBMeshOps.bevel_edges(c_single3, PackedInt32Array([outer_edge_ids[0]]), 0.1, 3)
 	assert_true(b_res3.get("ok", false), "Beveling single rim edge with segs=3 should succeed")
 	_assert_watertight(c_single3, "Single rim edge bevel segs=3")
+
+func test_reproduce_user_bevel_outer_edge_loop():
+	var elem_editor := PBElementEditor.new()
+	var cube := PBMeshData.create_cube(2.0)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
+	assert_true(inset_res["ok"], "Inset succeeds")
+	var inner_face_id: int = inset_res["cap_face_ids"][0]
+
+	var extrude_res := PBMeshOps.extrude_faces(cube, PackedInt32Array([inner_face_id]), -0.5)
+	assert_true(extrude_res["ok"], "Inward extrude succeeds")
+
+	# Find the 4 OUTER edges of the front face (at Z ≈ 1.0, on perimeter: abs(x) > 0.99 or abs(y) > 0.99)
+	var common_edges := cube.get_common_edges()
+	var perimeter_4_edges := PackedInt32Array([9, 13, 14, 15])
+	var c_perim := PBCommand.copy_mesh_data(cube)
+	var b_perim := PBMeshOps.bevel_edges(c_perim, perimeter_4_edges, 0.1, 3)
+	assert_true(b_perim.get("ok", false), "Beveling outer perimeter edges with segs=3 should succeed")
+	assert_eq(c_perim.faces.size(), 26, "4 beveled edges with shared miters: 26 faces (no degenerate corner caps)")
+	_assert_watertight(c_perim, "Outer perimeter edges bevel segs=3")
+	_assert_compiled_convention(c_perim, false, "Outer perimeter edges bevel segs=3")
+
+	# Verify weld groups around corner (+1, +1, +1)
+	var lookup := c_perim.get_shared_vertex_lookup()
+	var groups := {}
+	for idx in range(c_perim.positions.size()):
+		var g: int = lookup.get(idx, idx)
+		if not groups.has(g):
+			groups[g] = []
+		groups[g].append(idx)
+
+	# Find group near (0.981854, 0.981854, 0.96387)
+	var miter_group := -1
+	for g in groups:
+		var pos: Vector3 = c_perim.positions[groups[g][0]]
+		if pos.distance_to(Vector3(0.981854, 0.981854, 0.96387)) < 0.001:
+			miter_group = g
+			break
+	assert_gt(miter_group, -1, "Must find miter rail vertex group")
+	assert_eq(groups[miter_group].size(), 4, "Miter rail vertex must weld across both meeting bevel bridges (4 coincident positions)")
+
+	# Test moving this vertex with CmdMoveElements — all 4 vertices must move in lockstep
+	var move_delta := Vector3(0.2, 0.3, 0.1)
+	var move_cmd := CmdMoveElements.new()
+	var indices_to_move := PackedInt32Array()
+	for idx in groups[miter_group]:
+		indices_to_move.append(idx)
+	move_cmd.setup(c_perim, indices_to_move, move_delta)
+	move_cmd.do_it()
+
+	var moved_pos: Vector3 = c_perim.positions[groups[miter_group][0]]
+	for idx in groups[miter_group]:
+		assert_eq(c_perim.positions[idx], moved_pos, "All 4 vertices in miter group must move in lockstep")
+	_assert_watertight(c_perim, "After moving miter vertex: mesh must remain 100% watertight (no tears or open edges)")
