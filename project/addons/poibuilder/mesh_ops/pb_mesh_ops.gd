@@ -1086,7 +1086,7 @@ static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, templat
 	var poly_2d := PackedVector2Array()
 	var basis_u: Vector3
 	var basis_v: Vector3
-	var normal: Vector3 = expected_normal
+	var normal: Vector3 = expected_normal.normalized() if expected_normal.length_squared() > 0.001 else Vector3.ZERO
 	if normal.length_squared() < 0.1:
 		for i in range(n):
 			var cur: Vector3 = pts[i]
