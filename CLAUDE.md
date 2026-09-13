@@ -2865,7 +2865,23 @@ across four previous rounds):
   than the face is not representable — it now shrinks instead of shipping
   non-manifold junk). Failure rolls the mesh back through a `PBCommand` snapshot,
   so a refused bevel leaves the mesh byte-identical.
-- ALSO: `bevel_faces` (FACE-mode) validated its faces only AFTER marking them
+- CORNER PATCHES ARE THE BANDS TURNING THE CORNER (the follow-up report: the
+  first rewrite closed the corners but did it with one many-sided fan face
+  stuck between the bands — "just makes ugly n-gons for the corners", next to
+  UniBuilder's strips). Where two beveled edges meet, the patch is now built
+  from the two rails the way the bands are built: rows of quads bridging them
+  (paired corner-relative — both rails start at the point they share, which is
+  the face the two bands have in common; pairing them by the ring's own walk
+  order twists the quads when the rails run head to tail), collapsing to a
+  triangle at a seam end, plus one leftover face closing the corner region
+  between the rails' far ends and the faces' own cut-back corner path. Rails
+  that are the same point set (the bands meeting in a ridge — a cube's
+  chamfered top rim) bound nothing and add no face at all. A 1-segment chamfer
+  therefore still has NO corner face (2 rails that are one segment), a 3-segment
+  fillet has 3 strip faces + 1 small corner face per corner, and no corner face
+  has more than four vertices — `test_bevel_corners_are_quads_not_fans` pins
+  that (several faces per corner, each a quad or triangle, for segments 2-4).
+- ALSO: `bevel_faces` (FACE mode) validated its faces only AFTER marking them
   removed — a hole face would have been dropped from the mesh; it now validates
   first and reports a collapsed inset instead of silently skipping a face.
 - VERIFIED: a 288-case sweep (cube sizes 1/2 m x inset 0.1-0.3 x extrude depth

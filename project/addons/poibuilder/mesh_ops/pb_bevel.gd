@@ -369,6 +369,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 			if cycle.is_empty():
 				continue
 			var ring: Array = []
+			var ring_segs: Array = []   # { kind, pts } in traversal order
+			var corner_rails: Array = []
 			var m := cycle.size()
 			for j in range(m):
 				var cur: Dictionary = cycle[j]
@@ -386,8 +388,12 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 							entry.append(chain[q])
 					elif is_same(chain[0], tail):
 						start = 1
+				var chain_pts: Array = []
 				for q in range(start, entry.size()):
-					_ring_push(ring, entry[q])
+					if _ring_push(ring, entry[q]):
+						chain_pts.append(entry[q])
+				if not chain_pts.is_empty():
+					ring_segs.append({"kind": "chain", "pts": chain_pts})
 				var k: Vector2i = cur["k_next"]
 				var rail_key := Vector3i(k.x, k.y, c)
 				if not rails.has(rail_key):
@@ -399,6 +405,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					ordered = []
 					for r in range(rail.size() - 1, -1, -1):
 						ordered.append(rail[r])
+				corner_rails.append(ordered)
+				ring_segs.append({"kind": "rail", "pts": ordered})
 				# The rail's first point is this chain's last one: append the rest.
 				for r in range(1, ordered.size()):
 					_ring_push(ring, ordered[r])
@@ -415,9 +423,19 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 			for j in range(m):
 				var cur_n: Vector3 = normals[cycle[j]["fi"]]
 				outward += cur_n
-			var cap := _fan_face(mesh_data, ring, outward.normalized(), mesh_data.faces[cycle[0]["fi"]])
+			var template: PBFace = mesh_data.faces[cycle[0]["fi"]]
+			# Two rails meeting at a corner (the usual case: two beveled edges and a
+			# face between them) are the two sides of one patch — bridge them as a
+			# strip of quads, exactly like the bands, so the corner reads as the
+			# bands turning rather than as a fan n-gon stuck in the middle.
+			if corner_rails.size() == 2:
+				var patch := _corner_patch(mesh_data, corner_rails[0], corner_rails[1], ring, ring_segs, outward.normalized(), template)
+				if not patch.is_empty():
+					secondary.append_array(patch)
+					continue
+			var cap := _fan_face(mesh_data, ring, outward.normalized(), template)
 			if cap == null:
-					return _fail("Bevel edges: the corner at %s collapsed" % str(mesh_data.positions[c]))
+				return _fail("Bevel edges: the corner at %s collapsed" % str(mesh_data.positions[c]))
 			secondary.append(cap)
 
 		# ---- 9. swap the faces in ----------------------------------------------
@@ -578,15 +596,16 @@ static func _dedupe(chain: Array) -> Array:
 		out.append(rec)
 	return out
 
-static func _ring_push(ring: Array, rec: Dictionary) -> void:
+static func _ring_push(ring: Array, rec: Dictionary) -> bool:
 	if not ring.is_empty():
 		var last: Dictionary = ring[ring.size() - 1]
 		# Two records can name the same place (a corner point and a neighbour's
 		# offset landing together): a ring must not visit it twice, or the fan
 		# emits a zero-length edge.
 		if is_same(last, rec) or last["pt"].distance_to(rec["pt"]) < 0.000001:
-			return
+			return false
 	ring.append(rec)
+	return true
 
 ## The chain endpoint of `entry`'s face corner that touches edge `k`.
 static func _corner_end(corners: Dictionary, entry: Dictionary, c: int, k: Vector2i) -> Dictionary:
@@ -652,6 +671,143 @@ static func _vertex_face_cycle(corners: Dictionary, loops: Dictionary, incidence
 			return cycle
 	return []
 
+
+## The corner patch where two beveled edges meet.
+##
+## The two rails of a corner are the end rings of the two bands. Their points
+## have to be paired corner-relative — both starting at the point the two rails
+## share, which is the face they have in common — or the rows pair a point near
+## one end of a band with a point near the other end and the quads twist. With
+## that pairing the patch is the bands turning the corner:
+##   - rows of quads bridging the rails (their segmentation follows the bands),
+##     collapsing to a triangle at a seam end where the rails meet, and
+##   - one leftover face closing the corner region between the rails' far ends
+##     and the chain path that runs between them (the faces' own cut-back
+##     corners), which is what keeps the corner's shape.
+## Rails that are the same point set — the bands meeting in a ridge, as on a
+## cube's chamfered top rim — bound no surface at all and are skipped.
+static func _corner_patch(mesh_data: PBMeshData, rail_a: Array, rail_b: Array,
+		ring: Array, ring_segs: Array, outward: Vector3, template: PBFace) -> Array[PBFace]:
+	var out: Array[PBFace] = []
+	var n := rail_a.size()
+	if n < 2 or rail_b.size() != n:
+		return out
+	var r1: Array = rail_a
+	var r2: Array = rail_b
+	# Find the corner point the two rails share (they meet head to tail when the
+	# ring walks one of them the other way round) and run both from it, so the
+	# rows pair corner-relative.
+	var head1 := 0
+	var head2 := 0
+	if _same_point(r1[0], r2[0]):
+		head1 = 0
+		head2 = 0
+	elif _same_point(r1[0], r2[n - 1]):
+		head1 = 0
+		head2 = n - 1
+	elif _same_point(r1[n - 1], r2[0]):
+		head1 = n - 1
+		head2 = 0
+	elif _same_point(r1[n - 1], r2[n - 1]):
+		head1 = n - 1
+		head2 = n - 1
+	else:
+		# No shared corner point: the rails are not comparable row by row.
+		return out
+	if head1 != 0:
+		r1 = _reversed_points(r1)
+	if head2 != 0:
+		r2 = _reversed_points(r2)
+	if _same_point(r1[n - 1], r2[n - 1]):
+		# Same points all the way: the bands meet in a ridge, nothing to fill.
+		return out
+	for s in range(n - 1):
+		var row := _corner_row(mesh_data, r1[s], r1[s + 1], r2[s + 1], r2[s], outward, template)
+		if row != null:
+			out.append(row)
+	var far1: Dictionary = r1[n - 1]
+	var far2: Dictionary = r2[n - 1]
+	var leftover := _corner_leftover(mesh_data, ring, ring_segs, far1, far2, outward, template)
+	if leftover != null:
+		out.append(leftover)
+	return out
+
+## The region between the rails' far ends, closed by the chain path that runs
+## between them (the faces' cut-back corner points).
+static func _corner_leftover(mesh_data: PBMeshData, ring: Array, ring_segs: Array,
+		far1: Dictionary, far2: Dictionary, outward: Vector3, template: PBFace) -> PBFace:
+	var chain_points := {}
+	for seg: Dictionary in ring_segs:
+		if seg["kind"] == "chain":
+			for rec: Dictionary in seg["pts"]:
+				chain_points[rec] = true
+	var idx1 := -1
+	var idx2 := -1
+	for i in range(ring.size()):
+		if _same_point(ring[i], far1):
+			idx1 = i
+		if _same_point(ring[i], far2):
+			idx2 = i
+	if idx1 < 0 or idx2 < 0:
+		return null
+	# The two ways round the ring: keep the one made of chain points (the other
+	# runs back through the rails, which the strip already covers).
+	var best: Array = []
+	for dir in [1, ring.size() - 1]:
+		var pts: Array = []
+		var i: int = (idx1 + int(dir) + ring.size()) % ring.size()
+		var ok := true
+		for _guard in range(ring.size()):
+			if i == idx2:
+				break
+			if not chain_points.has(ring[i]):
+				ok = false
+				break
+			pts.append(ring[i])
+			i = (i + dir + ring.size()) % ring.size()
+		if ok and (best.is_empty() or pts.size() < best.size()):
+			best = pts
+	var poly: Array = [far1]
+	poly.append_array(best)
+	poly.append(far2)
+	var loop := PackedInt32Array()
+	for rec: Dictionary in poly:
+		loop.append(_record_position(mesh_data, rec))
+	return _face_from_indices(mesh_data, loop, template, outward)
+
+## One row of the corner strip: a quad, or a triangle where the rails share
+## that row's point (a seam end), or nothing when the row is a retrace.
+static func _corner_row(mesh_data: PBMeshData, p0: Dictionary, p1: Dictionary,
+		q1: Dictionary, q0: Dictionary, outward: Vector3, template: PBFace) -> PBFace:
+	var quad: Array = []
+	for rec: Dictionary in [p0, p1, q1, q0]:
+		if quad.is_empty() or not _same_point(quad[quad.size() - 1], rec):
+			quad.append(rec)
+	if quad.size() == 4 and _same_point(quad[0], quad[3]):
+		quad.remove_at(3)
+	if quad.size() < 3:
+		return null
+	var all_same := true
+	for rec: Dictionary in quad:
+		if not _same_point(rec, quad[0]):
+			all_same = false
+			break
+	if all_same:
+		return null
+	var loop := PackedInt32Array()
+	for rec: Dictionary in quad:
+		loop.append(_record_position(mesh_data, rec))
+	return _face_from_indices(mesh_data, loop, template, outward)
+
+static func _reversed_points(pts: Array) -> Array:
+	var out: Array = []
+	for i in range(pts.size() - 1, -1, -1):
+		out.append(pts[i])
+	return out
+
+## Two point records name the same place.
+static func _same_point(a: Dictionary, b: Dictionary) -> bool:
+	return is_same(a, b) or a["pt"].distance_to(b["pt"]) < 0.000001
 
 ## Corner cap: a fan from the ring's centroid. A cap is a small, near-convex
 ## piece of the fillet surface; a fan keeps neighbouring triangles' normals

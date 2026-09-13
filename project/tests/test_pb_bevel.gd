@@ -445,6 +445,44 @@ func test_bevel_clamps_amount_to_what_the_geometry_allows():
 	_assert_watertight(cube, "Over-wide bevel")
 	assert_eq(_surface_defects(cube), 0, "Over-wide bevel has no inverted or degenerate faces")
 
+func test_bevel_corners_are_quads_not_fans():
+	# The reported shape problem: the corner where two beveled edges meet came out
+	# as one many-sided fan face stuck between the bands ("ugly n-gons"). It must
+	# be the bands TURNING the corner: a row per segment plus the corner's own
+	# cut-back face, all quads or triangles, sharing the bands' points.
+	var cube := PBMeshData.create_cube(2.0)
+	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
+	PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -0.5)
+	var outer := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa := cube.positions[e.a]
+		var pb := cube.positions[e.b]
+		if absf(pa.z - 1.0) > 0.001 or absf(pb.z - 1.0) > 0.001:
+			continue
+		if (absf(pa.x) > 0.99 or absf(pa.y) > 0.99) and (absf(pb.x) > 0.99 or absf(pb.y) > 0.99):
+			outer.append(eid)
+
+	for segs in [2, 3, 4]:
+		var c := PBCommand.copy_mesh_data(cube)
+		assert_true(PBMeshOps.bevel_edges(c, outer, 0.1, segs).get("ok", false), "bevel segs=%d" % segs)
+		for corner: Vector3 in [Vector3(1, 1, 1), Vector3(-1, 1, 1), Vector3(1, -1, 1), Vector3(-1, -1, 1)]:
+			var nearby: Array = []
+			for fi in range(c.faces.size()):
+				var loop := PBMeshOps._ordered_loop(c.faces[fi])
+				if loop.size() < 3:
+					continue
+				var inside := true
+				for v in loop:
+					if c.positions[v].distance_to(corner) > 0.45:
+						inside = false
+						break
+				if inside:
+					nearby.append(loop.size())
+			assert_gt(nearby.size(), 2, "corner %s segs=%d is built from several faces, not one cap" % [str(corner), segs])
+			for size in nearby:
+				assert_true(int(size) <= 4, "corner %s segs=%d: face with %d vertices (quads and triangles only)" % [str(corner), segs, size])
+
 func test_bevel_sweep_all_shapes_stay_closed():
 	# The sweep that found the reported corner: cube sizes, inset widths, inward
 	# extrude depths, bevel distances, segment counts and both rim loops of the
