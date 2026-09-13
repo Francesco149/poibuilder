@@ -840,7 +840,7 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 					var l := mesh_data.positions[va].distance_to(mesh_data.positions[vb])
 					if l > 0.0001 and l < min_edge_len:
 						min_edge_len = l
-	var max_allowed: float = min_edge_len * 0.49
+	var max_allowed: float = min_edge_len * 0.38
 	if amount > max_allowed:
 		amount = maxf(0.001, max_allowed)
 	if amount < 0.0005:
@@ -901,18 +901,30 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 			elif prev_beveled and not next_beveled:
 				var sin_a: float = absf(d_next.dot(u_prev))
 				var step: float = amount / maxf(0.1, sin_a)
+				var max_step: float = pos_i.distance_to(mesh_data.positions[v_next]) * 0.38
+				step = minf(step, max_step)
 				var pt: Vector3 = pos_i + d_next * step
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
 			elif not prev_beveled and next_beveled:
 				var sin_a: float = absf(d_prev.dot(u_next))
 				var step: float = amount / maxf(0.1, sin_a)
+				var max_step: float = pos_i.distance_to(mesh_data.positions[v_prev]) * 0.38
+				step = minf(step, max_step)
 				var pt: Vector3 = pos_i + d_prev * step
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
 			elif prev_beveled and next_beveled:
 				var denom: float = 1.0 + u_prev.dot(u_next)
-				var pt: Vector3 = pos_i + (u_prev + u_next) * (amount / maxf(0.1, denom))
+				var shift_len: float = amount / maxf(0.2, denom)
+				var max_shift: float = minf(pos_i.distance_to(mesh_data.positions[v_prev]), pos_i.distance_to(mesh_data.positions[v_next])) * 0.38
+				shift_len = minf(shift_len, max_shift)
+				var dir: Vector3 = (u_prev + u_next)
+				if dir.length_squared() > 0.001:
+					dir = dir.normalized()
+				else:
+					dir = u_prev
+				var pt: Vector3 = pos_i + dir * shift_len
 				new_loop_positions.append(pt)
 				_record_rail_endpoint(rail_endpoints, key_prev, fi, ci, pt)
 				_record_rail_endpoint(rail_endpoints, key_next, fi, ci, pt)
@@ -1173,6 +1185,30 @@ static func face_perimeter_common_edge_ids(mesh_data: PBMeshData, face_ids: Pack
 	var wanted := {}
 	for be in boundary_edges:
 		wanted[_common_key(lookup, be.a, be.b)] = true
+	var common := mesh_data.get_common_edges()
+	for i in range(common.size()):
+		if wanted.has(_common_key(lookup, common[i].a, common[i].b)):
+			result.append(i)
+	return result
+
+## Returns the common edge ids for all edges belonging to the given faces.
+## Unlike face_perimeter_common_edge_ids (which only returns the region boundary edges),
+## this returns every edge of every selected face, so selecting all faces of a closed
+## mesh selects all of its edges for beveling.
+static func face_edges_common_ids(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> PackedInt32Array:
+	var result := PackedInt32Array()
+	if mesh_data == null or face_ids.is_empty():
+		return result
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var wanted := {}
+	for fi in face_ids:
+		if fi < 0 or fi >= mesh_data.faces.size():
+			continue
+		var f := mesh_data.faces[fi]
+		if f == null:
+			continue
+		for edge in f.get_edges():
+			wanted[_common_key(lookup, edge.a, edge.b)] = true
 	var common := mesh_data.get_common_edges()
 	for i in range(common.size()):
 		if wanted.has(_common_key(lookup, common[i].a, common[i].b)):

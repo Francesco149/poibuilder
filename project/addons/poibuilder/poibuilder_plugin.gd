@@ -1436,10 +1436,23 @@ func _on_operation_requested(op_name: String) -> void:
 		"bevel_edges":
 			var edge_ids: PackedInt32Array
 			if editor.select_mode == PBEditor.SelectMode.FACE:
-				edge_ids = PBMeshOps.face_perimeter_common_edge_ids(mesh_data, selection.selected_faces)
+				edge_ids = PBMeshOps.face_edges_common_ids(mesh_data, selection.selected_faces)
 			else:
 				edge_ids = PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
-			result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
+			if edge_ids.is_empty():
+				return
+			var shortest_l := INF
+			var common := mesh_data.get_common_edges()
+			for eid in edge_ids:
+				if eid >= 0 and eid < common.size():
+					var ce := common[eid]
+					var l := mesh_data.positions[ce.a].distance_to(mesh_data.positions[ce.b])
+					if l > 0.0001 and l < shortest_l:
+						shortest_l = l
+			var eff_amount := op_bevel_amount
+			if shortest_l < INF and eff_amount > shortest_l * 0.35:
+				eff_amount = maxf(0.01, snappedf(shortest_l * 0.25, 0.01))
+			result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)

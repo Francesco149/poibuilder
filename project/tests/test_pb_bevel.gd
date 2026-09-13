@@ -223,3 +223,46 @@ func test_bevel_twice_all_edges_watertight():
 	assert_true(res2.get("ok", false), "Second bevel all edges should succeed")
 	_assert_watertight(cube, "Second full bevel")
 
+func test_bevel_all_faces_matches_all_edges():
+	# Regression test: selecting all faces of a cube must bevel all 12 edges and produce 26 faces
+	var cube := _cube()
+	var all_faces := PackedInt32Array([0, 1, 2, 3, 4, 5])
+	var edge_ids := PBMeshOps.face_edges_common_ids(cube, all_faces)
+	assert_eq(edge_ids.size(), 12, "face_edges_common_ids on all 6 cube faces must return all 12 common edges")
+
+	var res := PBMeshOps.bevel_edges(cube, edge_ids, 0.2, 1)
+	assert_true(res.get("ok", false), "Beveling all faces should succeed")
+	assert_eq(cube.faces.size(), 26, "Beveling all faces produces 26 faces (identical to all edges)")
+	_assert_watertight(cube, "All faces bevel")
+
+func test_rebevel_quad_edges_without_overlap():
+	# Re-beveling the 2 long edges of an already beveled edge quad must not overlap
+	var cube := _cube()
+	var res1 := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
+	assert_true(res1.get("ok", false), "First bevel succeeds")
+	assert_eq(cube.faces.size(), 7)
+
+	var common := cube.get_common_edges()
+	var lookup := cube.get_shared_vertex_lookup()
+	var bevel_quad := cube.faces[cube.faces.size() - 1]
+	var b_edges := bevel_quad.get_edges()
+	var rebevel_ids := PackedInt32Array()
+	for eid in range(common.size()):
+		var e := common[eid]
+		var ca: int = lookup.get(e.a, e.a)
+		var cb: int = lookup.get(e.b, e.b)
+		var k := Vector2i(mini(ca, cb), maxi(ca, cb))
+		for be in b_edges:
+			var b_ca: int = lookup.get(be.a, be.a)
+			var b_cb: int = lookup.get(be.b, be.b)
+			if k == Vector2i(mini(b_ca, b_cb), maxi(b_ca, b_cb)):
+				var l := cube.positions[e.a].distance_to(cube.positions[e.b])
+				if l > 0.8:
+					rebevel_ids.append(eid)
+	assert_eq(rebevel_ids.size(), 2, "Found 2 long edges of the bevel quad")
+
+	var res2 := PBMeshOps.bevel_edges(cube, rebevel_ids, 0.2, 1) # amount 0.2 will be clamped safely
+	assert_true(res2.get("ok", false), "Re-beveling bevel quad edges should succeed")
+	assert_eq(cube.faces.size(), 9, "Re-beveling 2 edges adds 2 bridge faces (7 -> 9 faces)")
+	_assert_watertight(cube, "Re-beveled quad edges")
+
