@@ -2895,7 +2895,7 @@ across four previous rounds):
   906/906 GUT tests passing (16.5k asserts), GUI harness green including the
   live editor bevel checks; `test_pb_bevel_sweep_all_shapes_stay_closed` keeps
   the 288-case sweep in the suite (~9 s).
-- Version bump 0.9.91 -> 0.9.92 across `poibuilder_plugin.gd`, `pb_editor.gd`,
+- Version bump 0.9.91 -> 0.9.93 across `poibuilder_plugin.gd`, `pb_editor.gd`,
   and `plugin.cfg`.
 
 ## Key Conventions
