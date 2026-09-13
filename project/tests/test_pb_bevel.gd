@@ -266,3 +266,35 @@ func test_rebevel_quad_edges_without_overlap():
 	assert_eq(cube.faces.size(), 9, "Re-beveling 2 edges adds 2 bridge faces (7 -> 9 faces)")
 	_assert_watertight(cube, "Re-beveled quad edges")
 
+func test_bevel_faces_single_face_on_beveled_cube_watertight():
+	# Regression test: beveling a single face on an already beveled cube must not tear adjacent unselected quads or corner triangles
+	var cube := _cube()
+	var all_edges := PackedInt32Array()
+	for i in range(cube.get_common_edges().size()):
+		all_edges.append(i)
+	PBMeshOps.bevel_edges(cube, all_edges, 0.15, 1)
+	assert_eq(cube.faces.size(), 26)
+
+	# Find top face (normal +Y)
+	var top_fi := -1
+	for fi in range(cube.faces.size()):
+		var f := cube.faces[fi]
+		var n := PBMeshOps._face_area_normal(cube, f)
+		if n.dot(Vector3.UP) > 0.8:
+			top_fi = fi
+			break
+	assert_gt(top_fi, -1)
+
+	var res := PBMeshOps.bevel_faces(cube, PackedInt32Array([top_fi]), 0.05, 1)
+	assert_true(res.get("ok", false), "bevel_faces on single face should succeed")
+	assert_eq(cube.faces.size(), 30, "Replaced 1 face with 1 inner face + 4 bridge quads (26 - 1 + 5 = 30)")
+	_assert_watertight(cube, "Single face bevel on beveled cube")
+
+func test_bevel_faces_multi_segment():
+	var cube := _cube()
+	var res := PBMeshOps.bevel_faces(cube, PackedInt32Array([4]), 0.15, 3) # Top face with 3 segments
+	assert_true(res.get("ok", false), "bevel_faces with segments=3 should succeed")
+	# 6 - 1 + 1 inner face + 4 * 3 bridge quads = 18 faces
+	assert_eq(cube.faces.size(), 18, "Cube with 1 face beveled (seg=3) produces 18 faces")
+	_assert_watertight(cube, "Face bevel 3 segments")
+

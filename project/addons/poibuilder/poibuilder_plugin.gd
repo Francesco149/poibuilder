@@ -1434,25 +1434,52 @@ func _on_operation_requested(op_name: String) -> void:
 			var loop_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
 			result = PBMeshOps.insert_edge_loop(mesh_data, loop_ids)
 		"bevel_edges":
+			var is_face_bevel := false
 			var edge_ids: PackedInt32Array
 			if editor.select_mode == PBEditor.SelectMode.FACE:
-				edge_ids = PBMeshOps.face_edges_common_ids(mesh_data, selection.selected_faces)
+				if selection.selected_faces.size() == mesh_data.faces.size():
+					edge_ids = PBMeshOps.face_edges_common_ids(mesh_data, selection.selected_faces)
+				else:
+					is_face_bevel = true
 			else:
 				edge_ids = PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
-			if edge_ids.is_empty():
+
+			if not is_face_bevel and edge_ids.is_empty():
 				return
+			if is_face_bevel and selection.selected_faces.is_empty():
+				return
+
 			var shortest_l := INF
-			var common := mesh_data.get_common_edges()
-			for eid in edge_ids:
-				if eid >= 0 and eid < common.size():
-					var ce := common[eid]
-					var l := mesh_data.positions[ce.a].distance_to(mesh_data.positions[ce.b])
-					if l > 0.0001 and l < shortest_l:
-						shortest_l = l
+			if is_face_bevel:
+				for fi in selection.selected_faces:
+					if fi >= 0 and fi < mesh_data.faces.size():
+						var f := mesh_data.faces[fi]
+						if f != null:
+							for e in f.get_edges():
+								var l := mesh_data.positions[e.a].distance_to(mesh_data.positions[e.b])
+								if l > 0.0001 and l < shortest_l:
+									shortest_l = l
+			else:
+				var common := mesh_data.get_common_edges()
+				for eid in edge_ids:
+					if eid >= 0 and eid < common.size():
+						var ce := common[eid]
+						var l := mesh_data.positions[ce.a].distance_to(mesh_data.positions[ce.b])
+						if l > 0.0001 and l < shortest_l:
+							shortest_l = l
+
 			var eff_amount := op_bevel_amount
 			if shortest_l < INF and eff_amount > shortest_l * 0.35:
 				eff_amount = maxf(0.01, snappedf(shortest_l * 0.25, 0.01))
-			result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
+				op_bevel_amount = eff_amount
+
+			if is_face_bevel:
+				result = PBMeshOps.bevel_faces(mesh_data, selection.selected_faces.duplicate(), eff_amount, op_bevel_segments)
+			else:
+				result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
+
+			if result.get("ok", false) and tool_overlay != null:
+				_start_bevel_modal(mesh, is_face_bevel, selection.selected_faces.duplicate(), selection.selected_edges.duplicate(), shortest_l, eff_amount, result.get("new_face_ids", PackedInt32Array()))
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
@@ -1466,9 +1493,7 @@ func _on_operation_requested(op_name: String) -> void:
 	cmd.capture_after()
 	if not cmd.is_noop():
 		cmd.add_to_undo_manager(get_undo_redo())
-	_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()))
-
-## Detach is special: besides mutating the source mesh it spawns a new PBMesh
+	_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
 ## sibling holding the extracted faces. One undo action covers both (the new
 ## node is registered as a do-reference so undo keeps it alive for redo).
 func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
@@ -1504,10 +1529,14 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 
 ## Shared tail of every op: element ids changed, so the engine's subgizmo
 ## selection and our mirror are both stale — clear them and re-render.
-func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int) -> void:
+func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int, created_faces: PackedInt32Array = PackedInt32Array()) -> void:
 	editor.hover_id = -1
 	_hover_drawn_last = -1
-	editor.selection.clear_all()
+	if op_name == "bevel_edges" and not created_faces.is_empty():
+		editor.select_mode = PBEditor.SelectMode.FACE
+		editor.selection.set_faces(created_faces)
+	else:
+		editor.selection.clear_all()
 	gizmo_plugin.element_editor.reset_side_faces()
 	mesh.clear_subgizmo_selection()
 	mesh.rebuild()
@@ -1516,7 +1545,6 @@ func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int) -> void
 		mesh.pb_mesh_data.shape_edited = true
 	if logger:
 		logger.info("mesh_ops", "%s: %d new face(s)" % [op_name, new_face_count])
-
 ## Undo-history display names per overlay op.
 const OP_ACTION_NAMES := {
 	"extrude_faces": "Extrude Faces",
@@ -1543,6 +1571,13 @@ var _params_session_kind: String = ""
 var _params_edit_node: PBMesh = null
 var _params_edit_snapshot: PBMeshData = null
 var _params_edit_snapshot_cast_shadow: int = 0
+var _bevel_session_node: PBMesh = null
+var _bevel_session_snapshot: PBMeshData = null
+var _bevel_session_mode: PBEditor.SelectMode = PBEditor.SelectMode.OBJECT
+var _bevel_session_is_face_bevel: bool = false
+var _bevel_session_faces: PackedInt32Array = PackedInt32Array()
+var _bevel_session_edges: Array[PBEdge] = []
+var _bevel_session_last_new_faces: PackedInt32Array = PackedInt32Array()
 var _params_edit_values: Dictionary = {}
 
 ## A New Shape menu pick ARMS creation: nothing exists yet — the next LMB
@@ -2599,6 +2634,12 @@ func _on_param_changed(param_name: String, value: float) -> void:
 	if _params_session_kind == "create":
 		shape_creator.set_param(param_name, value)
 		_refresh_preview()
+	elif _params_session_kind == "bevel":
+		if param_name == "distance":
+			op_bevel_amount = value
+		elif param_name == "segments":
+			op_bevel_segments = clampi(int(round(value)), 1, 8)
+		_update_bevel_preview()
 	elif _params_session_kind == "edit" and _params_edit_node != null \
 			and is_instance_valid(_params_edit_node):
 		_params_edit_values[param_name] = value
@@ -2638,6 +2679,8 @@ func _on_params_applied() -> void:
 			logger.info("plugin", "Shape parameters applied")
 	elif _params_session_kind == "edit":
 		_commit_edit_params()
+	elif _params_session_kind == "bevel":
+		_commit_bevel_session()
 
 func _on_params_canceled() -> void:
 	if _params_session_kind == "create":
@@ -2666,6 +2709,8 @@ func _on_params_canceled() -> void:
 		_params_edit_values = {}
 		if logger:
 			logger.info("plugin", "Shape parameters edit cancelled")
+	elif _params_session_kind == "bevel":
+		_cancel_bevel_session()
 	else:
 		_params_session_kind = ""
 		_params_edit_node = null
@@ -2674,6 +2719,97 @@ func _on_params_canceled() -> void:
 
 	if tool_overlay != null:
 		tool_overlay.close_params()
+func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], shortest_l: float, eff_amount: float, new_face_ids: PackedInt32Array) -> void:
+	_params_session_kind = "bevel"
+	_bevel_session_node = mesh
+	_bevel_session_snapshot = PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	_bevel_session_is_face_bevel = is_face_bevel
+	_bevel_session_faces = faces
+	_bevel_session_edges = edges
+	_bevel_session_mode = editor.select_mode
+	_bevel_session_last_new_faces = new_face_ids
+	var max_d := maxf(1.0, shortest_l * 0.5) if shortest_l < INF else 1.0
+	var defs := [
+		{"name": "distance", "label": "Distance", "min": 0.005, "max": max_d, "step": 0.01, "suffix": "m"},
+		{"name": "segments", "label": "Segments", "min": 1, "max": 8, "step": 1, "kind": "int"}
+	]
+	var values := {
+		"distance": eff_amount,
+		"segments": op_bevel_segments
+	}
+	tool_overlay.open_params("Bevel Settings", defs, values)
+
+func _update_bevel_preview() -> void:
+	if _bevel_session_node == null or _bevel_session_snapshot == null:
+		return
+	var mesh_data := _bevel_session_node.pb_mesh_data
+	PBCommand.restore_mesh_data(mesh_data, _bevel_session_snapshot)
+	var result: Dictionary
+	if _bevel_session_is_face_bevel:
+		result = PBMeshOps.bevel_faces(mesh_data, _bevel_session_faces, op_bevel_amount, op_bevel_segments)
+	else:
+		var edge_ids := PBMeshOps.common_edge_ids(mesh_data, _bevel_session_edges)
+		if _bevel_session_mode == PBEditor.SelectMode.FACE and _bevel_session_faces.size() == _bevel_session_snapshot.faces.size():
+			edge_ids = PBMeshOps.face_edges_common_ids(mesh_data, _bevel_session_faces)
+		result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
+
+	if result.get("ok", false):
+		_bevel_session_last_new_faces = result.get("new_face_ids", PackedInt32Array())
+		if not _bevel_session_last_new_faces.is_empty():
+			editor.select_mode = PBEditor.SelectMode.FACE
+			editor.selection.set_faces(_bevel_session_last_new_faces)
+	_bevel_session_node.rebuild()
+	_bevel_session_node.update_gizmos()
+
+func _commit_bevel_session() -> void:
+	if _bevel_session_node == null or _bevel_session_snapshot == null:
+		return
+	var node := _bevel_session_node
+	var data := node.pb_mesh_data
+	var before := _bevel_session_snapshot
+	var after := PBCommand.copy_mesh_data(data)
+	var cmd := CmdMeshOp.new(data, "Bevel", node)
+	cmd.before = before
+	cmd.after = after
+	if logger:
+		cmd.logger = logger
+	cmd.add_to_undo_manager(get_undo_redo())
+
+	if not _bevel_session_last_new_faces.is_empty():
+		editor.select_mode = PBEditor.SelectMode.FACE
+		editor.selection.set_faces(_bevel_session_last_new_faces)
+
+	_params_session_kind = ""
+	_bevel_session_node = null
+	_bevel_session_snapshot = null
+	_bevel_session_faces = PackedInt32Array()
+	_bevel_session_edges = []
+	_bevel_session_last_new_faces = PackedInt32Array()
+	if tool_overlay != null:
+		tool_overlay.close_params()
+	if logger:
+		logger.info("plugin", "Bevel operation committed")
+
+func _cancel_bevel_session() -> void:
+	if _bevel_session_node != null and is_instance_valid(_bevel_session_node) and _bevel_session_snapshot != null:
+		PBCommand.restore_mesh_data(_bevel_session_node.pb_mesh_data, _bevel_session_snapshot)
+		_bevel_session_node.rebuild()
+		_bevel_session_node.update_gizmos()
+		editor.select_mode = _bevel_session_mode
+		if _bevel_session_mode == PBEditor.SelectMode.FACE:
+			editor.selection.set_faces(_bevel_session_faces)
+		elif _bevel_session_mode == PBEditor.SelectMode.EDGE:
+			editor.selection.set_edges(_bevel_session_edges)
+	_params_session_kind = ""
+	_bevel_session_node = null
+	_bevel_session_snapshot = null
+	_bevel_session_faces = PackedInt32Array()
+	_bevel_session_edges = []
+	_bevel_session_last_new_faces = PackedInt32Array()
+	if tool_overlay != null:
+		tool_overlay.close_params()
+	if logger:
+		logger.info("plugin", "Bevel cancelled and reverted")
 ## Edit Params on a pristine factory shape: live param rebuilds; Apply
 ## commits a snapshot undo, Cancel restores the pre-session data. Ignored
 ## while another params session is running.

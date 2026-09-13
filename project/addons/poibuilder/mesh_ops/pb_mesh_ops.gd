@@ -1151,6 +1151,110 @@ static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, templat
 		f.uv_swap_uv = template_face.uv_swap_uv
 	return f
 
+## Bevels selected faces by retracting their boundaries inward by `amount` and inserting
+## bridge quads (or multi-segment fillets) between the original boundary and the retracted face.
+## Unselected neighbor faces remain completely untouched at their original coordinates,
+## guaranteeing zero tears or holes when beveling individual faces on complex or already-beveled meshes.
+static func bevel_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
+		amount: float, segments: int = 1) -> Dictionary:
+	if mesh_data == null or face_ids.is_empty():
+		return _fail("Bevel faces: no faces selected")
+
+	segments = clampi(segments, 1, 8)
+	amount = maxf(amount, 0.0001)
+
+	var new_faces: Array[PBFace] = []
+	var removed := {}
+
+	for fi in face_ids:
+		if fi < 0 or fi >= mesh_data.faces.size():
+			continue
+		var face := mesh_data.faces[fi]
+		if face == null:
+			continue
+		removed[fi] = true
+
+		var loop := _ordered_loop(face)
+		var N: int = loop.size()
+		if N < 3:
+			continue
+		var fn := _face_area_normal(mesh_data, face)
+
+		# Compute safe distance clamp for this face
+		var min_edge_len := INF
+		for i in range(N):
+			var l: float = mesh_data.positions[loop[i]].distance_to(mesh_data.positions[loop[(i + 1) % N]])
+			if l > 0.0001 and l < min_edge_len:
+				min_edge_len = l
+		var max_allowed: float = min_edge_len * 0.38
+		var eff_amount := minf(amount, max_allowed)
+
+		# 1. Compute outer and inner points
+		var outer_pts: Array[Vector3] = []
+		var inner_pts: Array[Vector3] = []
+
+		for i in range(N):
+			var vi: int = loop[i]
+			var v_prev: int = loop[(i - 1 + N) % N]
+			var v_next: int = loop[(i + 1) % N]
+
+			var pos_i: Vector3 = mesh_data.positions[vi]
+			var d_prev: Vector3 = (mesh_data.positions[v_prev] - pos_i).normalized()
+			var d_next: Vector3 = (mesh_data.positions[v_next] - pos_i).normalized()
+
+			var u_prev: Vector3 = fn.cross(-d_prev).normalized()
+			var u_next: Vector3 = fn.cross(d_next).normalized()
+
+			var denom: float = 1.0 + u_prev.dot(u_next)
+			var shift_len: float = eff_amount / maxf(0.2, denom)
+			var max_shift: float = minf(pos_i.distance_to(mesh_data.positions[v_prev]), pos_i.distance_to(mesh_data.positions[v_next])) * 0.38
+			shift_len = minf(shift_len, max_shift)
+			var dir: Vector3 = (u_prev + u_next)
+			if dir.length_squared() > 0.001:
+				dir = dir.normalized()
+			else:
+				dir = u_prev
+			var pt: Vector3 = pos_i + dir * shift_len
+
+			outer_pts.append(pos_i)
+			inner_pts.append(pt)
+
+		# 2. Build the inner retracted face
+		var inner_face := _build_bevel_polygon_face(mesh_data, inner_pts, face, fn)
+		if inner_face != null:
+			new_faces.append(inner_face)
+
+		# 3. Compute shared rails per corner to guarantee seamless quad matching
+		var corner_rails: Array[Array] = []
+		for i in range(N):
+			var o_pt := outer_pts[i]
+			var i_pt := inner_pts[i]
+			var rail: Array[Vector3] = []
+			for s in range(segments + 1):
+				var t: float = float(s) / float(segments)
+				rail.append(o_pt.lerp(i_pt, t))
+			corner_rails.append(rail)
+
+		# 4. Build bridge quads between corner i and corner j
+		for i in range(N):
+			var j: int = (i + 1) % N
+			var rail_i: Array = corner_rails[i]
+			var rail_j: Array = corner_rails[j]
+			var edge_dir := (outer_pts[j] - outer_pts[i]).normalized()
+			var outward_edge := fn.cross(edge_dir).normalized()
+
+			for s in range(segments):
+				var qs_start: Vector3 = rail_i[s]
+				var qs_end: Vector3 = rail_j[s]
+				var qnext_end: Vector3 = rail_j[s + 1]
+				var qnext_start: Vector3 = rail_i[s + 1]
+				var seg_normal := outward_edge.lerp(fn, (float(s) + 0.5) / float(segments)).normalized()
+				var quad_pts := [qs_start, qs_end, qnext_end, qnext_start]
+				var bridge_face := _build_bevel_polygon_face(mesh_data, quad_pts, face, seg_normal)
+				if bridge_face != null:
+					new_faces.append(bridge_face)
+	return _replace_faces(mesh_data, removed, new_faces, [])
+
 # ==============================================================================
 # Selection helpers
 # ==============================================================================
