@@ -768,4 +768,22 @@ func test_texture_mode_in_scene_gizmo_transforms():
 	ur.redo()
 	assert_almost_eq(cube_data.textures0[f0_indices[0]].x, uvs_pre_rot[f0_indices[0]].x + uv_rot_diff.x, 0.001, "Redo must restore rotated U")
 
+	# 5. Rotate via off-axis ring (e.g. Red ring along face X)
+	element_editor.commit_subgizmos(node, PackedInt32Array([0]), false)
+	var uvs_pre_offaxis := cube_data.textures0.duplicate()
+	var offaxis_rot_xf := Transform3D(rot_start_xf.basis.rotated(f0_basis.x, deg_to_rad(30)), rot_start_xf.origin)
+	element_editor.set_subgizmo_transform(node, PackedInt32Array([0]), 0, offaxis_rot_xf)
+	var offaxis_diff := cube_data.textures0[f0_indices[0]] - uvs_pre_offaxis[f0_indices[0]]
+	assert_gt(offaxis_diff.length(), 0.05, "Off-axis ring rotation must rotate texture UVs")
+
+	# 6. Scale via Z handle (normal axis) maps to uniform scale
+	element_editor.commit_subgizmos(node, PackedInt32Array([0]), false)
+	editor.tool_mode = PBEditor.ToolMode.SCALE
+	var scale_start_xf := element_editor.get_subgizmo_transform(cube_data, node, 0)
+	var uvs_pre_scale := cube_data.textures0.duplicate()
+	var z_scaled_xf := Transform3D(scale_start_xf.basis.scaled_local(Vector3(1.0, 1.0, 2.0)), scale_start_xf.origin)
+	element_editor.set_subgizmo_transform(node, PackedInt32Array([0]), 0, z_scaled_xf)
+	var scale_diff := cube_data.textures0[f0_indices[0]] - uvs_pre_scale[f0_indices[0]]
+	assert_gt(scale_diff.length(), 0.1, "Z-handle scaling must uniformly scale texture UVs instead of locking")
+
 	node.free()

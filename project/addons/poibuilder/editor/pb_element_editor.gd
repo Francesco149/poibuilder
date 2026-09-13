@@ -1146,9 +1146,24 @@ func _apply_texture_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Ar
 			return true
 
 		PBEditor.ToolMode.ROTATE:
-			var angle: float = local_rel_basis.get_euler().z
-			if grid != null and grid.enabled:
-				angle = deg_to_rad(roundf(rad_to_deg(angle) / grid.rotate_step) * grid.rotate_step)
+			var q := rel.basis.get_rotation_quaternion()
+			var total_angle := q.get_angle()
+			var angle := 0.0
+			if total_angle > 0.0001:
+				var q_vec := Vector3(q.x, q.y, q.z)
+				var normal_comp := q_vec.dot(face_basis.z)
+				if absf(normal_comp) > 0.01:
+					angle = 2.0 * atan2(normal_comp, q.w)
+				else:
+					var u_comp := q_vec.dot(face_basis.x)
+					var v_comp := q_vec.dot(face_basis.y)
+					var sign_dir := 1.0 if (u_comp + v_comp >= 0.0) else -1.0
+					angle = total_angle * sign_dir
+
+			if grid != null and grid.enabled and not Input.is_key_pressed(KEY_SHIFT):
+				var r_step := deg_to_rad(grid.rotate_step)
+				if r_step > 0.001:
+					angle = roundf(angle / r_step) * r_step
 
 			for fid in target_faces:
 				if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
@@ -1166,6 +1181,21 @@ func _apply_texture_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Ar
 		PBEditor.ToolMode.SCALE:
 			var sx: float = local_rel_basis.x.length()
 			var sy: float = local_rel_basis.y.length()
+			var sz: float = local_rel_basis.z.length()
+
+			# If user dragged the Z handle (normal axis) or a plane/center handle involving Z,
+			# map Z scale onto uniform scale so Z never locks or freezes the scale:
+			if absf(sz - 1.0) > 0.001:
+				if absf(sx - 1.0) < 0.001 and absf(sy - 1.0) < 0.001:
+					sx = sz
+					sy = sz
+				elif absf(sx - 1.0) > 0.001 and absf(sy - 1.0) < 0.001:
+					sy = sz
+				elif absf(sy - 1.0) > 0.001 and absf(sx - 1.0) < 0.001:
+					sx = sz
+				elif absf(sx - sy) < 0.001 and absf(sx - sz) < 0.001:
+					sx = sz
+					sy = sz
 
 			for fid in target_faces:
 				if fid >= 0 and fid < mesh_data.faces.size() and mesh_data.faces[fid] != null:
@@ -1177,9 +1207,8 @@ func _apply_texture_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Ar
 
 			mesh_data.textures0 = uvs
 			node.rebuild()
-			_emit_drag_update(true, Vector3.ZERO, Vector3.ZERO, Vector3(sx, sy, 1.0))
+			_emit_drag_update(true, Vector3.ZERO, Vector3.ZERO, Vector3(sx, sy, sz))
 			return true
-
 	return false
 ## Applies the latest pending transform to ALL selected elements' vertices.
 ## Deliberately recomputes the full result from the drag-start snapshot every
