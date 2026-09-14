@@ -48,6 +48,10 @@ var _collider_type_explicit: bool = false
 
 ## Whether the compiled mesh needs rebuilding.
 var _needs_rebuild: bool = false
+
+## Editor camera position at the last gizmo refresh (overlay normalization).
+var _gizmo_cam_pos: Vector3 = Vector3.ZERO
+var _gizmo_cam_valid: bool = false
 # ==============================================================================
 # Lifecycle
 # ==============================================================================
@@ -57,6 +61,29 @@ func _ready() -> void:
 		rebuild()
 	else:
 		_update_collider()
+
+## While the editor camera moves relative to this mesh, refresh the gizmos:
+## strokes and face fills are sized by camera distance (PBMeshGizmoPlugin),
+## which only re-derives on a redraw. Runtime/game builds never process.
+func _process(_delta: float) -> void:
+	if not Engine.is_editor_hint() or not ClassDB.class_exists("EditorInterface"):
+		return
+	# The edited scene's viewport is the root window (no camera); the editor
+	# camera lives in the 3D editor screen's SubViewport.
+	var cam: Camera3D = null
+	for i in range(2):
+		var vp3: Viewport = EditorInterface.get_editor_viewport_3d(i)
+		if vp3 != null:
+			cam = vp3.get_camera_3d()
+			if cam != null:
+				break
+	if cam == null:
+		return
+	var pos := cam.global_position
+	if not _gizmo_cam_valid or pos.distance_to(_gizmo_cam_pos) > maxf(0.02, pos.distance_to(global_position) * 0.008):
+		_gizmo_cam_pos = pos
+		_gizmo_cam_valid = true
+		update_gizmos()
 
 func _validate_property(property: Dictionary) -> void:
 	if property.name == "collider_type":

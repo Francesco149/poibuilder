@@ -356,3 +356,43 @@ func test_common_edge_indices_matches_common_edges():
 	for i in range(edges.size()):
 		assert_eq(flat2[i * 2], edges[i].a)
 		assert_eq(flat2[i * 2 + 1], edges[i].b)
+
+
+func test_smoothing_group_averages_normals_at_weld_groups():
+	# Two CCW-from-outside triangles sharing the welded edge (1,0,0)-(0,0,1):
+	# tri A is flat on Y=0, tri B tilts up. With smoothing group 1 the two
+	# shared-edge weld pairs must carry the AVERAGE normal; with group 0 they
+	# keep their own face's flat normal (position privacy, last-wins).
+	var n_a := Vector3(0, 1, 0)
+	var n_b := Vector3(-1, 1, -1).normalized()
+	var data := PBMeshData.new()
+	data.positions = PackedVector3Array([
+		Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 0, 0),   # tri A -> +Y
+		Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(1, 1, 1),   # tri B -> tilted
+	])
+	data.faces = [
+		PBFace.new(PackedInt32Array([0, 1, 2])),
+		PBFace.new(PackedInt32Array([3, 4, 5])),
+	]
+	for f in data.faces:
+		f.smoothing_group = 1
+	data.rebuild_welds()
+	var normals := data.calculate_normals()
+	# Area-weighted average: tri B's raw cross product is (-1, 1, -1).
+	var avg := (n_a + Vector3(-1, 1, -1)).normalized()
+	assert_eq(normals[2], n_a, "non-shared apex keeps its own flat normal")
+	assert_eq(normals[5], n_b, "non-shared apex of tri B keeps its own")
+	assert_eq(normals[1], normals[3], "welded pair shares one smoothed normal")
+	assert_eq(normals[0], normals[4], "second weld pair shares too")
+	assert_eq(normals[1], avg, "smoothed normal is the face-normal average")
+	assert_ne(normals[1], n_a, "smoothed normal differs from tri A's flat normal")
+
+	# same mesh, flat (group 0): each face's corners keep the face normal
+	for f in data.faces:
+		f.smoothing_group = 0
+	data.invalidate_caches()
+	var flat := data.calculate_normals()
+	assert_eq(flat[0], n_a, "flat mode: tri A corners keep tri A normal")
+	assert_eq(flat[1], n_a, "flat mode: no averaging across the weld")
+	assert_eq(flat[3], n_b, "flat mode: tri B corners keep tri B normal")
+	assert_eq(flat[4], n_b, "flat mode: shared coords keep separate normals")

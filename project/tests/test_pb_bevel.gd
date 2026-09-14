@@ -161,8 +161,9 @@ func test_bevel_multi_segment_two():
 
 	var res := PBMeshOps.bevel_edges(cube, all_edges, 0.2, 2)
 	assert_true(res.get("ok", false), "Multi-segment bevel (seg=2) should succeed")
-	# 12*2 strip quads + split corner n-gons
-	assert_eq(cube.faces.size(), 62, "Beveled cube with 2 segments produces 62 faces")
+	# 6 retracted octagons + 12 edges * 2 strip quads + 8 corner domes
+	# (1 inset ring band of 6 quads + 1 flat inner n-gon: ring = 3 tips + 3 arcs)
+	assert_eq(cube.faces.size(), 86, "Beveled cube with 2 segments produces 86 faces")
 
 	_assert_watertight(cube, "Beveled cube 2 segments")
 	_assert_compiled_convention(cube, true, "Beveled cube 2 segments")
@@ -175,14 +176,14 @@ func test_bevel_multi_segment_three_and_four():
 
 	var res3 := PBMeshOps.bevel_edges(cube3, all_edges, 0.2, 3)
 	assert_true(res3.get("ok", false), "Multi-segment bevel (seg=3) should succeed")
-	assert_eq(cube3.faces.size(), 98, "Beveled cube with 3 segments produces 98 faces")
+	assert_eq(cube3.faces.size(), 194, "Beveled cube with 3 segments produces 194 faces (6 octagons + 36 strip quads + 8 domes: 2 bands * 9 + 1 inner n-gon)")
 
 	_assert_watertight(cube3, "Beveled cube 3 segments")
 
 	var cube4 := _cube()
 	var res4 := PBMeshOps.bevel_edges(cube4, all_edges, 0.2, 4)
 	assert_true(res4.get("ok", false), "Multi-segment bevel (seg=4) should succeed")
-	assert_eq(cube4.faces.size(), 134, "Beveled cube with 4 segments produces 134 faces")
+	assert_eq(cube4.faces.size(), 350, "Beveled cube with 4 segments produces 350 faces (6 octagons + 48 strip quads + 8 domes: 3 bands * 12 + 1 inner n-gon)")
 
 	_assert_watertight(cube4, "Beveled cube 4 segments")
 	_assert_compiled_convention(cube4, true, "Beveled cube 4 segments")
@@ -257,16 +258,16 @@ func test_bevel_undo_redo():
 func test_bevel_single_edge_multi_segment_three():
 	# Beveling one edge with segments = 3 must not leave open holes on the end
 	# faces AND must not split the two faces of the edge into triangles.
-	# 2 adjacent quads + 2 untouched + 2 terminal n-gons (4-1+(3+1)=7 verts) +
-	# 3 bridge quads = 9.
+	# 2 adjacent quads + 2 untouched + 3 bridge quads + 2 rounded end caps
+	# (Blender's vertex mesh: the profile arc closed by the cut chord) = 11.
 	var cube := _cube()
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 3)
 	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed: %s" % str(res.get("error", "")))
-	assert_eq(cube.faces.size(), 9, "Single edge bevel with 3 segments produces 9 faces, not a triangulated 27")
+	assert_eq(cube.faces.size(), 11, "Single edge bevel with 3 segments produces 11 faces, not a triangulated 27")
 	var sizes := _loop_sizes(cube)
 	assert_eq(int(sizes.get(3, 0)), 0, "Single-edge fillet must not fan original faces into triangles")
-	assert_eq(int(sizes.get(4, 0)), 7, "7 quads: 2 adjacent + 2 untouched + 3 bridges")
-	assert_eq(int(sizes.get(7, 0)), 2, "2 end faces absorb the 4-point rail as 7-gons")
+	assert_eq(int(sizes.get(4, 0)), 9, "9 quads: 2 adjacent + 2 untouched + 3 bridges + 2 end caps")
+	assert_eq(int(sizes.get(5, 0)), 2, "2 end faces keep the cut corner as pentagons")
 	_assert_watertight(cube, "Single edge 3-segment fillet")
 	_assert_compiled_convention(cube, true, "Single edge 3-segment fillet")
 
@@ -294,6 +295,314 @@ func test_bevel_two_adjacent_edges_terminals_are_ngons():
 	assert_gt(cube.faces.size(), 9, "two edges add more faces than one")
 	assert_eq(int(_loop_sizes(cube).get(3, 0)), 0, "adjacent-edge path must not fan terminals into triangles")
 	_assert_watertight(cube, "two adjacent edges S=3")
+
+
+func test_bevel_multi_segment_loops_round_the_corner():
+	# The reported bug: beveling the inset rim loop with >1 segment produced
+	# the same FLAT 45-degree chamfer as 1 segment (just subdivided). The
+	# loop-corner rails are now tangent arcs in the corner plane, so the
+	# corner profile must approach the original corner like a quarter-round:
+	# nearest approach ~0.41*amount at the 45-degree sample versus 0.87*amount
+	# for the old straight chord.
+	var amt := 0.1
+	for segs in [2, 3, 4]:
+		var cube := PBMeshData.create_cube(2.0)
+		var ir := PBMeshOps.inset_faces(cube, PackedInt32Array([4]), 0.25)
+		assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([ir["cap_face_ids"][0]]), -0.4)["ok"], "extrude")
+		var corners: Array[Vector3] = []
+		var ids := PackedInt32Array()
+		for eid in range(cube.get_common_edges().size()):
+			var e := cube.get_common_edges()[eid]
+			var pa: Vector3 = cube.positions[e.a]
+			var pb: Vector3 = cube.positions[e.b]
+			if absf(pa.y - 1.0) < 0.001 and absf(pb.y - 1.0) < 0.001:
+				var rima: bool = absf(absf(pa.x) - 1.0) < 0.001 or absf(absf(pa.z) - 1.0) < 0.001
+				var rimb: bool = absf(absf(pb.x) - 1.0) < 0.001 or absf(absf(pb.z) - 1.0) < 0.001
+				if not rima and not rimb:
+					ids.append(eid)
+					for qi in [e.a, e.b]:
+						var pc: Vector3 = cube.positions[qi]
+						var known := false
+						for cc in corners:
+							if cc.distance_to(pc) < 0.001:
+								known = true
+								break
+						if not known:
+							corners.append(pc)
+		assert_eq(ids.size(), 4, "inner rim loop")
+		var res := PBMeshOps.bevel_edges(cube, ids, amt, segs)
+		assert_true(res.get("ok", false), "rim bevel segs=%d: %s" % [segs, str(res.get("error", ""))])
+		_assert_watertight(cube, "rim bevel segs=%d" % segs)
+		assert_eq(_tearing_groups(cube), 0, "rim bevel segs=%d: shared corner rails stay welded" % segs)
+		var nearest := 999.0
+		for cc in corners:
+			for p in cube.positions:
+				var d: float = p.distance_to(cc)
+				if d > 0.0005:
+					nearest = minf(nearest, d)
+		assert_true(nearest < amt * 0.75,
+			"segs=%d corner profile rounds toward the corner (nearest %.4f < %.4f; straight chord would be %.4f)"
+			% [segs, nearest, amt * 0.75, amt * 0.866])
+		assert_true(nearest > amt * 0.3, "segs=%d profile must not collapse onto the corner (%.4f)" % [segs, nearest])
+
+
+func test_bevel_single_edge_strips_span_the_true_edge():
+	# Regression: the rail arcs were once computed in a garbage plane because
+	# the edge direction was read from weld-group ids as if they were position
+	# indexes. With the true edge direction the strip profile points of one
+	# edge end lie in that end's cap plane (perpendicular to the edge through
+	# the corner) — every new position near an end but off the two adjacent
+	# faces is an arc point and must sit in that plane.
+	var cube := _cube()
+	var e := cube.get_common_edges()[0]
+	var a: Vector3 = cube.positions[e.a]
+	var b: Vector3 = cube.positions[e.b]
+	var dir := (b - a).normalized()
+	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 4)
+	assert_true(res.get("ok", false), "single edge segs=4: %s" % str(res.get("error", "")))
+	_assert_watertight(cube, "single edge segs=4")
+	_assert_compiled_convention(cube, true, "single edge segs=4")
+	for end_pos: Vector3 in [a, b]:
+		for p in cube.positions:
+			if p.distance_to(end_pos) > 0.35:
+				continue
+			var local := p - end_pos
+			var along := local.dot(dir)
+			# slid corners ride ALONG the perimeter edges; arc points must sit
+			# within the cap plane (no drift along the edge beyond a slide).
+			var perp := local - dir * along
+			var near_arc := along < 0.001 and perp.length() > 0.001
+			if near_arc:
+				assert_true(absf(along) < 0.0005,
+					"arc point %s drifts %.5f along the edge from the cap plane at %s" % [str(p), along, str(end_pos)])
+
+
+func test_bevel_vertical_strip_uvs_do_not_stretch():
+	# The reported bug: beveling a VERTICAL cube edge produced a stretched
+	# checkerboard — the band's transverse UV gradient cancelled because both
+	# walls' phases coincide at the corner. The strip must instead unfold the
+	# band at true texel density (transverse span ~= the rail-to-rail chord)
+	# and keep phase continuity with its anchor wall along the shared rail.
+	var cube := _cube()
+	var vid := -1
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var a: Vector3 = cube.positions[e.a]
+		var b: Vector3 = cube.positions[e.b]
+		if absf(absf(a.x) - 0.5) < 0.001 and absf(absf(a.z) - 0.5) < 0.001 \
+				and absf(a.y - b.y) > 0.1:
+			vid = eid
+			break
+	assert_gt(vid, -1, "found a vertical cube edge")
+	var amt := 0.2
+	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([vid]), amt, 2)
+	assert_true(res.get("ok", false), "vertical edge bevel: %s" % str(res.get("error", "")))
+
+	var walls: Array = []
+	for fid in res.get("new_face_ids", PackedInt32Array()):
+		if not cube.faces[fid].manual_uv:
+			walls.append(cube.faces[fid])
+	# The band's segment quads share one continuous mapping: measure the
+	# transverse span and the wall matches over ALL strip corners together.
+	var u_min := INF
+	var u_max := -INF
+	var rail_matches := 0
+	for sid in range(cube.faces.size()):
+		if not cube.faces[sid].manual_uv:
+			continue
+		for idx in cube.faces[sid].get_distinct_indexes():
+			var uv: Vector2 = cube.textures0[idx]
+			u_min = minf(u_min, uv.x)
+			u_max = maxf(u_max, uv.x)
+			var p: Vector3 = cube.positions[idx]
+			for w in walls:
+				var want: Dictionary = PBUv.calculate_face_uvs(cube, w)
+				for idx2 in want:
+					if cube.positions[idx2].distance_to(p) < 0.000001:
+						if uv.distance_to(want[idx2]) < 0.0005:
+							rail_matches += 1
+						break
+	var chord: float = amt * sqrt(2.0)   # rail-to-rail distance across the band
+	var u_span := u_max - u_min
+	assert_true(absf(u_span - chord) < 0.02,
+		"band transverse span %.4f matches the chord %.4f (no stretch/cancellation)" % [u_span, chord])
+	assert_gt(rail_matches, 1, "band stays phase-true with its anchor wall (%d corners)" % rail_matches)
+
+
+func test_bevel_corner_dome_lies_on_the_fillet_sphere():
+	# The corner dome must follow the fillet sphere the edge strips are
+	# tangent to (Blender's vertex mesh blends its edge profiles onto that
+	# sphere): every dome position strictly inside the retracted face planes
+	# sits (within tolerance) at the sphere radius from the sphere centre,
+	# which rests sqrt(3)*amount down the corner diagonal.
+	var amt := 0.2
+	var cube := _cube()
+	var all_edges := PackedInt32Array()
+	for i in range(cube.get_common_edges().size()):
+		all_edges.append(i)
+	var res := PBMeshOps.bevel_edges(cube, all_edges, amt, 4)
+	assert_true(res.get("ok", false), "bevel succeeds: %s" % str(res.get("error", "")))
+	var plane := 0.5 - amt   # retracted face planes
+	var checked := 0
+	for corner: Vector3 in [Vector3(0.5, 0.5, 0.5), Vector3(-0.5, 0.5, 0.5),
+			Vector3(0.5, -0.5, 0.5), Vector3(0.5, 0.5, -0.5), Vector3(-0.5, -0.5, 0.5),
+			Vector3(-0.5, 0.5, -0.5), Vector3(0.5, -0.5, -0.5), Vector3(-0.5, -0.5, -0.5)]:
+		var centre: Vector3 = corner - corner.normalized() * sqrt(3.0) * amt
+		for p in cube.positions:
+			if p.distance_to(corner) > 0.5:
+				continue
+			# interior dome points only: strictly inside every retracted plane
+			if absf(p.x) < plane + 0.001 or absf(p.y) < plane + 0.001 or absf(p.z) < plane + 0.001:
+				continue
+			var dev: float = absf(p.distance_to(centre) - amt)
+			assert_true(dev < 0.02,
+				"dome point %s deviates %.4f from the fillet sphere at %s" % [str(p), dev, str(centre)])
+			checked += 1
+	assert_gt(checked, 0, "found interior dome points to check")
+
+
+func test_bevel_smooth_shades_the_fillet():
+	# Strips and domes share ONE fresh smoothing group (the fillet shades
+	# continuously within itself, across seam rails and dome bands alike);
+	# the rebuilt adjacent faces keep group 0 so the fillet creases sharply
+	# where it meets the untouched flat surface. The smoothed normals must
+	# differ from flat at the smooth/shared welds.
+	var cube := _cube()
+	var all := PackedInt32Array()
+	for i in range(cube.get_common_edges().size()):
+		all.append(i)
+	var res := PBMeshOps.bevel_edges(cube, all, 0.2, 3)
+	assert_true(res.get("ok", false), "bevel succeeds: %s" % str(res.get("error", "")))
+	var groups := {}
+	var smooth_count := 0
+	for face in cube.faces:
+		if face.smoothing_group != 0:
+			groups[face.smoothing_group] = true
+			smooth_count += 1
+	assert_eq(groups.size(), 1, "all smooth faces share one smoothing group")
+	assert_gt(smooth_count, 19, "12 strips + 8 domes wear the group")
+
+	# duplicate(): invalidate_caches() clears the shared packed buffer
+	var smoothed := cube.calculate_normals().duplicate()
+	for face in cube.faces:
+		face.smoothing_group = 0
+	cube.invalidate_caches()
+	var flat := cube.calculate_normals()
+	var changed := 0
+	for i in range(smoothed.size()):
+		if smoothed[i].distance_to(flat[i]) > 0.001:
+			changed += 1
+	assert_gt(changed, 0, "smoothing changed the normals at fillet welds")
+
+
+func test_bevel_strip_uvs_continue_the_adjacent_face():
+	# The reported bug: a single-edge bevel smeared the texture across the
+	# strip. Strips now carry the anchor face's own auto mapping continued
+	# across the band: at the rail shared with the anchor face the strip's UVs
+	# must EQUAL that face's rendered UVs at the same 3D corners, and each
+	# further strip segment must equal its neighbour strip across their shared
+	# rail — the texture runs unbroken from the anchor face across the band.
+	# Strips are manual so later auto refreshes keep the continuation.
+	var cube := _cube()
+	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.3, 2)
+	assert_true(res.get("ok", false), "bevel succeeds: %s" % str(res.get("error", "")))
+
+	# auto faces: stored UVs must match their own projection (the op writes
+	# them; direct textures0 consumers never see stale corner copies)
+	for fid: int in res.get("new_face_ids", PackedInt32Array()):
+		var f := cube.faces[fid]
+		if f.manual_uv:
+			continue
+		var want: Dictionary = PBUv.calculate_face_uvs(cube, f)
+		for idx in want:
+			assert_true(cube.textures0[idx].distance_to(want[idx]) < 0.001,
+				"face %d carries its own auto-projection UVs" % fid)
+
+	# count UV-matching shared corners between every strip and every other
+	# face (auto or strip): the band must connect to the anchor face and stay
+	# connected across its own segments through seamless rails. Auto faces are
+	# compared via their projection (== stored); strips via their STORED UVs
+	# (calculate_face_uvs would recompute, losing the continuation).
+	var strips: Array = []
+	for fid in range(cube.faces.size()):
+		if cube.faces[fid].manual_uv:
+			strips.append(fid)
+	assert_gt(strips.size(), 0, "the bevel has strip faces with continued UVs")
+	for sid: int in strips:
+		var strip := cube.faces[sid]
+		var best_matches := 0
+		for fid2 in range(cube.faces.size()):
+			if fid2 == sid:
+				continue
+			var other := cube.faces[fid2]
+			var want: Dictionary = PBUv.calculate_face_uvs(cube, other)
+			if other.manual_uv:
+				want = {}
+				for idx2 in other.get_distinct_indexes():
+					want[idx2] = cube.textures0[idx2]
+			var matches := 0
+			for idx in strip.get_distinct_indexes():
+				var p: Vector3 = cube.positions[idx]
+				for idx2 in want:
+					if cube.positions[idx2].distance_to(p) < 0.000001 \
+							and cube.textures0[idx].distance_to(want[idx2]) < 0.0005:
+						matches += 1
+						break
+			best_matches = maxi(best_matches, matches)
+		assert_true(best_matches >= 2,
+			"strip %d connects seamlessly to its neighbour (best %d shared corners match)" % [sid, best_matches])
+
+
+func test_bevel_rejects_knife_cut_splice_corner_cleanly():
+	# KNOWN LIMITATION: a closed knife cut splices the inner loop into the
+	# outer face through a zero-width slit that passes through a cut corner;
+	# coincident-weld topology makes that corner visited TWICE by one face,
+	# which the slide bevel cannot traverse. It must fail with an explanation
+	# and roll back completely (no junk mesh), not tear.
+	var cube := PBMeshData.create_cube(2.0)
+	var top_fi := -1
+	for fi in range(cube.faces.size()):
+		if PBMeshOps._face_area_normal(cube, cube.faces[fi]).normalized().dot(Vector3.UP) > 0.9:
+			top_fi = fi
+			break
+	var sq := PackedVector3Array([
+		Vector3(-0.5, 1.001, -0.5), Vector3(0.5, 1.001, -0.5),
+		Vector3(0.5, 1.001, 0.5), Vector3(-0.5, 1.001, 0.5),
+		Vector3(-0.5, 1.001, -0.5),
+	])
+	var cut := PBMeshOps.cut_face(cube, top_fi, sq, true)
+	assert_true(cut.get("ok", false), "knife cut succeeds")
+	var inner := -1
+	for fi in range(cube.faces.size()):
+		var loop := PBMeshOps._ordered_loop(cube.faces[fi])
+		if loop.size() < 4:
+			continue
+		var allnear := true
+		for idx in loop:
+			var p: Vector3 = cube.positions[idx]
+			if not (absf(p.x) <= 0.501 and absf(p.z) <= 0.501 and absf(p.y - 1.0) < 0.001):
+				allnear = false
+				break
+		if allnear:
+			inner = fi
+	assert_gt(inner, -1, "cut inner face found")
+	assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([inner]), -0.4)["ok"], "extrude succeeds")
+	var rim := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa: Vector3 = cube.positions[e.a]
+		var pb: Vector3 = cube.positions[e.b]
+		if absf(pa.y - 1.0) < 0.001 and absf(pb.y - 1.0) < 0.001 \
+				and absf(pa.x) < 0.51 and absf(pb.x) < 0.51 \
+				and absf(pa.z) < 0.51 and absf(pb.z) < 0.51:
+			rim.append(eid)
+	assert_eq(rim.size(), 4, "rim loop found")
+	var before := cube.faces.size()
+	var res := PBMeshOps.bevel_edges(cube, rim, 0.1, 1)
+	assert_false(res.get("ok", true), "the splice-slit corner cannot be beveled yet")
+	assert_true(str(res.get("error", "")).contains("same corner twice"),
+		"the error names the self-touching face: %s" % str(res.get("error", "")))
+	assert_eq(cube.faces.size(), before, "the refused bevel rolled back")
 
 
 func test_bevel_twice_all_edges_watertight():
@@ -387,7 +696,7 @@ func test_bevel_faces_single_face_on_beveled_cube_watertight():
 
 	var res := PBMeshOps.bevel_faces(cube, PackedInt32Array([top_fi]), 0.05, 1)
 	assert_true(res.get("ok", false), "bevel_faces on single face should succeed")
-	assert_eq(cube.faces.size(), 30, "Replaced 1 face with 1 inner face + 4 bridge quads (26 - 1 + 5 = 30)")
+	assert_eq(cube.faces.size(), 34, "Octagon top face: 8 boundary strips, 26 - 1 + 1 + 8 = 34")
 	_assert_watertight(cube, "Single face bevel on beveled cube")
 
 func test_bevel_faces_multi_segment():
@@ -753,7 +1062,67 @@ func test_bevel_inset_inner_loop_honors_amount():
 		assert_true(res.get("ok", false), "inner loop S=%d 0.1: %s" % [segs, str(res.get("error", ""))])
 		_assert_watertight(c, "inner loop S=%d" % segs)
 		var w := _chamfer_width(c, sa, sb)
-		assert_true(w > 0.09, "inner loop S=%d width %.4f should be ~0.1 not the old 0.06 clamp" % [segs, w])
+		# The requested distance must be honored (not the old 0.067 clamp):
+		# a 1-segment chamfer's surface keeps its full distance from the old
+		# edge; a rounded multi-segment profile dips to the quarter-circle
+		# tangent point ((sqrt(2)-1) * amount at the closest sample) — both
+		# prove the rails were NOT shrunk, which is what this guards.
+		if segs == 1:
+			assert_true(w > 0.09, "inner loop S=1 width %.4f should be ~0.1 not the old 0.06 clamp" % w)
+		else:
+			assert_true(w > 0.035, "inner loop S=%d width %.4f should stay near the quarter-round minimum 0.041" % [segs, w])
+
+
+func test_bevel_repeated_restore_rebevel_never_sticks():
+	# The reported stuck state: cancelling a bevel modal (snapshot restore)
+	# left the mesh in a state where every later bevel failed with
+	# "the corner at (...) collapsed". Restore + re-bevel must succeed
+	# indefinitely, at any amount and segment count.
+	var cube := PBMeshData.create_cube(1.0)
+	for i in range(6):
+		var snapshot := PBCommand.copy_mesh_data(cube)
+		var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.08 + 0.03 * (i % 4), 1 + (i % 3))
+		assert_true(res.get("ok", false), "bevel %d should succeed: %s" % [i, str(res.get("error", ""))])
+		_assert_watertight(cube, "bevel %d" % i)
+		PBCommand.restore_mesh_data(cube, snapshot)
+
+
+func test_bevel_width_grows_monotonically_with_the_request():
+	# The drag ping-pong: widths must grow with the request — the op clamps,
+	# it never refuses an amount the slider can reach, and it never lands on
+	# a leftover retry size.
+	var cube := PBMeshData.create_cube(1.0)
+	var ir := PBMeshOps.inset_faces(cube, PackedInt32Array([4]), 0.25)
+	PBMeshOps.extrude_faces(cube, PackedInt32Array([ir["cap_face_ids"][0]]), -0.4)
+	var seed := cube.get_common_edges()[0]
+	var a: Vector3 = cube.positions[seed.a]
+	var b: Vector3 = cube.positions[seed.b]
+	var last_w := -1.0
+	for amt in [0.02, 0.04, 0.06, 0.08, 0.1, 0.15, 0.2, 0.4, 0.8]:
+		var c := PBCommand.copy_mesh_data(cube)
+		var ids := PackedInt32Array()
+		for eid in range(c.get_common_edges().size()):
+			ids.append(eid)
+		var res := PBMeshOps.bevel_edges(c, ids, amt, 2)
+		assert_true(res.get("ok", false), "amt=%.2f should succeed: %s" % [amt, str(res.get("error", ""))])
+		var w := _chamfer_width(c, a, b)
+		assert_true(w >= last_w - 0.0001, "amt=%.2f width %.4f must not shrink from %.4f" % [amt, w, last_w])
+		last_w = w
+
+
+func test_bevel_repeated_restore_rebevel_never_sticks_verify_snapshot_fidelity():
+	# The cancel path restores the FULL snapshot (positions, faces, welds).
+	# After a restore, topology queries must match the pre-op mesh exactly.
+	var cube := PBMeshData.create_cube(1.0)
+	var snapshot := PBCommand.copy_mesh_data(cube)
+	PBMeshOps.bevel_edges(cube, PackedInt32Array([0, 1, 2]), 0.1, 2)
+	assert_gt(cube.faces.size(), 6, "op applied")
+	PBCommand.restore_mesh_data(cube, snapshot)
+	assert_eq(cube.faces.size(), 6, "restore brings back 6 faces")
+	assert_eq(cube.get_common_edges().size(), 12, "restore brings back 12 edges")
+	assert_eq(cube.shared_vertices.size(), 8, "restore brings back 8 weld groups")
+	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([3]), 0.12, 1)
+	assert_true(res.get("ok", false), "bevel after restore works: %s" % str(res.get("error", "")))
 
 
 func test_bevel_outer_loop_fillet_does_not_bump_the_corner():

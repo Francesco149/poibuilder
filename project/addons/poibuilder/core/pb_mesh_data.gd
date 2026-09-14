@@ -485,8 +485,12 @@ func validate() -> String:
 # Mesh Compilation & Normals (ToMesh)
 # ==============================================================================
 
-## Calculates flat normals for all vertices across all faces.
-## Returns a PackedVector3Array of the same size as positions.
+## Calculates normals for all vertices across all faces.
+## Flat by default ("last triangle wins per position"); faces sharing a
+## non-zero smoothing_group at a weld group get their normals AVERAGED there
+## (Unity/ProBuilder semantics — the cylinder factory marks its walls
+## smoothing_group 1 for exactly this). Returns a PackedVector3Array of the
+## same size as positions.
 func calculate_normals() -> PackedVector3Array:
 	var normals := PackedVector3Array()
 	normals.resize(positions.size())
@@ -515,6 +519,68 @@ func calculate_normals() -> PackedVector3Array:
 			normals[i0] = normal
 			normals[i1] = normal
 			normals[i2] = normal
+
+	# Smooth-shading pass: within each weld group, faces wearing the same
+	# non-zero smoothing group contribute their area-weighted normal to an
+	# average that every one of their positions in the group wears. Faces on
+	# smoothing group 0 keep the flat normal, so a smooth-shaded bevel still
+	# creases sharply where it meets the untouched flat faces.
+	var has_smooth := false
+	for face in faces:
+		if face != null and face.smoothing_group != 0:
+			has_smooth = true
+			break
+	if has_smooth and not shared_vertices.is_empty():
+		# Area-weighted normal per face (unnormalized cross products sum).
+		var face_count: int = faces.size()
+		var face_normals: Array[Vector3] = []
+		face_normals.resize(face_count)
+		for fi in range(face_count):
+			var face: PBFace = faces[fi]
+			if face == null:
+				continue
+			var acc := Vector3.ZERO
+			var idxs := face.get_indexes()
+			for tri_i in range(0, idxs.size() - 2, 3):
+				var i0: int = idxs[tri_i]
+				var i1: int = idxs[tri_i + 1]
+				var i2: int = idxs[tri_i + 2]
+				if i0 < 0 or i0 >= pos_count or i1 < 0 or i1 >= pos_count or i2 < 0 or i2 >= pos_count:
+					continue
+				acc += (positions[i1] - positions[i0]).cross(positions[i2] - positions[i0])
+			face_normals[fi] = acc
+		# Weld group -> { smoothing group -> { face index } }, plus the
+		# position each smooth face owns in the group.
+		var lookup := get_shared_vertex_lookup()
+		var group_faces := {}   # group id -> { sg -> { fi } }
+		var group_pos := {}     # group id -> { fi -> position index }
+		for fi in range(face_count):
+			var face: PBFace = faces[fi]
+			if face == null or face.smoothing_group == 0:
+				continue
+			for idx in face.get_distinct_indexes():
+				var gid: int = lookup.get(idx, idx)
+				if not group_faces.has(gid):
+					group_faces[gid] = {}
+				if not group_faces[gid].has(face.smoothing_group):
+					group_faces[gid][face.smoothing_group] = {}
+				group_faces[gid][face.smoothing_group][fi] = true
+				group_pos[gid] = group_pos.get(gid, {})
+				group_pos[gid][fi] = idx
+		for gid in group_faces:
+			for sg in group_faces[gid]:
+				var members: Array = group_faces[gid][sg].keys()
+				if members.size() < 2:
+					continue
+				var avg := Vector3.ZERO
+				for fi in members:
+					avg += face_normals[fi]
+				if avg.length_squared() < 0.000000000001:
+					continue
+				avg = avg.normalized()
+				for fi in members:
+					normals[int(group_pos[gid][fi])] = avg
+
 	_normals = normals
 	return normals
 

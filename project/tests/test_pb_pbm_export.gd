@@ -44,7 +44,11 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_gte(num_textures, 12, "Texture table must be present")
 
 	var num_meshes := f.get_32()
-	assert_eq(num_meshes, 24, "Mesh count must match Oracle (24 chunks)")
+	# 23: the two wet-tiles materials used to embed the SAME tiles_wet_4x4
+	# pixels twice (one in-memory copy, one file-backed), producing a
+	# duplicate mesh chunk; the lossless texture imports let the glTF writer
+	# dedupe them into one image, so the duplicate chunk is gone.
+	assert_eq(num_meshes, 23, "Mesh count must match Oracle (23 chunks)")
 	var num_colliders := f.get_32()
 	assert_eq(num_colliders, 9, "Collider count must match Oracle (9 colliders)")
 

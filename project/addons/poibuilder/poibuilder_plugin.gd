@@ -1507,7 +1507,7 @@ func _on_operation_requested(op_name: String) -> void:
 			if result.get("ok", false):
 				_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
 				if tool_overlay != null:
-					_start_bevel_modal(mesh, is_face_bevel, faces_to_bevel, edges_to_bevel, shortest_l, eff_amount, result.get("new_face_ids", PackedInt32Array()), pre_snapshot)
+					_start_bevel_modal(mesh, is_face_bevel, faces_to_bevel, edges_to_bevel, float(result.get("max_amount", shortest_l)), eff_amount, result.get("new_face_ids", PackedInt32Array()), pre_snapshot)
 					return
 		_:
 			if logger:
@@ -2749,7 +2749,7 @@ func _on_params_canceled() -> void:
 	if tool_overlay != null:
 		tool_overlay.close_params()
 
-func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], shortest_l: float, eff_amount: float, new_face_ids: PackedInt32Array, pre_snapshot: PBMeshData) -> void:
+func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], max_amount: float, eff_amount: float, new_face_ids: PackedInt32Array, pre_snapshot: PBMeshData) -> void:
 	_params_session_kind = "bevel"
 	_bevel_session_node = mesh
 	_bevel_session_snapshot = pre_snapshot
@@ -2758,7 +2758,10 @@ func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Arr
 	_bevel_session_edges = edges
 	_bevel_session_mode = editor.select_mode
 	_bevel_session_last_new_faces = new_face_ids
-	var max_d := maxf(1.0, shortest_l * 0.95) if shortest_l < INF else 1.0
+	# The slider max is the op's own representable clamp, so every position on
+	# the slider produces a valid bevel — dragging can never toggle between a
+	# proper bevel and a refused/tiny one.
+	var max_d := maxf(0.05, max_amount) if max_amount < INF else 1.0
 	var defs := [
 		{"name": "distance", "label": "Distance", "min": 0.0, "max": max_d, "step": 0.01, "suffix": "m"},
 		{"name": "segments", "label": "Segments", "min": 1, "max": 8, "step": 1, "kind": "int"}

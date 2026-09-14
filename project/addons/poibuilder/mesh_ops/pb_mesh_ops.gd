@@ -754,116 +754,19 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		amount: float, segments: int = 1) -> Dictionary:
 	return PBMeshBevel.bevel_edges(mesh_data, edge_ids, amount, segments)
 
-static func _arc_interp(p0: Vector3, p1: Vector3, n0: Vector3, n1: Vector3, t: float) -> Vector3:
-	var diff_n := n0 - n1
-	var denom := diff_n.length_squared()
-	if denom < 0.001:
-		return p0.lerp(p1, t)
-	var diff_p := p0 - p1
-	var R := diff_p.dot(diff_n) / denom
-	var center := p0 - n0 * R
-	var v0 := p0 - center
-	var v1 := p1 - center
-	var l0 := v0.length()
-	var l1 := v1.length()
-	if l0 < 0.0001 or l1 < 0.0001:
-		return p0.lerp(p1, t)
-	var angle := v0.angle_to(v1)
-	var axis := v0.cross(v1).normalized()
-	if axis.length_squared() < 0.5:
-		return p0.lerp(p1, t)
-	var v_rot := v0.rotated(axis, angle * t)
-	var radius := (1.0 - t) * l0 + t * l1
-	return center + (v_rot / l0) * radius
-static func _build_bevel_polygon_face(mesh_data: PBMeshData, pts: Array, template_face: PBFace, expected_normal: Vector3 = Vector3.ZERO) -> PBFace:
-	var n := pts.size()
-	if n < 3:
-		return null
-	var poly_2d := PackedVector2Array()
-	var basis_u: Vector3
-	var basis_v: Vector3
-	var normal: Vector3 = expected_normal.normalized() if expected_normal.length_squared() > 0.001 else Vector3.ZERO
-	if normal.length_squared() < 0.1:
-		for i in range(n):
-			var cur: Vector3 = pts[i]
-			var nxt: Vector3 = pts[(i + 1) % n]
-			normal.x += (cur.y - nxt.y) * (cur.z + nxt.z)
-			normal.y += (cur.z - nxt.z) * (cur.x + nxt.x)
-			normal.z += (cur.x - nxt.x) * (cur.y + nxt.y)
-		normal = normal.normalized()
-
-	if absf(normal.y) < 0.99:
-		basis_u = Vector3.UP.cross(normal).normalized()
-	else:
-		basis_u = Vector3.RIGHT.cross(normal).normalized()
-	basis_v = normal.cross(basis_u).normalized()
-
-	var origin: Vector3 = pts[0]
-	for i in range(n):
-		var diff: Vector3 = pts[i] - origin
-		poly_2d.append(Vector2(diff.dot(basis_u), diff.dot(basis_v)))
-
-	var area := 0.0
-	for i in range(n):
-		var j := (i + 1) % n
-		area += poly_2d[i].x * poly_2d[j].y - poly_2d[j].x * poly_2d[i].y
-	if area < 0.0:
-		pts.reverse()
-		poly_2d = PackedVector2Array()
-		origin = pts[0]
-		for i in range(n):
-			var diff: Vector3 = pts[i] - origin
-			poly_2d.append(Vector2(diff.dot(basis_u), diff.dot(basis_v)))
-
-	var tris_2d: PackedInt32Array = Geometry2D.triangulate_polygon(poly_2d)
-	if tris_2d.is_empty():
-		tris_2d = PackedInt32Array()
-		for i in range(1, n - 1):
-			tris_2d.append(0)
-			tris_2d.append(i)
-			tris_2d.append(i + 1)
-
-	var pos_indices := PackedInt32Array()
-	var src_idx := template_face.get_indexes()[0] if template_face != null and template_face.get_indexes().size() > 0 else 0
-	for i in range(n):
-		var idx := _dup_position_at(mesh_data, pts[i], src_idx)
-		pos_indices.append(idx)
-
-	var face_indices := PackedInt32Array()
-	for tri_i in range(0, tris_2d.size(), 3):
-		face_indices.append(pos_indices[tris_2d[tri_i]])
-		face_indices.append(pos_indices[tris_2d[tri_i + 1]])
-		face_indices.append(pos_indices[tris_2d[tri_i + 2]])
-	var f := PBFace.new(face_indices)
-	if template_face != null:
-		f.submesh_index = template_face.submesh_index
-		f.uv_scale = template_face.uv_scale
-		f.uv_offset = template_face.uv_offset
-		f.uv_rotation = template_face.uv_rotation
-		f.uv_use_world_space = template_face.uv_use_world_space
-		f.uv_flip_u = template_face.uv_flip_u
-		f.uv_flip_v = template_face.uv_flip_v
-		f.uv_swap_uv = template_face.uv_swap_uv
-	return f
-
-## Bevels selected faces by retracting their boundaries inward by `amount` and inserting
-## bridge quads (or multi-segment fillets) between the original boundary and the retracted face.
-## Unselected neighbor faces remain completely untouched at their original coordinates,
-## guaranteeing zero tears or holes when beveling individual faces on complex or already-beveled meshes.
+## Bevels the selected faces by chamfering/filleting their boundary edges —
+## exactly how ProBuilder implements face bevel ("select all perimeter edges of
+## the face and run BevelEdges"): the faces retract by `amount` and a bridge
+## band (one quad per segment) grows around the selection's boundary. Interior
+## edges of a multi-face region are not beveled, and unselected neighbor faces
+## stay untouched, so nothing can tear.
 static func bevel_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 		amount: float, segments: int = 1) -> Dictionary:
 	if mesh_data == null or face_ids.is_empty():
 		return _fail("Bevel faces: no faces selected")
 
-	segments = clampi(segments, 1, 8)
-	amount = maxf(amount, 0.0001)
-
-	var new_faces: Array[PBFace] = []
-	var removed := {}
-
 	# Validate before touching anything: a face whose perimeter is not a single
-	# simple loop (a hole, e.g. a closed knife cut) cannot be inset consistently,
-	# and marking it removed before this check would drop it from the mesh.
+	# simple loop (a hole, e.g. a closed knife cut) cannot be inset consistently.
 	for fi in face_ids:
 		if fi < 0 or fi >= mesh_data.faces.size():
 			return _fail("Bevel faces: invalid face id %d" % fi)
@@ -871,89 +774,10 @@ static func bevel_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 		if face == null or _ordered_loop(face).size() < 3:
 			return _fail("Bevel faces: face %d has a hole (its perimeter is not a single loop)" % fi)
 
-	for fi in face_ids:
-		var face: PBFace = mesh_data.faces[fi]
-		removed[fi] = true
-
-		var loop := _ordered_loop(face)
-		var N: int = loop.size()
-		var fn := _face_area_normal(mesh_data, face)
-
-		# Compute safe distance clamp for this face
-		var min_edge_len := INF
-		for i in range(N):
-			var l: float = mesh_data.positions[loop[i]].distance_to(mesh_data.positions[loop[(i + 1) % N]])
-			if l > 0.0001 and l < min_edge_len:
-				min_edge_len = l
-		var max_allowed: float = min_edge_len * 0.38
-		var eff_amount := minf(amount, max_allowed)
-
-		# 1. Compute outer and inner points
-		var outer_pts: Array[Vector3] = []
-		var inner_pts: Array[Vector3] = []
-
-		for i in range(N):
-			var vi: int = loop[i]
-			var v_prev: int = loop[(i - 1 + N) % N]
-			var v_next: int = loop[(i + 1) % N]
-
-			var pos_i: Vector3 = mesh_data.positions[vi]
-			var d_prev: Vector3 = (mesh_data.positions[v_prev] - pos_i).normalized()
-			var d_next: Vector3 = (mesh_data.positions[v_next] - pos_i).normalized()
-
-			var u_prev: Vector3 = fn.cross(-d_prev).normalized()
-			var u_next: Vector3 = fn.cross(d_next).normalized()
-
-			var denom: float = 1.0 + u_prev.dot(u_next)
-			var shift_len: float = eff_amount / maxf(0.2, denom)
-			var max_shift: float = minf(pos_i.distance_to(mesh_data.positions[v_prev]), pos_i.distance_to(mesh_data.positions[v_next])) * 0.38
-			shift_len = minf(shift_len, max_shift)
-			var dir: Vector3 = (u_prev + u_next)
-			if dir.length_squared() > 0.001:
-				dir = dir.normalized()
-			else:
-				dir = u_prev
-			var pt: Vector3 = pos_i + dir * shift_len
-
-			outer_pts.append(pos_i)
-			inner_pts.append(pt)
-
-		# 2. Build the inner retracted face
-		var inner_face := _build_bevel_polygon_face(mesh_data, inner_pts, face, fn)
-		if inner_face == null:
-			return _fail("Bevel faces: face %d collapsed at this distance" % fi)
-		new_faces.append(inner_face)
-
-		# 3. Compute shared rails per corner to guarantee seamless quad matching
-		var corner_rails: Array[Array] = []
-		for i in range(N):
-			var o_pt := outer_pts[i]
-			var i_pt := inner_pts[i]
-			var rail: Array[Vector3] = []
-			for s in range(segments + 1):
-				var t: float = float(s) / float(segments)
-				rail.append(o_pt.lerp(i_pt, t))
-			corner_rails.append(rail)
-
-		# 4. Build bridge quads between corner i and corner j
-		for i in range(N):
-			var j: int = (i + 1) % N
-			var rail_i: Array = corner_rails[i]
-			var rail_j: Array = corner_rails[j]
-			var edge_dir := (outer_pts[j] - outer_pts[i]).normalized()
-			var outward_edge := fn.cross(edge_dir).normalized()
-
-			for s in range(segments):
-				var qs_start: Vector3 = rail_i[s]
-				var qs_end: Vector3 = rail_j[s]
-				var qnext_end: Vector3 = rail_j[s + 1]
-				var qnext_start: Vector3 = rail_i[s + 1]
-				var seg_normal := outward_edge.lerp(fn, (float(s) + 0.5) / float(segments)).normalized()
-				var quad_pts := [qs_start, qs_end, qnext_end, qnext_start]
-				var bridge_face := _build_bevel_polygon_face(mesh_data, quad_pts, face, seg_normal)
-				if bridge_face != null:
-					new_faces.append(bridge_face)
-	return _replace_faces(mesh_data, removed, new_faces, [])
+	var boundary := face_perimeter_common_edge_ids(mesh_data, face_ids)
+	if boundary.is_empty():
+		return _fail("Bevel faces: the selection has no perimeter edges to bevel")
+	return PBMeshBevel.bevel_edges(mesh_data, boundary, amount, segments)
 
 # ==============================================================================
 # Selection helpers

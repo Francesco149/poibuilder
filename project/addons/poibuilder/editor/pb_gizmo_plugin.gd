@@ -49,7 +49,14 @@ const VERTEX_DOT_HOVER_SIZE: float = 9.0
 
 ## World-space offset between the sub-lines of a "thick" edge. Godot lines are
 ## always 1px; stacking parallel lines fakes ProBuilder-style thickness.
+## Scaled by camera distance each redraw (STROKE_SCREEN_SCALE) so a stroke
+## reads the same size at any zoom instead of towering over a close-up mesh.
 const THICK_LINE_OFFSET: float = 0.006
+## Stroke thickness as a fraction of camera distance (0.006 at ~3 m).
+const STROKE_SCREEN_SCALE: float = 0.002
+## Face-fill depth offset as a fraction of camera distance (0.004 at ~3 m):
+## the fill hugs the geometry up close instead of floating visibly off it.
+const FILL_SCREEN_SCALE: float = 0.00133
 
 ## Shape-creation language: cyan everywhere (same cyan as hover — creation
 ## highlights and hovers share the "cursor preview" meaning), orange for the
@@ -118,6 +125,12 @@ var _vertex_dot_hover_material: StandardMaterial3D
 var _face_fill_material: StandardMaterial3D
 var _face_hover_fill_material: StandardMaterial3D
 var _creation_fill_material: StandardMaterial3D
+
+## Live overlay sizes, recomputed at the top of _redraw from the camera
+## distance (see STROKE_SCREEN_SCALE). Helpers read these instead of the
+## constants so every stroke/fill normalizes with zoom.
+var _live_stroke_offset: float = THICK_LINE_OFFSET
+var _live_fill_offset: float = 0.004
 
 ## Display opacities (multipliers from Settings panel).
 var wireframe_opacity: float = 0.7
@@ -321,12 +334,46 @@ func _commit_subgizmos(gizmo, ids: PackedInt32Array, _restores: Array, cancel: b
 # Rendering
 # ==============================================================================
 
+## The camera the overlays size against. An edited node's own viewport is
+## the editor's root window, which has no attached camera — the real camera
+## lives in the 3D editor screen's SubViewport (EditorInterface), the same
+## route the grid/tool bridges use.
+static func _overlay_camera(node: Node3D) -> Camera3D:
+	var vp := node.get_viewport()
+	if vp != null:
+		var cam := vp.get_camera_3d()
+		if cam != null:
+			return cam
+	if Engine.is_editor_hint() and ClassDB.class_exists("EditorInterface"):
+		for i in range(2):
+			var vp3: Viewport = EditorInterface.get_editor_viewport_3d(i)
+			if vp3 != null:
+				var cam3 := vp3.get_camera_3d()
+				if cam3 != null:
+					return cam3
+	return null
+
+
 func _redraw(gizmo) -> void:
 	gizmo.clear()
 	_center_handle_drawn = false
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null:
 		return
+	# Overlay sizing: strokes and fills scale with CAMERA DISTANCE so they
+	# read identically at any zoom — a fixed world-space stroke towers over
+	# the mesh up close, and a fixed fill offset floats visibly off it.
+	_live_stroke_offset = THICK_LINE_OFFSET
+	_live_fill_offset = PBElementEditor.FACE_FILL_DEPTH_OFFSET
+	var cam := _overlay_camera(node)
+	if cam != null:
+		# Measure to the mesh's world AABB (not the origin): zooming into a
+		# corner of a large mesh must shrink the overlays like the geometry.
+		var aabb: AABB = node.global_transform * node.get_aabb()
+		var target: Vector3 = cam.global_position.clamp(aabb.position, aabb.end)
+		var cam_dist: float = target.distance_to(cam.global_position)
+		_live_stroke_offset = clampf(cam_dist * STROKE_SCREEN_SCALE, 0.0015, 0.08)
+		_live_fill_offset = clampf(cam_dist * FILL_SCREEN_SCALE, 0.001, 0.06)
 	# N-gon drawing session (Knife tool or N-Gon shape extrusion)
 	# Checked FIRST: preview_node draws its overlay without requiring mesh_data!
 	if ngon_drawer != null and ngon_drawer.is_active():
@@ -406,7 +453,7 @@ func _redraw(gizmo) -> void:
 			# EDGE mode base wireframe: slightly thinner cyan (hover/select
 			# strokes drawn on top stay full-thick).
 			_add_thick_lines(gizmo, wire_points, get_material("pb_wireframe_edge", gizmo),
-				THICK_LINE_OFFSET * 0.5, 1)
+				_live_stroke_offset * 0.5, 1)
 		else:
 			gizmo.add_lines(wire_points, get_material("pb_wireframe", gizmo))
 
@@ -639,7 +686,7 @@ func _draw_selected_faces(gizmo, mesh_data: PBMeshData) -> void:
 	var expanded := element_editor.expand_face_ids(mesh_data, selected)
 	if expanded.is_empty():
 		return
-	var fill := element_editor.build_face_fill_mesh_multi(mesh_data, expanded)
+	var fill := element_editor.build_face_fill_mesh_multi(mesh_data, expanded, _live_fill_offset)
 	if fill == null:
 		return
 	if _face_fill_material == null:
@@ -656,7 +703,7 @@ func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 		return
 	if gizmo.is_subgizmo_selected(hover_id):
 		return
-	var fill := element_editor.build_face_fill_mesh(mesh_data, hover_id)
+	var fill := element_editor.build_face_fill_mesh(mesh_data, hover_id, _live_fill_offset)
 	if fill == null:
 		return
 	if _face_hover_fill_material == null:
@@ -691,7 +738,7 @@ func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
 	if write_idx < lines.size():
 		lines.resize(write_idx)
 	if lines.size() >= 2:
-		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo), THICK_LINE_OFFSET * 1.5, 2)
+		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo), _live_stroke_offset * 1.5, 2)
 ## The hovered (not selected) edge as a translucent yellow on-top stroke.
 func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
@@ -705,7 +752,7 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	if edge.a < 0 or edge.a >= positions.size() or edge.b < 0 or edge.b >= positions.size():
 		return
 	_add_thick_lines(gizmo, PackedVector3Array([positions[edge.a], positions[edge.b]]),
-		get_material("pb_hover_edge", gizmo), THICK_LINE_OFFSET * 1.5, 2)
+		get_material("pb_hover_edge", gizmo), _live_stroke_offset * 1.5, 2)
 
 ## All shared vertices as gray dots, selected ones as opaque yellow dots, the
 ## hovered one (when not selected) as a slightly more transparent yellow dot.
@@ -862,7 +909,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	if node == null:
 		return
 	var to_local := node.global_transform.affine_inverse()
-	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+	var creation_offset: float = _live_stroke_offset * 1.5
 
 	if creator.state == PBShapeCreator.State.BASE:
 		var corners := creator.base_rect_corners()
@@ -934,7 +981,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 ## under the cursor.
 func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void:
 	if face_index >= 0 and face_index < mesh_data.faces.size():
-		var fill := element_editor.build_face_fill_mesh(mesh_data, face_index)
+		var fill := element_editor.build_face_fill_mesh(mesh_data, face_index, _live_fill_offset)
 		var col := Color(HOVER_FACE_FILL_COLOR.r, HOVER_FACE_FILL_COLOR.g, HOVER_FACE_FILL_COLOR.b, HOVER_FACE_FILL_COLOR.a * hover_opacity)
 		if _face_hover_fill_material == null:
 			_face_hover_fill_material = _make_face_fill_material(col)
@@ -959,7 +1006,7 @@ func _draw_ngon_drawer_overlay(gizmo, mesh_data: PBMeshData, drawer: PBNgonDrawe
 	if node == null:
 		return
 	var to_local := node.global_transform.affine_inverse()
-	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+	var creation_offset: float = _live_stroke_offset * 1.5
 
 	# 1. Drawn lines between placed vertices
 	var pts := drawer.points
@@ -1000,7 +1047,7 @@ func _draw_ngon_height_preview(gizmo, mesh_data: PBMeshData, drawer: PBNgonDrawe
 	if node == null:
 		return
 	var to_local := node.global_transform.affine_inverse()
-	var creation_offset: float = THICK_LINE_OFFSET * 1.5
+	var creation_offset: float = _live_stroke_offset * 1.5
 
 	var pts := drawer.points
 	var n := pts.size()
