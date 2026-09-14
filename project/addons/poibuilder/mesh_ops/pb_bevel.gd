@@ -2,26 +2,21 @@
 ##
 ## Runtime-safe, headless-testable; entry point is PBMeshOps.bevel_edges().
 ##
-## DESIGN — duplicate the selected edges, connect the copies
+## DESIGN — cylindrical fillet, connected at loop corners
 ## ------------------------------------------------------------
-## A bevel with `segments` = S is S parallel copies of each selected edge,
-## offset along the two incident faces and connected by quads. That is the
-## UniBuilder topology: the selected loop is duplicated S times and matching
-## verts are connected. No n-gon is stuck in the corner.
+## `segments` = S is a circular profile in each edge's dihedral (S quads along
+## the edge). S = 1 is a flat chamfer; S > 1 rounds it. A loop corner's two
+## edges have different dihedrals so their end-arcs differ; those two arcs are
+## bridged by a grid of quads/tris (no leftover n-gon). Intermediate rail
+## points are keyed by endpoints + normals so one edge's consumers agree.
 ##
 ## Every point the op creates exists EXACTLY ONCE as a record. Faces take their
 ## own position copies (position-privacy: calculate_normals writes per position);
 ## the weld rebuild reconnects coincident copies so dragging stays coherent.
 ##
-## Per beveled vertex v, the number of selected edges at v decides the corner:
-##   - valence 2 (a loop corner): the two strips SHARE one straight rail of
-##     S segments from one offset point to the other. Intermediate rail points
-##     are keyed by their endpoints so both edges reference the same records.
-##     There is no corner face — the strips already close the mesh, the way
-##     S = 1 already did. A circular-arc rail was what made the two edges
-##     disagree and forced an n-gon cap to fill the gap.
-##   - valence 1 (a strip end): the end face cannot carry the off-plane rail
-##     intermediates, so a small cap still closes the termination.
+## Per beveled vertex v:
+##   - valence 2 (a loop corner): quad grid between the two cylindrical ends.
+##   - valence 1 (a strip end): a small cap still closes the termination.
 ##   - valence 3+ (a cube corner with 3 beveled edges): the three rails bound
 ##     a corner region that is capped.
 ##
@@ -342,12 +337,12 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				var pts: Array = [end_a]
 				for s in range(1, segments):
 					var t := float(s) / float(segments)
-					# Straight shared rail: both edges of a loop corner interpolate
-					# the same endpoints and must reuse the same records. An arc
-					# through each edge's own dihedral made the two rails miss,
-					# which is the "verts not aligned / not connected" report.
-					pts.append(_shared_rail_point(rail_cache, end_a, end_b, t, int(end_a["src"])))
+					# Circular profile in this edge's dihedral. A loop corner's two
+					# edges cache separately (different normals) and the vertex-cap
+					# step bridges those two arcs with quads — rounded AND connected.
+					pts.append(_shared_rail_point(rail_cache, end_a, end_b, n_fa, n_fb, t, int(end_a["src"])))
 				pts.append(end_b)
+
 				rails[Vector3i(k.x, k.y, c)] = pts
 
 			if not detail_fail.is_empty():
@@ -375,13 +370,10 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 
 		# ---- 8. vertex caps ----------------------------------------------------
 		for c: int in touched:
-			# A loop corner (exactly two beveled edges) is closed by the two
-			# strips sharing a rail. A cap there is the leftover n-gon.
-			if int(bevel_count.get(c, 0)) == 2:
-				continue
 			var cycle := _vertex_face_cycle(corners, loops, incidence, lookup, c)
 			if cycle.is_empty():
 				continue
+
 			var ring: Array = []
 			var ring_segs: Array = []   # { kind, pts } in traversal order
 			var corner_rails: Array = []
@@ -438,19 +430,21 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				var cur_n: Vector3 = normals[cycle[j]["fi"]]
 				outward += cur_n
 			var template: PBFace = mesh_data.faces[cycle[0]["fi"]]
-			# Two rails meeting at a corner (the usual case: two beveled edges and a
-			# face between them) are the two sides of one patch — bridge them as a
-			# strip of quads, exactly like the bands, so the corner reads as the
-			# bands turning rather than as a fan n-gon stuck in the middle.
+			# Two rails at a loop corner: bridge the two cylindrical ends with
+			# quads. Never fall through to a fan n-gon there.
 			if corner_rails.size() == 2:
-				var patch := _corner_patch(mesh_data, corner_rails[0], corner_rails[1], ring, ring_segs, outward.normalized(), template)
+				var patch := _corner_patch(mesh_data, corner_rails[0], corner_rails[1], outward.normalized(), template)
+
 				if not patch.is_empty():
 					secondary.append_array(patch)
-					continue
+				continue
+			if int(bevel_count.get(c, 0)) == 2:
+				continue
 			var cap := _fan_face(mesh_data, ring, outward.normalized(), template)
 			if cap == null:
 				return _fail("Bevel edges: the corner at %s collapsed" % str(mesh_data.positions[c]))
 			secondary.append(cap)
+
 
 		# ---- 9. swap the faces in ----------------------------------------------
 		return PBMeshOps._replace_faces(mesh_data, removed, primary, secondary)
@@ -462,28 +456,35 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 static func _pt(label: String, pt: Vector3, src: int) -> Dictionary:
 	return {"label": label, "pt": pt, "src": src, "idx": -1}
 
-## Intermediate rail point between two chain ends. Both edges of a valence-2
-## corner interpolate the same endpoints; they must share ONE record so the
-## strips actually meet (weld-by-coincidence is not enough if the coords
-## differ by an arc).
+## Intermediate rail point between two chain ends, on the circular fillet in
+## the dihedral (n0, n1). Same endpoints + same normals reuse one record so a
+## single edge's two consumers agree. A loop corner's two edges have different
+## normals and therefore different arcs; those are bridged by the corner grid.
 static func _shared_rail_point(cache: Dictionary, end_a: Dictionary, end_b: Dictionary,
-		t: float, src: int) -> Dictionary:
+		n0: Vector3, n1: Vector3, t: float, src: int) -> Dictionary:
 	var pa: Vector3 = end_a["pt"]
 	var pb: Vector3 = end_b["pt"]
+	var pt: Vector3 = PBMeshOps._arc_interp(pa, pb, n0, n1, t)
 	var ka := _point_key(pa)
 	var kb := _point_key(pb)
-	var pt: Vector3 = pa.lerp(pb, t)
+	var na := _point_key(n0)
+	var nb := _point_key(n1)
+	var tt := t
 	if ka > kb:
 		var tmp := ka
 		ka = kb
 		kb = tmp
-		t = 1.0 - t
-	var key := "%s|%s|%d" % [ka, kb, roundi(t * 1000.0)]
+		tmp = na
+		na = nb
+		nb = tmp
+		tt = 1.0 - t
+	var key := "%s|%s|%s|%s|%d" % [ka, kb, na, nb, roundi(tt * 1000.0)]
 	if cache.has(key):
 		return cache[key]
 	var rec := _pt("r" + key, pt, src)
 	cache[key] = rec
 	return rec
+
 
 
 static func _key(lookup: Dictionary, a: int, b: int) -> Vector2i:
@@ -712,20 +713,13 @@ static func _vertex_face_cycle(corners: Dictionary, loops: Dictionary, incidence
 
 ## The corner patch where two beveled edges meet.
 ##
-## The two rails of a corner are the end rings of the two bands. Their points
-## have to be paired corner-relative — both starting at the point the two rails
-## share, which is the face they have in common — or the rows pair a point near
-## one end of a band with a point near the other end and the quads twist. With
-## that pairing the patch is the bands turning the corner:
-##   - rows of quads bridging the rails (their segmentation follows the bands),
-##     collapsing to a triangle at a seam end where the rails meet, and
-##   - one leftover face closing the corner region between the rails' far ends
-##     and the chain path that runs between them (the faces' own cut-back
-##     corners), which is what keeps the corner's shape.
-## Rails that are the same point set — the bands meeting in a ridge, as on a
-## cube's chamfered top rim — bound no surface at all and are skipped.
+## The two rails are the cylindrical end-rings of the two bands. Pair them
+## corner-relative (both starting at the shared point) and emit a row of quads
+## between corresponding segments — the bands turning the corner, no leftover
+## n-gon. Identical rails (S=1 chamfer / ridge) bound nothing and are skipped.
 static func _corner_patch(mesh_data: PBMeshData, rail_a: Array, rail_b: Array,
-		ring: Array, ring_segs: Array, outward: Vector3, template: PBFace) -> Array[PBFace]:
+		outward: Vector3, template: PBFace) -> Array[PBFace]:
+
 	var out: Array[PBFace] = []
 	var n := rail_a.size()
 	if n < 2 or rail_b.size() != n:
@@ -756,62 +750,20 @@ static func _corner_patch(mesh_data: PBMeshData, rail_a: Array, rail_b: Array,
 		r1 = _reversed_points(r1)
 	if head2 != 0:
 		r2 = _reversed_points(r2)
-	if _same_point(r1[n - 1], r2[n - 1]):
-		# Same points all the way: the bands meet in a ridge, nothing to fill.
+	var same_all := true
+	for i in range(n):
+		if not _same_point(r1[i], r2[i]):
+			same_all = false
+			break
+	if same_all:
+		# Identical rails (S=1 chamfer, or a ridge): nothing to fill.
 		return out
 	for s in range(n - 1):
 		var row := _corner_row(mesh_data, r1[s], r1[s + 1], r2[s + 1], r2[s], outward, template)
 		if row != null:
 			out.append(row)
-	var far1: Dictionary = r1[n - 1]
-	var far2: Dictionary = r2[n - 1]
-	var leftover := _corner_leftover(mesh_data, ring, ring_segs, far1, far2, outward, template)
-	if leftover != null:
-		out.append(leftover)
 	return out
 
-## The region between the rails' far ends, closed by the chain path that runs
-## between them (the faces' cut-back corner points).
-static func _corner_leftover(mesh_data: PBMeshData, ring: Array, ring_segs: Array,
-		far1: Dictionary, far2: Dictionary, outward: Vector3, template: PBFace) -> PBFace:
-	var chain_points := {}
-	for seg: Dictionary in ring_segs:
-		if seg["kind"] == "chain":
-			for rec: Dictionary in seg["pts"]:
-				chain_points[rec] = true
-	var idx1 := -1
-	var idx2 := -1
-	for i in range(ring.size()):
-		if _same_point(ring[i], far1):
-			idx1 = i
-		if _same_point(ring[i], far2):
-			idx2 = i
-	if idx1 < 0 or idx2 < 0:
-		return null
-	# The two ways round the ring: keep the one made of chain points (the other
-	# runs back through the rails, which the strip already covers).
-	var best: Array = []
-	for dir in [1, ring.size() - 1]:
-		var pts: Array = []
-		var i: int = (idx1 + int(dir) + ring.size()) % ring.size()
-		var ok := true
-		for _guard in range(ring.size()):
-			if i == idx2:
-				break
-			if not chain_points.has(ring[i]):
-				ok = false
-				break
-			pts.append(ring[i])
-			i = (i + dir + ring.size()) % ring.size()
-		if ok and (best.is_empty() or pts.size() < best.size()):
-			best = pts
-	var poly: Array = [far1]
-	poly.append_array(best)
-	poly.append(far2)
-	var loop := PackedInt32Array()
-	for rec: Dictionary in poly:
-		loop.append(_record_position(mesh_data, rec))
-	return _face_from_indices(mesh_data, loop, template, outward)
 
 ## One row of the corner strip: a quad, or a triangle where the rails share
 ## that row's point (a seam end), or nothing when the row is a retrace.

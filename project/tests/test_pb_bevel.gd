@@ -78,9 +78,14 @@ func _unique_near(data: PBMeshData, corner: Vector3, radius: float) -> Array:
 		pts.append(p)
 	return pts
 
-func _assert_collinear(pts: Array, context: String) -> void:
-	assert_gt(pts.size(), 2, context + ": need 3+ points")
-	# Farthest pair is the rail's ends.
+func _loop_bevel_faces(base: int, segs: int) -> int:
+	# S=1: 4 strip quads. S>1: 4 cylindrical strips + 4 corner grids of S faces.
+	if segs <= 1:
+		return base + 4 * segs
+	return base + 8 * segs
+
+func _assert_profile_rounded(pts: Array, context: String) -> void:
+	assert_gt(pts.size(), 3, context + ": rounded profile has more than the chord's 2 ends")
 	var a: Vector3 = pts[0]
 	var b: Vector3 = pts[0]
 	var best := -1.0
@@ -92,11 +97,13 @@ func _assert_collinear(pts: Array, context: String) -> void:
 				a = pts[i]
 				b = pts[j]
 	var ab: Vector3 = b - a
-	assert_gt(ab.length(), 0.001, context + ": rail has length")
+	assert_gt(ab.length(), 0.001, context + ": chord has length")
+	var max_off := 0.0
 	for p in pts:
 		var t: float = (p - a).dot(ab) / ab.length_squared()
-		var proj: Vector3 = a + ab * t
-		assert_true(p.distance_to(proj) < 0.002, context + ": %s off the rail" % str(p))
+		max_off = maxf(max_off, p.distance_to(a + ab * t))
+	assert_gt(max_off, 0.015, context + ": profile must bulge off the chamfer chord (offset %s)" % str(max_off))
+
 
 
 # ==============================================================================
@@ -361,7 +368,6 @@ func test_bevel_inset_inward_extrusion_outer_edges():
 		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
 			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
 				outer_edge_ids.append(eid)
-
 	assert_eq(outer_edge_ids.size(), 4, "Must find exactly 4 outer edges of inward extrusion")
 	for segs in [1, 2, 3, 4]:
 		var c_test := PBCommand.copy_mesh_data(cube)
@@ -371,6 +377,8 @@ func test_bevel_inset_inward_extrusion_outer_edges():
 		_assert_no_ngons(c_test, "Inset inward extrusion inner-rim bevel segs=" + str(segs))
 		_assert_watertight(c_test, "Inset inward extrusion outer edge bevel segs=" + str(segs))
 		_assert_compiled_convention(c_test, false, "Inset inward extrusion outer edge bevel segs=" + str(segs))
+
+
 
 
 func test_bevel_inset_inward_extrusion_single_rim_edge():
@@ -437,7 +445,8 @@ func test_reproduce_user_bevel_outer_edge_loop():
 		var c := PBCommand.copy_mesh_data(cube)
 		var res := PBMeshOps.bevel_edges(c, outer, 0.1, segs)
 		assert_true(res.get("ok", false), "Bevel segs=%d succeeds: %s" % [segs, str(res.get("error", ""))])
-		assert_eq(c.faces.size(), 14 + 4 * segs, "loop bevel segs=%d face count" % segs)
+		assert_eq(c.faces.size(), _loop_bevel_faces(14, segs), "loop bevel segs=%d face count" % segs)
+
 		_assert_no_ngons(c, "Inset outer loop bevel segs=%d" % segs)
 		_assert_watertight(c, "Inset outer loop bevel segs=%d" % segs)
 		assert_eq(_surface_defects(c), 0, "Inset outer loop bevel segs=%d has no inverted or degenerate faces" % segs)
@@ -492,9 +501,9 @@ func test_bevel_clamps_amount_to_what_the_geometry_allows():
 	assert_eq(_surface_defects(cube), 0, "Over-wide bevel has no inverted or degenerate faces")
 
 func test_bevel_corners_are_quads_not_fans():
-	# UniBuilder topology: duplicate the edge loop `segments` times and connect
-	# matching verts. A loop corner is a STRAIGHT shared rail of `segments`
-	# pieces — not a leftover n-gon and not a fan stuck between the bands.
+	# Multi-segment bevel is a cylindrical fillet: S quads along each edge, and
+	# at a loop corner a grid of quads/tris bridging the two cylinder ends —
+	# rounded, connected, no leftover n-gon.
 	var cube := PBMeshData.create_cube(2.0)
 	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
 	PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -0.5)
@@ -513,13 +522,14 @@ func test_bevel_corners_are_quads_not_fans():
 	for segs in [2, 3, 4]:
 		var c := PBCommand.copy_mesh_data(cube)
 		assert_true(PBMeshOps.bevel_edges(c, outer, 0.1, segs).get("ok", false), "bevel segs=%d" % segs)
-		assert_eq(c.faces.size(), 14 + 4 * segs, "loop bevel segs=%d is 4 strips of %d quads on the 14-face mesh" % [segs, segs])
+		assert_eq(c.faces.size(), _loop_bevel_faces(14, segs), "loop bevel segs=%d face count" % segs)
 		_assert_no_ngons(c, "loop bevel segs=%d" % segs)
 		_assert_watertight(c, "loop bevel segs=%d" % segs)
+		assert_eq(_tearing_groups(c), 0, "loop bevel segs=%d: no weld group tears" % segs)
 		for corner: Vector3 in [Vector3(1, 1, 1), Vector3(-1, 1, 1), Vector3(1, -1, 1), Vector3(-1, -1, 1)]:
 			var pts := _unique_near(c, corner, 0.35)
-			assert_eq(pts.size(), segs + 1, "corner %s segs=%d has a %d-point rail" % [str(corner), segs, segs + 1])
-			_assert_collinear(pts, "corner %s segs=%d rail" % [str(corner), segs])
+			_assert_profile_rounded(pts, "corner %s segs=%d" % [str(corner), segs])
+
 
 func test_bevel_sweep_all_shapes_stay_closed():
 	# The sweep that found the reported corner: cube sizes, inset widths, inward

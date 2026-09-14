@@ -2916,6 +2916,15 @@ v0.9.94 round complete ✓ — bevel loop corners are duplicated edge loops, not
   tearing weld group. 908/908 GUT.
 - Version bump 0.9.93 -> 0.9.94.
 
+v0.9.95 round complete ✓ — multi-segment bevel is a rounded cylindrical fillet:
+- THE REPORT: v0.9.94's shared straight rail was connected but looked like a
+  subdivided 1-segment chamfer. S > 1 must round the profile.
+- FIX: each edge's rail is `_arc_interp` in that edge's dihedral (cached by
+  endpoints + normals). A loop corner's two arcs are bridged by a quad/tri
+  grid; the leftover n-gon is gone. S=1 still 18 quads; S=3 outer loop is 38
+  faces, all ≤4 verts, profile bulges off the chamfer chord, watertight.
+- Version bump 0.9.94 -> 0.9.95.
+
 
 ## Key Conventions
 
