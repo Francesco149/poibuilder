@@ -5,17 +5,18 @@
 ## DESIGN — cylindrical fillet, connected at loop corners
 ## ------------------------------------------------------------
 ## `segments` = S is a circular profile in each edge's dihedral (S quads along
-## the edge). S = 1 is a flat chamfer; S > 1 rounds it. A loop corner's two
-## edges have different dihedrals so their end-arcs differ; those two arcs are
-## bridged by a grid of quads/tris (no leftover n-gon). Intermediate rail
-## points are keyed by endpoints + normals so one edge's consumers agree.
+## the edge). S = 1 is a flat chamfer; S > 1 rounds it. A loop corner (valence
+## 2) shares a straight subdivided rail — two cylindrical ends in different
+## dihedrals used to bulge a bump at the corner. Valence-3+ corners still
+## use the dihedral arc. Intermediate rail points are keyed by endpoints +
+## normals so one edge's consumers agree.
 ##
 ## Every point the op creates exists EXACTLY ONCE as a record. Faces take their
 ## own position copies (position-privacy: calculate_normals writes per position);
 ## the weld rebuild reconnects coincident copies so dragging stays coherent.
 ##
 ## Per beveled vertex v:
-##   - valence 2 (a loop corner): quad grid between the two cylindrical ends.
+##   - valence 2 (a loop corner): straight shared rail, no extra cap.
 ##   - valence 1 (a strip end): the unbeveled end face absorbs the profile as
 ##     one n-gon (ProBuilder / Blender). No extra cap, no split of the two
 ##     faces of the beveled edge.
@@ -23,12 +24,11 @@
 ##     a corner region that is capped.
 ##
 ## Face corners: both edges beveled → miter of the two offset lines (every
-## boundary is offset by exactly `amount`; the old diagonal shift was short
-## by cos(45°)). One edge beveled → offset line meets the other edge. Neither
-## → the points neighbours placed on those edges.
+## boundary is offset by exactly `amount`). One edge beveled → offset line
+## meets the other edge. Neither → the points neighbours placed on those edges.
 ##
 ## An attempt that fails — or that closes with a folded seam — is rolled back
-## and retried at half the distance.
+## and reported. Distance is not silently halved.
 @tool
 class_name PBMeshBevel
 extends RefCounted
@@ -96,11 +96,18 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		return _fail("Bevel edges: cannot bevel open boundary edges")
 
 	# ---- 3. beveled vertices + distance clamp ------------------------------
+	# Remaining room is per edge, not a global 0.38×shortest. A radial on an
+	# inset ring is touched at ONE end, so amount may use almost its full
+	# length; an edge with both ends beveled must keep half. The old 0.38
+	# factor turned a requested 0.1 into ~0.06 on a 0.18 m ring, and the
+	# half-retry then ping-ponged tiny/proper sizes when a later amount
+	# happened to pass the folded-seam check.
 	var touched := {}
-	var shortest := {}
 	for k: Vector2i in valid:
 		touched[k.x] = true
 		touched[k.y] = true
+	var amt := amount
+	var seen_edge := {}
 	for fi: int in loops:
 		var loop: PackedInt32Array = loops[fi]
 		var n := loop.size()
@@ -109,49 +116,40 @@ static func bevel_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 			var b: int = loop[(i + 1) % n]
 			var ca: int = lookup.get(a, a)
 			var cb: int = lookup.get(b, b)
+			var ek := Vector2i(mini(ca, cb), maxi(ca, cb))
+			if seen_edge.has(ek):
+				continue
+			seen_edge[ek] = true
 			var l := mesh_data.positions[a].distance_to(mesh_data.positions[b])
 			if l <= 0.0001:
 				continue
-			if touched.has(ca) and (not shortest.has(ca) or l < float(shortest[ca])):
-				shortest[ca] = l
-			if touched.has(cb) and (not shortest.has(cb) or l < float(shortest[cb])):
-				shortest[cb] = l
-	var amt := amount
-	for c: int in shortest:
-		amt = minf(amt, float(shortest[c]) * 0.38)
+			var n_touch := 0
+			if touched.has(ca):
+				n_touch += 1
+			if touched.has(cb):
+				n_touch += 1
+			if n_touch == 2:
+				amt = minf(amt, l * 0.49)
+			elif n_touch == 1:
+				amt = minf(amt, l * 0.95)
 	if amt < 0.0005:
 		return _fail("Bevel edges: bevel distance exceeds available surface")
 
-	# An attempt that fails — or that closes with a folded seam, see below — is
-	# rolled back and retried at half the distance.
 	var restore_snapshot: PBMeshData = PBCommand.copy_mesh_data(mesh_data)
 	var preexisting_seams := _seam_defects(mesh_data)
-	var attempt := 0
-	var last_error := ""
-	while attempt < 16:
-		attempt += 1
-		var outcome := _bevel_build(mesh_data, lookup, valid, incidence, loops, normals, touched, amt, segments)
-		if outcome.get("ok", false):
-			# The beveled region must end up closed and consistently wound: a
-			# surface that only LOOKS right (each face fine on its own, two of
-			# them lying on the same side of a seam) is the corruption this op
-			# must never ship. Detect it here, retry smaller, then report.
-			var defects := _new_seams(mesh_data, preexisting_seams)
-			if defects == 0:
-				return outcome
-			outcome = {"ok": false, "error": "the bevel crosses itself at this selection (%d folded seams)" % defects}
-		last_error = str(outcome.get("error", ""))
+	var outcome := _bevel_build(mesh_data, lookup, valid, incidence, loops, normals, touched, amt, segments)
+	if not outcome.get("ok", false):
 		PBCommand.restore_mesh_data(mesh_data, restore_snapshot)
-		if amt <= amount * 0.0005:
-			break
-		amt *= 0.5
-	return _fail("Bevel edges: " + last_error)
+		return outcome
+	var defects := _new_seams(mesh_data, preexisting_seams)
+	if defects == 0:
+		return outcome
+	PBCommand.restore_mesh_data(mesh_data, restore_snapshot)
+	return _fail("Bevel edges: the bevel crosses itself at this selection (%d folded seams)" % defects)
 
-## Builds the bevel surface at the given distance. Any face that cannot survive
-## the offset (a face narrower than the offset needs) fails the attempt, and the
-## caller retries with a smaller distance: a bevel that would cross its own
-## offset lines is not representable, and shipping the crossed result is what
-## used to leave non-manifold junk behind.
+## Builds the bevel surface at the given distance. A face narrower than the
+## offset fails the attempt; the caller restores the snapshot. Crossing offset
+## lines is not representable — refuse rather than ship non-manifold junk.
 static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dictionary,
 		incidence: Dictionary, loops: Dictionary, normals: Dictionary, touched: Dictionary,
 		amt: float, segments: int) -> Dictionary:
@@ -223,7 +221,7 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					var denom := d_next.dot(u_prev)
 					var step := amt / maxf(0.05, absf(denom))
 					var edge_len: float = pos_i.distance_to(mesh_data.positions[v_next])
-					step = minf(step, edge_len * 0.45)
+					step = minf(step, edge_len * 0.95)
 					var q: Vector3 = pos_i + d_next * step
 					var rec: Dictionary = _reg_add(reg, k_next, vrep, _pt("c%d_%d" % [fi, i], q, vi), step)
 					info["entries"].append(rec)
@@ -232,7 +230,7 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					var denom2 := d_prev.dot(u_next)
 					var step2 := amt / maxf(0.05, absf(denom2))
 					var edge_len2: float = pos_i.distance_to(mesh_data.positions[v_prev])
-					step2 = minf(step2, edge_len2 * 0.45)
+					step2 = minf(step2, edge_len2 * 0.95)
 					var q2: Vector3 = pos_i + d_prev * step2
 					var rec2: Dictionary = _reg_add(reg, k_prev, vrep, _pt("c%d_%d" % [fi, i], q2, vi), step2)
 					info["entries"].append(rec2)
@@ -331,12 +329,16 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					detail_fail = "edge end has no rail anchor"
 					break
 				var pts: Array = [end_a]
+				var loop_corner: bool = int(bevel_count.get(c, 0)) == 2
 				for s in range(1, segments):
 					var t := float(s) / float(segments)
-					# Circular profile in this edge's dihedral. A loop corner's two
-					# edges cache separately (different normals) and the vertex-cap
-					# step bridges those two arcs with quads — rounded AND connected.
-					pts.append(_shared_rail_point(rail_cache, end_a, end_b, n_fa, n_fb, t, int(end_a["src"])))
+					if loop_corner:
+						# Straight rail: cylindrical ends in different dihedrals
+						# meet in a bump at a 2-edge corner.
+						var mid: Vector3 = (end_a["pt"] as Vector3).lerp(end_b["pt"] as Vector3, t)
+						pts.append(_pt("rl%d_%d_%d_%d" % [k.x, k.y, c, s], mid, int(end_a["src"])))
+					else:
+						pts.append(_shared_rail_point(rail_cache, end_a, end_b, n_fa, n_fb, t, int(end_a["src"])))
 				pts.append(end_b)
 
 				rails[Vector3i(k.x, k.y, c)] = pts

@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.97"
+const VERSION := "0.9.98"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1487,9 +1487,6 @@ func _on_operation_requested(op_name: String) -> void:
 							shortest_l = l
 
 			var eff_amount := op_bevel_amount
-			if shortest_l < INF and eff_amount > shortest_l * 0.35:
-				eff_amount = maxf(0.01, snappedf(shortest_l * 0.25, 0.01))
-				op_bevel_amount = eff_amount
 			var pre_snapshot := PBCommand.copy_mesh_data(mesh_data)
 			var faces_to_bevel := selection.selected_faces.duplicate()
 			var edges_to_bevel: Array[PBEdge] = []
@@ -2761,9 +2758,9 @@ func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Arr
 	_bevel_session_edges = edges
 	_bevel_session_mode = editor.select_mode
 	_bevel_session_last_new_faces = new_face_ids
-	var max_d := maxf(1.0, shortest_l * 0.5) if shortest_l < INF else 1.0
+	var max_d := maxf(1.0, shortest_l * 0.95) if shortest_l < INF else 1.0
 	var defs := [
-		{"name": "distance", "label": "Distance", "min": 0.005, "max": max_d, "step": 0.01, "suffix": "m"},
+		{"name": "distance", "label": "Distance", "min": 0.0, "max": max_d, "step": 0.01, "suffix": "m"},
 		{"name": "segments", "label": "Segments", "min": 1, "max": 8, "step": 1, "kind": "int"}
 	]
 	var values := {

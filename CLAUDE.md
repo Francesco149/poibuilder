@@ -2948,6 +2948,21 @@ v0.9.97 round complete ✓ — single-edge bevel keeps original faces as n-gons:
   pentagons; S=3 → 9 faces / 2 heptagons. Watertight.
 - Version bump 0.9.96 -> 0.9.97.
 
+v0.9.98 round complete ✓ — bevel distance matches the request; loop corners stay flat:
+- THE REPORT: 0.1 looked like ~0.02, 0.11 looked right, 0.12 tiny again;
+  inset+inward-extrude inner loop failed with 8 folded seams; outer loop
+  fillet had a bump at the cube corner.
+- CAUSE: (1) 0.38×shortest-incident clamp plus 0.45×radial cap turned 0.1
+  into ~0.06 on an inset ring, then half-retry ping-ponged tiny/proper
+  sizes; (2) plugin also mutated `op_bevel_amount` from shortest selected
+  edge; (3) S>1 rails at valence-2 corners were cylindrical in different
+  dihedrals, so the ruled patch bowed toward the original vertex.
+- FIX: remaining-room clamp (0.49× if both ends beveled, 0.95× if one);
+  no silent half-retry; modal min=0 / step=0.01; valence-2 rails lerp the
+  chamfer chord. Inner loop 0.1 is 0.1 wide; 0.10/0.11/0.12 track the
+  request; loop S>1 is 14+4S faces, no corner bump.
+- Version bump 0.9.97 -> 0.9.98.
+
 
 ## Key Conventions
 

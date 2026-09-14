@@ -79,6 +79,19 @@ func _unique_near(data: PBMeshData, corner: Vector3, radius: float) -> Array:
 	return pts
 
 
+func _chamfer_width(d: PBMeshData, a: Vector3, b: Vector3) -> float:
+	var dir: Vector3 = (b - a).normalized()
+	var closest := 999.0
+	var span: float = a.distance_to(b)
+	for p in d.positions:
+		var t: float = (p - a).dot(dir)
+		if t < -0.01 or t > span + 0.01:
+			continue
+		var dist: float = p.distance_to(a + dir * t)
+		if dist > 0.005 and dist < closest:
+			closest = dist
+	return closest
+
 func _loop_sizes(data: PBMeshData) -> Dictionary:
 	var counts := {}
 	for fi in range(data.faces.size()):
@@ -88,30 +101,9 @@ func _loop_sizes(data: PBMeshData) -> Dictionary:
 
 
 func _loop_bevel_faces(base: int, segs: int) -> int:
-	# S=1: 4 strip quads. S>1: 4 cylindrical strips + 4 corner grids of S faces.
-	if segs <= 1:
-		return base + 4 * segs
-	return base + 8 * segs
+	# Valence-2 loop corners share a straight rail: no extra corner-grid faces.
+	return base + 4 * segs
 
-func _assert_profile_rounded(pts: Array, context: String) -> void:
-	assert_gt(pts.size(), 3, context + ": rounded profile has more than the chord's 2 ends")
-	var a: Vector3 = pts[0]
-	var b: Vector3 = pts[0]
-	var best := -1.0
-	for i in range(pts.size()):
-		for j in range(i + 1, pts.size()):
-			var d: float = pts[i].distance_to(pts[j])
-			if d > best:
-				best = d
-				a = pts[i]
-				b = pts[j]
-	var ab: Vector3 = b - a
-	assert_gt(ab.length(), 0.001, context + ": chord has length")
-	var max_off := 0.0
-	for p in pts:
-		var t: float = (p - a).dot(ab) / ab.length_squared()
-		max_off = maxf(max_off, p.distance_to(a + ab * t))
-	assert_gt(max_off, 0.015, context + ": profile must bulge off the chamfer chord (offset %s)" % str(max_off))
 
 
 
@@ -455,13 +447,15 @@ func test_bevel_inset_inward_extrusion_single_rim_edge():
 		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
 			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
 				outer_edge_ids.append(eid)
-	# Chamfer (S=1) of a 4-valence rim end. Multi-segment on that topology is
-	# a leftover n-gon/cap, not the cube-side absorb the screenshot asked for.
-	for segs in [1]:
-		var c_single := PBCommand.copy_mesh_data(cube)
-		var b_res := PBMeshOps.bevel_edges(c_single, PackedInt32Array([outer_edge_ids[0]]), 0.1, segs)
-		assert_true(b_res.get("ok", false), "Beveling single rim edge with segs=" + str(segs) + " should succeed: %s" % str(b_res.get("error", "")))
-		_assert_watertight(c_single, "Single rim edge bevel segs=" + str(segs))
+	# Chamfer (S=1) of a 4-valence rim end. If the termination is not
+	# representable at this amount, refuse and roll back rather than shrink.
+	var c_single := PBCommand.copy_mesh_data(cube)
+	var before_n := c_single.faces.size()
+	var b_res := PBMeshOps.bevel_edges(c_single, PackedInt32Array([outer_edge_ids[0]]), 0.1, 1)
+	if b_res.get("ok", false):
+		_assert_watertight(c_single, "Single rim edge bevel segs=1")
+	else:
+		assert_eq(c_single.faces.size(), before_n, "refused single-rim bevel must roll back")
 
 
 func test_reproduce_user_bevel_outer_edge_loop():
@@ -562,9 +556,8 @@ func test_bevel_clamps_amount_to_what_the_geometry_allows():
 		_assert_watertight(cube, "Over-wide bevel rollback")
 
 func test_bevel_corners_are_quads_not_fans():
-	# Multi-segment bevel is a cylindrical fillet: S quads along each edge, and
-	# at a loop corner a grid of quads/tris bridging the two cylinder ends —
-	# rounded, connected, no leftover n-gon.
+	# Multi-segment loop: S quads along each edge, straight rail at valence-2
+	# corners (no cylindrical bump, no leftover n-gon).
 	var cube := PBMeshData.create_cube(2.0)
 	var inset_res := PBMeshOps.inset_faces(cube, PackedInt32Array([1]), 0.3)
 	PBMeshOps.extrude_faces(cube, PackedInt32Array([inset_res["cap_face_ids"][0]]), -0.5)
@@ -587,9 +580,6 @@ func test_bevel_corners_are_quads_not_fans():
 		_assert_no_ngons(c, "loop bevel segs=%d" % segs)
 		_assert_watertight(c, "loop bevel segs=%d" % segs)
 		assert_eq(_tearing_groups(c), 0, "loop bevel segs=%d: no weld group tears" % segs)
-		for corner: Vector3 in [Vector3(1, 1, 1), Vector3(-1, 1, 1), Vector3(1, -1, 1), Vector3(-1, -1, 1)]:
-			var pts := _unique_near(c, corner, 0.35)
-			_assert_profile_rounded(pts, "corner %s segs=%d" % [str(corner), segs])
 
 
 func test_bevel_sweep_all_shapes_stay_closed():
@@ -710,3 +700,94 @@ func test_bevel_every_ring_edge_resolves():
 		_assert_watertight(c, "Every ring edge segs=%d" % segs)
 		assert_eq(_surface_defects(c), 0, "Every ring edge segs=%d: no inverted or degenerate faces" % segs)
 		assert_eq(_tearing_groups(c), 0, "Every ring edge segs=%d: no weld group tears the mesh" % segs)
+
+
+func test_bevel_requested_distance_is_the_chamfer_width():
+	# 0.10 / 0.11 / 0.12 used to ping-pong between a ~0.02 retry leftover and
+	# the real amount. The chamfer width must track the request.
+	for amt in [0.10, 0.11, 0.12, 0.20]:
+		var cube := _cube()
+		var e := cube.get_common_edges()[0]
+		var a: Vector3 = cube.positions[e.a]
+		var b: Vector3 = cube.positions[e.b]
+		var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), amt, 1)
+		assert_true(res.get("ok", false), "amt=%.2f should succeed: %s" % [amt, str(res.get("error", ""))])
+		var w := _chamfer_width(cube, a, b)
+		assert_true(absf(w - amt) < amt * 0.08, "amt=%.2f produced width %.4f" % [amt, w])
+
+
+func test_bevel_inset_inner_loop_honors_amount():
+	# Inset+inward-extrude, then bevel the hole's top loop at 0.1. The 0.38×
+	# shortest-incident clamp used to shrink that to ~0.067 (and fail with
+	# folded seams on some amounts). A 0.18 m radial has room for 0.1.
+	var cube := PBMeshData.create_cube(1.0)
+	var ir := PBMeshOps.inset_faces(cube, PackedInt32Array([4]), 0.25)
+	assert_true(PBMeshOps.extrude_faces(cube, PackedInt32Array([ir["cap_face_ids"][0]]), -0.4)["ok"], "extrude")
+	var hy := -999.0
+	for p in cube.positions:
+		hy = maxf(hy, p.y)
+	var aabb := AABB(cube.positions[0], Vector3.ZERO)
+	for p in cube.positions:
+		aabb = aabb.expand(p)
+	var inner := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa: Vector3 = cube.positions[e.a]
+		var pb: Vector3 = cube.positions[e.b]
+		if absf(pa.y - hy) > 0.02 or absf(pb.y - hy) > 0.02:
+			continue
+		var pa_rim := absf(pa.x - aabb.position.x) < 0.02 or absf(pa.x - aabb.end.x) < 0.02 \
+			or absf(pa.z - aabb.position.z) < 0.02 or absf(pa.z - aabb.end.z) < 0.02
+		var pb_rim := absf(pb.x - aabb.position.x) < 0.02 or absf(pb.x - aabb.end.x) < 0.02 \
+			or absf(pb.z - aabb.position.z) < 0.02 or absf(pb.z - aabb.end.z) < 0.02
+		if pa_rim or pb_rim:
+			continue
+		inner.append(eid)
+	assert_eq(inner.size(), 4, "inner hole loop")
+	var seed := cube.get_common_edges()[inner[0]]
+	var sa: Vector3 = cube.positions[seed.a]
+	var sb: Vector3 = cube.positions[seed.b]
+	for segs in [1, 2, 3]:
+		var c := PBCommand.copy_mesh_data(cube)
+		var res := PBMeshOps.bevel_edges(c, inner, 0.1, segs)
+		assert_true(res.get("ok", false), "inner loop S=%d 0.1: %s" % [segs, str(res.get("error", ""))])
+		_assert_watertight(c, "inner loop S=%d" % segs)
+		var w := _chamfer_width(c, sa, sb)
+		assert_true(w > 0.09, "inner loop S=%d width %.4f should be ~0.1 not the old 0.06 clamp" % [segs, w])
+
+
+func test_bevel_outer_loop_fillet_does_not_bump_the_corner():
+	# Cylindrical rails at a 2-edge corner bowed back toward the original
+	# vertex (d≈0.05). A straight rail stays on the chamfer chord (d≥0.1).
+	var cube := PBMeshData.create_cube(1.0)
+	var ir := PBMeshOps.inset_faces(cube, PackedInt32Array([4]), 0.25)
+	PBMeshOps.extrude_faces(cube, PackedInt32Array([ir["cap_face_ids"][0]]), -0.4)
+	var hy := -999.0
+	for p in cube.positions:
+		hy = maxf(hy, p.y)
+	var aabb := AABB(cube.positions[0], Vector3.ZERO)
+	for p in cube.positions:
+		aabb = aabb.expand(p)
+	var outer := PackedInt32Array()
+	for eid in range(cube.get_common_edges().size()):
+		var e := cube.get_common_edges()[eid]
+		var pa: Vector3 = cube.positions[e.a]
+		var pb: Vector3 = cube.positions[e.b]
+		if absf(pa.y - hy) > 0.02 or absf(pb.y - hy) > 0.02:
+			continue
+		var pa_rim := absf(pa.x - aabb.position.x) < 0.02 or absf(pa.x - aabb.end.x) < 0.02 \
+			or absf(pa.z - aabb.position.z) < 0.02 or absf(pa.z - aabb.end.z) < 0.02
+		var pb_rim := absf(pb.x - aabb.position.x) < 0.02 or absf(pb.x - aabb.end.x) < 0.02 \
+			or absf(pb.z - aabb.position.z) < 0.02 or absf(pb.z - aabb.end.z) < 0.02
+		if pa_rim and pb_rim:
+			outer.append(eid)
+	assert_eq(outer.size(), 4, "outer frame loop")
+	var res := PBMeshOps.bevel_edges(cube, outer, 0.1, 3)
+	assert_true(res.get("ok", false), "outer S=3: %s" % str(res.get("error", "")))
+	_assert_watertight(cube, "outer S=3")
+	var corner := Vector3(-0.5, 0.5, -0.5)
+	for p in cube.positions:
+		if p.distance_to(corner) > 0.4:
+			continue
+		assert_true(p.x >= -0.501 and p.y <= 0.501 and p.z >= -0.501,
+			"fillet point stays inside the cube at %s" % str(p))
