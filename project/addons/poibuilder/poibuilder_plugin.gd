@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.98"
+const VERSION := "0.9.99"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1450,6 +1450,30 @@ func _on_operation_requested(op_name: String) -> void:
 		"insert_edge_loop":
 			var loop_ids := _edge_ids_for_op(mesh_data)
 			result = PBMeshOps.insert_edge_loop(mesh_data, loop_ids)
+		"bridge_edges":
+			var edge_ids := _edge_ids_for_op(mesh_data)
+			result = PBMeshOps.bridge_edges(mesh_data, edge_ids)
+		"connect_edges":
+			if editor.select_mode == PBEditor.SelectMode.VERTEX:
+				result = PBMeshOps.connect_vertices(mesh_data, selection.selected_vertices.duplicate())
+			else:
+				var edge_ids := _edge_ids_for_op(mesh_data)
+				result = PBMeshOps.connect_edges(mesh_data, edge_ids)
+		"connect_vertices":
+			result = PBMeshOps.connect_vertices(mesh_data, selection.selected_vertices.duplicate())
+		"collapse_elements":
+			var elem_ids: PackedInt32Array
+			match editor.select_mode:
+				PBEditor.SelectMode.VERTEX:
+					elem_ids = selection.selected_vertices.duplicate()
+				PBEditor.SelectMode.EDGE:
+					elem_ids = _edge_ids_for_op(mesh_data)
+				PBEditor.SelectMode.FACE:
+					elem_ids = selection.selected_faces.duplicate()
+			result = PBMeshOps.collapse_elements(mesh_data, int(editor.select_mode), elem_ids)
+		"fill_hole":
+			var edge_ids := _edge_ids_for_op(mesh_data)
+			result = PBMeshOps.fill_hole(mesh_data, edge_ids)
 		"bevel_edges":
 			var is_face_bevel := false
 			var edge_ids: PackedInt32Array
@@ -1561,7 +1585,7 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int, created_faces: PackedInt32Array = PackedInt32Array()) -> void:
 	editor.hover_id = -1
 	_hover_drawn_last = -1
-	if op_name == "bevel_edges" and not created_faces.is_empty():
+	if (op_name == "bevel_edges" or op_name == "bridge_edges" or op_name == "fill_hole") and not created_faces.is_empty():
 		editor.select_mode = PBEditor.SelectMode.FACE
 		editor.selection.set_faces(created_faces)
 	else:
@@ -1587,6 +1611,11 @@ const OP_ACTION_NAMES := {
 	"weld_vertices": "Weld Vertices",
 	"knife_tool": "Knife Cut",
 	"bevel_edges": "Bevel Edges",
+	"bridge_edges": "Bridge Edges",
+	"connect_edges": "Connect",
+	"connect_vertices": "Connect Vertices",
+	"collapse_elements": "Collapse",
+	"fill_hole": "Fill Hole",
 }
 
 # ==============================================================================

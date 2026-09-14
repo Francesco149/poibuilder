@@ -212,13 +212,17 @@ func test_toolbar_initial_state():
 	add_child_autofree(tb)
 
 	# Items across rows: Logo, Split button, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face/Texture, sep, Space,
-	# sep, Grid, GridState, sep, 10 op buttons (incl Bevel), sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
+	# sep, Grid, GridState, sep, 14 op buttons (incl Bevel, Bridge, Connect, Collapse, Fill Hole), sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
 	# sep, Material button, UV button, Settings button, sep, Export button.
-	assert_eq(tb.get_item_count(), 41, "Toolbar should have 41 items in default two-row mode")
+	assert_eq(tb.get_item_count(), 45, "Toolbar should have 45 items in default two-row mode")
 	assert_true(tb.two_rows, "Default layout should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in default two-row mode")
 	assert_not_null(tb._btn_export, "Export button should exist")
 	assert_not_null(tb._op_buttons.get("bevel_edges"), "Bevel op button should exist")
+	assert_not_null(tb._op_buttons.get("bridge_edges"), "Bridge op button should exist")
+	assert_not_null(tb._op_buttons.get("connect_edges"), "Connect op button should exist")
+	assert_not_null(tb._op_buttons.get("collapse_elements"), "Collapse op button should exist")
+	assert_not_null(tb._op_buttons.get("fill_hole"), "Fill hole op button should exist")
 	assert_not_null(tb._btn_split_rows, "Split rows button should exist")
 	assert_true(tb._logo is TextureRect, "Toolbar should lead with the PoiBuilder logo")
 	assert_eq(tb._row1.get_child(0), tb._logo, "First item in Row 1 must be logo")
@@ -232,7 +236,7 @@ func test_toolbar_split_rows_toggle():
 	# Initially 2 rows by default
 	assert_true(tb.two_rows, "Initial state should be two rows")
 	assert_true(tb._row2.visible, "Row 2 should be visible in two-row mode")
-	assert_eq(tb._row1.get_child_count(), 18, "Row 1 should contain logo, split button, tools (3+sep), ops (10+sep), and env")
+	assert_eq(tb._row1.get_child_count(), 22, "Row 1 should contain logo, split button, tools (3+sep), ops (14+sep), and env")
 	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
 
 	# Toggle to 1 row
@@ -242,13 +246,13 @@ func test_toolbar_split_rows_toggle():
 
 	assert_false(tb.two_rows, "two_rows property should be false in single-row mode")
 	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
-	assert_eq(tb._row1.get_child_count(), 42, "Row 1 should have all items in single-row mode")
+	assert_eq(tb._row1.get_child_count(), 46, "Row 1 should have all items in single-row mode")
 
 	# Toggle back to 2 rows via button
 	tb._btn_split_rows.button_pressed = true
 	assert_true(tb.two_rows, "two_rows property should be true after toggling button")
 	assert_true(tb._row2.visible, "Row 2 should be visible again")
-	assert_eq(tb._row1.get_child_count(), 18, "Row 1 should contain 18 items")
+	assert_eq(tb._row1.get_child_count(), 22, "Row 1 should contain 22 items")
 	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain 23 items")
 	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
 	assert_true(received_splits[0], "Emitted value should match button state")

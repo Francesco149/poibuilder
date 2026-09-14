@@ -175,7 +175,7 @@ graph TD
 
 ---
 
-### Session 5: Topology Operations — Bridge, Connect, Collapse & Fill Hole
+### Session 5: Topology Operations — Bridge, Connect, Collapse & Fill Hole (Complete ✓)
 - **Goal**: Complete the core polygon modeling toolkit.
 - **Files**:
   - `mesh_ops/pb_mesh_ops.gd`:

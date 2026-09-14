@@ -60,6 +60,10 @@ const ACTIONS: Dictionary = {
 	"op_detach":       { "label": "Mesh Op: Detach Faces",    "keys": [] },
 	"op_delete":       { "label": "Mesh Op: Delete Faces",    "keys": [] },
 	"op_knife":        { "label": "Mesh Op: Knife Tool",     "keys": [] },
+	"op_bridge":       { "label": "Mesh Op: Bridge Edges",   "keys": [[KEY_B, 0, 0, 1]] },
+	"op_connect":      { "label": "Mesh Op: Connect",        "keys": [] },
+	"op_collapse":     { "label": "Mesh Op: Collapse",       "keys": [] },
+	"op_fill_hole":    { "label": "Mesh Op: Fill Hole",      "keys": [] },
 	# Dedicated Tools
 	"tool_sprite":     { "label": "Tool: Place Billboard / Sprite", "keys": [[KEY_B, 0, 0, 0]] },
 	# Environment / Time of Day
@@ -82,6 +86,10 @@ const OP_ACTION_TO_OPERATION: Dictionary = {
 	"op_delete": "delete_faces",
 	"op_knife": "knife_tool",
 	"op_bevel": "bevel_edges",
+	"op_bridge": "bridge_edges",
+	"op_connect": "connect_edges",
+	"op_collapse": "collapse_elements",
+	"op_fill_hole": "fill_hole",
 }
 
 # ==============================================================================

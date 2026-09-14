@@ -780,6 +780,734 @@ static func bevel_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 	return PBMeshBevel.bevel_edges(mesh_data, boundary, amount, segments)
 
 # ==============================================================================
+# Topology Operations (Session 5): Bridge, Connect, Collapse, Fill Hole
+# ==============================================================================
+
+## Connects two boundary edges across a gap with a new polygon face (quad or triangle).
+## edge_ids contains exactly 2 common edge IDs (indices into mesh_data.get_common_edges()).
+static func bridge_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Bridge edges: no mesh data")
+	if edge_ids.size() != 2:
+		return _fail("Bridge edges requires exactly 2 edges selected")
+
+	var common := mesh_data.get_common_edges()
+	var eid_a := edge_ids[0]
+	var eid_b := edge_ids[1]
+	if eid_a < 0 or eid_a >= common.size() or eid_b < 0 or eid_b >= common.size():
+		return _fail("Bridge edges: edge index out of range")
+	if eid_a == eid_b:
+		return _fail("Bridge edges requires 2 distinct edges")
+
+	var edge_a := common[eid_a]
+	var edge_b := common[eid_b]
+	var lookup := mesh_data.get_shared_vertex_lookup()
+
+	var key_a := _common_key(lookup, edge_a.a, edge_a.b)
+	var key_b := _common_key(lookup, edge_b.a, edge_b.b)
+
+	# Find adjacent faces and verify boundary status (1 connecting face)
+	var adj_faces_a: Array[PBFace] = []
+	var adj_faces_b: Array[PBFace] = []
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		for fe in face.get_edges():
+			var f_key := _common_key(lookup, fe.a, fe.b)
+			if f_key == key_a:
+				adj_faces_a.append(face)
+			if f_key == key_b:
+				adj_faces_b.append(face)
+
+	if adj_faces_a.size() != 1 or adj_faces_b.size() != 1:
+		return _fail("Bridge edges requires open boundary edges (1 connecting face each)")
+	if adj_faces_a[0] == adj_faces_b[0]:
+		return _fail("Face already exists between these two edges")
+
+	var face_a: PBFace = adj_faces_a[0]
+	var face_b: PBFace = adj_faces_b[0]
+	var submesh: int = face_a.submesh_index
+
+	var ca_a: int = lookup.get(edge_a.a, edge_a.a)
+	var ca_b: int = lookup.get(edge_a.b, edge_a.b)
+	var cb_a: int = lookup.get(edge_b.a, edge_b.a)
+	var cb_b: int = lookup.get(edge_b.b, edge_b.b)
+
+	var shares_vertex := (ca_a == cb_a or ca_a == cb_b or ca_b == cb_a or ca_b == cb_b)
+	var new_face: PBFace = null
+
+	var ref_n: Vector3 = (_face_area_normal(mesh_data, face_a) + _face_area_normal(mesh_data, face_b)).normalized()
+	if ref_n.length_squared() < 0.0001:
+		ref_n = Vector3.UP
+
+	if shares_vertex:
+		# Triangle bridge
+		var shared_src: int = -1
+		var other_a: int = -1
+		var other_b: int = -1
+		if ca_a == cb_a:
+			shared_src = edge_a.a
+			other_a = edge_a.b
+			other_b = edge_b.b
+		elif ca_a == cb_b:
+			shared_src = edge_a.a
+			other_a = edge_a.b
+			other_b = edge_b.a
+		elif ca_b == cb_a:
+			shared_src = edge_a.b
+			other_a = edge_a.a
+			other_b = edge_b.b
+		else:
+			shared_src = edge_a.b
+			other_a = edge_a.a
+			other_b = edge_b.a
+
+		var qa := _dup_position(mesh_data, shared_src, Vector3.ZERO)
+		var qb := _dup_position(mesh_data, other_a, Vector3.ZERO)
+		var qc := _dup_position(mesh_data, other_b, Vector3.ZERO)
+
+		var pa := mesh_data.positions[qa]
+		var pb := mesh_data.positions[qb]
+		var pc := mesh_data.positions[qc]
+		var tri_n := (pb - pa).cross(pc - pa)
+		if tri_n.dot(ref_n) < 0.0:
+			new_face = PBFace.new(PackedInt32Array([qa, qc, qb]))
+		else:
+			new_face = PBFace.new(PackedInt32Array([qa, qb, qc]))
+	else:
+		# Quad bridge with planar untwist
+		var pa0 := mesh_data.positions[edge_a.a]
+		var pa1 := mesh_data.positions[edge_a.b]
+		var pb0 := mesh_data.positions[edge_b.a]
+		var pb1 := mesh_data.positions[edge_b.b]
+
+		var src_a0 := edge_a.a
+		var src_a1 := edge_a.b
+		var src_b0 := edge_b.a
+		var src_b1 := edge_b.b
+
+		# Check untwist in planar projection
+		var plane_n := (pb0 - pa0).cross(pa1 - pa0)
+		if plane_n.length_squared() < 0.0001:
+			plane_n = ref_n
+		else:
+			plane_n = plane_n.normalized()
+
+		var basis := PBUv.get_planar_basis(plane_n)
+		var u_axis: Vector3 = basis["u"]
+		var v_axis: Vector3 = basis["v"]
+
+		var p2_a0 := Vector2(u_axis.dot(pa0), v_axis.dot(pa0))
+		var p2_a1 := Vector2(u_axis.dot(pa1), v_axis.dot(pa1))
+		var p2_b0 := Vector2(u_axis.dot(pb0), v_axis.dot(pb0))
+		var p2_b1 := Vector2(u_axis.dot(pb1), v_axis.dot(pb1))
+
+		# Line segment intersection test between diagonal cross candidates
+		var isect := PBMath.get_line_segment_intersect(p2_a0, p2_b0, p2_a1, p2_b1)
+		if isect.get("intersects", false):
+			var tmp_p := pb0
+			pb0 = pb1
+			pb1 = tmp_p
+			var tmp_s := src_b0
+			src_b0 = src_b1
+			src_b1 = tmp_s
+
+		var q0 := _dup_position(mesh_data, src_a0, Vector3.ZERO)
+		var q1 := _dup_position(mesh_data, src_a1, Vector3.ZERO)
+		var q2 := _dup_position(mesh_data, src_b1, Vector3.ZERO)
+		var q3 := _dup_position(mesh_data, src_b0, Vector3.ZERO)
+
+		var quad_n := (pa1 - pa0).cross(pb0 - pa0)
+		if quad_n.dot(ref_n) < 0.0:
+			new_face = PBFace.new(PackedInt32Array([
+				q0, q3, q2,
+				q2, q1, q0,
+			]))
+		else:
+			new_face = PBFace.new(PackedInt32Array([
+				q0, q1, q2,
+				q2, q3, q0,
+			]))
+
+	new_face.submesh_index = submesh
+	PBUv.apply_face_uvs(mesh_data, new_face)
+	mesh_data.faces.append(new_face)
+	_rebuild_topology(mesh_data)
+
+	var new_ids := PackedInt32Array([mesh_data.faces.size() - 1])
+	return {"ok": true, "new_face_ids": new_ids}
+
+## Inserts a new edge connecting the center points of selected edges across adjacent faces.
+## Quads split into two quads when opposite edges are connected.
+## Faces with 3+ edges split radiating around their centroid.
+static func connect_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Connect edges: no mesh data")
+	if edge_ids.is_empty():
+		return _fail("Connect edges: no edges selected")
+
+	var common := mesh_data.get_common_edges()
+	var lookup := mesh_data.get_shared_vertex_lookup()
+
+	var selected_keys := {}
+	for eid in edge_ids:
+		if eid >= 0 and eid < common.size():
+			var ce := common[eid]
+			selected_keys[_common_key(lookup, ce.a, ce.b)] = true
+
+	if selected_keys.is_empty():
+		return _fail("Connect edges: invalid edge selection")
+
+	# Group selected edges by face
+	var touched := {} # face_idx -> Array[Dictionary with {edge: PBEdge, key: Vector2i}]
+	for fi in range(mesh_data.faces.size()):
+		var f: PBFace = mesh_data.faces[fi]
+		if f == null:
+			continue
+		for fe in f.get_edges():
+			var k := _common_key(lookup, fe.a, fe.b)
+			if selected_keys.has(k):
+				if not touched.has(fi):
+					touched[fi] = []
+				touched[fi].append({"edge": fe, "key": k})
+
+	if touched.is_empty():
+		return _fail("Connect edges: selected edges do not touch any faces")
+
+	# Weed out edges that won't connect across faces (isolated 1-edge touches)
+	var affected := {}
+	for fi in touched:
+		var edge_list: Array = touched[fi]
+		if edge_list.size() > 1:
+			affected[fi] = edge_list
+		else:
+			var k: Vector2i = edge_list[0]["key"]
+			var has_connecting_neighbor := false
+			for other_fi in touched:
+				if other_fi != fi and touched[other_fi].size() > 1:
+					for other_item in touched[other_fi]:
+						if other_item["key"] == k:
+							has_connecting_neighbor = true
+							break
+				if has_connecting_neighbor:
+					break
+			if has_connecting_neighbor:
+				affected[fi] = edge_list
+
+	if affected.is_empty():
+		return _fail("Connect edges: no connecting edge pairs found (requires at least 2 edges on a face or connected across faces)")
+
+	var removed := {}
+	var added: Array[PBFace] = []
+
+	for fi in affected:
+		var face: PBFace = mesh_data.faces[fi]
+		var target_edges: Array = affected[fi]
+		removed[fi] = true
+
+		var loop: PackedInt32Array = _ordered_loop(face)
+		if loop.size() < 3:
+			continue
+
+		var f_normal := _face_area_normal(mesh_data, face).normalized()
+		if f_normal.length_squared() < 0.0001:
+			f_normal = Vector3.UP
+
+		var face_target_keys := {}
+		for item in target_edges:
+			face_target_keys[item["key"]] = true
+
+		var n_verts: int = loop.size()
+		if target_edges.size() == 2 and n_verts == 4:
+			# Quad split: 2 opposite edges of a quad
+			var split_indices: Array[int] = []
+			for i in range(n_verts):
+				var va: int = loop[i]
+				var vb: int = loop[(i + 1) % n_verts]
+				var k := _common_key(lookup, va, vb)
+				if face_target_keys.has(k):
+					split_indices.append(i)
+
+			if split_indices.size() == 2:
+				var i0: int = split_indices[0]
+				var i1: int = split_indices[1]
+				var m0 := (mesh_data.positions[loop[i0]] + mesh_data.positions[loop[(i0 + 1) % n_verts]]) * 0.5
+				var m1 := (mesh_data.positions[loop[i1]] + mesh_data.positions[loop[(i1 + 1) % n_verts]]) * 0.5
+
+				var q_m0a := _dup_position_at(mesh_data, m0, loop[i0])
+				var q_m0b := _dup_position_at(mesh_data, m0, loop[i0])
+				var q_m1a := _dup_position_at(mesh_data, m1, loop[i1])
+				var q_m1b := _dup_position_at(mesh_data, m1, loop[i1])
+
+				var part1_src: Array[int] = []
+				var cur := (i0 + 1) % n_verts
+				while cur != (i1 + 1) % n_verts:
+					part1_src.append(loop[cur])
+					cur = (cur + 1) % n_verts
+
+				var part2_src: Array[int] = []
+				cur = (i1 + 1) % n_verts
+				while cur != (i0 + 1) % n_verts:
+					part2_src.append(loop[cur])
+					cur = (cur + 1) % n_verts
+
+				var poly1_pts := PackedVector3Array([m0])
+				var poly1_idx := PackedInt32Array([q_m0a])
+				for s_idx in part1_src:
+					poly1_pts.append(mesh_data.positions[s_idx])
+					poly1_idx.append(_dup_position(mesh_data, s_idx, Vector3.ZERO))
+				poly1_pts.append(m1)
+				poly1_idx.append(q_m1a)
+
+				var poly2_pts := PackedVector3Array([m1])
+				var poly2_idx := PackedInt32Array([q_m1b])
+				for s_idx in part2_src:
+					poly2_pts.append(mesh_data.positions[s_idx])
+					poly2_idx.append(_dup_position(mesh_data, s_idx, Vector3.ZERO))
+				poly2_pts.append(m0)
+				poly2_idx.append(q_m0b)
+
+				var f1 := _build_polygon_face_with_normal(mesh_data, poly1_pts, poly1_idx, f_normal, face.submesh_index)
+				var f2 := _build_polygon_face_with_normal(mesh_data, poly2_pts, poly2_idx, f_normal, face.submesh_index)
+				if f1 != null:
+					added.append(f1)
+				if f2 != null:
+					added.append(f2)
+				continue
+
+		# Multi-edge split or single-edge neighbor conform
+		var centroid := Vector3.ZERO
+		for idx in loop:
+			centroid += mesh_data.positions[idx]
+		centroid /= float(n_verts)
+
+		var midpoints: Dictionary = {} # edge_index -> Vector3
+		for i in range(n_verts):
+			var va: int = loop[i]
+			var vb: int = loop[(i + 1) % n_verts]
+			var k := _common_key(lookup, va, vb)
+			if face_target_keys.has(k):
+				midpoints[i] = (mesh_data.positions[va] + mesh_data.positions[vb]) * 0.5
+
+		if midpoints.size() >= 2:
+			var split_pts := PackedVector3Array()
+			var split_dups := PackedInt32Array()
+			for i in range(n_verts):
+				split_pts.append(mesh_data.positions[loop[i]])
+				split_dups.append(loop[i])
+				if midpoints.has(i):
+					split_pts.append(midpoints[i])
+					split_dups.append(loop[i])
+
+			var n_split := split_pts.size()
+			for i in range(n_split):
+				var p0 := centroid
+				var p1 := split_pts[i]
+				var p2 := split_pts[(i + 1) % n_split]
+				var q0 := _dup_position_at(mesh_data, p0, loop[0])
+				var q1 := _dup_position_at(mesh_data, p1, split_dups[i])
+				var q2 := _dup_position_at(mesh_data, p2, split_dups[(i + 1) % n_split])
+				var tri_pts := PackedVector3Array([p0, p1, p2])
+				var tri_idx := PackedInt32Array([q0, q1, q2])
+				var nf := _build_polygon_face_with_normal(mesh_data, tri_pts, tri_idx, f_normal, face.submesh_index)
+				if nf != null:
+					added.append(nf)
+		else:
+			var split_pts := PackedVector3Array()
+			var split_idx := PackedInt32Array()
+			for i in range(n_verts):
+				split_pts.append(mesh_data.positions[loop[i]])
+				split_idx.append(_dup_position(mesh_data, loop[i], Vector3.ZERO))
+				if midpoints.has(i):
+					split_pts.append(midpoints[i])
+					split_idx.append(_dup_position_at(mesh_data, midpoints[i], loop[i]))
+			var nf := _build_polygon_face_with_normal(mesh_data, split_pts, split_idx, f_normal, face.submesh_index)
+			if nf != null:
+				added.append(nf)
+
+	if added.is_empty():
+		return _fail("Connect edges: failed to construct sub-faces")
+
+	var replace_res := _replace_faces(mesh_data, removed, added, [])
+	_rebuild_topology(mesh_data)
+
+	return {"ok": true, "new_face_ids": replace_res.get("new_face_ids", PackedInt32Array())}
+
+## Inserts an edge between two non-adjacent vertices on a face, splitting the face.
+## If 3+ vertices on a face are selected, subdivides the face connecting them to their centroid.
+static func connect_vertices(mesh_data: PBMeshData, vertex_ids: PackedInt32Array) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Connect vertices: no mesh data")
+	if vertex_ids.size() < 2:
+		return _fail("Connect vertices requires at least 2 vertices selected")
+
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var selected_common := {}
+	for vid in vertex_ids:
+		if vid >= 0 and vid < mesh_data.positions.size():
+			selected_common[lookup.get(vid, vid)] = true
+
+	if selected_common.size() < 2:
+		return _fail("Connect vertices: select at least 2 distinct vertex positions")
+
+	# Find faces containing 2 or more of the selected vertices
+	var splits := {} # face_idx -> Array[int] (indices into face's ordered loop)
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var loop: PackedInt32Array = _ordered_loop(face)
+		if loop.size() < 3:
+			continue
+		var matched: Array[int] = []
+		for i in range(loop.size()):
+			var cv: int = lookup.get(loop[i], loop[i])
+			if selected_common.has(cv):
+				matched.append(i)
+		if matched.size() >= 2:
+			splits[fi] = matched
+
+	if splits.is_empty():
+		return _fail("Connect vertices: selected vertices must share at least one face")
+
+	var removed := {}
+	var added: Array[PBFace] = []
+
+	for fi in splits:
+		var face: PBFace = mesh_data.faces[fi]
+		var matched_loop_idxs: Array[int] = splits[fi]
+		var loop: PackedInt32Array = _ordered_loop(face)
+		var n_verts := loop.size()
+		var f_normal := _face_area_normal(mesh_data, face).normalized()
+		if f_normal.length_squared() < 0.0001:
+			f_normal = Vector3.UP
+
+		if matched_loop_idxs.size() == 2:
+			var i0: int = mini(matched_loop_idxs[0], matched_loop_idxs[1])
+			var i1: int = maxi(matched_loop_idxs[0], matched_loop_idxs[1])
+
+			# Reject if vertices are already connected by an edge along the perimeter
+			if i1 - i0 == 1 or (i0 == 0 and i1 == n_verts - 1):
+				continue
+
+			removed[fi] = true
+
+			var poly1_pts := PackedVector3Array()
+			var poly1_idx := PackedInt32Array()
+			var cur := i0
+			while true:
+				poly1_pts.append(mesh_data.positions[loop[cur]])
+				poly1_idx.append(_dup_position(mesh_data, loop[cur], Vector3.ZERO))
+				if cur == i1:
+					break
+				cur = (cur + 1) % n_verts
+
+			var poly2_pts := PackedVector3Array()
+			var poly2_idx := PackedInt32Array()
+			cur = i1
+			while true:
+				poly2_pts.append(mesh_data.positions[loop[cur]])
+				poly2_idx.append(_dup_position(mesh_data, loop[cur], Vector3.ZERO))
+				if cur == i0:
+					break
+				cur = (cur + 1) % n_verts
+
+			var f1 := _build_polygon_face_with_normal(mesh_data, poly1_pts, poly1_idx, f_normal, face.submesh_index)
+			var f2 := _build_polygon_face_with_normal(mesh_data, poly2_pts, poly2_idx, f_normal, face.submesh_index)
+			if f1 != null:
+				added.append(f1)
+			if f2 != null:
+				added.append(f2)
+		else:
+			removed[fi] = true
+			var centroid := Vector3.ZERO
+			for li in matched_loop_idxs:
+				centroid += mesh_data.positions[loop[li]]
+			centroid /= float(matched_loop_idxs.size())
+
+			var m_count := matched_loop_idxs.size()
+			for k in range(m_count):
+				var start_idx: int = matched_loop_idxs[k]
+				var end_idx: int = matched_loop_idxs[(k + 1) % m_count]
+				var poly_pts := PackedVector3Array([centroid])
+				var poly_idx := PackedInt32Array([_dup_position_at(mesh_data, centroid, loop[start_idx])])
+				var cur := start_idx
+				while true:
+					poly_pts.append(mesh_data.positions[loop[cur]])
+					poly_idx.append(_dup_position(mesh_data, loop[cur], Vector3.ZERO))
+					if cur == end_idx:
+						break
+					cur = (cur + 1) % n_verts
+				var nf := _build_polygon_face_with_normal(mesh_data, poly_pts, poly_idx, f_normal, face.submesh_index)
+				if nf != null:
+					added.append(nf)
+
+	if added.is_empty():
+		return _fail("Connect vertices: vertices are already connected by edges")
+
+	var replace_res := _replace_faces(mesh_data, removed, added, [])
+	_rebuild_topology(mesh_data)
+
+	return {"ok": true, "new_face_ids": replace_res.get("new_face_ids", PackedInt32Array())}
+
+## Collapses selected vertices, edges, or faces into a single point.
+## Mode: PBEditor.SelectMode (1: VERTEX, 2: EDGE, 3: FACE).
+## If collapse_to_first is true, collapses to the first element's position; otherwise to the centroid.
+static func collapse_elements(mesh_data: PBMeshData, mode: int, element_ids: PackedInt32Array,
+		collapse_to_first: bool = false) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Collapse elements: no mesh data")
+	if element_ids.is_empty():
+		return _fail("Collapse elements: no elements selected")
+
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var target_indices := PackedInt32Array()
+
+	if mode == 1: # VERTEX
+		for vid in element_ids:
+			if vid >= 0 and vid < mesh_data.positions.size():
+				var cg: int = lookup.get(vid, vid)
+				for i in range(mesh_data.positions.size()):
+					if lookup.get(i, i) == cg:
+						target_indices.append(i)
+	elif mode == 2: # EDGE
+		var common := mesh_data.get_common_edges()
+		for eid in element_ids:
+			if eid >= 0 and eid < common.size():
+				var ce := common[eid]
+				var ca: int = lookup.get(ce.a, ce.a)
+				var cb: int = lookup.get(ce.b, ce.b)
+				for i in range(mesh_data.positions.size()):
+					var c: int = lookup.get(i, i)
+					if c == ca or c == cb:
+						target_indices.append(i)
+	elif mode == 3: # FACE
+		for fid in element_ids:
+			if fid >= 0 and fid < mesh_data.faces.size():
+				var f: PBFace = mesh_data.faces[fid]
+				if f != null:
+					for idx in f.get_distinct_indexes():
+						var cg: int = lookup.get(idx, idx)
+						for i in range(mesh_data.positions.size()):
+							if lookup.get(i, i) == cg:
+								target_indices.append(i)
+
+	if target_indices.is_empty():
+		return _fail("Collapse elements: no valid vertices found")
+
+	var target_pos := Vector3.ZERO
+	if collapse_to_first:
+		target_pos = mesh_data.positions[target_indices[0]]
+	else:
+		var sum_pos := Vector3.ZERO
+		var distinct_pts := {}
+		for idx in target_indices:
+			var p := mesh_data.positions[idx]
+			var k := Vector3(snappedf(p.x, 0.0001), snappedf(p.y, 0.0001), snappedf(p.z, 0.0001))
+			if not distinct_pts.has(k):
+				distinct_pts[k] = true
+				sum_pos += p
+		target_pos = sum_pos / float(maxi(1, distinct_pts.size()))
+
+	for idx in target_indices:
+		mesh_data.positions[idx] = target_pos
+
+	# Eliminate degenerate triangles
+	var surviving_faces: Array[PBFace] = []
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		var raw_idxs := face.get_indexes()
+		var valid_tris := PackedInt32Array()
+		for i in range(0, raw_idxs.size(), 3):
+			var i0 := raw_idxs[i]
+			var i1 := raw_idxs[i + 1]
+			var i2 := raw_idxs[i + 2]
+			var p0 := mesh_data.positions[i0]
+			var p1 := mesh_data.positions[i1]
+			var p2 := mesh_data.positions[i2]
+			if p0.distance_to(p1) > 0.0005 and p1.distance_to(p2) > 0.0005 and p2.distance_to(p0) > 0.0005:
+				valid_tris.append_array(PackedInt32Array([i0, i1, i2]))
+
+		if not valid_tris.is_empty():
+			face.set_indexes(valid_tris)
+			surviving_faces.append(face)
+
+	if surviving_faces.is_empty():
+		return _fail("Collapse elements: all mesh geometry collapsed")
+
+	mesh_data.faces = surviving_faces
+	_rebuild_topology(mesh_data)
+
+	return {"ok": true, "target_position": target_pos}
+
+## Detects open boundary loops touching selected edges and caps each with a new polygon face.
+## If edge_ids is empty, caps all open boundary loops found on the mesh.
+static func fill_hole(mesh_data: PBMeshData, edge_ids: PackedInt32Array = PackedInt32Array()) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Fill hole: no mesh data")
+
+	var lookup := mesh_data.get_shared_vertex_lookup()
+	var common := mesh_data.get_common_edges()
+
+	var usage := {} # key -> int
+	var directed_half_edges := {} # key -> {a: int, b: int, face: PBFace}
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		for fe in face.get_edges():
+			var k := _common_key(lookup, fe.a, fe.b)
+			usage[k] = usage.get(k, 0) + 1
+			directed_half_edges[k] = {"a": fe.a, "b": fe.b, "face": face}
+
+	var boundary_keys := {}
+	for k in usage:
+		if usage[k] == 1:
+			boundary_keys[k] = true
+
+	if boundary_keys.is_empty():
+		return _fail("Fill hole: no open boundary holes found on mesh")
+
+	var target_keys := {}
+	if not edge_ids.is_empty():
+		for eid in edge_ids:
+			if eid >= 0 and eid < common.size():
+				var ce := common[eid]
+				target_keys[_common_key(lookup, ce.a, ce.b)] = true
+
+	var next_hop := {} # common_vertex -> {next_common: int, src_a: int, src_b: int, face: PBFace}
+	for k in boundary_keys:
+		var d: Dictionary = directed_half_edges[k]
+		var ca: int = lookup.get(d["a"], d["a"])
+		var cb: int = lookup.get(d["b"], d["b"])
+		next_hop[cb] = {"next_common": ca, "src_a": d["b"], "src_b": d["a"], "face": d["face"], "key": k}
+
+	var visited_keys := {}
+	var added_faces: Array[PBFace] = []
+
+	for start_cb in next_hop:
+		var info: Dictionary = next_hop[start_cb]
+		if visited_keys.has(info["key"]):
+			continue
+
+		var cycle_common: Array[int] = []
+		var cycle_src: Array[int] = []
+		var cycle_faces: Array[PBFace] = []
+		var cycle_keys: Array[Vector2i] = []
+		var cur: int = start_cb
+		var guard: int = next_hop.size() + 2
+
+		while guard > 0 and next_hop.has(cur):
+			guard -= 1
+			var step: Dictionary = next_hop[cur]
+			cycle_common.append(cur)
+			cycle_src.append(step["src_a"])
+			cycle_faces.append(step["face"])
+			cycle_keys.append(step["key"])
+			cur = step["next_common"]
+			if cur == start_cb:
+				break
+
+		for k in cycle_keys:
+			visited_keys[k] = true
+
+		if cycle_common.size() < 3 or cur != start_cb:
+			continue
+
+		if not target_keys.is_empty():
+			var matches := false
+			for k in cycle_keys:
+				if target_keys.has(k):
+					matches = true
+					break
+			if not matches:
+				continue
+
+		var loop_pts := PackedVector3Array()
+		var loop_dups := PackedInt32Array()
+		for s_idx in cycle_src:
+			loop_pts.append(mesh_data.positions[s_idx])
+			loop_dups.append(_dup_position(mesh_data, s_idx, Vector3.ZERO))
+
+		var loop_n := PBMath.normal_from_positions(loop_pts)
+		if loop_n.length_squared() < 0.0001:
+			loop_n = _face_area_normal(mesh_data, cycle_faces[0]).normalized()
+
+		var cap := _build_polygon_face_with_normal(mesh_data, loop_pts, loop_dups, loop_n, cycle_faces[0].submesh_index)
+		if cap != null:
+			added_faces.append(cap)
+
+	if added_faces.is_empty():
+		return _fail("Fill hole: no matching open holes found")
+
+	mesh_data.faces.append_array(added_faces)
+	_rebuild_topology(mesh_data)
+
+	var new_ids := PackedInt32Array()
+	var base_idx := mesh_data.faces.size() - added_faces.size()
+	for i in range(added_faces.size()):
+		new_ids.append(base_idx + i)
+
+	return {"ok": true, "new_face_ids": new_ids}
+
+static func _build_polygon_face_with_normal(mesh_data: PBMeshData, pts_3d: PackedVector3Array,
+		corner_indices: PackedInt32Array, ref_normal: Vector3, submesh: int) -> PBFace:
+	var n := pts_3d.size()
+	if n < 3:
+		return null
+	var tri_indexes := PackedInt32Array()
+	if n == 3:
+		tri_indexes = PackedInt32Array([0, 1, 2])
+	elif n == 4:
+		tri_indexes = PackedInt32Array([0, 1, 2, 2, 3, 0])
+	else:
+		var basis := PBUv.get_planar_basis(ref_normal)
+		var u_axis: Vector3 = basis["u"]
+		var v_axis: Vector3 = basis["v"]
+		var pts_2d := PackedVector2Array()
+		for p in pts_3d:
+			pts_2d.append(Vector2(u_axis.dot(p), v_axis.dot(p)))
+		var area2 := 0.0
+		for i in range(n):
+			area2 += pts_2d[i].cross(pts_2d[(i + 1) % n])
+		var pts_for_clip := pts_2d
+		var reversed := false
+		if area2 < 0.0:
+			pts_for_clip = pts_2d.duplicate()
+			pts_for_clip.reverse()
+			reversed = true
+		var raw_tris := PBShapeComplex._triangulate_2d(pts_for_clip)
+		for t in raw_tris:
+			var i0: int = t[0]
+			var i1: int = t[1]
+			var i2: int = t[2]
+			if reversed:
+				i0 = n - 1 - i0
+				i1 = n - 1 - i1
+				i2 = n - 1 - i2
+				tri_indexes.append_array(PackedInt32Array([i0, i2, i1]))
+			else:
+				tri_indexes.append_array(PackedInt32Array([i0, i1, i2]))
+
+	var final_indexes := PackedInt32Array()
+	for local_idx in tri_indexes:
+		final_indexes.append(corner_indices[local_idx])
+
+	var fn := PBMath.normal_from_positions(mesh_data.positions, final_indexes)
+	if fn.dot(ref_normal) < 0.0:
+		var reversed_final := PackedInt32Array()
+		for i in range(0, final_indexes.size(), 3):
+			reversed_final.append(final_indexes[i])
+			reversed_final.append(final_indexes[i + 2])
+			reversed_final.append(final_indexes[i + 1])
+		final_indexes = reversed_final
+
+	var face := PBFace.new(final_indexes)
+	face.submesh_index = submesh
+	PBUv.apply_face_uvs(mesh_data, face)
+	return face
+
+# ==============================================================================
 # Selection helpers
 # ==============================================================================
 

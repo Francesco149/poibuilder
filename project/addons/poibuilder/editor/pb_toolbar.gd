@@ -233,6 +233,10 @@ func _build_ui() -> void:
 	_make_op_button("Extrude", "extrude_faces", "Extrude selected faces/edges along their normal (Shift+Move does this live)", "icon_extrude.svg")
 	_make_op_button("Inset", "inset_faces", "Inset selected faces (Shift+Scale does this live)", "icon_inset.svg")
 	_make_op_button("Bevel", "bevel_edges", "Bevel selected edges or faces (Chamfer or fillet rounding)", "icon_bevel.svg")
+	_make_op_button("Bridge", "bridge_edges", "Bridge: Connect two open boundary edges with a face (Alt+B)", "icon_bridge.svg")
+	_make_op_button("Connect", "connect_edges", "Connect: Insert edge connecting edge midpoints or vertices (Alt+E)", "icon_connect.svg")
+	_make_op_button("Collapse", "collapse_elements", "Collapse selected vertices, edges, or faces to a single point", "icon_collapse.svg")
+	_make_op_button("Fill Hole", "fill_hole", "Fill Hole: Cap open boundary loops with a new face", "icon_fill_hole.svg")
 	_make_op_button("Knife", "knife_tool", "Knife: Cut faces by placing vertices (Enter to complete cut)", "icon_knife.svg")
 	_make_op_button("Loop Cut", "insert_edge_loop", "Insert an edge loop through the ring of quads crossed by the selected edge", "icon_loop_cut.svg")
 	_make_op_button("Merge", "merge_faces", "Merge edge-adjacent selected faces into one n-gon", "icon_merge.svg")
@@ -425,6 +429,7 @@ func _update_row_layout() -> void:
 	var grp_ops: Array[Control] = [
 		_sep_ops,
 		_op_buttons["extrude_faces"], _op_buttons["inset_faces"], _op_buttons["bevel_edges"],
+		_op_buttons["bridge_edges"], _op_buttons["connect_edges"], _op_buttons["collapse_elements"], _op_buttons["fill_hole"],
 		_op_buttons["knife_tool"], _op_buttons["insert_edge_loop"],
 		_op_buttons["merge_faces"], _op_buttons["subdivide_faces"],
 		_op_buttons["weld_vertices"], _op_buttons["detach_faces"],
@@ -593,6 +598,18 @@ func _on_selection_info_changed(_arg = null) -> void:
 	if _op_buttons.has("bevel_edges"):
 		_op_buttons["bevel_edges"].disabled = not (in_edge and edges_selected) \
 			and not (in_face and faces_selected)
+	if _op_buttons.has("bridge_edges"):
+		_op_buttons["bridge_edges"].disabled = not (in_edge and edges_selected)
+	if _op_buttons.has("connect_edges"):
+		_op_buttons["connect_edges"].disabled = not (in_edge and edges_selected) \
+			and not (in_vertex and verts_selected) \
+			and not (in_face and faces_selected)
+	if _op_buttons.has("collapse_elements"):
+		_op_buttons["collapse_elements"].disabled = not (in_vertex and verts_selected) \
+			and not (in_edge and edges_selected) \
+			and not (in_face and faces_selected)
+	if _op_buttons.has("fill_hole"):
+		_op_buttons["fill_hole"].disabled = editor == null or editor.active_mesh == null
 	if _op_buttons.has("knife_tool"):
 		_op_buttons["knife_tool"].disabled = editor == null or editor.active_mesh == null
 	if _op_buttons.has("insert_edge_loop"):
