@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.103"
+const VERSION := "0.9.104"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1590,7 +1590,7 @@ func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int, created
 	if (op_name == "bridge_edges" or op_name == "fill_hole") and not created_faces.is_empty():
 		editor.select_mode = PBEditor.SelectMode.FACE
 		editor.selection.set_faces(created_faces)
-	elif op_name != "bevel_edges":
+	else:
 		editor.selection.clear_all()
 	gizmo_plugin.element_editor.reset_side_faces()
 	mesh.clear_subgizmo_selection()
@@ -2836,13 +2836,10 @@ func _commit_bevel_session() -> void:
 	cmd.add_to_undo_manager(get_undo_redo())
 
 	editor.select_mode = _bevel_session_mode
-	if _bevel_session_mode == PBEditor.SelectMode.FACE:
-		if not _bevel_session_last_new_faces.is_empty():
-			editor.selection.set_faces(_bevel_session_last_new_faces)
-		else:
-			editor.selection.set_faces(_bevel_session_faces)
-	elif _bevel_session_mode == PBEditor.SelectMode.EDGE:
-		editor.selection.set_edges(_bevel_session_edges)
+	editor.selection.clear_all()
+	if is_instance_valid(node):
+		node.clear_subgizmo_selection()
+		node.update_gizmos()
 	_params_session_kind = ""
 	_bevel_session_node = null
 	_bevel_session_snapshot = null
