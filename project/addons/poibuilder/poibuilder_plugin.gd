@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.95"
+const VERSION := "0.9.96"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1386,6 +1386,19 @@ const OP_BEVEL_SEGMENTS := 1
 var op_bevel_amount: float = OP_BEVEL_AMOUNT
 var op_bevel_segments: int = OP_BEVEL_SEGMENTS
 
+## Edge ids the gizmo is actually highlighting: engine selection expanded
+## through recorded loops. Toolbar clicks must not shrink this to the seed.
+func _edge_ids_for_op(mesh_data: PBMeshData) -> PackedInt32Array:
+	var seeds := PBMeshOps.common_edge_ids(mesh_data, editor.selection.selected_edges)
+	var ee := gizmo_plugin.element_editor if gizmo_plugin != null else null
+	if ee == null:
+		return seeds
+	if seeds.is_empty() and not ee.selected_loops.is_empty():
+		seeds = PackedInt32Array()
+		for k in ee.selected_loops.keys():
+			seeds.append(int(k))
+	return ee.expand_edge_ids(mesh_data, seeds)
+
 ## Performs a mesh op from the toolbar on the current selection. Face-mode
 ## ops read the selected faces; edge extrude reads the selected edges. Undo
 ## goes through full-mesh snapshots (CmdMeshOp) — ops rewrite topology, so
@@ -1432,10 +1445,10 @@ func _on_operation_requested(op_name: String) -> void:
 		"weld_vertices":
 			result = PBMeshOps.weld_vertices(mesh_data, selection.selected_vertices.duplicate())
 		"extrude_edges":
-			var edge_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+			var edge_ids := _edge_ids_for_op(mesh_data)
 			result = PBMeshOps.extrude_edges(mesh_data, edge_ids, distance)
 		"insert_edge_loop":
-			var loop_ids := PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+			var loop_ids := _edge_ids_for_op(mesh_data)
 			result = PBMeshOps.insert_edge_loop(mesh_data, loop_ids)
 		"bevel_edges":
 			var is_face_bevel := false
@@ -1446,7 +1459,8 @@ func _on_operation_requested(op_name: String) -> void:
 				else:
 					is_face_bevel = true
 			else:
-				edge_ids = PBMeshOps.common_edge_ids(mesh_data, selection.selected_edges)
+				edge_ids = _edge_ids_for_op(mesh_data)
+
 
 			if not is_face_bevel and edge_ids.is_empty():
 				return
@@ -1478,7 +1492,15 @@ func _on_operation_requested(op_name: String) -> void:
 				op_bevel_amount = eff_amount
 			var pre_snapshot := PBCommand.copy_mesh_data(mesh_data)
 			var faces_to_bevel := selection.selected_faces.duplicate()
-			var edges_to_bevel := selection.selected_edges.duplicate()
+			var edges_to_bevel: Array[PBEdge] = []
+			if not is_face_bevel:
+				var common_store := mesh_data.get_common_edges()
+				for eid in edge_ids:
+					if eid >= 0 and eid < common_store.size():
+						edges_to_bevel.append(common_store[eid])
+			else:
+				edges_to_bevel = selection.selected_edges.duplicate()
+
 
 			if is_face_bevel:
 				result = PBMeshOps.bevel_faces(mesh_data, faces_to_bevel, eff_amount, op_bevel_segments)

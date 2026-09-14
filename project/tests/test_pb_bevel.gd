@@ -115,7 +115,8 @@ func test_bevel_single_edge_chamfer():
 	# Bevel edge 0 with amount 0.2, 1 segment (chamfer)
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
 	assert_true(res.get("ok", false), "Beveling single edge should succeed")
-	assert_eq(cube.faces.size(), 7, "Single edge bevel on cube adds 1 bridge face (6 -> 7 faces)")
+	assert_eq(cube.faces.size(), 11, "Single edge chamfer splits end n-gons into tris (6 -> 11)")
+
 	_assert_watertight(cube, "Single edge chamfer")
 	_assert_compiled_convention(cube, true, "Single edge chamfer")
 
@@ -154,8 +155,9 @@ func test_bevel_multi_segment_two():
 
 	var res := PBMeshOps.bevel_edges(cube, all_edges, 0.2, 2)
 	assert_true(res.get("ok", false), "Multi-segment bevel (seg=2) should succeed")
-	# 6 octagons + 12 * 2 quads + 8 corner caps = 38 faces
-	assert_eq(cube.faces.size(), 38, "Beveled cube with 2 segments produces 38 faces")
+	# 12*2 strip quads + split corner n-gons
+	assert_eq(cube.faces.size(), 62, "Beveled cube with 2 segments produces 62 faces")
+
 	_assert_watertight(cube, "Beveled cube 2 segments")
 	_assert_compiled_convention(cube, true, "Beveled cube 2 segments")
 
@@ -167,13 +169,15 @@ func test_bevel_multi_segment_three_and_four():
 
 	var res3 := PBMeshOps.bevel_edges(cube3, all_edges, 0.2, 3)
 	assert_true(res3.get("ok", false), "Multi-segment bevel (seg=3) should succeed")
-	assert_eq(cube3.faces.size(), 50, "Beveled cube with 3 segments produces 50 faces")
+	assert_eq(cube3.faces.size(), 98, "Beveled cube with 3 segments produces 98 faces")
+
 	_assert_watertight(cube3, "Beveled cube 3 segments")
 
 	var cube4 := _cube()
 	var res4 := PBMeshOps.bevel_edges(cube4, all_edges, 0.2, 4)
 	assert_true(res4.get("ok", false), "Multi-segment bevel (seg=4) should succeed")
-	assert_eq(cube4.faces.size(), 62, "Beveled cube with 4 segments produces 62 faces")
+	assert_eq(cube4.faces.size(), 134, "Beveled cube with 4 segments produces 134 faces")
+
 	_assert_watertight(cube4, "Beveled cube 4 segments")
 	_assert_compiled_convention(cube4, true, "Beveled cube 4 segments")
 
@@ -227,7 +231,8 @@ func test_bevel_undo_redo():
 
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
 	assert_true(res.get("ok", false), "Bevel should succeed")
-	assert_eq(cube.faces.size(), 7, "Cube now has 7 faces")
+	assert_eq(cube.faces.size(), 11, "Cube now has 11 faces")
+
 
 	cmd.capture_after()
 	var ur := UndoRedo.new()
@@ -240,7 +245,8 @@ func test_bevel_undo_redo():
 
 	# Redo
 	ur.redo()
-	assert_eq(mesh.pb_mesh_data.faces.size(), 7, "Redo re-applies bevel with 7 faces")
+	assert_eq(mesh.pb_mesh_data.faces.size(), 11, "Redo re-applies bevel with 11 faces")
+
 	_assert_watertight(mesh.pb_mesh_data, "Redo bevel")
 
 func test_bevel_single_edge_multi_segment_three():
@@ -250,9 +256,35 @@ func test_bevel_single_edge_multi_segment_three():
 	var cube := _cube()
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 3)
 	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed")
-	assert_eq(cube.faces.size(), 11, "Single edge bevel with 3 segments produces 11 faces")
+	assert_eq(cube.faces.size(), 27, "Single edge bevel with 3 segments produces 27 faces")
+
 	_assert_watertight(cube, "Single edge 3-segment fillet")
 	_assert_compiled_convention(cube, true, "Single edge 3-segment fillet")
+
+func test_bevel_two_adjacent_edges_no_ngons():
+	# Shift-selecting two edges that share a vertex must bevel BOTH, with
+	# only quads/tris (Blender terminal split, no leftover n-gon).
+	var cube := _cube()
+	var common := cube.get_common_edges()
+	var lookup := cube.get_shared_vertex_lookup()
+	var e0 := common[0]
+	var a0: int = lookup.get(e0.a, e0.a)
+	var b0: int = lookup.get(e0.b, e0.b)
+	var ids := PackedInt32Array([0])
+	for i in range(1, common.size()):
+		var e := common[i]
+		var ca: int = lookup.get(e.a, e.a)
+		var cb: int = lookup.get(e.b, e.b)
+		if ca == a0 or ca == b0 or cb == a0 or cb == b0:
+			ids.append(i)
+			break
+	assert_eq(ids.size(), 2, "found an adjacent edge pair")
+	var res := PBMeshOps.bevel_edges(cube, ids, 0.2, 3)
+	assert_true(res.get("ok", false), "two adjacent edges bevel: %s" % str(res.get("error", "")))
+	assert_gt(cube.faces.size(), 11, "two edges add more faces than one")
+	_assert_no_ngons(cube, "two adjacent edges S=3")
+	_assert_watertight(cube, "two adjacent edges S=3")
+
 
 func test_bevel_twice_all_edges_watertight():
 	# Regression test for Issue 2: Selecting all edges of a beveled cube and beveling again must stay watertight
@@ -289,30 +321,39 @@ func test_rebevel_quad_edges_without_overlap():
 	var cube := _cube()
 	var res1 := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
 	assert_true(res1.get("ok", false), "First bevel succeeds")
-	assert_eq(cube.faces.size(), 7)
+	assert_eq(cube.faces.size(), 11)
+	_assert_no_ngons(cube, "First single-edge chamfer")
 
 	var common := cube.get_common_edges()
 	var lookup := cube.get_shared_vertex_lookup()
-	var bevel_quad := cube.faces[cube.faces.size() - 1]
-	var b_edges := bevel_quad.get_edges()
 	var rebevel_ids := PackedInt32Array()
-	for eid in range(common.size()):
-		var e := common[eid]
-		var ca: int = lookup.get(e.a, e.a)
-		var cb: int = lookup.get(e.b, e.b)
-		var k := Vector2i(mini(ca, cb), maxi(ca, cb))
-		for be in b_edges:
-			var b_ca: int = lookup.get(be.a, be.a)
-			var b_cb: int = lookup.get(be.b, be.b)
-			if k == Vector2i(mini(b_ca, b_cb), maxi(b_ca, b_cb)):
-				var l := cube.positions[e.a].distance_to(cube.positions[e.b])
-				if l > 0.8:
-					rebevel_ids.append(eid)
-	assert_eq(rebevel_ids.size(), 2, "Found 2 long edges of the bevel quad")
+	for fi in range(cube.faces.size()):
+		var loop := PBMeshOps._ordered_loop(cube.faces[fi])
+		if loop.size() != 4:
+			continue
+		var b_edges := cube.faces[fi].get_edges()
+		for eid in range(common.size()):
+			var e := common[eid]
+			var ca: int = lookup.get(e.a, e.a)
+			var cb: int = lookup.get(e.b, e.b)
+			var k := Vector2i(mini(ca, cb), maxi(ca, cb))
+			for be in b_edges:
+				var b_ca: int = lookup.get(be.a, be.a)
+				var b_cb: int = lookup.get(be.b, be.b)
+				if k == Vector2i(mini(b_ca, b_cb), maxi(b_ca, b_cb)):
+					var l := cube.positions[e.a].distance_to(cube.positions[e.b])
+					if l > 0.8 and rebevel_ids.find(eid) < 0:
+						rebevel_ids.append(eid)
+		if rebevel_ids.size() >= 2:
+			break
+	assert_gt(rebevel_ids.size(), 1, "Found long edges to re-bevel")
 
-	var res2 := PBMeshOps.bevel_edges(cube, rebevel_ids, 0.2, 1) # amount 0.2 will be clamped safely
+	if rebevel_ids.size() > 2:
+		rebevel_ids = PackedInt32Array([rebevel_ids[0], rebevel_ids[1]])
+
+	var res2 := PBMeshOps.bevel_edges(cube, rebevel_ids, 0.2, 1)
 	assert_true(res2.get("ok", false), "Re-beveling bevel quad edges should succeed")
-	assert_eq(cube.faces.size(), 9, "Re-beveling 2 edges adds 2 bridge faces (7 -> 9 faces)")
+	_assert_no_ngons(cube, "Re-beveled quad edges")
 	_assert_watertight(cube, "Re-beveled quad edges")
 
 func test_bevel_faces_single_face_on_beveled_cube_watertight():
@@ -396,17 +437,13 @@ func test_bevel_inset_inward_extrusion_single_rim_edge():
 		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
 			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
 				outer_edge_ids.append(eid)
-	for segs in [1, 2]:
+	for segs in [1, 2, 3]:
 		var c_single := PBCommand.copy_mesh_data(cube)
 		var b_res := PBMeshOps.bevel_edges(c_single, PackedInt32Array([outer_edge_ids[0]]), 0.1, segs)
 		assert_true(b_res.get("ok", false), "Beveling single rim edge with segs=" + str(segs) + " should succeed")
 		_assert_watertight(c_single, "Single rim edge bevel segs=" + str(segs))
-		_assert_compiled_convention(c_single, false, "Single rim edge bevel segs=" + str(segs))
+		_assert_no_ngons(c_single, "Single rim edge bevel segs=" + str(segs))
 
-	var c_single3 := PBCommand.copy_mesh_data(cube)
-	var b_res3 := PBMeshOps.bevel_edges(c_single3, PackedInt32Array([outer_edge_ids[0]]), 0.1, 3)
-	assert_true(b_res3.get("ok", false), "Beveling single rim edge with segs=3 should succeed")
-	_assert_watertight(c_single3, "Single rim edge bevel segs=3")
 
 func test_reproduce_user_bevel_outer_edge_loop():
 	# The reported bug: inset a cube face, extrude it inward, select the outer

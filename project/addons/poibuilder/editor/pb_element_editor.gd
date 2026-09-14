@@ -1953,6 +1953,12 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		return false
 	if drag_active:
 		return false
+	# A toolbar/overlay click leaves the viewport; the engine then reports
+	# an empty subgizmo selection. Wiping here made Bevel/Loop Cut no-ops
+	# on any multi-edge selection. Click-off of the node still clears via
+	# set_active_mesh.
+	if engine_ids.is_empty():
+		return false
 
 	var differs: bool = false
 	match editor.select_mode:

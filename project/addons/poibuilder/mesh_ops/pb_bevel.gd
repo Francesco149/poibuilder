@@ -303,8 +303,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 						new_loop.append(_record_position(mesh_data, rec))
 				else:
 					new_loop.append(loop[i])
-			var f := _face_from_indices(mesh_data, new_loop, mesh_data.faces[fi], normals[fi])
-			if f == null:
+			var rebuilt := _simple_faces(mesh_data, new_loop, mesh_data.faces[fi], normals[fi])
+			if rebuilt.is_empty():
 				if OS.get_environment("PB_BEVEL_TRACE") != "":
 					var dump := PackedStringArray()
 					for idx in new_loop:
@@ -313,7 +313,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				rebuilt_fail = "face %d did not survive the bevel (degenerate corner)" % fi
 				break
 			removed[fi] = true
-			primary.append(f)
+			primary.append_array(rebuilt)
+
 		if not rebuilt_fail.is_empty():
 			return _fail("Bevel edges: " + rebuilt_fail)
 
@@ -440,10 +441,16 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				continue
 			if int(bevel_count.get(c, 0)) == 2:
 				continue
-			var cap := _fan_face(mesh_data, ring, outward.normalized(), template)
-			if cap == null:
+			# Blender terminal/corner vmesh: never leave an n-gon. Fan the ring
+			# into separate triangles (same as bevel_build_trifan).
+			var cap_loop := PackedInt32Array()
+			for rec: Dictionary in ring:
+				cap_loop.append(_record_position(mesh_data, rec))
+			var caps := _simple_faces(mesh_data, cap_loop, template, outward.normalized())
+			if caps.is_empty():
 				return _fail("Bevel edges: the corner at %s collapsed" % str(mesh_data.positions[c]))
-			secondary.append(cap)
+			secondary.append_array(caps)
+
 
 
 		# ---- 9. swap the faces in ----------------------------------------------
@@ -851,9 +858,31 @@ static func _fan_face(mesh_data: PBMeshData, ring: Array, outward: Vector3, temp
 # Faces from explicit index loops (no position creation)
 # ==============================================================================
 
+## Like `_face_from_indices`, but a perimeter with more than 4 sides becomes
+## separate triangles (Blender's terminal vmesh splits the n-gon). Quads and
+## tris stay one face.
+static func _simple_faces(mesh_data: PBMeshData, loop_idx: PackedInt32Array,
+		template: PBFace, expected_normal: Vector3) -> Array[PBFace]:
+	var out: Array[PBFace] = []
+	var f := _face_from_indices(mesh_data, loop_idx, template, expected_normal)
+	if f == null:
+		return out
+	var peri := PBMeshOps._ordered_loop(f)
+	if peri.size() <= 4:
+		out.append(f)
+		return out
+	var idx := f.get_indexes()
+	for t in range(0, idx.size(), 3):
+		var tri := PackedInt32Array([idx[t], idx[t + 1], idx[t + 2]])
+		var tf := _face_from_indices(mesh_data, tri, template, expected_normal)
+		if tf != null:
+			out.append(tf)
+	return out
+
 ## Builds a PBFace over the given position indices, ear-clipping the polygon in
 ## the plane of `expected_normal`. Returns null when the loop cannot be
 ## triangulated (degenerate or self-intersecting).
+
 static func _face_from_indices(mesh_data: PBMeshData, loop_idx: PackedInt32Array,
 		template: PBFace, expected_normal: Vector3) -> PBFace:
 	var clean := PackedInt32Array()

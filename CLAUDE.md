@@ -2925,6 +2925,17 @@ v0.9.95 round complete ✓ — multi-segment bevel is a rounded cylindrical fill
   faces, all ≤4 verts, profile bulges off the chamfer chord, watertight.
 - Version bump 0.9.94 -> 0.9.95.
 
+v0.9.96 round complete ✓ — multi-edge bevel actually runs; terminal n-gons split:
+- THE REPORT: selecting more than one edge (loop/shift) made Bevel a no-op;
+  a single edge still left an n-gon where it met the unbeveled edges.
+- CAUSE: clicking the toolbar emptied the engine subgizmo selection, and
+  `mirror_engine_selection` wiped `selected_edges` / `selected_loops` before
+  the op ran. Terminations were one n-gon cap (ProBuilder tent / our `_fan_face`).
+- FIX: do not wipe element selection on empty engine ids; edge ops use
+  `_edge_ids_for_op` (expand loops). Blender `bevel_build_trifan`: perimeters
+  with >4 sides become separate triangles (`_simple_faces`).
+- Version bump 0.9.95 -> 0.9.96.
+
 
 ## Key Conventions
 
