@@ -16,7 +16,9 @@
 ##
 ## Per beveled vertex v:
 ##   - valence 2 (a loop corner): quad grid between the two cylindrical ends.
-##   - valence 1 (a strip end): a small cap still closes the termination.
+##   - valence 1 (a strip end): the unbeveled end face absorbs the profile as
+##     one n-gon (ProBuilder / Blender). No extra cap, no split of the two
+##     faces of the beveled edge.
 ##   - valence 3+ (a cube corner with 3 beveled edges): the three rails bound
 ##     a corner region that is capped.
 ##
@@ -224,11 +226,6 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					step = minf(step, edge_len * 0.45)
 					var q: Vector3 = pos_i + d_next * step
 					var rec: Dictionary = _reg_add(reg, k_next, vrep, _pt("c%d_%d" % [fi, i], q, vi), step)
-					# Extra fillet-end points only at strip terminations (valence
-					# != 2). On a closed loop they split the corner into a leftover
-					# n-gon; the two strips already share a straight rail.
-					if segments > 1 and int(bevel_count.get(vrep, 0)) != 2:
-						info["entries"].append(_pt("c%d_%d_r" % [fi, i], pos_i + d_prev * amt + u_prev * amt, vi))
 					info["entries"].append(rec)
 
 				elif eb_next:
@@ -238,8 +235,6 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 					step2 = minf(step2, edge_len2 * 0.45)
 					var q2: Vector3 = pos_i + d_prev * step2
 					var rec2: Dictionary = _reg_add(reg, k_prev, vrep, _pt("c%d_%d" % [fi, i], q2, vi), step2)
-					if segments > 1 and int(bevel_count.get(vrep, 0)) != 2:
-						info["entries"].append(_pt("c%d_%d_r" % [fi, i], pos_i + d_next * amt + u_next * amt, vi))
 					info["entries"].append(rec2)
 
 				else:
@@ -285,7 +280,7 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 
 		# ---- 6. rebuild the touched faces --------------------------------------
 		var removed := {}
-		var primary: Array[PBFace] = []
+		var rebuilt_by_fi := {}
 		var rebuilt_fail := ""
 		for fi in range(mesh_data.faces.size()):
 			if not corners.has(fi):
@@ -303,8 +298,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 						new_loop.append(_record_position(mesh_data, rec))
 				else:
 					new_loop.append(loop[i])
-			var rebuilt := _simple_faces(mesh_data, new_loop, mesh_data.faces[fi], normals[fi])
-			if rebuilt.is_empty():
+			var rebuilt_parts := _simple_faces(mesh_data, new_loop, mesh_data.faces[fi], normals[fi])
+			if rebuilt_parts.is_empty():
 				if OS.get_environment("PB_BEVEL_TRACE") != "":
 					var dump := PackedStringArray()
 					for idx in new_loop:
@@ -313,7 +308,7 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				rebuilt_fail = "face %d did not survive the bevel (degenerate corner)" % fi
 				break
 			removed[fi] = true
-			primary.append_array(rebuilt)
+			rebuilt_by_fi[fi] = rebuilt_parts
 
 		if not rebuilt_fail.is_empty():
 			return _fail("Bevel edges: " + rebuilt_fail)
@@ -368,6 +363,48 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				break
 		if not detail_fail.is_empty():
 			return _fail("Bevel edges: " + detail_fail)
+
+		# ---- 7b. terminal faces absorb the profile ---------------------------
+		# A strip that ends at an unbeveled face (single edge, path end) does
+		# not grow a triangle fan. ProBuilder keeps the end face as one n-gon;
+		# Blender does the same (the trifan path is an internal vertex-mesh
+		# builder, not the output). The two faces of the beveled edge stay
+		# whole — extra fillet-end points in their chains used to cut them
+		# into triangles.
+		for tfi: int in corners:
+			if not _should_absorb_face(corners[tfi], loops, lookup, bevel_count):
+				continue
+			var tloop: PackedInt32Array = loops[tfi]
+			var tn := tloop.size()
+			var tnew := PackedInt32Array()
+			var absorbed := false
+			for i in range(tn):
+				if corners[tfi].has(i):
+					var tinfo: Dictionary = corners[tfi][i]
+					if tinfo["zero"]:
+						tnew.append(tloop[i])
+						continue
+					var rail_pts := _terminal_rail_points(tinfo, rails, valid, reg)
+					if not rail_pts.is_empty() and _rail_fits_terminal(tinfo, rail_pts, reg):
+						tinfo["chain"] = rail_pts
+						absorbed = true
+						for rec: Dictionary in rail_pts:
+							tnew.append(_record_position(mesh_data, rec))
+					else:
+						tnew.append(tloop[i])
+				else:
+					tnew.append(tloop[i])
+			if absorbed:
+				var trebuilt := _face_from_indices(mesh_data, tnew, mesh_data.faces[tfi], normals[tfi])
+				if trebuilt != null:
+					rebuilt_by_fi[tfi] = [trebuilt]
+
+		var primary: Array[PBFace] = []
+		var rkeys: Array = rebuilt_by_fi.keys()
+		rkeys.sort()
+		for rfi in rkeys:
+			for rf: PBFace in rebuilt_by_fi[rfi]:
+				primary.append(rf)
 
 		# ---- 8. vertex caps ----------------------------------------------------
 		for c: int in touched:
@@ -441,8 +478,8 @@ static func _bevel_build(mesh_data: PBMeshData, lookup: Dictionary, valid: Dicti
 				continue
 			if int(bevel_count.get(c, 0)) == 2:
 				continue
-			# Blender terminal/corner vmesh: never leave an n-gon. Fan the ring
-			# into separate triangles (same as bevel_build_trifan).
+			# Leftover vertex ring (valence-1 inset end, or valence-3+ cube
+			# corner): split only this cap. Original faces stay n-gons.
 			var cap_loop := PackedInt32Array()
 			for rec: Dictionary in ring:
 				cap_loop.append(_record_position(mesh_data, rec))
@@ -641,6 +678,82 @@ static func _dedupe(chain: Array) -> Array:
 			seen[label] = true
 		out.append(rec)
 	return out
+
+## True when none of this face's touched corners sit on a beveled edge: it is
+## an end-cap of a strip and should absorb the profile as one n-gon.
+static func _face_is_terminal(face_corners: Dictionary) -> bool:
+	for i in face_corners:
+		var info: Dictionary = face_corners[i]
+		if info.get("zero", false):
+			continue
+		if info["eb_prev"] or info["eb_next"]:
+			return false
+	return true
+
+static func _vertex_face_count(loops: Dictionary, lookup: Dictionary, vrep: int) -> int:
+	var n := 0
+	for fi: int in loops:
+		var loop: PackedInt32Array = loops[fi]
+		for vi in loop:
+			if int(lookup.get(vi, vi)) == vrep:
+				n += 1
+				break
+	return n
+
+## Cube side-face case: the strip ends at a 3-face vertex with one beveled
+## edge. The unbeveled face can own the whole profile as one n-gon.
+static func _should_absorb_face(face_corners: Dictionary, loops: Dictionary, lookup: Dictionary, bevel_count: Dictionary) -> bool:
+	if not _face_is_terminal(face_corners):
+		return false
+	for i in face_corners:
+		var info: Dictionary = face_corners[i]
+		if info.get("zero", false):
+			continue
+		var vrep: int = info["vrep"]
+		if int(bevel_count.get(vrep, 0)) != 1:
+			return false
+		if _vertex_face_count(loops, lookup, vrep) != 3:
+			return false
+	return true
+
+## The fillet rail at a valence-1 vertex, oriented to walk from this face's
+## incoming edge to its outgoing edge so the n-gon winding stays outward.
+static func _terminal_rail_points(info: Dictionary, rails: Dictionary, valid: Dictionary, reg: Dictionary) -> Array:
+	var vrep: int = info["vrep"]
+	var rail: Array = []
+	for k: Vector2i in valid:
+		if k.x != vrep and k.y != vrep:
+			continue
+		var rk := Vector3i(k.x, k.y, vrep)
+		if rails.has(rk):
+			rail = rails[rk].duplicate()
+			break
+	if rail.size() < 2:
+		return []
+	var pts_prev := _reg_sorted(reg, info["k_prev"], vrep, false)
+	var pts_next := _reg_sorted(reg, info["k_next"], vrep, true)
+	if pts_prev.is_empty() or pts_next.is_empty():
+		return rail
+	var want_start: Dictionary = pts_prev[pts_prev.size() - 1]
+	if _same_point(rail[rail.size() - 1], want_start):
+		rail = _reversed_points(rail)
+	return rail
+
+## True when this unbeveled face's two incident edges already carry the rail
+## endpoints — the cube-side case, where the profile lies on that face.
+static func _rail_fits_terminal(info: Dictionary, rail: Array, reg: Dictionary) -> bool:
+	if rail.size() < 2:
+		return false
+	var vrep: int = info["vrep"]
+	var pts_prev := _reg_sorted(reg, info["k_prev"], vrep, false)
+	var pts_next := _reg_sorted(reg, info["k_next"], vrep, true)
+	if pts_prev.is_empty() or pts_next.is_empty():
+		return false
+	var a: Dictionary = pts_prev[pts_prev.size() - 1]
+	var b: Dictionary = pts_next[0]
+	var r0: Dictionary = rail[0]
+	var r1: Dictionary = rail[rail.size() - 1]
+	return (_same_point(r0, a) and _same_point(r1, b)) or (_same_point(r0, b) and _same_point(r1, a))
 
 static func _ring_push(ring: Array, rec: Dictionary) -> bool:
 	if not ring.is_empty():
@@ -859,8 +972,8 @@ static func _fan_face(mesh_data: PBMeshData, ring: Array, outward: Vector3, temp
 # ==============================================================================
 
 ## Like `_face_from_indices`, but a perimeter with more than 4 sides becomes
-## separate triangles (Blender's terminal vmesh splits the n-gon). Quads and
-## tris stay one face.
+## separate triangles. Used only for valence-3+ vertex caps (truncated-cube
+## corners). Original faces and strip terminations stay one n-gon.
 static func _simple_faces(mesh_data: PBMeshData, loop_idx: PackedInt32Array,
 		template: PBFace, expected_normal: Vector3) -> Array[PBFace]:
 	var out: Array[PBFace] = []

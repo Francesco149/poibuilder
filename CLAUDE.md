@@ -2936,6 +2936,18 @@ v0.9.96 round complete ✓ — multi-edge bevel actually runs; terminal n-gons s
   with >4 sides become separate triangles (`_simple_faces`).
 - Version bump 0.9.95 -> 0.9.96.
 
+v0.9.97 round complete ✓ — single-edge bevel keeps original faces as n-gons:
+- THE REPORT: beveling one cube edge fanned the top into triangles and grew
+  extra corner junk (11 faces). ProBuilder / Blender: 1 bridge quad, 2 adjacent
+  faces stay quads, 2 end faces become pentagons (7 faces).
+- CAUSE: extra fillet-end points in the adjacent-face chains plus `_simple_faces`
+  trifan on those faces, plus a valence-1 cap that split the termination.
+- FIX: no extra fillet-end points; terminal (3-face, 1-bevel) end faces absorb
+  the rail as one n-gon (`_should_absorb_face`); rebuilt faces keyed by original
+  index so `_replace_faces` keeps in-place slots. Cube S=1 → 7 faces / 2
+  pentagons; S=3 → 9 faces / 2 heptagons. Watertight.
+- Version bump 0.9.96 -> 0.9.97.
+
 
 ## Key Conventions
 

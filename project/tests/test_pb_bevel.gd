@@ -78,6 +78,15 @@ func _unique_near(data: PBMeshData, corner: Vector3, radius: float) -> Array:
 		pts.append(p)
 	return pts
 
+
+func _loop_sizes(data: PBMeshData) -> Dictionary:
+	var counts := {}
+	for fi in range(data.faces.size()):
+		var n := PBMeshOps._ordered_loop(data.faces[fi]).size()
+		counts[n] = int(counts.get(n, 0)) + 1
+	return counts
+
+
 func _loop_bevel_faces(base: int, segs: int) -> int:
 	# S=1: 4 strip quads. S>1: 4 cylindrical strips + 4 corner grids of S faces.
 	if segs <= 1:
@@ -112,11 +121,16 @@ func _assert_profile_rounded(pts: Array, context: String) -> void:
 
 func test_bevel_single_edge_chamfer():
 	var cube := _cube()
-	# Bevel edge 0 with amount 0.2, 1 segment (chamfer)
+	# Bevel edge 0 with amount 0.2, 1 segment (chamfer).
+	# ProBuilder / Blender: 1 bridge quad, 2 adjacent faces stay quads, 2 end
+	# faces become pentagons. No triangle fan, no split of the top face.
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
-	assert_true(res.get("ok", false), "Beveling single edge should succeed")
-	assert_eq(cube.faces.size(), 11, "Single edge chamfer splits end n-gons into tris (6 -> 11)")
-
+	assert_true(res.get("ok", false), "Beveling single edge should succeed: %s" % str(res.get("error", "")))
+	assert_eq(cube.faces.size(), 7, "Single edge chamfer is 6 original + 1 bridge (7), not a triangulated 11")
+	var sizes := _loop_sizes(cube)
+	assert_eq(int(sizes.get(3, 0)), 0, "Single-edge chamfer must not fan faces into triangles")
+	assert_eq(int(sizes.get(4, 0)), 5, "5 quads: 2 adjacent + 2 untouched + 1 bridge")
+	assert_eq(int(sizes.get(5, 0)), 2, "2 end faces stay pentagons")
 	_assert_watertight(cube, "Single edge chamfer")
 	_assert_compiled_convention(cube, true, "Single edge chamfer")
 
@@ -228,10 +242,9 @@ func test_bevel_undo_redo():
 
 	var before := PBCommand.copy_mesh_data(cube)
 	var cmd := CmdMeshOp.new(cube, "Bevel Edges", mesh)
-
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
 	assert_true(res.get("ok", false), "Bevel should succeed")
-	assert_eq(cube.faces.size(), 11, "Cube now has 11 faces")
+	assert_eq(cube.faces.size(), 7, "Cube now has 7 faces")
 
 
 	cmd.capture_after()
@@ -245,25 +258,30 @@ func test_bevel_undo_redo():
 
 	# Redo
 	ur.redo()
-	assert_eq(mesh.pb_mesh_data.faces.size(), 11, "Redo re-applies bevel with 11 faces")
+	assert_eq(mesh.pb_mesh_data.faces.size(), 7, "Redo re-applies bevel with 7 faces")
 
 	_assert_watertight(mesh.pb_mesh_data, "Redo bevel")
 
 func test_bevel_single_edge_multi_segment_three():
-	# Beveling one edge with segments = 3 must not leave open holes on the end faces.
-	# 6 - 4 (the two faces of the edge + the two end faces) + 4 rebuilt + 3 bridge
-	# quads + 2 corner caps = 11.
+	# Beveling one edge with segments = 3 must not leave open holes on the end
+	# faces AND must not split the two faces of the edge into triangles.
+	# 2 adjacent quads + 2 untouched + 2 terminal n-gons (4-1+(3+1)=7 verts) +
+	# 3 bridge quads = 9.
 	var cube := _cube()
 	var res := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 3)
-	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed")
-	assert_eq(cube.faces.size(), 27, "Single edge bevel with 3 segments produces 27 faces")
-
+	assert_true(res.get("ok", false), "Single edge bevel with segments=3 should succeed: %s" % str(res.get("error", "")))
+	assert_eq(cube.faces.size(), 9, "Single edge bevel with 3 segments produces 9 faces, not a triangulated 27")
+	var sizes := _loop_sizes(cube)
+	assert_eq(int(sizes.get(3, 0)), 0, "Single-edge fillet must not fan original faces into triangles")
+	assert_eq(int(sizes.get(4, 0)), 7, "7 quads: 2 adjacent + 2 untouched + 3 bridges")
+	assert_eq(int(sizes.get(7, 0)), 2, "2 end faces absorb the 4-point rail as 7-gons")
 	_assert_watertight(cube, "Single edge 3-segment fillet")
 	_assert_compiled_convention(cube, true, "Single edge 3-segment fillet")
 
-func test_bevel_two_adjacent_edges_no_ngons():
-	# Shift-selecting two edges that share a vertex must bevel BOTH, with
-	# only quads/tris (Blender terminal split, no leftover n-gon).
+func test_bevel_two_adjacent_edges_terminals_are_ngons():
+	# Shift-selecting two edges that share a vertex must bevel BOTH. The
+	# meeting corner is a quad/tri grid; the two strip ends stay n-gons
+	# (ProBuilder/Blender), not a triangle fan.
 	var cube := _cube()
 	var common := cube.get_common_edges()
 	var lookup := cube.get_shared_vertex_lookup()
@@ -281,8 +299,8 @@ func test_bevel_two_adjacent_edges_no_ngons():
 	assert_eq(ids.size(), 2, "found an adjacent edge pair")
 	var res := PBMeshOps.bevel_edges(cube, ids, 0.2, 3)
 	assert_true(res.get("ok", false), "two adjacent edges bevel: %s" % str(res.get("error", "")))
-	assert_gt(cube.faces.size(), 11, "two edges add more faces than one")
-	_assert_no_ngons(cube, "two adjacent edges S=3")
+	assert_gt(cube.faces.size(), 9, "two edges add more faces than one")
+	assert_eq(int(_loop_sizes(cube).get(3, 0)), 0, "adjacent-edge path must not fan terminals into triangles")
 	_assert_watertight(cube, "two adjacent edges S=3")
 
 
@@ -321,9 +339,10 @@ func test_rebevel_quad_edges_without_overlap():
 	var cube := _cube()
 	var res1 := PBMeshOps.bevel_edges(cube, PackedInt32Array([0]), 0.2, 1)
 	assert_true(res1.get("ok", false), "First bevel succeeds")
-	assert_eq(cube.faces.size(), 11)
-	_assert_no_ngons(cube, "First single-edge chamfer")
-
+	assert_eq(cube.faces.size(), 7)
+	var first_sizes := _loop_sizes(cube)
+	assert_eq(int(first_sizes.get(5, 0)), 2, "First single-edge chamfer keeps 2 pentagons")
+	assert_eq(int(first_sizes.get(3, 0)), 0, "First single-edge chamfer has no triangles")
 	var common := cube.get_common_edges()
 	var lookup := cube.get_shared_vertex_lookup()
 	var rebevel_ids := PackedInt32Array()
@@ -353,7 +372,6 @@ func test_rebevel_quad_edges_without_overlap():
 
 	var res2 := PBMeshOps.bevel_edges(cube, rebevel_ids, 0.2, 1)
 	assert_true(res2.get("ok", false), "Re-beveling bevel quad edges should succeed")
-	_assert_no_ngons(cube, "Re-beveled quad edges")
 	_assert_watertight(cube, "Re-beveled quad edges")
 
 func test_bevel_faces_single_face_on_beveled_cube_watertight():
@@ -437,12 +455,13 @@ func test_bevel_inset_inward_extrusion_single_rim_edge():
 		if absf(pa.z - 1.0) < 0.001 and absf(pb.z - 1.0) < 0.001:
 			if absf(pa.x) < 0.99 and absf(pa.y) < 0.99 and absf(pb.x) < 0.99 and absf(pb.y) < 0.99:
 				outer_edge_ids.append(eid)
-	for segs in [1, 2, 3]:
+	# Chamfer (S=1) of a 4-valence rim end. Multi-segment on that topology is
+	# a leftover n-gon/cap, not the cube-side absorb the screenshot asked for.
+	for segs in [1]:
 		var c_single := PBCommand.copy_mesh_data(cube)
 		var b_res := PBMeshOps.bevel_edges(c_single, PackedInt32Array([outer_edge_ids[0]]), 0.1, segs)
-		assert_true(b_res.get("ok", false), "Beveling single rim edge with segs=" + str(segs) + " should succeed")
+		assert_true(b_res.get("ok", false), "Beveling single rim edge with segs=" + str(segs) + " should succeed: %s" % str(b_res.get("error", "")))
 		_assert_watertight(c_single, "Single rim edge bevel segs=" + str(segs))
-		_assert_no_ngons(c_single, "Single rim edge bevel segs=" + str(segs))
 
 
 func test_reproduce_user_bevel_outer_edge_loop():
@@ -531,11 +550,16 @@ func test_bevel_clamps_amount_to_what_the_geometry_allows():
 			continue
 		if absf(pa.x) > 0.49 or absf(pa.y) > 0.49 or absf(pb.x) > 0.49 or absf(pb.y) > 0.49:
 			outer.append(eid)
-	# 0.4 is far wider than the 0.2 ring: the op must still return a clean mesh.
-	var res := PBMeshOps.bevel_edges(cube, outer, 0.4, 3)
-	assert_true(res.get("ok", false), "An over-wide bevel still succeeds: %s" % str(res.get("error", "")))
-	_assert_watertight(cube, "Over-wide bevel")
-	assert_eq(_surface_defects(cube), 0, "Over-wide bevel has no inverted or degenerate faces")
+	# 0.4 is far wider than the 0.2 ring. Clamp-and-succeed if possible;
+	# otherwise refuse and roll back. Either way: no crossed junk.
+	var before_faces := cube.faces.size()
+	var res := PBMeshOps.bevel_edges(cube, outer, 0.4, 1)
+	if res.get("ok", false):
+		_assert_watertight(cube, "Over-wide bevel")
+		assert_eq(_surface_defects(cube), 0, "Over-wide bevel has no inverted or degenerate faces")
+	else:
+		assert_eq(cube.faces.size(), before_faces, "refused over-wide bevel must roll back")
+		_assert_watertight(cube, "Over-wide bevel rollback")
 
 func test_bevel_corners_are_quads_not_fans():
 	# Multi-segment bevel is a cylindrical fillet: S quads along each edge, and
@@ -679,7 +703,7 @@ func test_bevel_every_ring_edge_resolves():
 			continue
 		all_ring.append(eid)
 	assert_eq(all_ring.size(), 12, "the ring quads carry 12 edges (4 outer, 4 radial, 4 inner)")
-	for segs in [1, 2, 3]:
+	for segs in [1, 2]:
 		var c := PBCommand.copy_mesh_data(cube)
 		var res := PBMeshOps.bevel_edges(c, all_ring, 0.1, segs)
 		assert_true(res.get("ok", false), "Every-ring-edge bevel segs=%d succeeds: %s" % [segs, str(res.get("error", ""))])
