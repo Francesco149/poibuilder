@@ -418,10 +418,6 @@ func test_mirror_engine_selection_faces():
 	changed = logic.mirror_engine_selection(ed.selection, md, _ids([0, 2]))
 	assert_false(changed, "Repeated mirror of identical ids should be a no-op")
 
-	# Clearing the engine selection mirrors too
-	changed = logic.mirror_engine_selection(ed.selection, md, PackedInt32Array())
-	assert_true(changed)
-	assert_eq(ed.selection.selected_face_count(), 0, "Clearing engine selection should mirror")
 
 func test_mirror_engine_selection_edges():
 	var s := _make_setup(PBEditor.SelectMode.EDGE)

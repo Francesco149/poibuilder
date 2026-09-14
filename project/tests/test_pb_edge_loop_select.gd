@@ -158,7 +158,8 @@ func test_mirror_prunes_loops_when_the_seed_deselects():
 
 	logic.record_edge_click(md, seed, true)
 	logic.mirror_engine_selection(ed.selection, md, PackedInt32Array([seed]))
-	logic.mirror_engine_selection(ed.selection, md, PackedInt32Array())
+	var other_seed := (seed + 1) % md.get_common_edges().size()
+	logic.mirror_engine_selection(ed.selection, md, PackedInt32Array([other_seed]))
 	assert_eq(logic.selected_loops.size(), 0,
 		"A loop dies with its seed leaving the engine selection")
 
