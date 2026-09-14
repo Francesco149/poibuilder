@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.99"
+const VERSION := "0.9.103"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -462,8 +462,8 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	if paint_controller != null and paint_controller.is_active():
 		return _paint_controller_input(camera, event)
 
-	# If a shape-parameter modal is open (Edit Params session), handle its modal lifecycle:
-	if _params_session_kind == "edit" or (tool_overlay != null and tool_overlay.params_open and not shape_creator.is_active()):
+	# If an Edit Params or Bevel session modal is open, handle its modal lifecycle:
+	if _params_session_kind == "edit" or _params_session_kind == "bevel":
 		if event is InputEventKey and event.pressed:
 			var k := event as InputEventKey
 			if k.keycode == KEY_ESCAPE:
@@ -473,14 +473,16 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 				_on_params_applied()
 				return AFTER_GUI_INPUT_STOP
 			else:
-				_on_params_canceled()
+				_on_params_applied()
 				return AFTER_GUI_INPUT_PASS
 		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			if _params_session_kind == "bevel":
+				_on_params_applied()
+				return AFTER_GUI_INPUT_STOP
 			if logger:
 				logger.info("plugin", "Params modal cancelled (viewport press)")
 			_on_params_canceled()
 			return AFTER_GUI_INPUT_PASS
-
 	# Everything key-driven funnels through the rebindable action table BEFORE
 	# the editing gate: grid keys work with nothing selected (the grid must be
 	# adjustable before use), while action-internal context gates keep unbound
@@ -1529,10 +1531,10 @@ func _on_operation_requested(op_name: String) -> void:
 				result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
 
 			if result.get("ok", false):
-				_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
 				if tool_overlay != null:
 					_start_bevel_modal(mesh, is_face_bevel, faces_to_bevel, edges_to_bevel, float(result.get("max_amount", shortest_l)), eff_amount, result.get("new_face_ids", PackedInt32Array()), pre_snapshot)
 					return
+				_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
 		_:
 			if logger:
 				logger.warn("mesh_ops", "Unknown operation requested: %s" % op_name)
@@ -1585,10 +1587,10 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int, created_faces: PackedInt32Array = PackedInt32Array()) -> void:
 	editor.hover_id = -1
 	_hover_drawn_last = -1
-	if (op_name == "bevel_edges" or op_name == "bridge_edges" or op_name == "fill_hole") and not created_faces.is_empty():
+	if (op_name == "bridge_edges" or op_name == "fill_hole") and not created_faces.is_empty():
 		editor.select_mode = PBEditor.SelectMode.FACE
 		editor.selection.set_faces(created_faces)
-	else:
+	elif op_name != "bevel_edges":
 		editor.selection.clear_all()
 	gizmo_plugin.element_editor.reset_side_faces()
 	mesh.clear_subgizmo_selection()
@@ -2816,9 +2818,6 @@ func _update_bevel_preview() -> void:
 		result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
 	if result.get("ok", false):
 		_bevel_session_last_new_faces = result.get("new_face_ids", PackedInt32Array())
-		if not _bevel_session_last_new_faces.is_empty():
-			editor.select_mode = PBEditor.SelectMode.FACE
-			editor.selection.set_faces(_bevel_session_last_new_faces)
 	_bevel_session_node.rebuild()
 	_bevel_session_node.update_gizmos()
 
@@ -2836,10 +2835,14 @@ func _commit_bevel_session() -> void:
 		cmd.logger = logger
 	cmd.add_to_undo_manager(get_undo_redo())
 
-	if not _bevel_session_last_new_faces.is_empty():
-		editor.select_mode = PBEditor.SelectMode.FACE
-		editor.selection.set_faces(_bevel_session_last_new_faces)
-
+	editor.select_mode = _bevel_session_mode
+	if _bevel_session_mode == PBEditor.SelectMode.FACE:
+		if not _bevel_session_last_new_faces.is_empty():
+			editor.selection.set_faces(_bevel_session_last_new_faces)
+		else:
+			editor.selection.set_faces(_bevel_session_faces)
+	elif _bevel_session_mode == PBEditor.SelectMode.EDGE:
+		editor.selection.set_edges(_bevel_session_edges)
 	_params_session_kind = ""
 	_bevel_session_node = null
 	_bevel_session_snapshot = null

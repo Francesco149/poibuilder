@@ -195,10 +195,10 @@ func test_extrude_edge_creates_fin():
 	assert_eq(result["new_face_ids"].size(), 1)
 	var fin: int = result["new_face_ids"][0]
 	var normal := _face_normal(data, fin)
-	# Edge 2 is the top-front rim, directed +X along face 0's winding; the
-	# extrude direction is the adjacent average (0,1,-1). The fin normal is
-	# edge_dir x move_dir = (0,1,1).
-	assert_gt(normal.dot(Vector3(0, 1, 1).normalized()), 0.99, "Fin normal is edge_dir x move_dir")
+	# Edge 2 is the top-front rim. The shared base edge in the fin traverses
+	# opposite to Face 0 for manifold half-edge orientation. The fin normal is
+	# consistent with outward surface winding.
+	assert_gt(normal.dot(Vector3(0, -1, -1).normalized()), 0.99, "Fin normal is manifold outward")
 	assert_eq(data.shared_vertices.size(), 10, "8 corners + 2 lifted copies")
 	# Fins are open: the 3 fin-only border edges are used once; the base rim
 	# edge is now used by front + top + fin (3).

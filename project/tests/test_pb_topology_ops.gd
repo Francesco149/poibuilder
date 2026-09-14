@@ -356,3 +356,98 @@ func test_fill_hole_rejection_no_holes() -> void:
 	# Closed mesh has no holes
 	var res := PBMeshOps.fill_hole(data)
 	assert_false(res.get("ok", false), "Fill hole rejected on closed manifold mesh")
+
+func test_bridge_edges_cube_deleted_face_image_1() -> void:
+	var data := _cube()
+	# Replicate Image #1: Front face (face 0, at Z = -0.5) is deleted
+	PBMeshOps.delete_faces(data, PackedInt32Array([0]))
+	assert_eq(data.faces.size(), 5, "5 faces remain after deleting front face")
+
+	var lookup := data.get_shared_vertex_lookup()
+	var common := data.get_common_edges()
+
+	# Find the left boundary edge (on Face 2, at X = -0.5, Z = -0.5)
+	# and the right boundary edge (on Face 3, at X = +0.5, Z = -0.5)
+	var eid_left := -1
+	var eid_right := -1
+	for i in range(common.size()):
+		var ce := common[i]
+		var p0 := data.positions[ce.a]
+		var p1 := data.positions[ce.b]
+		if absf(p0.z - (-0.5)) < 0.01 and absf(p1.z - (-0.5)) < 0.01:
+			if absf(p0.x - (-0.5)) < 0.01 and absf(p1.x - (-0.5)) < 0.01:
+				eid_left = i
+			elif absf(p0.x - 0.5) < 0.01 and absf(p1.x - 0.5) < 0.01:
+				eid_right = i
+
+	assert_ne(eid_left, -1, "Found left boundary edge")
+	assert_ne(eid_right, -1, "Found right boundary edge")
+
+	# Bridge the left and right boundary edges
+	var res := PBMeshOps.bridge_edges(data, PackedInt32Array([eid_left, eid_right]))
+	assert_true(res.get("ok", false), "Bridge edges succeeded across front opening")
+	assert_eq(data.faces.size(), 6, "Mesh has 6 faces again")
+
+	# The new bridge face MUST have normal pointing OUTWARD towards -Z (NOT inward towards +Z)!
+	var new_fid: int = res["new_face_ids"][0]
+	var fn: Vector3 = PBMath.normal_from_positions(data.positions, data.faces[new_fid].get_indexes())
+	assert_lt(fn.z, -0.9, "Bridge face normal MUST point OUTWARD (-Z), not inward (+Z)")
+	_assert_compiled_convention(data, "Image 1 bridge test")
+
+func test_extrude_hole_edges_outward_normal() -> void:
+	var data := _cube()
+	# Cut a square hole into top face (face 4)
+	var sq := PackedVector3Array([
+		Vector3(-0.2, 0.5, -0.2),
+		Vector3(0.2, 0.5, -0.2),
+		Vector3(0.2, 0.5, 0.2),
+		Vector3(-0.2, 0.5, 0.2),
+	])
+	var cut_res := PBMeshOps.cut_face(data, 4, sq, true)
+	assert_true(cut_res.get("ok", false), "Cut face succeeded")
+
+	# Find the inner cut face (the one with area 0.4x0.4 = 0.16)
+	var inner_fid := -1
+	for fi in range(data.faces.size()):
+		var area: float = PBMath.polygon_area(data.positions, data.faces[fi].get_indexes())
+		if absf(area - 0.16) < 0.02:
+			inner_fid = fi
+			break
+	assert_ne(inner_fid, -1, "Found inner cut face")
+
+	# Delete the inner cut face, leaving the outer face with a hole
+	PBMeshOps.delete_faces(data, PackedInt32Array([inner_fid]))
+
+	# Find boundary edges of the hole (usage count == 1, all at Y = 0.5, within X:[-0.2, 0.2], Z:[-0.2, 0.2])
+	var usage := PBMeshOps.edge_usage_counts(data)
+	var common := data.get_common_edges()
+	var lookup := data.get_shared_vertex_lookup()
+	var hole_eids := PackedInt32Array()
+	for i in range(common.size()):
+		var ce := common[i]
+		var k := PBMeshOps._common_key(lookup, ce.a, ce.b)
+		if usage.get(k, 0) == 1:
+			var p0 := data.positions[ce.a]
+			var p1 := data.positions[ce.b]
+			if absf(p0.y - 0.5) < 0.01 and absf(p1.y - 0.5) < 0.01:
+				if maxf(absf(p0.x), absf(p0.z)) <= 0.21 and maxf(absf(p1.x), absf(p1.z)) <= 0.21:
+					hole_eids.append(i)
+
+	assert_eq(hole_eids.size(), 4, "Found 4 boundary edges around the hole")
+
+	# Extrude the hole edges DOWN into the cube (distance = -0.5)
+	var ext_res := PBMeshOps.extrude_edges(data, hole_eids, -0.5)
+	assert_true(ext_res.get("ok", false), "Extrude hole edges succeeded")
+
+	# Verify that the extruded fin walls face INTO the hole (front-facing from inside the hole)!
+	for nfid in ext_res["new_face_ids"]:
+		var fn: Vector3 = PBMath.normal_from_positions(data.positions, data.faces[nfid].get_indexes())
+		var c := Vector3.ZERO
+		var idxs := data.faces[nfid].get_distinct_indexes()
+		for idx in idxs:
+			c += data.positions[idx]
+		c /= float(maxi(1, idxs.size()))
+		# Vector pointing from face center to hole center (X=0, Z=0)
+		var to_hole_center := Vector3(-c.x, 0, -c.z).normalized()
+		# Normal must point toward the hole center (into the cavity), not away from it!
+		assert_gt(fn.dot(to_hole_center), 0.5, "Fin normal must face INTO the cavity/hole")

@@ -724,10 +724,10 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 		var qa2 := _dup_position(mesh_data, directed.a, offset)
 		var qb2 := _dup_position(mesh_data, directed.b, offset)
 		var fin := PBFace.new(PackedInt32Array([
-			qa, qb, qb2,
-			qb2, qa2, qa,
+			qb, qa, qa2,
+			qa2, qb2, qb,
 		]))
-		PBUv.setup_extruded_face_uvs(mesh_data, fin, hit_face, directed.a, directed.b, qa, qb)
+		PBUv.setup_extruded_face_uvs(mesh_data, fin, hit_face, directed.b, directed.a, qb, qa)
 		new_faces.append(fin)
 		drag_positions.append(qa2)
 		drag_positions.append(qb2)
@@ -809,6 +809,8 @@ static func bridge_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> D
 	# Find adjacent faces and verify boundary status (1 connecting face)
 	var adj_faces_a: Array[PBFace] = []
 	var adj_faces_b: Array[PBFace] = []
+	var dir_a: PBEdge = null
+	var dir_b: PBEdge = null
 	for face in mesh_data.faces:
 		if face == null:
 			continue
@@ -816,9 +818,10 @@ static func bridge_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> D
 			var f_key := _common_key(lookup, fe.a, fe.b)
 			if f_key == key_a:
 				adj_faces_a.append(face)
+				dir_a = fe
 			if f_key == key_b:
 				adj_faces_b.append(face)
-
+				dir_b = fe
 	if adj_faces_a.size() != 1 or adj_faces_b.size() != 1:
 		return _fail("Bridge edges requires open boundary edges (1 connecting face each)")
 	if adj_faces_a[0] == adj_faces_b[0]:
@@ -828,107 +831,73 @@ static func bridge_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> D
 	var face_b: PBFace = adj_faces_b[0]
 	var submesh: int = face_a.submesh_index
 
-	var ca_a: int = lookup.get(edge_a.a, edge_a.a)
-	var ca_b: int = lookup.get(edge_a.b, edge_a.b)
-	var cb_a: int = lookup.get(edge_b.a, edge_b.a)
-	var cb_b: int = lookup.get(edge_b.b, edge_b.b)
+	var ca_a: int = lookup.get(dir_a.a, dir_a.a)
+	var ca_b: int = lookup.get(dir_a.b, dir_a.b)
+	var cb_a: int = lookup.get(dir_b.a, dir_b.a)
+	var cb_b: int = lookup.get(dir_b.b, dir_b.b)
 
 	var shares_vertex := (ca_a == cb_a or ca_a == cb_b or ca_b == cb_a or ca_b == cb_b)
 	var new_face: PBFace = null
 
-	var ref_n: Vector3 = (_face_area_normal(mesh_data, face_a) + _face_area_normal(mesh_data, face_b)).normalized()
-	if ref_n.length_squared() < 0.0001:
-		ref_n = Vector3.UP
-
 	if shares_vertex:
-		# Triangle bridge
-		var shared_src: int = -1
-		var other_a: int = -1
-		var other_b: int = -1
-		if ca_a == cb_a:
-			shared_src = edge_a.a
-			other_a = edge_a.b
-			other_b = edge_b.b
-		elif ca_a == cb_b:
-			shared_src = edge_a.a
-			other_a = edge_a.b
-			other_b = edge_b.a
-		elif ca_b == cb_a:
-			shared_src = edge_a.b
-			other_a = edge_a.a
-			other_b = edge_b.b
-		else:
-			shared_src = edge_a.b
-			other_a = edge_a.a
-			other_b = edge_b.a
+		# Triangle bridge:
+		# In face_a, edge goes dir_a.a -> dir_a.b.
+		# In bridge triangle, shared edge MUST go dir_a.b -> dir_a.a (opposite traversal).
+		# Third corner is the endpoint of dir_b not in edge_a.
+		var other_b := dir_b.b if (cb_a == ca_a or cb_a == ca_b) else dir_b.a
 
-		var qa := _dup_position(mesh_data, shared_src, Vector3.ZERO)
-		var qb := _dup_position(mesh_data, other_a, Vector3.ZERO)
-		var qc := _dup_position(mesh_data, other_b, Vector3.ZERO)
+		var q0 := _dup_position(mesh_data, dir_a.b, Vector3.ZERO)
+		var q1 := _dup_position(mesh_data, dir_a.a, Vector3.ZERO)
+		var q2 := _dup_position(mesh_data, other_b, Vector3.ZERO)
 
-		var pa := mesh_data.positions[qa]
-		var pb := mesh_data.positions[qb]
-		var pc := mesh_data.positions[qc]
-		var tri_n := (pb - pa).cross(pc - pa)
-		if tri_n.dot(ref_n) < 0.0:
-			new_face = PBFace.new(PackedInt32Array([qa, qc, qb]))
-		else:
-			new_face = PBFace.new(PackedInt32Array([qa, qb, qc]))
+		new_face = PBFace.new(PackedInt32Array([q0, q1, q2]))
 	else:
-		# Quad bridge with planar untwist
-		var pa0 := mesh_data.positions[edge_a.a]
-		var pa1 := mesh_data.positions[edge_a.b]
-		var pb0 := mesh_data.positions[edge_b.a]
-		var pb1 := mesh_data.positions[edge_b.b]
+		# Quad bridge:
+		# In face_a, edge goes dir_a.a -> dir_a.b.
+		# In bridge quad, edge 0->1 MUST go dir_a.b -> dir_a.a (opposite traversal).
+		# Corner 0 = dir_a.b, Corner 1 = dir_a.a.
+		# Corner 2 and 3 are on dir_b.
+		var c0_src := dir_a.b
+		var c1_src := dir_a.a
+		var c2_src := dir_b.a
+		var c3_src := dir_b.b
 
-		var src_a0 := edge_a.a
-		var src_a1 := edge_a.b
-		var src_b0 := edge_b.a
-		var src_b1 := edge_b.b
+		var p_c0 := mesh_data.positions[c0_src]
+		var p_c1 := mesh_data.positions[c1_src]
+		var p_c2 := mesh_data.positions[c2_src]
+		var p_c3 := mesh_data.positions[c3_src]
 
-		# Check untwist in planar projection
-		var plane_n := (pb0 - pa0).cross(pa1 - pa0)
-		if plane_n.length_squared() < 0.0001:
-			plane_n = ref_n
+		var bridge_n := (p_c1 - p_c0).cross(p_c2 - p_c0)
+		if bridge_n.length_squared() < 0.0001:
+			bridge_n = _face_area_normal(mesh_data, face_a).normalized()
 		else:
-			plane_n = plane_n.normalized()
+			bridge_n = bridge_n.normalized()
 
-		var basis := PBUv.get_planar_basis(plane_n)
-		var u_axis: Vector3 = basis["u"]
-		var v_axis: Vector3 = basis["v"]
+		var basis := PBUv.get_planar_basis(bridge_n)
+		var u_ax: Vector3 = basis["u"]
+		var v_ax: Vector3 = basis["v"]
 
-		var p2_a0 := Vector2(u_axis.dot(pa0), v_axis.dot(pa0))
-		var p2_a1 := Vector2(u_axis.dot(pa1), v_axis.dot(pa1))
-		var p2_b0 := Vector2(u_axis.dot(pb0), v_axis.dot(pb0))
-		var p2_b1 := Vector2(u_axis.dot(pb1), v_axis.dot(pb1))
+		var p2_c0 := Vector2(u_ax.dot(p_c0), v_ax.dot(p_c0))
+		var p2_c1 := Vector2(u_ax.dot(p_c1), v_ax.dot(p_c1))
+		var p2_c2 := Vector2(u_ax.dot(p_c2), v_ax.dot(p_c2))
+		var p2_c3 := Vector2(u_ax.dot(p_c3), v_ax.dot(p_c3))
 
-		# Line segment intersection test between diagonal cross candidates
-		var isect := PBMath.get_line_segment_intersect(p2_a0, p2_b0, p2_a1, p2_b1)
+		# Check if segment (c1 -> c2) crosses segment (c0 -> c3):
+		var isect := PBMath.get_line_segment_intersect(p2_c1, p2_c2, p2_c0, p2_c3)
 		if isect.get("intersects", false):
-			var tmp_p := pb0
-			pb0 = pb1
-			pb1 = tmp_p
-			var tmp_s := src_b0
-			src_b0 = src_b1
-			src_b1 = tmp_s
+			var tmp := c2_src
+			c2_src = c3_src
+			c3_src = tmp
 
-		var q0 := _dup_position(mesh_data, src_a0, Vector3.ZERO)
-		var q1 := _dup_position(mesh_data, src_a1, Vector3.ZERO)
-		var q2 := _dup_position(mesh_data, src_b1, Vector3.ZERO)
-		var q3 := _dup_position(mesh_data, src_b0, Vector3.ZERO)
+		var q0 := _dup_position(mesh_data, c0_src, Vector3.ZERO)
+		var q1 := _dup_position(mesh_data, c1_src, Vector3.ZERO)
+		var q2 := _dup_position(mesh_data, c2_src, Vector3.ZERO)
+		var q3 := _dup_position(mesh_data, c3_src, Vector3.ZERO)
 
-		var quad_n := (pa1 - pa0).cross(pb0 - pa0)
-		if quad_n.dot(ref_n) < 0.0:
-			new_face = PBFace.new(PackedInt32Array([
-				q0, q3, q2,
-				q2, q1, q0,
-			]))
-		else:
-			new_face = PBFace.new(PackedInt32Array([
-				q0, q1, q2,
-				q2, q3, q0,
-			]))
-
+		new_face = PBFace.new(PackedInt32Array([
+			q0, q1, q2,
+			q2, q3, q0,
+		]))
 	new_face.submesh_index = submesh
 	PBUv.apply_face_uvs(mesh_data, new_face)
 	mesh_data.faces.append(new_face)
