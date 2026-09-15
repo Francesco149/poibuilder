@@ -405,3 +405,53 @@ func test_rebuild_replaces_bottom_top_against_recorded_shell():
 	for p in top_off.positions:
 		hi2 = maxf(hi2, p.y)
 	assert_almost_eq(hi2, 2.5, 0.002, "top offset slides the run down off the ceiling")
+
+## Placement-edge cross-sections: Bottom trims what exists at the floor
+## (a door front = two piers), Top trims what exists at the face's top
+## edge (a door front = one head run across the arch).
+func test_door_cross_section_follows_placement_edge():
+	var md := PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	var front := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		var poly := md.get_face_outline_positions(fi)
+		var c := Vector3.ZERO
+		for p in poly:
+			c += p
+		c /= poly.size()
+		if n.z > 0.9 and c.z > 0:
+			front = fi
+	var poly := md.get_face_outline_positions(front)
+	var lo := INF
+	var hi := -INF
+	for p in poly:
+		lo = minf(lo, p.y)
+		hi = maxf(hi, p.y)
+	assert_eq(PBTrimWallsTool.run_segments_at_height(poly, lo + 0.001).size(), 2,
+		"bottom edge: two pier runs")
+	assert_eq(PBTrimWallsTool.run_segments_at_height(poly, hi - 0.001).size(), 1,
+		"top edge: one head run across the arch")
+
+## Stairs at Top placement stop on the top step: two short runs on the top
+## step's profile, nothing running down the front.
+func test_stair_side_at_top_stops_on_the_top_step():
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = PBShapeComplex.create_stairs(Vector3(3, 1.2, 2), 6, true)
+	mesh.position = Vector3(0, 0.6, 0)
+	var face := -1
+	var mdata: PBMeshData = mesh.pb_mesh_data
+	for fi in range(mdata.faces.size()):
+		var n := PBMath.normal_from_positions(mdata.positions, mdata.faces[fi].get_indexes())
+		if n.x > 0.9:
+			face = fi
+	var poly := PBTrimWallsTool.face_world_polygon(mesh, face)
+	var hi := -INF
+	for p in poly:
+		hi = maxf(hi, p.y)
+	var segs := PBTrimWallsTool.run_segments_at_height(poly, hi - 0.001)
+	assert_eq(segs.size(), 1, "the top placement stops ON the top step")
+	var span: float = (segs[0]["a"] as Vector3).distance_to(segs[0]["b"])
+	assert_lt(span, 0.5, "the run is short (top step only, not the whole stair)")
+	# ...while the bottom still runs the full depth.
+	var bottom := PBTrimWallsTool.run_segments_at_height(poly, 0.05)
+	assert_eq(bottom.size(), 1, "bottom placement runs the full depth")

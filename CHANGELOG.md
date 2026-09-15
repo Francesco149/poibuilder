@@ -3126,3 +3126,15 @@ v0.9.113 — Trim Walls chaining sanity, calmer highlights, live placement after
   Placement/Height/Offset all keep working after the trim is committed
   ("changing top/bottom after the fact doesn't work").
 - Version bump 0.9.112 -> 0.9.113.
+
+v0.9.114 — Trim Walls cross-sections follow the placement edge:
+- Bottom placement cross-sections at the room shell surface (door front =
+  two pier runs); Top placement cross-sections at the FACE'S OWN TOP EDGE
+  (door front = one head run across the arch; a stair side = the top
+  step only) - the geometry REMAKES when Placement switches, and the
+  strip is then HUNG/SAT at the probe-based placement height. Path
+  points are normalized to the placement base (the raw cross-section
+  points sit at the edge height and previously ramped the strip).
+- Tests: door bottom=2/top=1, stair side top=short run on the top step
+  with bottom=full depth.
+- Version bump 0.9.113 -> 0.9.114.

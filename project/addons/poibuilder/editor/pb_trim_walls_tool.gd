@@ -250,7 +250,7 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 			continue  # not a wall (a floor/ceiling face was clicked)
 		var placement := _base_height_for(poly, normal, floor_probe, ceiling_probe)
 		var base_y: float = placement["base"]
-		for seg in run_segments_at_height(poly, base_y):
+		for seg in run_segments_at_height(poly, placement["cross_y"]):
 			var dir: Vector3 = seg["dir"]
 			var room_dir: Vector3 = normal.cross(Vector3.UP).normalized()
 			if dir.dot(room_dir) < 0.0:
@@ -325,25 +325,34 @@ func _base_height_for(poly: PackedVector3Array, normal: Vector3,
 	var floor_y := lo
 	var ceil_y := hi
 	var base_y: float
+	var cross_y: float
 	if top:
 		if ceiling_probe.is_valid():
 			var found: float = ceiling_probe.call(mid - Vector3.UP * 0.05)
 			if not is_nan(found):
 				ceil_y = minf(ceil_y, found)
 		base_y = ceil_y - height
+		# The cross-section is taken at the FACE'S OWN TOP EDGE: a door head
+		# yields one run across, a stair side yields the top step - the
+		# geometry that actually exists at the placement edge. The strip is
+		# then HUNG at the placement height above.
+		cross_y = hi - 0.001
 	else:
 		if floor_probe.is_valid():
 			var found: float = floor_probe.call(mid + Vector3.UP * 0.05)
 			if not is_nan(found):
 				floor_y = maxf(floor_y, found)
 		base_y = floor_y
+		# Bottom cross-sections at the shell surface (the skirting lands on
+		# the slab even when the wall cube is buried below it).
+		cross_y = floor_y + 0.001
 	# Offset is measured OFF the placement edge: Bottom slides UP from the
 	# floor, Top slides DOWN from the ceiling (positive = away from edge).
 	if top:
 		base_y -= offset
 	else:
 		base_y += offset
-	return {"base": base_y, "floor_y": floor_y, "ceil_y": ceil_y}
+	return {"base": base_y, "cross_y": cross_y, "floor_y": floor_y, "ceil_y": ceil_y}
 
 ## Sweeps the trim profile along one mitred path (already at its base height,
 ## run-oriented into the room).
@@ -437,10 +446,20 @@ static func _chain_and_mitre(segments: Array) -> Array[Dictionary]:
 		var pts := PackedVector3Array()
 		var first: Dictionary = chain[0]
 		var last: Dictionary = chain[chain.size() - 1]
-		pts.append(first.get("mitred_start", first["a"]))
+		# Raw a/b sit at the CROSS-SECTION height; the path runs at the
+		# PLACEMENT base (seg.y) - emitted endpoints take their segment's
+		# placement height or the path mixes heights (strip ramping).
+		var start_pt: Vector3 = first.get("mitred_start", first["a"])
+		start_pt.y = float(first.get("y", start_pt.y))
+		pts.append(start_pt)
 		for i in range(chain.size() - 1):
-			pts.append(chain[i].get("mitred_end", chain[i]["b"]))
-		pts.append(last.get("mitred_end", last["b"]))
+			var mid_seg: Dictionary = chain[i]
+			var mid_pt: Vector3 = mid_seg.get("mitred_end", mid_seg["b"])
+			mid_pt.y = float(mid_seg.get("y", mid_pt.y))
+			pts.append(mid_pt)
+		var end_pt: Vector3 = last.get("mitred_end", last["b"])
+		end_pt.y = float(last.get("y", end_pt.y))
+		pts.append(end_pt)
 		var closed: bool = pts[0].distance_to(pts[pts.size() - 1]) <= JOINT_TOLERANCE
 		if closed:
 			pts[pts.size() - 1] = pts[0]
