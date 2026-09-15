@@ -2882,3 +2882,117 @@ v0.9.107 round complete ✓ — feature gap implementation (Sessions 6, 7, 8, 9)
   - Full test suite: 989/989 tests passing across 64 suites (20,102 assertions), zero errors; real-editor GUI harness `./run_gui_tests.sh` passes with 0 failures.
   - Fix: preserve toroidal and spherical UVs on compile (`manual_uv = true`) with aspect-ratio scaling.
   - Version bump 0.9.106 -> 0.9.107.
+
+v0.9.108 round complete ✓ — poibuilderize/CSG dispatch, multi-select element
+editing, and spec-exact trim placement:
+- Poibuilderize & CSG booleans actually run now (regression from v0.9.107):
+  `_on_operation_requested` gated EVERY op behind `editor.is_editing()` and a
+  non-null `active_mesh`, so clicking Poibuilderize (or a CSG boolean) with a
+  plain MeshInstance3D / CSGShape3D selected — exactly the state the tools
+  exist for — silently returned before reaching their handlers. Object-level
+  ops are dispatched BEFORE the editing gate now; the CSG toolbar buttons are
+  enabled unconditionally (they act on the scene selection, not the active
+  element edit).
+- Poibuilderize undo repaired: the node swap (add PBMesh / remove source) is
+  registered purely through undo do-methods. The old path also added the
+  PBMesh directly, so the committed `add_child` errored with "already has a
+  parent" and the action's bookkeeping diverged from the tree.
+- CSG operand semantics: the selection ORDER decides — FIRST-selected node is
+  the target, LAST-selected (Shift/Ctrl-clicked most recently) is the cutter.
+  There is no hidden "active mesh" in a multi-node selection anymore; the
+  toolbar tooltips say so, and the target/cutter pair is logged.
+- Multi-select vs element modes: with several nodes selected, the active
+  mesh is the LAST-clicked PBMesh (selection order = click order; it used to
+  grab the FIRST, fighting the engine's own primary object). Entering an
+  element mode (or ctrl-adding a node while one is active) narrows the
+  engine selection to the active PBMesh — the whole-object gizmo on the
+  other nodes used to swallow element clicks ("faces hover but never
+  select"). Object mode keeps engine-native multi-select (move both, CSG,
+  merge).
+- Trim placement rewritten to the Unibuilder spec (PBShapeCreator):
+  - The drawn rect is the strip's FACE: u extent → Length, v extent →
+    Height, and the Depth is never dragged (the max/min heuristic used to
+    map the longer extent onto whichever axis it liked).
+  - On a floor the strip STANDS UP ON THE EDGE THE DRAG STARTED FROM: the
+    back-bottom edge lands on the start edge and the depth runs toward the
+    drag side, so starting at the wall leaves the strip flush with it (it
+    used to be centered on the drawn rect — half a height off the wall).
+  - On a wall it lies FLAT on the surface, bottom on the drag's lower edge,
+    depth protruding along the wall normal into the room.
+  - Depth/Height retypes in the adjust panel keep the back-bottom corner
+    pinned (the placement anchors the trim's local origin, not its AABB).
+  - The run arrow follows the drag direction (no aspect flip mid-drag).
+  - Project depth memory: a new trim starts at the last DEPTH committed in
+    this project (EditorSettings `poibuilder/trim/last_depth`; 5 cm before
+    you set one), and `on_wall` records which way the strip was drawn.
+- Tests: 5 new PBShapeCreator trim placement tests (flush start-edge stand,
+  drag-side depth flip, wall lie-flat, facing lock, mapping); full suite
+  993/993 across 64 suites.
+- Version bump 0.9.107 -> 0.9.108.
+
+v0.9.109 round complete ✓ — trim placement robustness, CSG undo ghost fix,
+CSGCombiner3D baking, and the Trim Walls tool:
+- Trim placement no longer trusts the drag's u lock: the u axis locks to the
+  first centimetres of mouse motion, so a wall-base drag begun with a
+  perpendicular wobble locked u INTO the room and the long along-wall extent
+  landed in the height — the strip stood the whole drag length TALL ("dragging
+  the trim at the base of the wall places it going up instead"). On a floor the
+  LONGER side of the drawn rect is the run now, and the strip stands on the
+  line through the drag start along it (back stays flush with the wall line);
+  on a wall the split is by WORLD direction (vertical extent = height,
+  horizontal = length), so mouldings sit upright whatever the lock did.
+- CSG boolean undo repaired: the cutter swap now follows the detach/creation
+  convention (add_do_reference keeps the node alive across the history; a
+  reattach helper restores tree membership, owner, and re-requests the gizmo).
+  Raw remove/add_child left the undone cutter a ghost — rendered but
+  unpickable, unmovable, and effectively absent from the scene dock. The
+  target is re-selected on commit so a dangling selection on the detached
+  cutter cannot break viewport picking.
+- Poibuilderize accepts CSGCombiner3D: `poibuilderize_csg` probed
+  `csg_node.material`, which only CSG *primitive* nodes have — combining a
+  combiner errored ("Invalid access to property or key 'material'"). The
+  property is probed with `in` now; combiners bake through
+  `bake_static_mesh()` like any CSG shape.
+- NEW TOOL — Trim Walls (Unibuilder spec): click wall faces on any PBMesh in
+  any order; a wall highlights teal under the cursor and amber once chosen;
+  the trim previews live as you go. Click a chosen wall again to drop it,
+  Backspace drops the last, Enter / double-click / panel Apply commits,
+  Esc or Cancel abandons. The strip sits where the wall meets the room: a
+  wall cube reaching below the floor slab still gets its skirting ON the
+  slab's surface (physics probe), a cornice tucks under the ceiling slab;
+  Placement Bottom/Top + Offset slide it; the six profiles are shared with
+  Trim. Walls meeting at a corner join with a clean mitre at any angle
+  (bounded line intersection), walls that overlap carry trim on their visible
+  run only (colinear overlap merge), a perimeter closes into a ring, and a
+  doorway cut breaks the run at the jambs (the run follows each clicked
+  face's own cross-section at the trim height). The result is ONE new
+  object; the mitred paths are recorded in its shape_params so Edit Params
+  rebuilds the same walls with new parameters. New files:
+  `editor/pb_trim_walls_tool.gd` (headless core), `tests/test_pb_trim_walls.gd`
+  (10 tests), `icons/icon_trim_walls.svg`; toolbar button in the Shapes group.
+  Also fixed a latent crash: `PBMeshData.get_face_positions()` was called by
+  `set_pivot_to_selection` but never defined — implemented on PBMeshData.
+- CSG/Poibuilderize/Trim Walls undo routed into the SCENE undo history
+  (context object on `create_action`, the same convention CmdMeshOp and
+  shape creation already used). Without a context the action landed in the
+  GLOBAL history while the engine's node Translates went to the scene
+  history; interleaving them printed "UndoRedo history mismatch: expected 0,
+  got 1" and a resync undo re-ran the CSG action's detach — the restored
+  cutter vanished the next time it was moved ("box->sphere subtraction ...
+  moved the sphere and it disappeared"). Scene + global histories now stay
+  consistent; Ctrl+Z walks Translate and CSG Subtract in one linear stack.
+- CRASH fixed in the CSG cutter reference polarity: `add_do_reference` puts
+  the marker in the action's do-ops, and `discard_redo()` — triggered by the
+  very next commit after an undo — memdeletes do-referenced objects. The
+  sphere re-attached by the undo was therefore deleted (while selected and
+  in the tree) by the first following transform, surfacing as "invalid
+  callable" in add_do_method and a SIGSEGV on the next editor action. The
+  cutter now takes `add_undo_reference`, the engine's own "Remove Node(s)"
+  convention (scene_tree_dock.cpp): the detached node is freed only if the
+  action falls off the history tail, never while it lives in the scene.
+  All other node-lifecycle ops audited for the same polarity (all correct:
+  do_reference = created by do; undo_reference = removed by do) and the
+  convention is now written into `.pi/orientation/architecture.md`.
+- Tests: 7 new trim placement regression tests (v0.9.108/109), 10 Trim Walls
+  tests; full suite 1005/1005 across 65 suites; GUI harness failures=0.
+- Version bump 0.9.108 -> 0.9.109.

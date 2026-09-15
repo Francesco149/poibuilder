@@ -171,3 +171,17 @@ selection** — write PBSelection, hold ONE seed in the engine, expand via
 the maps, let the engine's own gizmo/mirror/drag machinery do everything
 else. If you find yourself adding a second source of truth for selection or
 a second gizmo-orientation path, stop and re-read this file.
+
+## Multi-select vs element modes (v0.9.108 contract)
+
+Element modes edit exactly ONE mesh. With several nodes selected:
+- `active_mesh` is the LAST-clicked PBMesh (`get_selected_nodes()` is in
+  click order; taking the FIRST fought the engine's own primary object).
+- Entering an element mode — or ctrl-adding a node while one is active —
+  COLLAPSES the engine selection to the active PBMesh
+  (`_collapse_selection_to_active`, deferred). The second whole-object
+  transform gizmo otherwise swallows the element clicks (faces hover but
+  never select — shipped as the "multi-select face mode is broken" report).
+- OBJECT mode keeps engine-native multi-select (move several, CSG booleans,
+  merge). CSG operand order = selection order: FIRST-selected is the target,
+  LAST-selected is the cutter — there is no hidden "active mesh" there.

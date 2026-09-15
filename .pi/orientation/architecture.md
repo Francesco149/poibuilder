@@ -167,3 +167,64 @@ origin/elevation is session-only on purpose.
 - The overlay title shows PLUGIN_VERSION — a stale build is immediately
   obvious when behavior "doesn't match" what was fixed (this is why every
   round bumps the version).
+
+## The rest of the module map (moved from CLAUDE.md — single source)
+
+- `editor/pb_shape_creator.gd` — drag-to-create state machine (runtime-safe,
+  headless-testable): ARMED → BASE (LMB drag coplanar to the pressed surface;
+  floor vs wall extent mapping) → HEIGHT (mouse sets the 3rd dimension along
+  the normal, click confirms) → PARAMS (overlay modal; Cancel restores). ESC
+  before the confirming click creates NOTHING. `shapes/pb_shape_params.gd`
+  holds the per-shape parameter defs, defaults, `build()` dispatch, and the
+  drag-extent mapping. TRIM is special: it commits on base release and has
+  its own placement (`_trim_placement` — the strip stands on the drag's
+  start line, the longer rect side is the run; on walls the split is by
+  WORLD direction) — do not "simplify" it back into the generic centering.
+- `editor/pb_trim_walls_tool.gd` — the Trim Walls session (click wall faces,
+  teal/amber highlights, mitred chaining, floor/ceiling probes, ONE committed
+  object whose recorded paths keep params live via
+  `PBShapeParams.build(&"trim_walls")`). Headless-testable core; the plugin
+  owns the preview node + input.
+- `editor/uv/` — dedicated 2D UV Editor: `pb_uv_canvas.gd` (interactive 2D
+  canvas: pan/zoom, grid, texture underlay, wireframe, selection),
+  `pb_uv_editor_panel.gd` (bottom dock, toolbar, pop-out, selection sync).
+- `mesh_ops/` — PBMeshOps topology ops (extrude, inset, subdivide, loop cut,
+  merge, weld, delete, detach, knife, bevel, bridge, connect, collapse, fill
+  hole) + `pb_csg.gd` (booleans via Godot's CSG kernel; watertightness
+  pre-flight). Headless-static.
+- `materials/` — default material, shipped textures, splat/decal shaders, the
+  paint/splat data model (`core/pb_splat.gd`).
+- `export/` — the retro pipeline (see retro.md): `pb_map_exporter.gd`
+  (glTF writer, tile/light bakers, colliders) and `pb_pbm_converter.gd`
+  (byte-compatible with the Python oracle).
+- `gui/` — docks (Material & UV / paint / stamp) + the in-viewport overlay.
+
+Hover highlights are CYAN, selection YELLOW (v0.9.0+): yellow reads as
+"selected", cyan as "under your cursor".
+
+## Node-lifecycle ops (CSG booleans, detach, creation): the reference pattern
+
+Any op that adds/removes NODES through undo follows the engine's own
+"Remove Node(s)" convention (scene_tree_dock.cpp):
+- Node CREATED by the do → `add_do_reference(node)`.
+- Node REMOVED by the do (restored by the undo) → `add_undo_reference(node)`.
+  POLARITY MATTERS AND IS A CRASH: do-references live in the action's do-ops,
+  and `discard_redo()` — which runs on the very next commit after an undo —
+  `memdelete`s do-referenced objects. A do_reference on a node the undo
+  re-attached deleted that node while it sat in the scene tree (selected!),
+  and the next transform commit registered a Callable on a freed object:
+  "!p_callable.is_valid()" in add_do_method, then SIGSEGV (the "sphere
+  vanished and the editor crashed" round).
+- Tree changes go ONLY through undo do/undo methods (performing them
+  directly AND registering them double-fires — the committed `add_child`
+  errors "already has a parent").
+- Every action pins its history with a CONTEXT OBJECT on `create_action`
+  (`create_action(name, MERGE_DISABLE, scene_node)`). Without it the action
+  lands in the GLOBAL undo history, interleaves with the engine's scene
+  actions ("UndoRedo history mismatch: expected 0, got 1"), and cross-history
+  resyncs re-run detach/restore ops out of order.
+- A reattach helper must restore `owner` + `update_gizmos()` (a node
+  re-added without this renders but no longer picks or draws — the
+  "CSG undo ghost").
+Existing helpers: `_attach_detached`, `_own_node`, `_detach_node`,
+`_reattach_csg_cutter` in `poibuilder_plugin.gd`.

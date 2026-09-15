@@ -85,10 +85,38 @@ workflow.
       insets faces (aspect locked)
 - [x] **Mesh ops**: extrude faces/edges, inset, loop cut, subdivide, merge
       (including non-coplanar regions), weld vertices, delete, detach
-      (keeps the source transform) — all undoable
+      (keeps the source transform), **bevel** edges & faces (multi-segment
+      rounding, spherical dome corners, live modal), **bridge** boundary
+      edges, **connect**, **collapse**, and **fill hole** — all undoable
+      with live preview modals
 - [x] **Knife tool & N-gon shape extrusion**: interactive multi-point polygon
       drawing on any surface with grid/vertex snapping; edge-to-edge face cuts,
       interior hole cuts, and direct 3D n-gon prism extrusion
+- [x] **Advanced selection suite**: select all/invert, grow & shrink with
+      angle limits, select coplanar, select similar (material/smoothing/area),
+      open boundary edges, face loop & ring traversal — with mode-switch
+      selection conversion (faces → their edges/verts and back, ProBuilder parity)
+- [x] **Precision snapping**: toggleable grid snap, hold-V vertex snapping
+      across all meshes, and proportional (soft) editing with an adjustable
+      influence radius and falloff curves
+- [x] **Object-level tools**: merge objects, mirror geometry across X/Y/Z,
+      center pivot / pivot-to-selection, freeze transform, and
+      **Poibuilderize** — convert any MeshInstance3D (e.g. a GLB you dragged
+      in) or Godot CSG shape (including CSGCombiner3D) into an editable PoiBuilder mesh
+- [x] **CSG booleans**: manifold union / subtract / intersect on PoiBuilder
+      meshes, raw meshes, or CSG nodes (first-selected = target, last-selected
+      = cutter), with clean undo; smoothing groups (1..30) and angle-based
+      auto-smooth
+- [x] **Architectural Trim & Trim Walls**: one-drag trim strips (skirting,
+      dado, cornice) in six profiles (Flat, Chamfer, Round, Cove, Ogee,
+      Stepped) that stand flush on the drag's start edge — and a Trim Walls
+      tool that sweeps mitred trim along wall faces you click (teal hover /
+      amber chosen, skirting lands on the floor slab even when wall cubes
+      reach below it, cornices tuck under ceiling slabs, doorway jambs break
+      the run, perimeters close into rings)
+- [x] **Dedicated 2D UV Editor**: interactive canvas with pan/zoom, texture
+      underlay, wireframe, per-face/island selection sync, 2D transforms,
+      projection buttons, and a pop-out window
 - [x] **Auto-UV projection & texturing**: uniform 1x1m meter repeat heuristic
       across walls, floors, and slopes; textures never stretch when geometry is
       resized; persistent object-space texture anchor keeps coplanar seams aligned;
@@ -140,15 +168,10 @@ workflow.
       + a compact, draggable, collapsible overlay panel
 - [x] **Node transforms respected throughout**; half-size manipulator gizmo by default
 
-**Remaining future roadmap (see [ROADMAP.md](ROADMAP.md) for full session breakdown):**
+**Remaining future roadmap (see [ROADMAP.md](ROADMAP.md) for the full breakdown):**
 
-- [ ] **Dedicated 2D UV Editor Panel**: Canvas, navigation, texture underlay, wireframe, selection sync, 2D transforms, seams & projections (Sessions 1–2)
-- [ ] **In-Scene 3D Viewport Texture Tool ("Material Mode")**: Live 3D surface planar gizmo to slide, scale, and rotate textures directly on geometry (Session 3)
-- [ ] **Core Modeling Ops**: Bevel/chamfer edges & faces with multi-segment rounding, bridge open boundary edges, connect, collapse, fill hole (Sessions 4–5)
-- [ ] **Advanced Selection & Snapping Suite**: Grow/shrink with angle limit, select coplanar, select similar, hold `V` vertex snapping across meshes, proportional soft selection (Session 6)
-- [ ] **Object-Level Tools**: Merge objects, mirror across local planes, convert standard MeshInstance3D to PoiBuilder, pivot tools (Session 7)
-- [ ] **CSG Booleans & Smoothing Groups**: Manifold boolean union/subtract/intersect, smoothing group assignment (1..30) with auto-smooth angles (Session 8)
-- [ ] **Architectural Trims**: Skirting, cornice, and dado rail wall sweep tools with mitred corners (Session 9)
+- [ ] **End-user documentation site**: static HTML bundled with the extension
+      (planned in [docs/DOCUMENTATION-ROADMAP.md](docs/DOCUMENTATION-ROADMAP.md))
 ## How this project is built
 
 The unusual part: **PoiBuilder is developed almost entirely by AI coding
@@ -168,8 +191,8 @@ agents**, directed and sign-off-tested by a human. The process:
    others) implements phases and fix rounds in agent sessions. Each commit
    carries a `Co-authored-by` trailer documenting exactly which model wrote
    it — the git history doubles as an experiment log.
-4. **Verify.** A hardened headless test suite (`run_tests.sh`, currently **834
-   tests / ~15.9k assertions** across 54 files, and it fails if any test script
+4. **Verify.** A hardened headless test suite (`run_tests.sh`, currently **1005
+   tests / ~20.2k assertions** across 65 files, and it fails if any test script
    was silently skipped) must stay green, and every phase ends with a human
    sign-off checklist driving the next round of fixes. Most of the real UX
    quality comes from those sign-off rounds rather than the first pass. Retro

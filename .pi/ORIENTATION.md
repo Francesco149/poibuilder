@@ -80,6 +80,16 @@ broke it. Do not be the next one.
    ~100 KB? Stop — it is almost certainly an artifact. Put build output in a
    gitignored directory (`showcase_video/bake/`, `showcase_video/out/`) or
    `/tmp`, and commit only the SOURCE that makes it.
+5. **Version bump every round; commit trailer every commit.** Bump `VERSION`
+   (poibuilder_plugin.gd), `PLUGIN_VERSION` (pb_editor.gd), and plugin.cfg's
+   `version` TOGETHER at the start of every fix/UX round — the overlay title
+   is how the human verifies they are running the new build (rounds 2–3 of
+   v0.9.0 skipped this and shipped fixes the human never received). Every
+   commit ends with a blank line plus a `Co-authored-by` trailer naming the
+   model that wrote it:
+   `Co-authored-by: <provider-slug>/<model-slug> <<provider-slug>+<model-slug>@users.noreply.github.com>`
+   — derive the slugs from YOUR OWN model id; never reuse another model's
+   trailer.
 5. **Read before you write**: this file, the topic docs for your area, and
    `CLAUDE.md`. If a task says "X is broken/missing", FIRST grep the code and
    `CHANGELOG.md` for X — the behavior usually already exists and was
@@ -188,7 +198,7 @@ that blocks headless execution.
 
 ### Test Requirements
 - Your test MUST pass via `run_tests.sh` (full suite) before you declare done
-- Check the summary: your suite must appear (59 test files → 59 suites)
+- Check the summary: the on-disk test file count must equal the discovered suite count
 - Test file: `project/tests/test_<feature>.gd`, extends GutTest
 - Deterministic — no random seeds, no timing dependencies
 - Editor-dependent tests skip in headless:
