@@ -14,6 +14,14 @@
 #   3. FAILS if any SCRIPT ERROR appears in the output, even when GUT is green.
 #   4. FAILS if the number of discovered test suites differs from the number
 #      of test_*.gd files on disk (silent-skip guard).
+#
+# Usage:
+#   ./run_tests.sh                  # the full suite — the only accepted way
+#                                   # to claim "tests pass"
+#   ./run_tests.sh -gselect=X.gd    # filtered run while iterating (GUT args
+#                                   # pass through). A filtered run skips the
+#                                   # silent-skip count guard by definition —
+#                                   # it does NOT count as "tests pass".
 set -uo pipefail
 cd "$(dirname "$0")/project"
 
@@ -32,7 +40,7 @@ fi
 echo "== [2/4] Running GUT suite =="
 LOG=/tmp/pb_gut.log
 if ! GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless -s addons/gut/gut_cmdln.gd \
-    -gdir=res://tests -ginclude_subdirs -gexit > "$LOG" 2>&1; then
+    -gdir=res://tests -ginclude_subdirs -gexit "$@" > "$LOG" 2>&1; then
   echo "FAIL: GUT exited nonzero" >&2
   grep -E "\[Failed\]|Failing" "$LOG" | head -30 >&2
   FAIL=1
@@ -46,10 +54,16 @@ if grep -q "SCRIPT ERROR" "$LOG"; then
 fi
 
 echo "== [4/4] Verifying every test script was discovered =="
-TESTFILES=$(find tests -maxdepth 1 -name 'test_*.gd' | wc -l | tr -d ' ')
-SUITECOUNT=$(grep -c '<testsuite name=' tests/results.xml 2>/dev/null || echo 0)
+# grep -c prints 0 AND exits 1 on a zero-match file, so `|| echo 0` fired
+# too and produced "0\n0" — the guard disabled itself exactly when results.xml
+# held no suites (the case it exists for). grep's own zero IS the count.
+TESTFILES=$(find tests -name 'test_*.gd' | wc -l | tr -d ' ')
+SUITECOUNT=$(grep -c '<testsuite name=' tests/results.xml 2>/dev/null)
+SUITECOUNT=${SUITECOUNT:-0}
 echo "   test files on disk: $TESTFILES   suites discovered: $SUITECOUNT"
-if [ "$TESTFILES" -ne "$SUITECOUNT" ]; then
+if [ "$#" -gt 0 ]; then
+  echo "   (filtered run — suite-count guard skipped)"
+elif [ "$TESTFILES" -ne "$SUITECOUNT" ]; then
   echo "FAIL: script count mismatch — a test script was skipped (parse error or class resolution failure)" >&2
   FAIL=1
 fi

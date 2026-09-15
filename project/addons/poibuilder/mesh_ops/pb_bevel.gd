@@ -1129,10 +1129,7 @@ static func _fan_cap(mesh_data: PBMeshData, loop_idx: PackedInt32Array,
 		return null
 	if ring_normal.dot(outward) < 0.0:
 		clean.reverse()
-	var centroid := Vector3.ZERO
-	for idx in clean:
-		centroid += mesh_data.positions[idx]
-	centroid /= float(clean.size())
+	var centroid := PBMath.average(mesh_data.positions, clean)
 	var centre_idx := PBMeshOps._dup_position_at(mesh_data, centroid, clean[0])
 	var indices := PackedInt32Array()
 	for i in range(clean.size()):

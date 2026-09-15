@@ -533,6 +533,236 @@ func _shrink_face_selection() -> void:
 	set_faces(shrunk)
 
 # ==============================================================================
+# Mode Conversion (ProBuilder parity: switching modes converts the selection)
+# ==============================================================================
+
+## Converts a selection between element modes and returns the ids it maps to
+## in `to_mode` (VERTEX = shared-group ids, EDGE = common-edge ids, FACE =
+## face indices; TEXTURE shares the FACE id space). Empty result = nothing
+## survives and the caller clears, as before.
+##
+## Conversion rules are CONSERVATIVE and symmetric (a target element is
+## selected only when every defining element of it is selected):
+## - FACE -> VERTEX: all shared groups of the faces' corners.
+## - FACE -> EDGE: every distinct common edge of the faces.
+## - VERTEX -> FACE: faces whose EVERY distinct corner group is selected.
+## - VERTEX -> EDGE: common edges with BOTH endpoint groups selected.
+## - EDGE -> VERTEX: the endpoint groups of every selected edge.
+## - EDGE -> FACE: faces whose EVERY distinct edge is selected.
+static func convert_between_modes(mesh_data: PBMeshData, from_mode: PBEditor.SelectMode,
+		to_mode: PBEditor.SelectMode, vertices: PackedInt32Array, edges: Array[PBEdge],
+		faces: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var from := from_mode
+	var to := to_mode
+	if from == PBEditor.SelectMode.TEXTURE:
+		from = PBEditor.SelectMode.FACE
+	if to == PBEditor.SelectMode.TEXTURE:
+		to = PBEditor.SelectMode.FACE
+	if from == to:
+		match to:
+			PBEditor.SelectMode.FACE:
+				return faces
+			PBEditor.SelectMode.VERTEX:
+				return vertices
+			_:
+				return common_edge_ids_of(mesh_data, edges)
+
+	var edge_ids := common_edge_ids_of(mesh_data, edges)
+	match from:
+		PBEditor.SelectMode.FACE:
+			match to:
+				PBEditor.SelectMode.VERTEX:
+					return faces_to_vertex_ids(mesh_data, faces)
+				PBEditor.SelectMode.EDGE:
+					return faces_to_edge_ids(mesh_data, faces)
+		PBEditor.SelectMode.VERTEX:
+			match to:
+				PBEditor.SelectMode.FACE:
+					return vertex_ids_to_faces(mesh_data, vertices)
+				PBEditor.SelectMode.EDGE:
+					return vertex_ids_to_edge_ids(mesh_data, vertices)
+		PBEditor.SelectMode.EDGE:
+			match to:
+				PBEditor.SelectMode.VERTEX:
+					return edge_ids_to_vertex_ids(mesh_data, edge_ids)
+				PBEditor.SelectMode.FACE:
+					return edge_ids_to_faces(mesh_data, edge_ids)
+	return PackedInt32Array()
+
+## FACE -> VERTEX: the shared groups of every corner of the selected faces.
+static func faces_to_vertex_ids(mesh_data: PBMeshData, faces: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var out := PackedInt32Array()
+	var seen := {}
+	for fi in faces:
+		if fi < 0 or fi >= mesh_data.faces.size():
+			continue
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		for idx in face.get_distinct_indexes():
+			var common: int = lookup.get(idx, -1)
+			if common >= 0 and not seen.has(common):
+				seen[common] = true
+				out.append(common)
+	return out
+
+## FACE -> EDGE: the common-edge ids of every distinct edge of the faces.
+static func faces_to_edge_ids(mesh_data: PBMeshData, faces: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var id_of_key := _edge_key_to_common_id(mesh_data)
+	var out := PackedInt32Array()
+	var seen := {}
+	for fi in faces:
+		if fi < 0 or fi >= mesh_data.faces.size():
+			continue
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		for edge in face.get_edges():
+			var key := _group_pair_key(lookup, edge.a, edge.b)
+			if not seen.has(key):
+				seen[key] = true
+				var eid: int = id_of_key.get(key, -1)
+				if eid >= 0:
+					out.append(eid)
+	return out
+
+## VERTEX -> FACE: faces whose every distinct corner group is selected.
+static func vertex_ids_to_faces(mesh_data: PBMeshData, vertices: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var selected := _to_set(vertices)
+	var out := PackedInt32Array()
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var all_in := true
+		for idx in face.get_distinct_indexes():
+			if not selected.has(lookup.get(idx, -1)):
+				all_in = false
+				break
+		if all_in and not face.get_distinct_indexes().is_empty():
+			out.append(fi)
+	return out
+
+## VERTEX -> EDGE: common edges with both endpoint groups selected.
+static func vertex_ids_to_edge_ids(mesh_data: PBMeshData, vertices: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var selected := _to_set(vertices)
+	var out := PackedInt32Array()
+	for eid in range(mesh_data.get_common_edges().size()):
+		var edge: PBEdge = mesh_data.get_common_edges()[eid]
+		if selected.has(lookup.get(edge.a, -1)) and selected.has(lookup.get(edge.b, -1)):
+			out.append(eid)
+	return out
+
+## EDGE -> VERTEX: the endpoint groups of every selected edge.
+static func edges_to_vertex_ids(mesh_data: PBMeshData, edges: Array[PBEdge]) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var out := PackedInt32Array()
+	var seen := {}
+	for edge in edges:
+		if edge == null:
+			continue
+		for idx in [edge.a, edge.b]:
+			var common: int = lookup.get(idx, -1)
+			if common >= 0 and not seen.has(common):
+				seen[common] = true
+				out.append(common)
+	return out
+
+## EDGE -> VERTEX by common-edge ids (the dispatcher's form).
+static func edge_ids_to_vertex_ids(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> PackedInt32Array:
+	return edges_to_vertex_ids(mesh_data, edges_from_ids(mesh_data, edge_ids))
+
+## Common-edge ids -> the PBEdge objects (invalid ids skipped).
+static func edges_from_ids(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> Array[PBEdge]:
+	var out: Array[PBEdge] = []
+	if mesh_data == null:
+		return out
+	var common := mesh_data.get_common_edges()
+	for eid in edge_ids:
+		if eid >= 0 and eid < common.size():
+			out.append(common[eid])
+	return out
+
+## EDGE -> FACE: faces whose every distinct edge is selected.
+static func edge_ids_to_faces(mesh_data: PBMeshData, edge_ids: PackedInt32Array) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var selected := _to_set(edge_ids)
+	var id_of_key := _edge_key_to_common_id(mesh_data)
+	var out := PackedInt32Array()
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		var all_in := true
+		for edge in face.get_edges():
+			if not selected.has(id_of_key.get(_group_pair_key(lookup, edge.a, edge.b), -1)):
+				all_in = false
+				break
+		if all_in and not face.get_edges().is_empty():
+			out.append(fi)
+	return out
+
+## Common-edge ids for an edge selection (deduplicated by group pair).
+static func common_edge_ids_of(mesh_data: PBMeshData, edges: Array[PBEdge]) -> PackedInt32Array:
+	if mesh_data == null:
+		return PackedInt32Array()
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var id_of_key := _edge_key_to_common_id(mesh_data)
+	var out := PackedInt32Array()
+	var seen := {}
+	for edge in edges:
+		if edge == null:
+			continue
+		var key := _group_pair_key(lookup, edge.a, edge.b)
+		if seen.has(key):
+			continue
+		seen[key] = true
+		var eid: int = id_of_key.get(key, -1)
+		if eid >= 0:
+			out.append(eid)
+	return out
+
+static func _edge_key_to_common_id(mesh_data: PBMeshData) -> Dictionary:
+	var lookup: Dictionary = mesh_data.get_shared_vertex_lookup()
+	var id_of_key := {}
+	var common_edges := mesh_data.get_common_edges()
+	for i in range(common_edges.size()):
+		var e: PBEdge = common_edges[i]
+		if e == null:
+			continue
+		id_of_key[_group_pair_key(lookup, e.a, e.b)] = i
+	return id_of_key
+
+static func _group_pair_key(lookup: Dictionary, a: int, b: int) -> Vector2i:
+	var ca: int = lookup.get(a, a)
+	var cb: int = lookup.get(b, b)
+	return Vector2i(mini(ca, cb), maxi(ca, cb))
+
+static func _to_set(arr: PackedInt32Array) -> Dictionary:
+	var out := {}
+	for v in arr:
+		out[v] = true
+	return out
+
+# ==============================================================================
 # Helpers
 # ==============================================================================
 

@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.104"
+const VERSION := "0.9.105"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -804,20 +804,91 @@ func _auto_pick_element(mesh: PBMesh) -> void:
 func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
 		_on_params_applied()
-	# Clear element selection when mode changes (ProBuilder behavior).
-	# The engine's subgizmo selection is the authoritative drag source, so it
-	# must be cleared too, and the gizmo redrawn for the new element type.
+	# ProBuilder parity: switching element modes CONVERTS the selection
+	# (a face becomes its verts, selected verts become the faces they fully
+	# cover, ...). The conversion rides the SAME code path as an ordinary
+	# selection: PBSelection holds the converted ids, one seed id represents
+	# the set in the engine's subgizmo selection (single-id script API), and
+	# the element editor's conversion expansion makes drag/highlight/ops
+	# treat it exactly like a hand-picked set. Empty conversions (OBJECT
+	# mode, nothing selected, nothing survives) clear, as before.
+	var source_faces := editor.selection.selected_faces.duplicate()
+	var converted := PackedInt32Array()
+	if editor.active_mesh != null and editor.active_mesh.pb_mesh_data != null \
+			and editor.select_mode != PBEditor.SelectMode.OBJECT:
+		converted = PBSelection.convert_between_modes(
+			editor.active_mesh.pb_mesh_data, _last_select_mode, editor.select_mode,
+			editor.selection.selected_vertices, editor.selection.selected_edges,
+			editor.selection.selected_faces)
+	_last_select_mode = editor.select_mode
 	editor.selection.clear_all()
 	editor.hover_id = -1
 	_hover_drawn_last = -1
 	gizmo_plugin.element_editor.reset_side_faces()
 	if editor.active_mesh != null:
-		editor.active_mesh.clear_subgizmo_selection()
+		if converted.is_empty():
+			editor.active_mesh.clear_subgizmo_selection()
+		else:
+			_apply_selection_set(editor.active_mesh, converted, source_faces)
 		editor.active_mesh.update_gizmos()
 	_update_editing_context()
 	if material_dock != null:
 		material_dock.sync_selection()
 	_sync_uv_editor_selection()
+
+## The element mode the selection currently lives in — the conversion's
+## SOURCE when the mode changes (select_mode is already the TARGET by the
+## time this handler runs).
+var _last_select_mode: PBEditor.SelectMode = PBEditor.SelectMode.OBJECT
+
+## Materializes an element selection set through the ordinary selection path.
+## PBSelection gets the ids, and ONE seed id (the element nearest the set's
+## centroid) carries the set in the engine via the conversion expansion —
+## the seed reports the set's centroid as its pivot so the transform gizmo
+## lands on the selection's center. `source_faces` (when coming from a face
+## selection) keeps the gizmo oriented to the face the elements were
+## selected FROM (ProBuilder pick-side UX). Callers: mode-switch conversion,
+## bevel Apply (the new band), bridge/fill (the created faces).
+func _apply_selection_set(mesh: PBMesh, ids: PackedInt32Array,
+		source_faces: PackedInt32Array) -> void:
+	var mesh_data: PBMeshData = mesh.pb_mesh_data
+	var ee := gizmo_plugin.element_editor
+	var seed := ee.seed_id_nearest_centroid(mesh_data, ids)
+	if seed < 0:
+		return
+	ee.set_conversion_group(seed, ids)
+	match editor.select_mode:
+		PBEditor.SelectMode.VERTEX:
+			editor.selection.set_vertices(ids)
+		PBEditor.SelectMode.EDGE:
+			var common := mesh_data.get_common_edges()
+			var edges: Array[PBEdge] = []
+			for eid in ids:
+				if eid >= 0 and eid < common.size():
+					edges.append(common[eid])
+			editor.selection.set_edges(edges)
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			editor.selection.set_faces(ids)
+	# Orientation continuity: coming FROM face mode, the seed's gizmo orients
+	# to the nearest source face's normal, not an average over the mesh.
+	if source_faces.size() > 0 and editor.select_mode != PBEditor.SelectMode.FACE \
+			and editor.select_mode != PBEditor.SelectMode.TEXTURE:
+		var origin: Vector3 = ee.element_origin(mesh_data, seed)
+		var best := -1
+		var best_dist := INF
+		for fi in source_faces:
+			if fi < 0 or fi >= mesh_data.faces.size() or mesh_data.faces[fi] == null:
+				continue
+			var d: float = ee.element_origin(mesh_data, fi).distance_squared_to(origin)
+			if d < best_dist:
+				best_dist = d
+				best = fi
+		if best >= 0:
+			ee.pick_side_faces[seed] = best
+	var gizmo := gizmo_plugin.gizmo_for_node(mesh)
+	if gizmo != null:
+		mesh.set_subgizmo_selection(gizmo, seed,
+			ee.get_subgizmo_transform(mesh_data, mesh, seed))
 
 func _on_element_selection_changed() -> void:
 	if tool_overlay:
@@ -1583,21 +1654,23 @@ func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
 		logger.info("mesh_ops", "Detached faces into new node '%s'" % new_node.name)
 
 ## Shared tail of every op: element ids changed, so the engine's subgizmo
-## selection and our mirror are both stale — clear them and re-render.
+## selection and our mirror are both stale — clear them and re-render. Ops
+## that CREATE faces (bridge, fill hole) select their output through the
+## ordinary selection path so the gizmo lands on the new geometry instead
+## of going dead until the next click.
 func _finish_mesh_op(mesh: PBMesh, op_name: String, new_face_count: int, created_faces: PackedInt32Array = PackedInt32Array()) -> void:
 	editor.hover_id = -1
 	_hover_drawn_last = -1
+	gizmo_plugin.element_editor.reset_side_faces()
+	mesh.rebuild()
+	editor.selection.clear_all()
+	mesh.clear_subgizmo_selection()
 	if (op_name == "bridge_edges" or op_name == "fill_hole") and not created_faces.is_empty():
 		editor.select_mode = PBEditor.SelectMode.FACE
-		editor.selection.set_faces(created_faces)
-	else:
-		editor.selection.clear_all()
-	gizmo_plugin.element_editor.reset_side_faces()
-	mesh.clear_subgizmo_selection()
-	mesh.rebuild()
-	mesh.update_gizmos()
+		_apply_selection_set(mesh, created_faces, PackedInt32Array())
 	if mesh.pb_mesh_data != null:
 		mesh.pb_mesh_data.shape_edited = true
+	mesh.update_gizmos()
 	if logger:
 		logger.info("mesh_ops", "%s: %d new face(s)" % [op_name, new_face_count])
 ## Undo-history display names per overlay op.
@@ -2839,6 +2912,13 @@ func _commit_bevel_session() -> void:
 	editor.selection.clear_all()
 	if is_instance_valid(node):
 		node.clear_subgizmo_selection()
+	# Dismissing the dialog does NOT deselect: the bevel's own output (the
+	# band/corner faces) becomes the selection, through the same path as an
+	# ordinary face selection — provided the op produced a valid band.
+	if not _bevel_session_last_new_faces.is_empty() and is_instance_valid(node):
+		gizmo_plugin.element_editor.reset_side_faces()
+		editor.select_mode = PBEditor.SelectMode.FACE
+		_apply_selection_set(node, _bevel_session_last_new_faces, PackedInt32Array())
 		node.update_gizmos()
 	_params_session_kind = ""
 	_bevel_session_node = null

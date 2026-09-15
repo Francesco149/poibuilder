@@ -115,7 +115,10 @@ else counts as evidence:
     `contain` mode while the check built a correct mapper of its own). Segment
     stamps hash the pipeline's own sources too, so a tool fix re-bakes the
     clips it affects.
-- `.pi/ORIENTATION.md` — Sub-agent worker orientation
+- `.pi/ORIENTATION.md` — Sub-agent worker orientation: rules + the index
+  into `.pi/orientation/` (the full implementation docs, one topic file per
+  area: architecture, selection/gizmo, mesh ops, testing, footguns, retro).
+  Read the topic file for your area before touching that area.
 
 ## Reference Repos
 
@@ -221,9 +224,10 @@ unparseable test scripts and still reports green.
 
 ## Current Status
 
-- Current version: **v0.9.98** (core phases 0–7 and sign-off rounds complete).
-- All headless tests passing (`./run_tests.sh`; 8845+ assertions across 411 tests).
-- Architecture: native subgizmos, orientation space (Element/Object/World, X key), mesh ops (extrude, inset, loop cut, weld, detach, bevel), UV/material editor, retro PSP hardware exporter.
+- Current version: **v0.9.105** (core phases 0–7 and sign-off rounds complete).
+- All headless tests passing (`./run_tests.sh`; 957 tests, 19.6k+ assertions
+  across 59 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`).
+- Architecture: native subgizmos, orientation space (Element/Object/World, X key), mesh ops (extrude, inset, loop cut, weld, detach, bevel, bridge, connect, collapse, fill hole), MODE-SWITCH SELECTION CONVERSION (face→verts etc.; see `.pi/orientation/selection.md`), UV/material editor, retro PSP hardware exporter.
 - Full historical development log and version-by-version notes are archived in [CHANGELOG.md](CHANGELOG.md).
 
 
@@ -277,6 +281,11 @@ unparseable test scripts and still reports green.
   This is locked by test_pb_winding.gd against BoxMesh ground truth — do not
   "fix" winding or normals without updating that file and reading it first.
 - The editor's subgizmo selection is the authoritative element selection
-  while editing; PBSelection mirrors it (engine → us, in _redraw).
+  while editing; PBSelection mirrors it (engine → us, in _redraw). The
+  engine's script API can only REPLACE the subgizmo selection with ONE id —
+  multi-element semantics (loops, UV groups, mode-switch conversion) ride
+  seed ids + expansion maps in PBElementEditor. Full contract:
+  `.pi/orientation/selection.md`. Switching element modes CONVERTS the
+  selection (ProBuilder parity); ops that create faces select their output.
 - Element transforms compose as rel = target_xf * start_xf⁻¹ applied to the
   drag-start snapshot — idempotent under the engine's per-id delivery.

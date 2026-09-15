@@ -1,6 +1,6 @@
 # PoiBuilder Changelog & Historical Status Notes
 
-Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.98).
+Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
 ## Current Status
@@ -2748,3 +2748,70 @@ v0.9.98 round complete ✓ — bevel distance matches the request; loop corners 
 - Version bump 0.9.97 -> 0.9.98.
 
 
+
+v0.9.99 round complete ✓ — bridge, connect, collapse, fill hole:
+- New topology ops in PBMeshOps: bridge edge pairs into face strips, connect
+  (edges → splitting verts; verts → new edges), collapse elements (per-mode),
+  fill hole from boundary edges; toolbar buttons + keys wired through the op
+  pipeline; undo via whole-mesh snapshots.
+
+v0.9.100–v0.9.102 (v0.9.100–102 "selection conversion", REVERTED):
+- A first selection-conversion implementation forced single-element engine
+  selections without expanding the mirrors/drag unions (only 1 vert stayed
+  selected; undo moved 1 vert) and added a parallel
+  `selection_origin`/`selection_basis` gizmo-orientation layer duplicating
+  behavior the engine already had — breaking extrude direction and multi-
+  select pivots. Fully discarded via `git reset` (kept from those sessions:
+  the bridge/extrude winding fixes and the bevel stale-selection fix, which
+  landed anew in v0.9.103/104). The redesign contract is documented in
+  `.pi/orientation/selection.md`.
+
+v0.9.103 round complete ✓ — pristine reset + bridge/hole-extrude winding:
+- Reset to the pre-conversion state; `bridge_edges` now strictly obeys the
+  2-manifold half-edge invariant; `extrude_edges` keeps hole-edge winding.
+
+v0.9.104 round complete ✓ — bevel commit clears stale selection:
+- Bevel commit no longer restores pre-op edge ids (that selected an edge
+  BEHIND the bevel); selection is cleared on commit.
+
+v0.9.105 round complete ✓ — mode-switch selection conversion, done sanely:
+- THE FEATURE (third attempt; the reverted v0.9.100–102 taught the shape):
+  switching element modes now CONVERTS the selection, ProBuilder parity —
+  face → its 4 verts / 4 edges, verts → the faces they fully cover / the
+  edges with both endpoints, edges → their endpoints / the faces whose
+  every edge is selected. Rules are conservative and symmetric; TEXTURE
+  shares the FACE id space; OBJECT mode and empty conversions clear as
+  before.
+- THE ARCHITECTURE (no hacks, no parallel state): the engine's script API
+  can only replace the subgizmo selection with ONE id
+  (`se->subgizmos.clear(); insert(...)` in the C++), so the converted set is
+  carried as ONE seed id (the element nearest the set's centroid) plus a
+  conversion-expansion map in PBElementEditor — the same pattern as edge
+  loops and UV island groups. Drag union, mirror, highlights, undo payloads,
+  and ops all go through the SAME expansion path as an ordinary selection;
+  the seed reports the set's CENTROID as its pivot origin, so the engine's
+  transform gizmo lands on the selection's center and rotate/scale compose
+  about it (rel = target·start⁻¹ algebra unchanged). Coming from a face
+  selection, the gizmo orients to that face's normal (pick-side UX).
+- Bevel Apply no longer dead-ends the selection: the op's output band
+  (`new_face_ids`) becomes the selection through the same path; bridge/fill
+  hole likewise select their created faces now (the gizmo stays live on the
+  new geometry instead of hiding until the next click).
+- Fixes from the session/history sweeps: `run_tests.sh`'s silent-skip guard
+  no longer disables itself (`grep -c || echo 0` emitted two lines);
+  `./run_tests.sh -gselect=...` passes GUT filters through for iterating
+  (filtered runs skip the count guard and never count as "tests pass");
+  59 orphaned `.gd.uid` files swept; vacuous `pass_test("skipping")`
+  fixture skips in `test_pb_edge_loop_ring.gd` now `fail_test`; UV template
+  export print routed through PBLogger; the four inline centroid loops
+  (inset, face centroid, bevel cap) now use `PBMath.average`.
+- Docs: `.pi/ORIENTATION.md` is now an index; the implementation detail
+  lives in `.pi/orientation/` (architecture, selection, mesh_ops, testing,
+  footguns, retro) — distilled from a sweep of ~80 agent session transcripts
+  and the full git history, so workers stop re-implementing what exists.
+- Tests: new `test_pb_selection_conversion.gd` (18 tests: conversion rules,
+  seed+expansion carry, drag/undo coverage, mirror prune, pivot centroid);
+  GUI harness gained a CONVERT case (face → edges → verts → face round trip
+  in a real editor). 957 tests, 19.6k assertions, 59 suites, all green;
+  `run_gui_tests.sh` failures=0.
+- Version bump 0.9.104 -> 0.9.105.

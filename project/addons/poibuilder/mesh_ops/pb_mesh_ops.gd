@@ -132,10 +132,7 @@ static func inset_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 		if loop.size() != face.get_distinct_indexes().size():
 			return _fail("Inset faces: face %d has a hole — inset is not supported" % fi)
 
-		var centroid := Vector3.ZERO
-		for idx in loop:
-			centroid += mesh_data.positions[idx]
-		centroid /= float(loop.size())
+		var centroid := PBMath.average(mesh_data.positions, loop)
 
 		var pulled := {}
 		for idx in loop:
@@ -2182,14 +2179,7 @@ static func _region_submesh(mesh_data: PBMeshData, region: PackedInt32Array) -> 
 
 ## Face centroid of the distinct perimeter vertices.
 static func _face_centroid(mesh_data: PBMeshData, face: PBFace) -> Vector3:
-	var loop := face.get_distinct_indexes()
-	var centroid := Vector3.ZERO
-	var count: int = 0
-	for idx in loop:
-		if idx >= 0 and idx < mesh_data.positions.size():
-			centroid += mesh_data.positions[idx]
-			count += 1
-	return centroid / float(count) if count > 0 else Vector3.ZERO
+	return PBMath.average(mesh_data.positions, face.get_distinct_indexes())
 
 ## Ordered perimeter cycle of a face (face.get_edges() entries are directed
 ## along the winding — each (a→b) continues at b). Returns [] when the walk

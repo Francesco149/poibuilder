@@ -211,6 +211,17 @@ var selected_loops: Dictionary = {}
 ## seed face id -> PackedInt32Array of all face ids in that group.
 var selected_face_groups: Dictionary = {}
 
+## Mode-conversion groups (ProBuilder parity: switching modes converts the
+## selection — a face becomes its verts, etc.). The engine's script API holds
+## a SINGLE subgizmo id, so the converted set is carried as seed id ->
+## every id the conversion produced in the current mode. Selected ids expand
+## through it for dragging, highlighting, the PBSelection mirror, and the
+## pivot origin (the seed reports the set's centroid). Same lifecycle as the
+## loop/group maps: reset_side_faces clears it, a plain click on the seed
+## drops it, and the mirror prunes it when the seed leaves the engine
+## selection.
+var selected_conversion: Dictionary = {}
+
 ## Double-click tracking for the click path only (hover never reaches it).
 var _last_click_msec: int = -10000
 var _last_click_id: int = -1
@@ -222,6 +233,7 @@ func reset_side_faces() -> void:
 	pick_side_faces.clear()
 	selected_loops.clear()
 	selected_face_groups.clear()
+	selected_conversion.clear()
 	_last_click_msec = -10000
 	_last_click_id = -1
 	_last_click_alt = false
@@ -264,12 +276,18 @@ func element_indices(mesh_data: PBMeshData, id: int) -> PackedInt32Array:
 			# group's positions directly. (Passing the group id to
 			# get_coincident_vertices* would look it up as a POSITION index
 			# and move a different corner — the "moves a different vert" bug.)
-			if id >= mesh_data.shared_vertices.size():
-				return PackedInt32Array()
-			var sv: PBSharedVertex = mesh_data.shared_vertices[id]
-			if sv == null:
-				return PackedInt32Array()
-			return sv.indices.duplicate()
+			# A mode-conversion seed expands to every converted group first,
+			# so dragging the seed moves the whole converted set.
+			var groups := expand_conversion_ids(PackedInt32Array([id]))
+			var out := PackedInt32Array()
+			for gid in groups:
+				if gid < 0 or gid >= mesh_data.shared_vertices.size():
+					continue
+				var sv: PBSharedVertex = mesh_data.shared_vertices[gid]
+				if sv == null:
+					continue
+				out.append_array(sv.indices)
+			return out
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
 			if id >= edges.size():
@@ -631,6 +649,8 @@ func record_edge_click(mesh_data: PBMeshData, id: int, alt_held: bool, ring_held
 	_last_click_alt = alt_held or double_click
 	if not alt_held and not double_click:
 		selected_loops.erase(id)
+		# A plain click on a conversion seed re-selects just that element.
+		selected_conversion.erase(id)
 		return PackedInt32Array()
 	var spread := edge_ring_ids(mesh_data, id) if ring_held else edge_loop_ids(mesh_data, id)
 	if spread.size() > 1:
@@ -668,24 +688,27 @@ func _spread_ids(mesh_data: PBMeshData, edges: Array[PBEdge], spread: Array[PBEd
 			ids.append(eid)
 	return ids
 
-## Expands engine-selected edge ids through recorded loops (stable order,
-## deduplicated). Non-loop ids pass through unchanged.
+## Expands engine-selected edge ids through recorded loops AND conversion
+## groups (stable order, deduplicated). Plain ids pass through unchanged.
 func expand_edge_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt32Array:
-	if selected_loops.is_empty() or ids.is_empty():
+	if ids.is_empty() or (selected_loops.is_empty() and selected_conversion.is_empty()):
 		return ids
 	var out := PackedInt32Array()
 	var seen := {}
 	for eid in ids:
-		var loop: PackedInt32Array = selected_loops.get(eid, PackedInt32Array())
-		if loop.is_empty():
-			if not seen.has(eid):
-				seen[eid] = true
-				out.append(eid)
-		else:
-			for lid in loop:
-				if not seen.has(lid):
-					seen[lid] = true
-					out.append(lid)
+		for spread in [selected_loops.get(eid, PackedInt32Array()),
+				selected_conversion.get(eid, PackedInt32Array())]:
+			if spread.is_empty():
+				continue
+			for sid in spread:
+				if not seen.has(sid):
+					seen[sid] = true
+					out.append(sid)
+		if not seen.has(eid) \
+				and selected_loops.get(eid, PackedInt32Array()).is_empty() \
+				and selected_conversion.get(eid, PackedInt32Array()).is_empty():
+			seen[eid] = true
+			out.append(eid)
 	return out
 
 ## Sets a multi-face selection group represented by `seed_id`.
@@ -698,23 +721,78 @@ func set_selected_face_group(seed_id: int, all_face_ids: PackedInt32Array) -> vo
 func clear_selected_face_groups() -> void:
 	selected_face_groups.clear()
 
+## Records a mode-conversion group: `seed_id` represents every id in
+## `all_ids` (one conversion exists at a time — a mode switch converts the
+## whole selection).
+func set_conversion_group(seed_id: int, all_ids: PackedInt32Array) -> void:
+	selected_conversion.clear()
+	if seed_id >= 0 and all_ids.size() > 1:
+		selected_conversion[seed_id] = all_ids.duplicate()
+
+## Expands engine-selected ids through recorded conversion groups (stable
+## order, deduplicated). Ids without a conversion pass through unchanged.
+func expand_conversion_ids(ids: PackedInt32Array) -> PackedInt32Array:
+	if selected_conversion.is_empty() or ids.is_empty():
+		return ids
+	var out := PackedInt32Array()
+	var seen := {}
+	for id in ids:
+		var group: PackedInt32Array = selected_conversion.get(id, PackedInt32Array())
+		if group.is_empty():
+			if not seen.has(id):
+				seen[id] = true
+				out.append(id)
+		else:
+			for gid in group:
+				if not seen.has(gid):
+					seen[gid] = true
+					out.append(gid)
+	return out
+
+## The element id among `ids` whose origin is nearest the set's centroid —
+## the seed that carries a converted selection in the engine.
+func seed_id_nearest_centroid(mesh_data: PBMeshData, ids: PackedInt32Array) -> int:
+	if ids.is_empty():
+		return -1
+	if ids.size() == 1:
+		return ids[0]
+	var sum := Vector3.ZERO
+	var count: int = 0
+	for id in ids:
+		sum += element_origin(mesh_data, id)
+		count += 1
+	var centroid := sum / float(count) if count > 0 else Vector3.ZERO
+	var best := -1
+	var best_dist := INF
+	for id in ids:
+		var d: float = element_origin(mesh_data, id).distance_squared_to(centroid)
+		if d < best_dist:
+			best_dist = d
+			best = id
+	return best
+
 ## Expands engine-selected face ids through recorded face groups (stable order, deduplicated).
+## Expands engine-selected face ids through recorded groups AND conversion
+## groups (stable order, deduplicated). Plain ids pass through unchanged.
 func expand_face_ids(mesh_data: PBMeshData, ids: PackedInt32Array) -> PackedInt32Array:
-	if selected_face_groups.is_empty() or ids.is_empty():
+	if ids.is_empty() or (selected_face_groups.is_empty() and selected_conversion.is_empty()):
 		return ids
 	var out := PackedInt32Array()
 	var seen := {}
 	for fid in ids:
-		var group: PackedInt32Array = selected_face_groups.get(fid, PackedInt32Array())
-		if group.is_empty():
-			if not seen.has(fid):
-				seen[fid] = true
-				out.append(fid)
-		else:
-			for gfid in group:
-				if not seen.has(gfid):
-					seen[gfid] = true
-					out.append(gfid)
+		for spread in [selected_face_groups.get(fid, PackedInt32Array()),
+				selected_conversion.get(fid, PackedInt32Array())]:
+			if spread.is_empty():
+				continue
+			for sid in spread:
+				if not seen.has(sid):
+					seen[sid] = true
+					out.append(sid)
+		if not seen.has(fid) \
+				and selected_face_groups.get(fid, PackedInt32Array()).is_empty() \
+				and selected_conversion.get(fid, PackedInt32Array()).is_empty():
+			seen[fid] = true
+			out.append(fid)
 	return out
 
 static func _edge_key(lookup: Dictionary, a: int, b: int) -> Vector2i:
@@ -729,10 +807,31 @@ const DOUBLE_CLICK_MS := 400
 # ==============================================================================
 
 ## Start transform for subgizmo `id` — what the engine sees on selection.
+## The ORIGIN is the pivot origin (element_pivot_origin): a conversion seed
+## reports its set's centroid, so the engine's transform gizmo lands on the
+## center of the converted selection and rotate/scale compose about it —
+## the same affine the engine applies to this transform is what the drag
+## replays onto positions (rel = target * start^-1), so no drag math
+## special-cases the pivot. Loops/UV groups keep their seed pivot.
 func get_subgizmo_transform(mesh_data: PBMeshData, node: PBMesh, id: int) -> Transform3D:
 	if mesh_data == null or node == null or id < 0:
 		return Transform3D.IDENTITY
-	return Transform3D(element_basis(mesh_data, node, id), element_origin(mesh_data, id))
+	return Transform3D(element_basis(mesh_data, node, id), element_pivot_origin(mesh_data, id))
+
+## The origin reported to the engine for subgizmo `id`. Plain elements and
+## loop/group seeds report their own element_origin; a mode-conversion seed
+## reports the centroid of the full converted set (ProBuilder pivots a
+## converted multi-selection on its center).
+func element_pivot_origin(mesh_data: PBMeshData, id: int) -> Vector3:
+	var group: PackedInt32Array = selected_conversion.get(id, PackedInt32Array())
+	if group.size() <= 1:
+		return element_origin(mesh_data, id)
+	var sum := Vector3.ZERO
+	var count: int = 0
+	for gid in group:
+		sum += element_origin(mesh_data, gid)
+		count += 1
+	return sum / float(count) if count > 0 else element_origin(mesh_data, id)
 
 ## Handles one engine _set_subgizmo_transform delivery.
 ## `ids` is the engine's current subgizmo selection (all elements the gizmo
@@ -1546,7 +1645,9 @@ func center_pivot(mesh_data: PBMeshData, ids: PackedInt32Array) -> Vector3:
 	var acc := Vector3.ZERO
 	var count := 0
 	for id in ids:
-		acc += element_origin(mesh_data, id)
+		# Pivot origins (not raw origins): a conversion seed's pivot is its
+		# set's centroid, matching where the engine gizmo sits.
+		acc += element_pivot_origin(mesh_data, id)
 		count += 1
 	return acc / float(count) if count > 0 else Vector3.ZERO
 
@@ -1961,6 +2062,12 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		return false
 
 	var differs: bool = false
+	# Conversion/loop/group expansions die with their seed leaving the
+	# engine selection (a marquee or plain click that drops the seed falls
+	# back to exactly the engine's ids).
+	for seed in selected_conversion.keys():
+		if not engine_ids.has(seed):
+			selected_conversion.erase(seed)
 	match editor.select_mode:
 		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			for seed in selected_face_groups.keys():
@@ -1969,7 +2076,8 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 			var expanded := expand_face_ids(mesh_data, engine_ids)
 			differs = not _int_arrays_equal(selection.selected_faces, expanded)
 		PBEditor.SelectMode.VERTEX:
-			differs = not _int_arrays_equal(selection.selected_vertices, engine_ids)
+			var expanded := expand_conversion_ids(engine_ids)
+			differs = not _int_arrays_equal(selection.selected_vertices, expanded)
 		PBEditor.SelectMode.EDGE:
 			# Loops whose seed left the engine selection die with it.
 			for seed in selected_loops.keys():
@@ -1994,7 +2102,7 @@ func mirror_engine_selection(selection: PBSelection, mesh_data: PBMeshData,
 		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
 			selection.set_faces(expand_face_ids(mesh_data, engine_ids))
 		PBEditor.SelectMode.VERTEX:
-			selection.set_vertices(engine_ids)
+			selection.set_vertices(expand_conversion_ids(engine_ids))
 		PBEditor.SelectMode.EDGE:
 			var edges := mesh_data.get_common_edges()
 			var selected: Array[PBEdge] = []

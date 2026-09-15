@@ -778,8 +778,8 @@ func _on_export_png_pressed() -> void:
 		[],
 		canvas.uv_channel if canvas else 0
 	)
-	if err == OK:
-		print("[PB/uv] Exported UV template to %s" % path)
+	if err == OK and plugin != null and "logger" in plugin:
+		plugin.logger.info("io", "Exported UV template to %s" % path)
 # Toolbar Handlers
 # ==============================================================================
 

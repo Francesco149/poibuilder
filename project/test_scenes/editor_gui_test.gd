@@ -446,6 +446,37 @@ func _run() -> void:
 			_fail("ELEMENT: face click selects nothing (engine=%s mirror=%d)" % [
 				str(subgizmos), plugin.editor.selection.selected_face_count()])
 
+		# MODE CONVERSION: switching modes converts the selection (ProBuilder
+		# parity). The engine holds ONE seed id for the converted set (its
+		# script API cannot set several); the mirror must report the FULL set.
+		await _press_and_release_key(KEY_J)  # FACE -> EDGE
+		await _frames(10)
+		if gizmo.get_subgizmo_selection().size() > 0 \
+				and plugin.editor.selection.selected_edge_count() == 4:
+			_pass("CONVERT: face -> its 4 edges (seed present, mirror=4)")
+		else:
+			_fail("CONVERT: face -> edge lost the selection (engine=%s mirror=%d)" % [
+				str(gizmo.get_subgizmo_selection()),
+				plugin.editor.selection.selected_edge_count()])
+		await _press_and_release_key(KEY_H)  # EDGE -> VERTEX
+		await _frames(10)
+		if gizmo.get_subgizmo_selection().size() > 0 \
+				and plugin.editor.selection.selected_vertex_count() == 4:
+			_pass("CONVERT: edges -> their 4 verts (seed present, mirror=4)")
+		else:
+			_fail("CONVERT: edge -> vertex lost the selection (engine=%s mirror=%d)" % [
+				str(gizmo.get_subgizmo_selection()),
+				plugin.editor.selection.selected_vertex_count()])
+		await _press_and_release_key(KEY_K)  # VERTEX -> FACE (round trip)
+		await _frames(10)
+		if gizmo.get_subgizmo_selection().size() > 0 \
+				and plugin.editor.selection.selected_face_count() == 1:
+			_pass("CONVERT: verts -> the face again (round trip closes)")
+		else:
+			_fail("CONVERT: vertex -> face round trip failed (engine=%s mirror=%d)" % [
+				str(gizmo.get_subgizmo_selection()),
+				plugin.editor.selection.selected_face_count()])
+
 		# EDGE mode: click the vertical edge nearest the camera.
 		await _press_and_release_key(KEY_J)
 		await _frames(10)

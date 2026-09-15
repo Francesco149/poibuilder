@@ -109,7 +109,7 @@ func test_selection_with_edge_loop() -> void:
 	var sel := PBSelection.new(data)
 	var seed_edges: Array[PBEdge] = _find_vertical_body_edge()
 	if seed_edges.is_empty():
-		pass_test("No vertical edge found, skipping")
+		fail_test("Fixture regression: the box has no vertical body edge")
 		return
 
 	# Perform loop selection
@@ -122,7 +122,7 @@ func test_selection_with_edge_ring() -> void:
 	var sel := PBSelection.new(data)
 	var seed_edges: Array[PBEdge] = _find_horizontal_body_edge()
 	if seed_edges.is_empty():
-		pass_test("No horizontal edge found, skipping")
+		fail_test("Fixture regression: the box has no horizontal body edge")
 		return
 
 	var ring: Array[PBEdge] = PBTopology.get_edge_ring(data, seed_edges)
@@ -137,7 +137,7 @@ func test_selection_with_edge_ring() -> void:
 func test_edge_loop_iterative_extends() -> void:
 	var seed_edges: Array[PBEdge] = _find_vertical_body_edge()
 	if seed_edges.is_empty():
-		pass_test("No vertical edge found, skipping")
+		fail_test("Fixture regression: the box has no vertical body edge")
 		return
 
 	var iterative: Array[PBEdge] = PBTopology.get_edge_loop_iterative(data, seed_edges)
@@ -149,7 +149,7 @@ func test_edge_loop_iterative_extends() -> void:
 func test_edge_ring_iterative_extends() -> void:
 	var seed_edges: Array[PBEdge] = _find_horizontal_body_edge()
 	if seed_edges.is_empty():
-		pass_test("No horizontal edge found, skipping")
+		fail_test("Fixture regression: the box has no horizontal body edge")
 		return
 
 	var iterative: Array[PBEdge] = PBTopology.get_edge_ring_iterative(data, seed_edges)

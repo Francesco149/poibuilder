@@ -701,7 +701,9 @@ func _draw_hover_face(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
 	if hover_id < 0 or hover_id >= mesh_data.faces.size():
 		return
-	if gizmo.is_subgizmo_selected(hover_id):
+	# Suppression uses the EXPANDED selection (loop/conversion groups): a
+	# selected-but-not-seed face must not glow as hovered.
+	if element_editor.expand_face_ids(mesh_data, gizmo.get_subgizmo_selection()).has(hover_id):
 		return
 	var fill := element_editor.build_face_fill_mesh(mesh_data, hover_id, _live_fill_offset)
 	if fill == null:
@@ -745,7 +747,8 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	var edges := mesh_data.get_common_edges()
 	if hover_id < 0 or hover_id >= edges.size():
 		return
-	if gizmo.is_subgizmo_selected(hover_id):
+	# Suppression uses the EXPANDED selection (loop/conversion groups).
+	if element_editor.expand_edge_ids(mesh_data, gizmo.get_subgizmo_selection()).has(hover_id):
 		return
 	var positions := mesh_data.positions
 	var edge: PBEdge = edges[hover_id]
