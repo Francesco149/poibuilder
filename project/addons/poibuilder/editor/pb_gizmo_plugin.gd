@@ -1086,7 +1086,7 @@ func _draw_trim_walls_highlights(gizmo, mesh_data: PBMeshData, node: PBMesh) -> 
 	# Strokes read over the fills at any zoom.
 	if is_hover:
 		var stroke_pts := PackedVector3Array()
-		var poly := mesh_data.get_face_positions(trim_walls_hover_face)
+		var poly := mesh_data.get_face_outline_positions(trim_walls_hover_face)
 		# get_face_positions is already LOCAL (gizmo space) - pushing it
 		# through the inverse node transform displaced the outline off the
 		# face entirely.

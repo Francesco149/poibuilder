@@ -316,3 +316,53 @@ func test_build_is_deterministic_and_params_are_global():
 	assert_almost_eq(top_hi, ceiling_y, 0.001,
 		"top run tucks under the ceiling on EVERY wall (global placement)")
 	assert_almost_eq(top_hi - top_lo, 0.2, 0.002)
+
+## REGRESSION (door front): the door's front is ONE concave polygon wrapping
+## its arch. Boundary-order crossing pairing scrambled it - only ONE pier
+## got trim (a sliver of the other). Crossings sorted along the line pair
+## into both piers.
+func test_door_front_yields_both_pier_runs():
+	var md := PBShapeComplex.create_door(3.0, 2.5, 2.0, 0.5, 1.0, true, 6)
+	var front := -1
+	for fi in range(md.faces.size()):
+		var n := PBMath.normal_from_positions(md.positions, md.faces[fi].get_indexes())
+		var poly := md.get_face_outline_positions(fi)
+		var c := Vector3.ZERO
+		for p in poly:
+			c += p
+		c /= poly.size()
+		if n.z > 0.9 and c.z > 0:
+			front = fi
+	assert_gt(front, -1)
+	var segs := PBTrimWallsTool.run_segments_at_height(
+		md.get_face_outline_positions(front), 0.05)
+	assert_eq(segs.size(), 2, "BOTH sides of the doorway get a trim run")
+	var min_x := INF
+	var max_x := -INF
+	for sg in segs:
+		min_x = minf(min_x, minf((sg["a"] as Vector3).x, (sg["b"] as Vector3).x))
+		max_x = maxf(max_x, maxf((sg["a"] as Vector3).x, (sg["b"] as Vector3).x))
+	assert_lt(min_x, -0.9, "the left pier run spans the left side")
+	assert_gt(max_x, 0.9, "the right pier run spans the right side")
+
+## REGRESSION (stairs): the stair side faces store vertices in sliver-
+## triangle appearance order - the outline reconstruction must chain
+## boundary edges so the base run spans the whole stair on BOTH sides.
+func test_stair_sides_span_their_base_on_both_sides():
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = PBShapeComplex.create_stairs(Vector3(3, 1.2, 2), 6, true)
+	mesh.position = Vector3(0, 0.6, 0)  # sits on the floor
+	for side in [-1.0, 1.0]:
+		var face := -1
+		var mdata: PBMeshData = mesh.pb_mesh_data
+		for fi in range(mdata.faces.size()):
+			var n := PBMath.normal_from_positions(mdata.positions, mdata.faces[fi].get_indexes())
+			if absf(n.x) > 0.9 and (mesh.transform.basis * n).normalized().dot(Vector3(side, 0, 0)) > 0.9:
+				face = fi
+		assert_gt(face, -1)
+		var segs := PBTrimWallsTool.run_segments_at_height(
+			PBTrimWallsTool.face_world_polygon(mesh, face), 0.05)
+		assert_eq(segs.size(), 1, "side %s: one base run at floor height" % side)
+		var span: float = (segs[0]["a"] as Vector3).distance_to(segs[0]["b"])
+		assert_almost_eq(span, 2.0, 0.01,
+			"the run spans the stair's full depth (outline order, not zigzag)")

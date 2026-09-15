@@ -3089,3 +3089,22 @@ v0.9.111 — Trim Walls hover outline alignment + Offset direction:
   edge). The session tool, the recorded paths, and the Edit Params
   rebuild all share the same direction.
 - Version bump 0.9.110 -> 0.9.111.
+
+v0.9.112 — Trim Walls around doors and stairs:
+- DOOR FRONTS: a door's front is ONE concave polygon wrapping its arch.
+  Cross-section pairing walked the crossings in BOUNDARY order, which
+  scrambles on concave faces - only one pier got a trim run (a sliver of
+  the other), and higher placements produced nothing. Crossings are now
+  SORTED along the run line before pairing (they always alternate in/out
+  on a simple polygon), so both piers - and any height - yield their
+  spans.
+- STAIR SIDES: the stair generator stores side-face vertices in
+  sliver-triangle appearance order, not outline order - the cross-section
+  read a zigzag polygon and one side produced nothing (the other a
+  truncated run). PBFace.get_outline_indexes reconstructs the outline by
+  chaining boundary edges (edges in exactly one triangle) with winding
+  preserved; face_world_polygon and the session hover strokes use it.
+- Placement Top/Bottom now keeps runs at DIFFERENT base heights separate
+  (a wall at ceiling height vs a door front at the arch top no longer
+  mitre into each other with an averaged, shifted corner).
+- Version bump 0.9.111 -> 0.9.112.

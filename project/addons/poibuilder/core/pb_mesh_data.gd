@@ -762,6 +762,18 @@ func get_face_positions(face_index: int) -> PackedVector3Array:
 			out.append(positions[idx])
 	return out
 
+## The face's corner positions along its OUTLINE (winding order). Positions
+## whose first-appearance order zigzags (generator faces built from sliver
+## triangles, e.g. stair sides) need this for anything edge-based.
+func get_face_outline_positions(face_index: int) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	if face_index < 0 or face_index >= faces.size() or faces[face_index] == null:
+		return out
+	for idx in faces[face_index].get_outline_indexes():
+		if idx >= 0 and idx < positions.size():
+			out.append(positions[idx])
+	return out
+
 ## Returns the material assigned to a face, falling back to materials[0] or default material.
 func get_face_material(face: PBFace) -> Material:
 	if face == null:

@@ -118,7 +118,9 @@ static func face_world_polygon(mesh: PBMesh, face: int) -> PackedVector3Array:
 		return PackedVector3Array()
 	var xf: Transform3D = mesh.global_transform if mesh.is_inside_tree() else mesh.transform
 	var out := PackedVector3Array()
-	for p in mesh.pb_mesh_data.get_face_positions(face):
+	# OUTLINE order: distinct-index order zigzags on generator faces built
+	# from sliver triangles (stair sides) and the cross-section read garbage.
+	for p in mesh.pb_mesh_data.get_face_outline_positions(face):
 		out.append(xf * p)
 	return out
 
@@ -150,6 +152,15 @@ static func run_segments_at_height(poly: PackedVector3Array, base_y: float) -> A
 			continue
 		var t: float = (base_y - p0.y) / (p1.y - p0.y)
 		xs.append(p0.lerp(p1, t))
+	# Pair crossings along the LINE, not in boundary order: on a concave
+	# face (a door front wrapping its arch) the boundary visits the
+	# crossings out of order and boundary-order pairing produced slivers
+	# and dropped pier runs. Sorted crossings always alternate in/out on a
+	# simple polygon, so consecutive pairs are the interior spans.
+	xs.sort_custom(func(p, q):
+		if absf((p as Vector3).x - (q as Vector3).x) > 0.000001:
+			return (p as Vector3).x < (q as Vector3).x
+		return (p as Vector3).z < (q as Vector3).z)
 	for i in range(0, xs.size() - 1, 2):
 		var a: Vector3 = xs[i]
 		var b: Vector3 = xs[i + 1]
@@ -432,6 +443,11 @@ static func _mitre_join(seg: Dictionary, next_seg: Dictionary) -> Dictionary:
 	var d2: Vector3 = next_seg["dir"]
 	var flat_gap := Vector2(b.x - a.x, b.z - a.z).length()
 	if flat_gap > CHAIN_REACH:
+		return {}
+	# Runs at different base heights belong to different placement contexts
+	# (a wall at ceiling height vs a door front at the arch top) - a mitre
+	# between them averaged the heights and shifted/gapped the joint.
+	if absf(float(seg.get("y", 0.0)) - float(next_seg.get("y", 0.0))) > 0.02:
 		return {}
 	var denom: float = d1.x * d2.z - d1.z * d2.x
 	if absf(denom) < 0.0001:

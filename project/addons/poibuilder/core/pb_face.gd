@@ -131,6 +131,42 @@ func get_indexes() -> PackedInt32Array:
 	return _indexes
 
 ## Returns deduplicated vertex indices referenced by this face (lazy-cached).
+## The face's outline as a closed index loop IN WINDING ORDER. Vertices in
+## triangle-appearance order are NOT necessarily the outline (generator
+## faces like stair sides store sliver-triangle walks) - callers that treat
+## consecutive positions as polygon edges (cross-sections, outlines) must
+## use this: boundary edges (in exactly one triangle) chained by winding.
+func get_outline_indexes() -> PackedInt32Array:
+	invalidate_cache()
+	var idxs := get_indexes()
+	var edge_count := {}
+	var directed := {}
+	for tri_i in range(0, idxs.size() - 2, 3):
+		var tri := [idxs[tri_i], idxs[tri_i + 1], idxs[tri_i + 2]]
+		for e in range(3):
+			var a: int = tri[e]
+			var b: int = tri[(e + 1) % 3]
+			var key := Vector2i(mini(a, b), maxi(a, b))
+			edge_count[key] = int(edge_count.get(key, 0)) + 1
+			directed[key] = [a, b]
+	var adj := {}
+	for key in edge_count:
+		if int(edge_count[key]) != 1:
+			continue  # internal (diagonal) edge
+		var ab: Array = directed[key]
+		adj[ab[0]] = ab[1]  # boundary edge keeps its winding direction
+	if adj.is_empty():
+		return get_distinct_indexes()
+	var start: int = adj.keys()[0]
+	var out := PackedInt32Array([start])
+	var cur: int = adj[start]
+	var guard := adj.size() + 1
+	while cur != start and guard > 0:
+		out.append(cur)
+		cur = adj.get(cur, start)
+		guard -= 1
+	return out
+
 func get_distinct_indexes() -> PackedInt32Array:
 	if not _cache_valid:
 		_rebuild_cache()
