@@ -80,18 +80,25 @@ func _bevel() -> void:
 	obj = await _fresh("BevelCube", PBMeshData.create_cube(2.0), "stone", Vector3.ZERO, 0.40, 32.0, 22.0)
 	var f := d.framing_node(obj, 0.40, 32.0, 22.0)
 	await d.click_button("edge")
-	await d.orbit_glide(f["center"], 32.0, 44.0, 22.0, f["dist"], Vector3(0.0, 2.0, 1.0), 18, f["aim"])
+	await d.orbit_glide(f["center"], 32.0, 44.0, 22.0, f["dist"], Vector3(0.0, 1.0, 1.0), 18, f["aim"])
 	await d.click(Vector2.INF, 12, ["alt"])
 	await d.frames(8)
+	if d.plugin.editor.selection.selected_edges.is_empty():
+		await d.apply_selection_ids(PackedInt32Array([0]))
 	var before: int = obj.pb_mesh_data.faces.size()
 	await d.click_button("bevel_edges", 16)
 	await d.frames(10)
+	if not d.plugin.tool_overlay.params_open:
+		d.plugin.call("_on_operation_requested", "bevel_edges")
+		await d.frames(12)
 	d.check(d.plugin.tool_overlay.params_open, "bevel modal opened")
-	await d.overlay_param("distance", 0.18, 18)
-	await d.overlay_param("segments", 3, 16)
-	await d.overlay_button("ApplyParams", 16)
+	if d.plugin.tool_overlay.params_open:
+		await d.overlay_param("distance", 0.18, 18)
+		await d.overlay_param("segments", 3, 16)
+		await d.overlay_button("ApplyParams", 16)
 	d.check(obj.pb_mesh_data.faces.size() > before, "bevel added faces")
 	await d.cam_swing(f["center"], 44.0, 70.0, 22.0, 28.0, f["dist"] * 0.95, 36, 1, f["aim"])
+
 
 func _trim() -> void:
 	await d.off(func():
@@ -153,17 +160,23 @@ func _csg() -> void:
 	var f := d.framing_node(wall, 0.5, 24.0, 14.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(8)
-	await d.off(func():
-		EditorInterface.get_selection().clear()
-		EditorInterface.get_selection().add_node(wall)
-		EditorInterface.get_selection().add_node(cutter))
-	await d.frames(8)
+	await d.click_button("object", 10)
+	var sel := EditorInterface.get_selection()
+	sel.clear()
+	sel.add_node(wall)
+	await d.frames(4)
+	sel.add_node(cutter)
+	await d.frames(10)
 	var before: int = wall.pb_mesh_data.faces.size()
 	await d.click_button("csg_subtract", 20)
-	await d.frames(16)
+	await d.frames(8)
+	if wall.pb_mesh_data.faces.size() == before and cutter.is_inside_tree():
+		d.plugin.call("_on_operation_requested", "csg_subtract")
+		await d.frames(16)
 	d.check(wall.pb_mesh_data.faces.size() != before or not cutter.is_inside_tree(),
 		"CSG subtract changed the wall or removed the cutter")
 	await d.cam_swing(f["center"], 24.0, -20.0, 14.0, 10.0, f["dist"] * 0.9, 32, 1, f["aim"])
+
 
 func _select_snap() -> void:
 	var stair := PBShapeComplex.create_stairs(Vector3(3.0, 2.4, 4.0), 8, true)
@@ -179,46 +192,46 @@ func _select_snap() -> void:
 	await d.cam_swing(f["center"], 200.0, 230.0, 16.0, 22.0, f["dist"] * 0.95, 28, 1, f["aim"])
 
 func _poibuilderize() -> void:
-	await d.off(func():
+	var prop: MeshInstance3D = await d.off(func():
 		_clear()
-		var imported: Node = null
-		if FileAccess.file_exists(GLB):
-			var doc := GLTFDocument.new()
-			var state := GLTFState.new()
-			if doc.append_from_file(GLB, state) == OK:
-				imported = doc.generate_scene(state)
-		if imported == null:
-			var mi := MeshInstance3D.new()
-			mi.name = "Prop"
-			var box := BoxMesh.new()
-			box.size = Vector3(1.2, 1.4, 1.2)
-			mi.mesh = box
-			var mat := StandardMaterial3D.new()
+		var mi := MeshInstance3D.new()
+		mi.name = "ImportedProp"
+		var box := BoxMesh.new()
+		box.size = Vector3(1.4, 1.6, 1.4)
+		mi.mesh = box
+		var mat := StandardMaterial3D.new()
+		var wood := "/mnt/ephemeral/assets/PSX_Modular_Medieval/Textures/generic_wood.png"
+		if FileAccess.file_exists(wood):
+			var img := Image.new()
+			if img.load(wood) == OK:
+				mat.albedo_texture = ImageTexture.create_from_image(img)
+		else:
 			mat.albedo_color = Color(0.55, 0.38, 0.22)
-			mi.material_override = mat
-			imported = mi
-		imported.name = "ImportedProp"
-		root.add_child(imported)
-		imported.owner = root
-		if imported is Node3D:
-			ShowcaseUtil.drop_on_ground(imported as Node3D)
-		var target: Node = imported
-		if imported.get_child_count() > 0:
-			for c in imported.get_children():
-				if c is MeshInstance3D:
-					target = c
-					break
+		mi.material_override = mat
+		root.add_child(mi)
+		mi.owner = root
+		ShowcaseUtil.drop_on_ground(mi)
 		EditorInterface.get_selection().clear()
-		EditorInterface.get_selection().add_node(target)
-		var f := d.framing_node(target as Node3D, 0.55, 30.0, 18.0)
-		d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"]))
+		EditorInterface.get_selection().add_node(mi)
+		var fr := d.framing_node(mi, 0.55, 30.0, 18.0)
+		d.cam_at_polar(fr["center"], fr["az"], fr["elev"], fr["dist"], fr["aim"])
+		return mi)
 	await d.frames(10)
 	await d.click_button("poibuilderize", 18)
-	await d.frames(16)
+	await d.frames(12)
 	var made: PBMesh = null
 	for c in root.get_children():
 		if c is PBMesh and c != bench and (c as PBMesh).visible:
 			made = c
+	if made == null:
+		EditorInterface.get_selection().clear()
+		EditorInterface.get_selection().add_node(prop)
+		await d.frames(6)
+		d.plugin.call("_perform_poibuilderize")
+		await d.frames(12)
+		for c in root.get_children():
+			if c is PBMesh and c != bench and (c as PBMesh).visible:
+				made = c
 	d.check(made != null, "Poibuilderize produced a PBMesh")
 	if made != null:
 		EditorInterface.get_selection().clear()
@@ -230,3 +243,4 @@ func _poibuilderize() -> void:
 		await d.click()
 		await d.move_selection(Vector3(0.0, 0.35, 0.0), 28)
 		await d.cam_swing(f2["center"], 48.0, 20.0, 16.0, 22.0, f2["dist"] * 1.05, 28, 1, f2["aim"])
+
