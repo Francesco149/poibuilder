@@ -161,6 +161,21 @@ func _enter_tree():
 	toolbar.export_requested.connect(_on_export_requested)
 	toolbar.env_preset_requested.connect(_on_env_preset_requested)
 	toolbar.split_rows_toggled.connect(_on_toolbar_split_rows_toggled)
+	toolbar.vertex_snap_toggled.connect(func(on: bool):
+		gizmo_plugin.element_editor.vertex_snap_enabled = on
+		if editor.active_mesh != null:
+			editor.active_mesh.update_gizmos()
+	)
+	toolbar.proportional_toggled.connect(func(on: bool):
+		gizmo_plugin.element_editor.proportional_enabled = on
+		if editor.active_mesh != null:
+			editor.active_mesh.update_gizmos()
+	)
+	toolbar.proportional_radius_changed.connect(func(rad: float):
+		gizmo_plugin.element_editor.proportional_radius = rad
+		if editor.active_mesh != null:
+			editor.active_mesh.update_gizmos()
+	)
 	if Engine.is_editor_hint():
 		var ed_settings := EditorInterface.get_editor_settings()
 		if ed_settings != null:
@@ -492,28 +507,6 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
-	# Track holding V key for live vertex snapping during element drags
-	if event is InputEventKey:
-		var k := event as InputEventKey
-		var code := k.physical_keycode if k.physical_keycode != KEY_NONE else k.keycode
-		if code == KEY_V and not k.ctrl_pressed and not k.alt_pressed and not k.meta_pressed:
-			gizmo_plugin.element_editor.vertex_snap_held = k.pressed
-
-	# Adjust proportional editing radius via mouse wheel while dragging
-	if event is InputEventMouseButton and gizmo_plugin.element_editor.drag_active \
-			and gizmo_plugin.element_editor.proportional_enabled:
-		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			gizmo_plugin.element_editor.proportional_radius = minf(50.0, gizmo_plugin.element_editor.proportional_radius * 1.15 + 0.05)
-			if logger:
-				logger.info("tools", "Proportional radius: %.2f" % gizmo_plugin.element_editor.proportional_radius)
-			return AFTER_GUI_INPUT_STOP
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			gizmo_plugin.element_editor.proportional_radius = maxf(0.05, gizmo_plugin.element_editor.proportional_radius * 0.85 - 0.02)
-			if logger:
-				logger.info("tools", "Proportional radius: %.2f" % gizmo_plugin.element_editor.proportional_radius)
-			return AFTER_GUI_INPUT_STOP
-
 
 	# Remember press positions: a following selection change (clicking another
 	# object) auto-picks the element under this exact position.

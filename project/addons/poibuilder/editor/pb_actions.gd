@@ -49,7 +49,7 @@ const ACTIONS: Dictionary = {
 	"grid_reset":      { "label": "Grid: Reset Elevation", "keys": [[KEY_BACKSLASH, 0, 0, 0]] },
 	"snap_selection":  { "label": "Snap Selection To Grid", "keys": [] },
 	# Selection actions
-	"select_all":          { "label": "Selection: Select All",         "keys": [[KEY_A, 1, 0, 0]] },
+	"select_all":          { "label": "Selection: Select All",         "keys": [] },
 	"invert_selection":    { "label": "Selection: Invert Selection",    "keys": [[KEY_I, 1, 0, 0]] },
 	"grow_selection":      { "label": "Selection: Grow Selection",      "keys": [[KEY_G, 0, 0, 1]] },
 	"shrink_selection":    { "label": "Selection: Shrink Selection",    "keys": [[KEY_G, 0, 1, 1]] },
@@ -58,8 +58,8 @@ const ACTIONS: Dictionary = {
 	"select_boundary":     { "label": "Selection: Select Boundary",     "keys": [] },
 	"select_face_loop":    { "label": "Selection: Face Loop",           "keys": [[KEY_L, 0, 0, 1]] },
 	"select_face_ring":    { "label": "Selection: Face Ring",           "keys": [[KEY_R, 0, 0, 1]] },
-	"toggle_vertex_snap":  { "label": "Snapping: Hold/Toggle Vertex Snap", "keys": [[KEY_V, 0, 0, 0]] },
-	"toggle_proportional": { "label": "Snapping: Toggle Proportional Editing", "keys": [[KEY_O, 0, 0, 0]] },
+	"toggle_vertex_snap":  { "label": "Snapping: Toggle Vertex Snap",  "keys": [] },
+	"toggle_proportional": { "label": "Snapping: Toggle Proportional",  "keys": [] },
 	# Mesh operations (toolbar equivalents; extrude/inset keep ProBuilder's
 	# Alt defaults, the rest ship unbound but rebindable).
 	"op_extrude":      { "label": "Mesh Op: Extrude",         "keys": [[KEY_E, 0, 0, 1]] },

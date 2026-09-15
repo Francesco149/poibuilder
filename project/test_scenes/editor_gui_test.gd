@@ -1403,22 +1403,22 @@ func _run() -> void:
 				# ── Toolbar Split Rows Test ────────────────────────────────────
 				if plugin.toolbar != null and plugin.toolbar._btn_split_rows != null:
 					_pass("TOOLBAR-SPLIT: split rows button exists")
-					if plugin.toolbar.two_rows and plugin.toolbar._row2.visible:
-						_pass("TOOLBAR-SPLIT: two-row layout enabled by default (row2 visible, height=%.0f)" % plugin.toolbar.size.y)
+					if plugin.toolbar._row1.visible and plugin.toolbar._row2.visible:
+						_pass("TOOLBAR-SPLIT: two-row layout enabled by default (row1 & row2 visible, height=%.0f)" % plugin.toolbar.size.y)
 					else:
 						_fail("TOOLBAR-SPLIT: two-row layout should be default")
-					plugin.toolbar._btn_split_rows.button_pressed = false
-					await _frames(2)
-					if not plugin.toolbar.two_rows and not plugin.toolbar._row2.visible:
-						_pass("TOOLBAR-SPLIT: collapsed to single-row layout (row2 hidden)")
-					else:
-						_fail("TOOLBAR-SPLIT: failed to collapse to single-row layout")
 					plugin.toolbar._btn_split_rows.button_pressed = true
 					await _frames(2)
-					if plugin.toolbar.two_rows and plugin.toolbar._row2.visible:
-						_pass("TOOLBAR-SPLIT: restored two-row layout")
+					if plugin.toolbar._row3.visible:
+						_pass("TOOLBAR-SPLIT: expanded to three rows (row3 visible)")
 					else:
-						_fail("TOOLBAR-SPLIT: failed to restore two-row layout")
+						_fail("TOOLBAR-SPLIT: failed to expand to three rows")
+					plugin.toolbar._btn_split_rows.button_pressed = false
+					await _frames(2)
+					if not plugin.toolbar._row3.visible and plugin.toolbar._row2.visible:
+						_pass("TOOLBAR-SPLIT: restored default two-row layout (row3 hidden)")
+					else:
+						_fail("TOOLBAR-SPLIT: failed to restore default two-row layout")
 				else:
 					_fail("TOOLBAR-SPLIT: split rows button not found")
 				# ── Environment Presets Test ───────────────────────────────────

@@ -160,6 +160,7 @@ func _init() -> void:
 	create_material("pb_hover_edge", HOVER_COLOR, false, true)
 	create_handle_material("pb_center_handle")
 	create_material("pb_collider_debug", Color(0.1, 1.0, 0.4, 0.95), false, true, true)
+	create_material("pb_proportional_gizmo", Color(1.0, 0.75, 0.15, 0.75), false, false)
 	_vertex_dot_material = _make_point_material(VERTEX_COLOR, VERTEX_DOT_SIZE)
 	_vertex_dot_selected_material = _make_point_material(SELECTED_COLOR, VERTEX_DOT_SELECTED_SIZE)
 	_vertex_dot_hover_material = _make_point_material(HOVER_COLOR, VERTEX_DOT_HOVER_SIZE)
@@ -471,6 +472,7 @@ func _redraw(gizmo) -> void:
 			_draw_vertex_dots(gizmo, mesh_data)
 
 	_draw_center_scale_handle(gizmo, mesh_data)
+	_draw_proportional_radius_gizmo(gizmo, mesh_data)
 
 ## Draws the ProBuilder-style CENTER square handle while the scale tool is
 ## active over a selection: dragging it scales all axes together; with Shift
@@ -514,6 +516,45 @@ func _draw_center_scale_handle(gizmo, mesh_data: PBMeshData) -> void:
 	_center_handle_drawn = true
 	_center_handle_world = world
 
+
+## Draws a 3D wireframe sphere (3 orthogonal circles) around the selection pivot
+## representing the proportional editing influence radius.
+func _draw_proportional_radius_gizmo(gizmo, mesh_data: PBMeshData) -> void:
+	if element_editor == null or not element_editor.proportional_enabled:
+		return
+	var node := gizmo.get_node_3d() as Node3D
+	if node == null or not is_editing_node(node):
+		return
+	var selected: PackedInt32Array = gizmo.get_subgizmo_selection()
+	if selected.is_empty():
+		return
+
+	var pivot: Vector3 = element_editor.center_pivot(mesh_data, selected)
+	var radius: float = element_editor.proportional_radius
+	if radius <= 0.001:
+		return
+
+	var segments := 32
+	var lines := PackedVector3Array()
+
+	# 3 orthogonal circles: XZ (horizontal), XY (vertical frontal), YZ (vertical sagittal)
+	for i in range(segments):
+		var t1: float = (float(i) / float(segments)) * TAU
+		var t2: float = (float(i + 1) / float(segments)) * TAU
+
+		# XZ circle
+		lines.append(pivot + Vector3(cos(t1) * radius, 0.0, sin(t1) * radius))
+		lines.append(pivot + Vector3(cos(t2) * radius, 0.0, sin(t2) * radius))
+
+		# XY circle
+		lines.append(pivot + Vector3(cos(t1) * radius, sin(t1) * radius, 0.0))
+		lines.append(pivot + Vector3(cos(t2) * radius, sin(t2) * radius, 0.0))
+
+		# YZ circle
+		lines.append(pivot + Vector3(0.0, sin(t1) * radius, cos(t1) * radius))
+		lines.append(pivot + Vector3(0.0, sin(t2) * radius, cos(t2) * radius))
+
+	gizmo.add_lines(lines, get_material("pb_proportional_gizmo", gizmo))
 ## Whether the center scale handle was drawn in the last _redraw, and where.
 var _center_handle_drawn: bool = false
 var _center_handle_world: Vector3 = Vector3.ZERO

@@ -214,9 +214,9 @@ func test_toolbar_initial_state():
 	# Items across rows: Logo, Split button, sep, Move/Rotate/Scale, sep, Object/Vertex/Edge/Face/Texture, sep, Space,
 	# sep, Grid, GridState, sep, 14 op buttons (incl Bevel, Bridge, Connect, Collapse, Fill Hole), sep, New Shape, Ngon, Edit Params, sep, Panel toggle, Recover Panel,
 	# sep, Material button, UV button, Settings button, sep, Export button.
-	assert_eq(tb.get_item_count(), 45, "Toolbar should have 45 items in default two-row mode")
-	assert_true(tb.two_rows, "Default layout should be two rows")
-	assert_true(tb._row2.visible, "Row 2 should be visible in default two-row mode")
+	assert_true(tb._row1.visible, "Row 1 should be visible")
+	assert_true(tb._row2.visible, "Row 2 should be visible by default")
+	assert_false(tb._row3.visible, "Row 3 (extended tools) should be hidden by default")
 	assert_not_null(tb._btn_export, "Export button should exist")
 	assert_not_null(tb._op_buttons.get("bevel_edges"), "Bevel op button should exist")
 	assert_not_null(tb._op_buttons.get("bridge_edges"), "Bridge op button should exist")
@@ -229,64 +229,33 @@ func test_toolbar_initial_state():
 	assert_eq(tb._row1.get_child(1), tb._btn_split_rows, "Split button must be on the left right next to logo")
 	assert_eq(tb._btn_space.text, "Element", "Space button shows the current space")
 
-func test_toolbar_split_rows_toggle():
+func test_toolbar_extended_row_toggle():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Initially 2 rows by default
-	assert_true(tb.two_rows, "Initial state should be two rows")
-	assert_true(tb._row2.visible, "Row 2 should be visible in two-row mode")
-	assert_eq(tb._row1.get_child_count(), 22, "Row 1 should contain logo, split button, tools (3+sep), ops (14+sep), and env")
-	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain modes, space, grid, shapes, overlay, docks, export")
+	# Initially Row 1 & 2 visible, Row 3 hidden
+	assert_true(tb._row1.visible)
+	assert_true(tb._row2.visible)
+	assert_false(tb._row3.visible)
 
-	# Toggle to 1 row
-	var received_splits: Array = []
-	tb.split_rows_toggled.connect(func(val): received_splits.append(val))
-	tb.two_rows = false
+	var received: Array = []
+	tb.split_rows_toggled.connect(func(val): received.append(val))
 
-	assert_false(tb.two_rows, "two_rows property should be false in single-row mode")
-	assert_false(tb._row2.visible, "Row 2 should be hidden in single-row mode")
-	assert_eq(tb._row1.get_child_count(), 46, "Row 1 should have all items in single-row mode")
-
-	# Toggle back to 2 rows via button
+	# Toggle Row 3 on
 	tb._btn_split_rows.button_pressed = true
-	assert_true(tb.two_rows, "two_rows property should be true after toggling button")
-	assert_true(tb._row2.visible, "Row 2 should be visible again")
-	assert_eq(tb._row1.get_child_count(), 22, "Row 1 should contain 22 items")
-	assert_eq(tb._row2.get_child_count(), 23, "Row 2 should contain 23 items")
-	assert_eq(received_splits.size(), 1, "Signal should emit on button press")
-	assert_true(received_splits[0], "Emitted value should match button state")
+	assert_true(tb._row3.visible, "Row 3 should be visible when toggled on")
+	assert_not_null(tb._op_buttons.get("select_all"), "Select all button exists in Row 3")
+	assert_not_null(tb._op_buttons.get("merge_objects"), "Merge objects button exists in Row 3")
+	assert_not_null(tb._op_buttons.get("csg_union"), "CSG Union button exists in Row 3")
+	assert_not_null(tb._op_buttons.get("smooth_auto"), "Auto smooth button exists in Row 3")
+	assert_eq(received.size(), 1)
+	assert_true(received[0])
 
-func test_toolbar_auto_split_on_width():
-	var tb := PBToolbar.new()
-	add_child_autofree(tb)
-
-	# Default layout mode is AUTO
-	assert_eq(tb.rows_mode, PBToolbar.RowsMode.AUTO)
-
-	# When width is below threshold (< 1050px), auto-splits to 2 rows
-	tb.size = Vector2(800, 30)
-	tb.notification(Control.NOTIFICATION_RESIZED)
-	assert_true(tb.two_rows, "Auto-detection should enable 2 rows when width < 1050px")
-	assert_true(tb._row2.visible, "Row 2 should be visible when auto-split")
-
-	# When width is wide (>= 1050px), auto-returns to single row
-	tb.size = Vector2(1200, 30)
-	tb.notification(Control.NOTIFICATION_RESIZED)
-	assert_false(tb.two_rows, "Auto-detection should return to 1 row when width >= 1050px")
-	assert_false(tb._row2.visible, "Row 2 should be hidden when width is wide")
-
-	# Manual override locks preference
-	tb.set_rows_mode(PBToolbar.RowsMode.TWO_ROWS)
-	tb.size = Vector2(1400, 30)
-	tb.notification(Control.NOTIFICATION_RESIZED)
-	assert_true(tb.two_rows, "Manual TWO_ROWS mode must not be overridden by wide width")
-
-	tb.set_rows_mode(PBToolbar.RowsMode.SINGLE)
-	tb.size = Vector2(600, 30)
-	tb.notification(Control.NOTIFICATION_RESIZED)
-	assert_false(tb.two_rows, "Manual SINGLE mode must not be overridden by narrow width")
-
+	# Toggle Row 3 off
+	tb._btn_split_rows.button_pressed = false
+	assert_false(tb._row3.visible, "Row 3 should be hidden when toggled off")
+	assert_true(tb._row1.visible, "Row 1 stays visible")
+	assert_true(tb._row2.visible, "Row 2 stays visible")
 func test_toolbar_icons_present():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)

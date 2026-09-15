@@ -85,12 +85,20 @@ enum RowsMode {
 ## Window width breakpoint in pixels for auto-detection: below this width, 2 rows are used.
 const AUTO_SPLIT_THRESHOLD := 1050.0
 
-var rows_mode: RowsMode = RowsMode.AUTO
+var rows_mode: RowsMode = RowsMode.TWO_ROWS
 var _row1: HBoxContainer
 var _row2: HBoxContainer
+var _row3: HBoxContainer
 var _two_rows: bool = true
+var _row3_visible: bool = false
 var _btn_split_rows: Button
+var _btn_vertex_snap: Button
+var _btn_proportional: Button
+var _spin_prop_radius: SpinBox
 
+signal vertex_snap_toggled(pressed: bool)
+signal proportional_toggled(pressed: bool)
+signal proportional_radius_changed(radius: float)
 var _logo: TextureRect
 var _btn_move: Button
 var _btn_rotate: Button
@@ -124,7 +132,9 @@ var _sep_shapes: VSeparator
 var _sep_overlay: VSeparator
 var _sep_docks: VSeparator
 var _sep_export: VSeparator
-
+var _sep_row3_obj: VSeparator
+var _sep_row3_csg: VSeparator
+var _sep_row3_smooth: VSeparator
 var _tool_group: ButtonGroup = ButtonGroup.new()
 var _mode_group: ButtonGroup = ButtonGroup.new()
 
@@ -165,6 +175,13 @@ func _build_ui() -> void:
 	_row2.visible = true
 	add_child(_row2)
 
+	_row3 = HBoxContainer.new()
+	_row3.name = "Row3"
+	_row3.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
+	_row3.add_theme_constant_override("separation", 4)
+	_row3.visible = false
+	add_child(_row3)
+
 	# Header: Logo + Split Rows button (placed on the left so it's never cut off)
 	_logo = TextureRect.new()
 	_logo.name = "Logo"
@@ -181,8 +198,8 @@ func _build_ui() -> void:
 		_btn_split_rows.text = "☷"
 	_btn_split_rows.flat = true
 	_btn_split_rows.toggle_mode = true
-	_btn_split_rows.button_pressed = true
-	_update_split_button_tooltip()
+	_btn_split_rows.button_pressed = false
+	_btn_split_rows.tooltip_text = "Extended Tools (Row 3): Advanced Selection, Object Tools, CSG Booleans, Smoothing"
 	_btn_split_rows.toggled.connect(_on_split_rows_button_toggled)
 	_btn_split_rows.gui_input.connect(_on_split_rows_button_gui_input)
 
@@ -228,6 +245,34 @@ func _build_ui() -> void:
 	_lbl_grid_state.text = "0.2m"
 	_lbl_grid_state.tooltip_text = "Current snap step (unit / subdivisions) — elevation shown when nonzero"
 
+
+	_btn_vertex_snap = Button.new()
+	_btn_vertex_snap.name = "VertexSnapToggle"
+	_btn_vertex_snap.text = "V-Snap"
+	_btn_vertex_snap.flat = true
+	_btn_vertex_snap.toggle_mode = true
+	_btn_vertex_snap.focus_mode = Control.FOCUS_NONE
+	_btn_vertex_snap.tooltip_text = "Vertex Snapping: Toggle snapping dragged elements to nearest mesh vertex"
+	_btn_vertex_snap.toggled.connect(func(on: bool): vertex_snap_toggled.emit(on))
+
+	_btn_proportional = Button.new()
+	_btn_proportional.name = "ProportionalToggle"
+	_btn_proportional.text = "Soft"
+	_btn_proportional.flat = true
+	_btn_proportional.toggle_mode = true
+	_btn_proportional.focus_mode = Control.FOCUS_NONE
+	_btn_proportional.tooltip_text = "Proportional Editing (Soft Selection): Move nearby unselected vertices with smooth falloff"
+	_btn_proportional.toggled.connect(func(on: bool): proportional_toggled.emit(on))
+
+	_spin_prop_radius = SpinBox.new()
+	_spin_prop_radius.name = "PropRadius"
+	_spin_prop_radius.min_value = 0.1
+	_spin_prop_radius.max_value = 50.0
+	_spin_prop_radius.step = 0.1
+	_spin_prop_radius.value = 2.0
+	_spin_prop_radius.prefix = "r:"
+	_spin_prop_radius.tooltip_text = "Proportional Influence Radius (m)"
+	_spin_prop_radius.value_changed.connect(func(val: float): proportional_radius_changed.emit(val))
 	# Operations group
 	_sep_ops = _make_sep()
 	_make_op_button("Extrude", "extrude_faces", "Extrude selected faces/edges along their normal (Shift+Move does this live)", "icon_extrude.svg")
@@ -245,6 +290,32 @@ func _build_ui() -> void:
 	_make_op_button("Detach", "detach_faces", "Detach the selected faces into a new PBMesh node", "icon_detach.svg")
 	_make_op_button("Del", "delete_faces", "Delete the selected faces", "icon_delete.svg")
 
+
+	# Row 3 Extended Tools: Advanced Selection, Object Ops, CSG Booleans, Smoothing
+	_make_op_button("All", "select_all", "Select All elements of current mode")
+	_make_op_button("Invert", "invert_selection", "Invert element selection")
+	_make_op_button("Grow", "grow_selection", "Grow selection by 1 ring")
+	_make_op_button("Shrink", "shrink_selection", "Shrink selection by boundary elements")
+	_make_op_button("Coplanar", "select_coplanar", "Select adjacent coplanar faces")
+	_make_op_button("Similar", "select_similar", "Select faces with matching material")
+	_make_op_button("Boundary", "select_boundary", "Select open boundary edges")
+	_make_op_button("Loop", "select_face_loop", "Select quad strip face loop")
+	_make_op_button("Ring", "select_face_ring", "Select perpendicular quad face ring")
+
+	_sep_row3_obj = _make_sep()
+	_make_op_button("Merge Objs", "merge_objects", "Merge selected PBMesh nodes into one")
+	_make_op_button("Mirror", "mirror_object", "Mirror object geometry across X")
+	_make_op_button("Center Pivot", "center_pivot", "Center pivot to bounding box")
+	_make_op_button("Freeze Xform", "freeze_transform", "Freeze transform into vertex positions")
+	_make_op_button("Probuilderize", "probuilderize", "Convert selected MeshInstance3D to editable PBMesh")
+
+	_sep_row3_csg = _make_sep()
+	_make_op_button("CSG Union", "csg_union", "CSG: Solid union of selected meshes")
+	_make_op_button("CSG Subtract", "csg_subtract", "CSG: Subtract secondary mesh from active mesh")
+	_make_op_button("CSG Intersect", "csg_intersect", "CSG: Solid intersection of selected meshes")
+
+	_sep_row3_smooth = _make_sep()
+	_make_op_button("Auto Smooth", "smooth_auto", "Auto-smooth faces by dihedral angle (45 deg)")
 	# Shapes group
 	_sep_shapes = _make_sep()
 	_btn_new_shape = MenuButton.new()
@@ -369,63 +440,40 @@ func set_rows_mode(mode: int) -> void:
 	_update_split_button_tooltip()
 ## Sets whether the toolbar is split across 2 horizontal rows.
 func set_two_rows(value: bool) -> void:
-	if _two_rows == value and _row1.get_child_count() > 0:
-		return
-	_two_rows = value
+	_row3_visible = value
 	if _btn_split_rows != null and _btn_split_rows.button_pressed != value:
 		_btn_split_rows.set_pressed_no_signal(value)
-	_update_split_button_tooltip()
 	_update_row_layout()
 
 func _check_auto_split() -> void:
-	if rows_mode != RowsMode.AUTO:
-		return
-	var avail_w := size.x
-	if avail_w <= 10.0 and get_viewport() != null:
-		avail_w = get_viewport().get_visible_rect().size.x
-	if avail_w <= 10.0:
-		return
-	var should_two_rows := avail_w < AUTO_SPLIT_THRESHOLD
-	if _two_rows != should_two_rows or _row1.get_child_count() == 0:
-		_two_rows = should_two_rows
-		if _btn_split_rows != null:
-			_btn_split_rows.set_pressed_no_signal(_two_rows)
-			_update_split_button_tooltip()
-		_update_row_layout()
-		split_rows_toggled.emit(_two_rows)
+	pass
 
 func _on_split_rows_button_toggled(pressed: bool) -> void:
-	rows_mode = RowsMode.TWO_ROWS if pressed else RowsMode.SINGLE
-	set_two_rows(pressed)
+	_row3_visible = pressed
+	_row3.visible = pressed
 	split_rows_toggled.emit(pressed)
-func _on_split_rows_button_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
-		rows_mode = RowsMode.AUTO
-		_check_auto_split()
-		_update_split_button_tooltip()
-		split_rows_toggled.emit(_two_rows)
+
+func _on_split_rows_button_gui_input(_event: InputEvent) -> void:
+	pass
 
 func _update_split_button_tooltip() -> void:
-	if _btn_split_rows == null:
-		return
-	var mode_name := "Two Rows (Default)" if _two_rows else "Single Row"
-	if rows_mode == RowsMode.SINGLE:
-		mode_name = "Single Row"
-	elif rows_mode == RowsMode.TWO_ROWS:
-		mode_name = "Two Rows"
-	_btn_split_rows.tooltip_text = "Toolbar Layout: %s\nClick to toggle 1 vs 2 rows.\nRight-click to reset to Auto." % mode_name
-
+	if _btn_split_rows != null:
+		_btn_split_rows.tooltip_text = "Extended Tools (Row 3): Advanced Selection, Object Tools, CSG Booleans, Smoothing"
 func _update_row_layout() -> void:
 	for c in _row1.get_children():
 		_row1.remove_child(c)
 	for c in _row2.get_children():
 		_row2.remove_child(c)
+	for c in _row3.get_children():
+		_row3.remove_child(c)
 
+	_row1.visible = true
+	_row2.visible = true
+	_row3.visible = _row3_visible
+
+	# Row 1: Header | Tools | Mesh Operations | Env
 	var grp_header: Array[Control] = [_logo, _btn_split_rows]
 	var grp_tools: Array[Control] = [_sep_tools, _btn_move, _btn_rotate, _btn_scale]
-	var grp_modes: Array[Control] = [_sep_modes, _btn_object, _btn_vertex, _btn_edge, _btn_face, _btn_texture]
-	var grp_space: Array[Control] = [_sep_space, _btn_space]
-	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_ops: Array[Control] = [
 		_sep_ops,
 		_op_buttons["extrude_faces"], _op_buttons["inset_faces"], _op_buttons["bevel_edges"],
@@ -435,45 +483,55 @@ func _update_row_layout() -> void:
 		_op_buttons["weld_vertices"], _op_buttons["detach_faces"],
 		_op_buttons["delete_faces"]
 	]
+	for c in grp_header: _row1.add_child(c)
+	for c in grp_tools: _row1.add_child(c)
+	for c in grp_ops: _row1.add_child(c)
+	_row1.add_child(_btn_env)
+
+	# Row 2: Modes | Space | Snapping & Proportional | Shapes | Docks & Controls
+	var grp_space: Array[Control] = [_sep_space, _btn_space]
+	var grp_snapping: Array[Control] = [
+		_sep_grid, _btn_grid_panel, _lbl_grid_state,
+		_btn_vertex_snap, _btn_proportional, _spin_prop_radius
+	]
 	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
-	var grp_overlay: Array[Control] = [_sep_overlay, _btn_overlay, _btn_recover_overlay]
-	var grp_docks: Array[Control] = [_sep_docks, _btn_materials, _btn_uv_editor, _btn_settings]
-	var grp_export: Array[Control] = [_sep_export, _btn_export]
+	var grp_docks: Array[Control] = [
+		_sep_docks, _btn_materials, _btn_uv_editor, _btn_overlay, _btn_recover_overlay,
+		_btn_settings, _sep_export, _btn_export
+	]
+	_row2.add_child(_btn_object)
+	_row2.add_child(_btn_vertex)
+	_row2.add_child(_btn_edge)
+	_row2.add_child(_btn_face)
+	_row2.add_child(_btn_texture)
+	for c in grp_space: _row2.add_child(c)
+	for c in grp_snapping: _row2.add_child(c)
+	for c in grp_shapes: _row2.add_child(c)
+	for c in grp_docks: _row2.add_child(c)
 
-	if _two_rows:
-		_row2.visible = true
-		# Row 1: Logo + Split (left) | Tools | Operations
-		for c in grp_header: _row1.add_child(c)
-		for c in grp_tools: _row1.add_child(c)
-		for c in grp_ops: _row1.add_child(c)
-		_row1.add_child(_btn_env)
-		# Row 2: Modes (without initial sep) | Space | Grid | Shapes | Overlay | Docks | Export
-		_row2.add_child(_btn_object)
-		_row2.add_child(_btn_vertex)
-		_row2.add_child(_btn_edge)
-		_row2.add_child(_btn_face)
-		_row2.add_child(_btn_texture)
-		for c in grp_space: _row2.add_child(c)
-		for c in grp_grid: _row2.add_child(c)
-		for c in grp_shapes: _row2.add_child(c)
-		for c in grp_overlay: _row2.add_child(c)
-		for c in grp_docks: _row2.add_child(c)
-		for c in grp_export: _row2.add_child(c)
-	else:
-		_row2.visible = false
-		# Single Row: All groups in sequential classic order
-		for c in grp_header: _row1.add_child(c)
-		for c in grp_tools: _row1.add_child(c)
-		for c in grp_modes: _row1.add_child(c)
-		for c in grp_space: _row1.add_child(c)
-		for c in grp_grid: _row1.add_child(c)
-		for c in grp_ops: _row1.add_child(c)
-		for c in grp_shapes: _row1.add_child(c)
-		for c in grp_overlay: _row1.add_child(c)
-		for c in grp_docks: _row1.add_child(c)
-		_row1.add_child(_btn_env)
-		for c in grp_export: _row1.add_child(c)
-
+	# Row 3: Extended Tools (Advanced Selection, Objects, CSG, Smoothing)
+	var grp_row3_sel: Array[Control] = [
+		_op_buttons["select_all"], _op_buttons["invert_selection"], _op_buttons["grow_selection"],
+		_op_buttons["shrink_selection"], _op_buttons["select_coplanar"], _op_buttons["select_similar"],
+		_op_buttons["select_boundary"], _op_buttons["select_face_loop"], _op_buttons["select_face_ring"]
+	]
+	var grp_row3_obj: Array[Control] = [
+		_sep_row3_obj,
+		_op_buttons["merge_objects"], _op_buttons["mirror_object"], _op_buttons["center_pivot"],
+		_op_buttons["freeze_transform"], _op_buttons["probuilderize"]
+	]
+	var grp_row3_csg: Array[Control] = [
+		_sep_row3_csg,
+		_op_buttons["csg_union"], _op_buttons["csg_subtract"], _op_buttons["csg_intersect"]
+	]
+	var grp_row3_smooth: Array[Control] = [
+		_sep_row3_smooth,
+		_op_buttons["smooth_auto"]
+	]
+	for c in grp_row3_sel: _row3.add_child(c)
+	for c in grp_row3_obj: _row3.add_child(c)
+	for c in grp_row3_csg: _row3.add_child(c)
+	for c in grp_row3_smooth: _row3.add_child(c)
 ## Total number of controls and buttons across the toolbar rows.
 func get_item_count() -> int:
 	return _row1.get_child_count() + _row2.get_child_count()
@@ -623,8 +681,58 @@ func _on_selection_info_changed(_arg = null) -> void:
 		_op_buttons["detach_faces"].disabled = not (in_face and faces_selected)
 	if _op_buttons.has("delete_faces"):
 		_op_buttons["delete_faces"].disabled = not (in_face and faces_selected)
+	# Extended Tools (Row 3)
+	var has_mesh := editor != null and editor.active_mesh != null
+	var any_elem_selected := faces_selected or edges_selected or (sel != null and sel.selected_vertex_count() > 0)
 
+	if _op_buttons.has("select_all"):
+		_op_buttons["select_all"].disabled = not has_mesh or mode == PBEditor.SelectMode.OBJECT
+	if _op_buttons.has("invert_selection"):
+		_op_buttons["invert_selection"].disabled = not has_mesh or mode == PBEditor.SelectMode.OBJECT
+	if _op_buttons.has("grow_selection"):
+		_op_buttons["grow_selection"].disabled = not any_elem_selected
+	if _op_buttons.has("shrink_selection"):
+		_op_buttons["shrink_selection"].disabled = not any_elem_selected
+	if _op_buttons.has("select_coplanar"):
+		_op_buttons["select_coplanar"].disabled = not (in_face and faces_selected)
+	if _op_buttons.has("select_similar"):
+		_op_buttons["select_similar"].disabled = not (in_face and faces_selected)
+	if _op_buttons.has("select_boundary"):
+		_op_buttons["select_boundary"].disabled = not has_mesh
+	if _op_buttons.has("select_face_loop"):
+		_op_buttons["select_face_loop"].disabled = not (in_face and faces_selected)
+	if _op_buttons.has("select_face_ring"):
+		_op_buttons["select_face_ring"].disabled = not (in_face and faces_selected)
+
+	if _op_buttons.has("merge_objects"):
+		_op_buttons["merge_objects"].disabled = not has_mesh
+	if _op_buttons.has("mirror_object"):
+		_op_buttons["mirror_object"].disabled = not has_mesh
+	if _op_buttons.has("center_pivot"):
+		_op_buttons["center_pivot"].disabled = not has_mesh
+	if _op_buttons.has("freeze_transform"):
+		_op_buttons["freeze_transform"].disabled = not has_mesh
+	if _op_buttons.has("probuilderize"):
+		_op_buttons["probuilderize"].disabled = false
+
+	if _op_buttons.has("csg_union"):
+		_op_buttons["csg_union"].disabled = not has_mesh
+	if _op_buttons.has("csg_subtract"):
+		_op_buttons["csg_subtract"].disabled = not has_mesh
+	if _op_buttons.has("csg_intersect"):
+		_op_buttons["csg_intersect"].disabled = not has_mesh
+	if _op_buttons.has("smooth_auto"):
+		_op_buttons["smooth_auto"].disabled = not has_mesh
 	_btn_edit_params.disabled = not _active_mesh_editable()
+
+
+func sync_snapping(v_snap: bool, prop: bool, radius: float) -> void:
+	if _btn_vertex_snap != null and _btn_vertex_snap.button_pressed != v_snap:
+		_btn_vertex_snap.set_pressed_no_signal(v_snap)
+	if _btn_proportional != null and _btn_proportional.button_pressed != prop:
+		_btn_proportional.set_pressed_no_signal(prop)
+	if _spin_prop_radius != null and not is_equal_approx(_spin_prop_radius.value, radius):
+		_spin_prop_radius.set_value_no_signal(radius)
 
 ## A mesh can re-open its params while it is still the pristine factory shape
 ## it was created as (no element drags, no mesh ops).
