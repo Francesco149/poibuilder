@@ -114,6 +114,17 @@ static func get_param_defs(shape_id: StringName) -> Array:
 				_bool_def("flip_side", "Flip Side", false),
 				_bool_def("smooth", "Smooth Shading", true),
 			]
+		&"trim_walls":
+			return [
+				_count_def("profile", "Profile (0:Flat,1:Chamfer,2:Round,3:Cove,4:Ogee,5:Stepped)", 0, 5, 1),
+				_value_def("height", "Height", 0.02, 2.0, 0.1, "m"),
+				_value_def("depth", "Depth", 0.005, 1.0, 0.05, "m"),
+				_count_def("arc_segments", "Arc Segments", 2, 16, 4),
+				_bool_def("top", "Placement Top (Cornice)", false),
+				_value_def("offset", "Offset", -10.0, 10.0, 0.0, "m"),
+				_bool_def("upside_down", "Upside Down", false),
+				_bool_def("smooth", "Smooth Shading", true),
+			]
 	return []
 
 ## Default value per parameter name (defaults live with the defs so the
@@ -133,6 +144,10 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 	for key in values:
 		if v.has(key):
 			v[key] = float(values[key])
+	if shape_id == &"trim_walls" and values.has("wall_paths"):
+		# Non-scalar payload: the recorded mitred path(s) the committed tool
+		# swept (see the &"trim_walls" branch) — survives the float merge.
+		v["wall_paths"] = values["wall_paths"]
 	var data: PBMeshData = null
 	match shape_id:
 		&"cube":
@@ -187,6 +202,52 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 			var smooth: bool = bool(v.get("smooth", true))
 			data = PBShapeTrim.build_straight_trim(l, d, h, p_type as PBShapeTrim.ProfileType,
 				segs, upside_down, flip_side, smooth)
+		&"trim_walls":
+			# The committed tool records the swept path(s) ("its parameters
+			# stay live for the same walls") — a rebuild sweeps the SAME path
+			# with the new profile/height/depth instead of re-picking walls.
+			var recorded: Array = v.get("wall_paths", [])
+			for rec in recorded:
+				var pts := PackedVector3Array()
+				for p in rec.get("points", []):
+					pts.append(p)
+				if pts.size() < 2:
+					continue
+				var profile := PBShapeTrim.get_profile_points(
+					int(v.get("profile", 1)) as PBShapeTrim.ProfileType,
+					maxf(0.005, float(v.get("depth", 0.05))),
+					maxf(0.01, float(v.get("height", 0.1))),
+					int(v.get("arc_segments", 4)),
+					bool(v.get("upside_down", false)), false)
+				var swept := PBShapeTrim.extrude_profile_along_path(
+					profile, pts, Vector3.UP, bool(rec.get("closed", false)), true)
+				if bool(v.get("smooth", true)) and swept != null:
+					for f in swept.faces:
+						f.smoothing_group = 1
+					swept.calculate_normals()
+				if swept == null:
+					continue
+				if data == null:
+					data = swept
+				else:
+					var offset := data.positions.size()
+					for p in swept.positions:
+						data.positions.append(p)
+					for uv in swept.textures0:
+						data.textures0.append(uv)
+					for face in swept.faces:
+						if face == null:
+							continue
+						var clone := face.duplicate_face()
+						var shifted := PackedInt32Array()
+						for idx in clone.get_indexes():
+							shifted.append(idx + offset)
+						clone.set_indexes(shifted)
+						clone.invalidate_cache()
+						data.faces.append(clone)
+					data.invalidate_caches()
+					data.rebuild_welds()
+					data.calculate_normals()
 	if data != null:
 		data.shape_id = shape_id
 		data.shape_params = v.duplicate()

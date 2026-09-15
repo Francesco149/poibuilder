@@ -40,6 +40,7 @@ signal operation_requested(op_name: String)
 
 ## Emitted when the user asks to re-edit the selected mesh's shape params.
 signal edit_params_requested
+signal trim_walls_requested
 
 ## Emitted when the user toggles the overlay panel pin.
 signal overlay_toggled(pinned: bool)
@@ -113,6 +114,7 @@ var _btn_space: Button
 var _btn_new_shape: MenuButton
 var _btn_ngon: Button
 var _btn_edit_params: Button
+var _btn_trim_walls: Button
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
 var _btn_materials: Button
@@ -358,6 +360,16 @@ func _build_ui() -> void:
 	_btn_edit_params.disabled = true
 	_btn_edit_params.pressed.connect(func(): edit_params_requested.emit())
 
+	_btn_trim_walls = Button.new()
+	_btn_trim_walls.name = "TrimWalls"
+	_btn_trim_walls.icon = _load_icon("icon_trim_walls.svg")
+	if _btn_trim_walls.icon == null:
+		_btn_trim_walls.text = "Trim Walls"
+	_btn_trim_walls.flat = true
+	_btn_trim_walls.focus_mode = Control.FOCUS_NONE
+	_btn_trim_walls.tooltip_text = "Trim Walls: click wall faces to sweep mitred trim along them (teal hover, amber chosen; Enter / double-click applies, Esc cancels)"
+	_btn_trim_walls.pressed.connect(func(): trim_walls_requested.emit())
+
 	# Overlay panel group
 	_sep_overlay = _make_sep()
 	_btn_overlay = Button.new()
@@ -505,7 +517,7 @@ func _update_row_layout() -> void:
 	# Modes | Space | Grid | Shapes | Docks & Export
 	var grp_space: Array[Control] = [_sep_space, _btn_space]
 	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
-	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
+	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_trim_walls, _btn_ngon, _btn_edit_params]
 	var grp_docks: Array[Control] = [
 		_sep_docks, _btn_materials, _btn_uv_editor, _btn_overlay, _btn_recover_overlay,
 		_btn_settings, _sep_export, _btn_export

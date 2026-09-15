@@ -29,6 +29,15 @@ var shape_creator: PBShapeCreator = PBShapeCreator.new()
 var ngon_drawer: PBNgonDrawer = PBNgonDrawer.new()
 var sprite_placer: PBSpritePlacer = PBSpritePlacer.new()
 
+## Trim Walls session: click wall faces, live preview, one committed object.
+var trim_walls_tool: PBTrimWallsTool = PBTrimWallsTool.new()
+## The preview node shown while a Trim Walls session is armed (world-space
+## data, node transform stays identity). Owned by the plugin like the
+## shape-creation preview.
+var _trim_walls_preview: PBMesh = null
+var _trim_walls_last_click_msec: int = -10000
+var _trim_walls_last_click_pos: Vector2 = Vector2.ZERO
+
 # ==============================================================================
 # UI Components
 # ==============================================================================
@@ -78,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.107"
+const VERSION := "0.9.109"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -152,6 +161,7 @@ func _enter_tree():
 	toolbar.shape_requested.connect(_on_shape_requested)
 	toolbar.operation_requested.connect(_on_operation_requested)
 	toolbar.edit_params_requested.connect(_on_edit_params_requested)
+	toolbar.trim_walls_requested.connect(_on_trim_walls_requested)
 	toolbar.overlay_toggled.connect(_on_overlay_toggled)
 	toolbar.reset_panel_requested.connect(_on_reset_panel_requested)
 	toolbar.grid_panel_toggled.connect(_on_grid_panel_toggled)
@@ -466,6 +476,10 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# Interactive N-gon drawing / Knife tool owns the mouse while active
 	if ngon_drawer.is_active():
 		return _ngon_drawer_input(camera, event)
+
+	# Trim Walls session owns the mouse while armed (wall picking + preview)
+	if trim_walls_tool.is_active():
+		return _trim_walls_input(camera, event)
 
 	# Shape creation owns the mouse while armed/dragging/modal (checked even
 	# when nothing is selected — creation needs no editing context).
@@ -819,6 +833,11 @@ func _on_selection_changed() -> void:
 			pass
 		elif _params_session_kind == "edit" and pb_mesh == _params_edit_node:
 			pass
+		elif _params_session_kind == "trim_walls":
+			# A wall-picking session survives selection changes: stray clicks
+			# that miss a wall select scene nodes but must not tear the
+			# session down (only Esc / Cancel / Apply end it).
+			pass
 		else:
 			if logger:
 				logger.info("plugin", "Params session cancelled (selection changed)")
@@ -1051,7 +1070,8 @@ func _update_editing_context() -> void:
 		var sc_active := shape_creator != null and shape_creator.is_active()
 		var ng_active := ngon_drawer != null and ngon_drawer.is_active()
 		var sp_active := sprite_placer != null and sprite_placer.is_active()
-		var pb_context := mesh_selected or sc_active or ng_active or sp_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
+		var tw_active := trim_walls_tool != null and trim_walls_tool.is_active()
+		var pb_context := mesh_selected or sc_active or ng_active or sp_active or tw_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
 		var cam3d: Camera3D = null
 		var vp := get_editor_interface().get_editor_viewport_3d(0)
 		if vp != null:
@@ -1666,7 +1686,6 @@ func _on_operation_requested(op_name: String) -> void:
 		_perform_auto_smooth()
 		return
 
-
 	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
 	if logger:
 		cmd.logger = logger
@@ -2059,17 +2078,23 @@ func _perform_poibuilderize() -> void:
 			if parent == null and scene_root != null:
 				parent = scene_root
 			if parent != null:
-				parent.add_child(pb)
-				pb.owner = scene_root if scene_root != null else parent
 				pb.transform = n.transform
 				created_nodes.append(pb)
+				# The whole swap runs through the undo do-methods: adding the
+				# PBMesh directly here as well would make the committed
+				# add_child a no-op error ("already has a parent") and leave
+				# the action's bookkeeping out of sync with the tree.
 				if undo_mgr != null:
 					undo_mgr.add_do_reference(pb)
+					undo_mgr.add_undo_reference(n)
 					undo_mgr.add_do_method(parent, "add_child", pb)
+					undo_mgr.add_do_method(self, "_own_node", pb)
 					undo_mgr.add_do_method(parent, "remove_child", n)
 					undo_mgr.add_undo_method(parent, "add_child", n)
 					undo_mgr.add_undo_method(parent, "remove_child", pb)
 				else:
+					parent.add_child(pb)
+					pb.owner = scene_root if scene_root != null else parent
 					parent.remove_child(n)
 
 	if undo_mgr != null:
@@ -2262,11 +2287,14 @@ var _params_edit_values: Dictionary = {}
 ## a still-open dialog was editing.
 func _on_shape_requested(shape_id: StringName) -> void:
 	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
-		_on_params_applied()
+		if not trim_walls_tool.is_active():
+			_on_params_applied()
 	elif shape_creator.is_active():
 		_creation_abort("a new shape was picked")
 	elif ngon_drawer.is_active():
 		_ngon_drawer_abort("a new shape was picked")
+	if trim_walls_tool.is_active():
+		_trim_walls_disarm("a new shape was picked")
 
 	if shape_id == &"sprite":
 		_start_sprite_tool()
@@ -2276,6 +2304,11 @@ func _on_shape_requested(shape_id: StringName) -> void:
 		_start_ngon_shape_tool()
 		return
 	shape_creator.arm(shape_id)
+	# Trim depth carries across the project: a trim "starts at the last Depth
+	# you set in this project (5 cm before you set one)" — it is never dragged,
+	# so the typed value is the one thing that persists between trims.
+	if shape_id == &"trim":
+		_seed_trim_project_values()
 	# Arming is a PoiBuilder context change too: the engine grid hides and
 	# the elevated PB grid shows while drawing (engine-bridge a no-op).
 	_update_editing_context()
@@ -2714,9 +2747,34 @@ func _finalize_created_shape(node: PBMesh) -> void:
 	if node == null or not is_instance_valid(node) or node.pb_mesh_data == null:
 		return
 	node.pb_mesh_data.shape_id = shape_creator.shape_id
+	if shape_creator.shape_id == &"trim":
+		# "On Wall records which way the strip was drawn" — a recorded flag on
+		# the created data (not an editable modal row): true when the drag was
+		# drawn on a vertical surface, so the strip lies flat on that wall.
+		shape_creator.values["on_wall"] = absf(shape_creator.plane_normal.dot(Vector3.UP)) < 0.5
+		_persist_trim_project_values(shape_creator.values)
 	node.pb_mesh_data.shape_params = shape_creator.values.duplicate()
 	node.pb_mesh_data.shape_edited = false
 	node._update_collider()
+
+const TRIM_SETTING_PREFIX := "poibuilder/trim/"
+
+## Seeds a new trim's depth from the project's last committed value.
+func _seed_trim_project_values() -> void:
+	if _settings == null or not _settings.has_method("has_setting"):
+		return
+	var path := TRIM_SETTING_PREFIX + "last_depth"
+	if _settings.has_setting(path):
+		var d := float(_settings.get_setting(path))
+		if d >= 0.005:
+			shape_creator.values["depth"] = d
+
+## Remembers the depth a trim was committed with.
+func _persist_trim_project_values(values: Dictionary) -> void:
+	if _settings == null or not _settings.has_method("set_setting"):
+		return
+	if values.has("depth"):
+		_settings.set_setting(TRIM_SETTING_PREFIX + "last_depth", float(values["depth"]))
 func _creation_abort(reason: String) -> void:
 	var node := shape_creator.preview_node
 	shape_creator.reset()
@@ -3143,11 +3201,14 @@ func _ngon_drawer_abort(reason: String) -> void:
 
 func _start_sprite_tool() -> void:
 	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
-		_on_params_applied()
+		if not trim_walls_tool.is_active():
+			_on_params_applied()
 	if shape_creator.is_active():
 		_creation_abort("switched to sprite tool")
 	if ngon_drawer.is_active():
 		_ngon_drawer_abort("switched to sprite tool")
+	if trim_walls_tool.is_active():
+		_trim_walls_disarm("switched to sprite tool")
 	_clear_creation_hover()
 	sprite_placer.arm()
 	_update_editing_context()
@@ -3161,6 +3222,263 @@ func _on_sprite_placed(node: PBMesh) -> void:
 	_update_editing_context()
 	if logger and node != null:
 		logger.info("plugin", "Placed billboard sprite '%s'" % node.name)
+
+# ==============================================================================
+# Trim Walls — click walls, live preview, one committed object
+# ==============================================================================
+
+## Arms the Trim Walls session: the trim's parameters appear in the adjust
+## panel STRAIGHT AWAY (Placement, profile, sizes are chosen while picking
+## walls), and the trim previews as walls are added.
+func _on_trim_walls_requested() -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		_on_params_applied()
+	if shape_creator.is_active():
+		_creation_abort("switched to trim walls")
+	if ngon_drawer.is_active():
+		_ngon_drawer_abort("switched to trim walls")
+	if sprite_placer != null and sprite_placer.is_active():
+		sprite_placer.disarm()
+	_clear_creation_hover()
+	trim_walls_tool.arm()
+	_trim_walls_ensure_preview()
+	_sync_trim_walls_highlights()
+	_update_editing_context()
+	_params_session_kind = "trim_walls"
+	if tool_overlay != null:
+		tool_overlay.panel_enabled = true
+		tool_overlay.open_params("Trim Walls Parameters",
+			PBShapeParams.get_param_defs(&"trim_walls"), trim_walls_tool.params)
+	_set_creation_hint("Trim Walls: click wall faces — teal under cursor, amber chosen. "
+		+ "Click a chosen wall to drop it, Backspace drops the last, "
+		+ "Enter / double-click applies, Esc cancels")
+	if logger:
+		logger.info("plugin", "Trim Walls armed — click wall faces to place the trim")
+
+func _trim_walls_ensure_preview() -> void:
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		if logger:
+			logger.warn("plugin", "Trim Walls: no edited scene")
+		return
+	if _trim_walls_preview != null and is_instance_valid(_trim_walls_preview):
+		return
+	var node := PBMesh.new()
+	node.name = _unique_shape_name(scene_root, &"trim_walls")
+	scene_root.add_child(node)
+	# Owner BEFORE first draw — the editor attaches gizmos only to owned
+	# nodes (see _make_preview_node).
+	node.owner = scene_root
+	_trim_walls_preview = node
+
+## Tears the session down (Esc, Cancel, commit, or switching tools). Frees
+## the un-committed preview.
+func _trim_walls_disarm(reason: String) -> void:
+	trim_walls_tool.disarm()
+	gizmo_plugin.trim_walls_session = false
+	gizmo_plugin.trim_walls_hover_node = null
+	gizmo_plugin.trim_walls_hover_face = -1
+	gizmo_plugin.trim_walls_chosen.clear()
+	if _trim_walls_preview != null and is_instance_valid(_trim_walls_preview):
+		var node := _trim_walls_preview
+		_trim_walls_preview = null
+		if node.get_parent() != null:
+			node.get_parent().remove_child(node)
+		node.queue_free()
+	_set_creation_hint("")
+	if tool_overlay != null and _params_session_kind == "trim_walls":
+		tool_overlay.close_params()
+		_params_session_kind = ""
+	_update_editing_context()
+	if logger:
+		logger.info("plugin", "Trim Walls session ended (%s)" % reason)
+
+func _trim_walls_input(camera: Camera3D, event: InputEvent) -> int:
+	_trim_walls_camera = camera
+	if event is InputEventMouseMotion:
+		_last_mouse_pos = event.position
+		_last_mouse_camera = camera
+		var pick := _pick_wall_face(camera, event.position)
+		var prev_node := gizmo_plugin.trim_walls_hover_node
+		var prev_face := gizmo_plugin.trim_walls_hover_face
+		var new_node: PBMesh = pick.get("node")
+		var new_face: int = pick.get("face", -1)
+		if new_node != prev_node or new_face != prev_face:
+			gizmo_plugin.trim_walls_hover_node = new_node
+			gizmo_plugin.trim_walls_hover_face = new_face
+			if prev_node != null and is_instance_valid(prev_node):
+				prev_node.update_gizmos()
+			if new_node != null:
+				new_node.update_gizmos()
+		return AFTER_GUI_INPUT_PASS
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var pick := _pick_wall_face(camera, event.position)
+		var mesh: PBMesh = pick.get("node")
+		var face: int = pick.get("face", -1)
+		if mesh != null and face >= 0:
+			# A double-click commits instead of toggling (spec: Enter,
+			# double-click or Apply commits) — but only when something is
+			# chosen; the toggle itself still runs for a fresh wall.
+			var is_double_click: bool = Time.get_ticks_msec() - _trim_walls_last_click_msec < 400 \
+				and event.position.distance_to(_trim_walls_last_click_pos) < 10.0
+			_trim_walls_last_click_msec = Time.get_ticks_msec()
+			_trim_walls_last_click_pos = event.position
+			if is_double_click and trim_walls_tool.is_chosen(mesh, face):
+				_trim_walls_commit()
+				return AFTER_GUI_INPUT_STOP
+			var chosen: bool = trim_walls_tool.toggle_wall(mesh, face)
+			if logger:
+				logger.info("plugin", "Trim Walls: %s face %d (%s)"
+					% [mesh.name, face, "chosen" if chosen else "dropped"])
+			_sync_trim_walls_highlights()
+			_refresh_trim_walls_preview()
+			return AFTER_GUI_INPUT_STOP
+		_trim_walls_last_click_msec = Time.get_ticks_msec()
+		_trim_walls_last_click_pos = event.position
+		return AFTER_GUI_INPUT_PASS
+
+	if event is InputEventKey and event.pressed and not event.echo:
+		var k := event as InputEventKey
+		if k.keycode == KEY_ESCAPE:
+			_on_params_canceled()
+			return AFTER_GUI_INPUT_STOP
+		elif k.keycode == KEY_BACKSPACE:
+			if trim_walls_tool.drop_last():
+				_sync_trim_walls_highlights()
+				_refresh_trim_walls_preview()
+			return AFTER_GUI_INPUT_STOP
+		elif k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER:
+			_trim_walls_commit()
+			return AFTER_GUI_INPUT_STOP
+	return AFTER_GUI_INPUT_PASS
+
+## Nearest VERTICAL PBMesh face under the cursor (floors/ceilings are not
+## walls). Returns {"node": PBMesh, "face": int} or {}.
+func _pick_wall_face(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
+	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
+	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	var best_t := INF
+	var best_node: PBMesh = null
+	var best_face := -1
+	if scene_root != null:
+		for node in _collect_pbmeshes(scene_root):
+			if node == _trim_walls_preview or node.pb_mesh_data == null \
+					or not node.is_visible_in_tree():
+				continue
+			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
+			if res.face_index < 0 or res.distance >= best_t:
+				continue
+			var n := PBMath.normal_from_positions(
+				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
+			var world_n: Vector3 = (node.global_transform.basis * n).normalized()
+			if absf(world_n.dot(Vector3.UP)) > 0.7:
+				continue  # a floor/ceiling — not a wall
+			best_t = res.distance
+			best_node = node
+			best_face = res.face_index
+	if best_node == null:
+		return {}
+	return {"node": best_node, "face": best_face}
+
+## Mirrors the session state into the gizmo plugin (teal hover, amber chosen).
+func _sync_trim_walls_highlights() -> void:
+	gizmo_plugin.trim_walls_session = trim_walls_tool.is_active()
+	gizmo_plugin.trim_walls_chosen.clear()
+	for w in trim_walls_tool.walls:
+		gizmo_plugin.trim_walls_chosen.append(w)
+	for node in _collect_pbmeshes(get_editor_interface().get_edited_scene_root()):
+		if is_instance_valid(node):
+			node.update_gizmos()
+
+## Rebuilds the world-space preview from the chosen walls.
+func _refresh_trim_walls_preview() -> void:
+	if _trim_walls_preview == null or not is_instance_valid(_trim_walls_preview):
+		return
+	var data := trim_walls_tool.build(_probe_floor_y, _probe_ceiling_y)
+	_trim_walls_preview.pb_mesh_data = data
+	_trim_walls_preview.transform = Transform3D.IDENTITY
+	_trim_walls_preview.rebuild()
+	_trim_walls_preview.update_gizmos()
+
+## Enter / double-click / panel Apply: the result is ONE new object; its
+## recorded paths keep the parameters live for the same walls (Edit Params).
+func _trim_walls_commit() -> void:
+	if trim_walls_tool.wall_count() == 0:
+		if logger:
+			logger.warn("plugin", "Trim Walls: click wall faces before applying")
+		return
+	var data := trim_walls_tool.build(_probe_floor_y, _probe_ceiling_y)
+	if data == null or data.faces.is_empty():
+		if logger:
+			logger.warn("plugin", "Trim Walls: no wall runs in the selection")
+		return
+	data.shape_id = &"trim_walls"
+	data.shape_edited = false
+	var params := trim_walls_tool.params.duplicate()
+	var recorded: Array = []
+	for p in trim_walls_tool.last_paths:
+		recorded.append({"points": p["points"], "closed": p["closed"]})
+	params["wall_paths"] = recorded
+	data.shape_params = params
+	if data.materials.is_empty():
+		var def := PBMeshData.get_default_material()
+		if def != null:
+			data.materials.append(def)
+
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	var node := PBMesh.new()
+	node.name = _unique_shape_name(scene_root, &"trim_walls")
+	node.transform = Transform3D.IDENTITY
+	node.pb_mesh_data = data
+	node.rebuild()
+	node._update_collider()
+	var undo := get_undo_redo()
+	if undo != null:
+		# Scene-history context (see the CSG action above).
+		undo.create_action("Trim Walls", UndoRedo.MERGE_DISABLE, scene_root)
+		undo.add_do_method(self, "_attach_detached", node, scene_root)
+		undo.add_do_method(self, "_own_node", node)
+		undo.add_do_reference(node)
+		undo.add_undo_method(self, "_detach_node", node)
+		undo.commit_action()
+	else:
+		_attach_detached(node, scene_root)
+
+	var editor_selection := get_editor_interface().get_selection()
+	if editor_selection != null:
+		editor_selection.clear()
+		editor_selection.add_node(node)
+	editor.active_mesh = node
+	var wall_total := trim_walls_tool.wall_count()
+	_trim_walls_disarm("applied (%d walls)" % wall_total)
+	if logger:
+		logger.info("plugin", "Trim Walls committed from %d wall face(s)" % wall_total)
+
+## Physics probes for the room-contact rule: the skirting lands on the slab's
+## surface (not the wall cube's buried bottom), the cornice tucks under the
+## ceiling slab. Return the hit's Y, or NAN for "nothing" (the tool falls
+## back to the wall face's own edge).
+func _probe_floor_y(from: Vector3) -> float:
+	return _probe_surface_y(from, Vector3.DOWN)
+func _probe_ceiling_y(from: Vector3) -> float:
+	return _probe_surface_y(from, Vector3.UP)
+func _probe_surface_y(from: Vector3, dir: Vector3) -> float:
+	var cam := _trim_walls_camera
+	if cam == null or not cam.is_inside_tree() or cam.get_world_3d() == null:
+		return NAN
+	var space := cam.get_world_3d().direct_space_state
+	if space == null:
+		return NAN
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 500.0)
+	var hit := space.intersect_ray(query)
+	if hit.is_empty() or not hit.has("position"):
+		return NAN
+	return (hit["position"] as Vector3).y
+
+## The last camera seen by the session (probes need a World3D).
+var _trim_walls_camera: Camera3D = null
 
 func _get_viewport_host() -> Control:
 	var viewport: SubViewport = get_editor_interface().get_editor_viewport_3d(0)
@@ -3318,6 +3636,9 @@ func _on_param_changed(param_name: String, value: float) -> void:
 	if _params_session_kind == "create":
 		shape_creator.set_param(param_name, value)
 		_refresh_preview()
+	elif _params_session_kind == "trim_walls":
+		trim_walls_tool.params[param_name] = value
+		_refresh_trim_walls_preview()
 	elif _params_session_kind == "bevel":
 		if param_name == "distance":
 			op_bevel_amount = value
@@ -3328,6 +3649,8 @@ func _on_param_changed(param_name: String, value: float) -> void:
 			and is_instance_valid(_params_edit_node):
 		_params_edit_values[param_name] = value
 		var data := _params_edit_node.pb_mesh_data
+		if data != null and data.shape_id == &"trim" and param_name == "depth":
+			_persist_trim_project_values(_params_edit_values)
 		var old_materials: Array[Material] = data.materials.duplicate() if data != null else []
 		var rebuilt := PBShapeParams.build(data.shape_id, _params_edit_values)
 		if rebuilt != null:
@@ -3371,6 +3694,9 @@ func _on_params_applied() -> void:
 		_finish_creation_session(node)
 		if logger:
 			logger.info("plugin", "Shape parameters applied")
+	elif _params_session_kind == "trim_walls":
+		trim_walls_tool.params = tool_overlay.get_param_values()
+		_trim_walls_commit()
 	elif _params_session_kind == "edit":
 		_commit_edit_params()
 	elif _params_session_kind == "bevel":
@@ -3407,6 +3733,8 @@ func _on_params_canceled() -> void:
 		_params_edit_values = {}
 		if logger:
 			logger.info("plugin", "Shape parameters edit cancelled")
+	elif _params_session_kind == "trim_walls":
+		_trim_walls_disarm("cancelled")
 	elif _params_session_kind == "bevel":
 		_cancel_bevel_session()
 	else:
