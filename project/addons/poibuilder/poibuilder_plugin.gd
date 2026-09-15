@@ -2501,6 +2501,13 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	if hit.is_empty():
 		return false
 	var view_z: Vector3 = camera.global_transform.basis.z
+	# The visible face's normal opposes the viewing ray. A normal pointing
+	# WITH the ray belongs to inward-wound geometry (GLB-sourced meshes with
+	# the opposite winding) — shapes placed against it would protrude into
+	# the surface and read inside-out ("flipped windings"). Face the viewer.
+	var forward: Vector3 = -view_z
+	if forward.dot(hit["normal"]) > 0.0:
+		hit["normal"] = -hit["normal"]
 	if shape_creator.shape_id == &"sprite":
 		# Sprite flow: one click anchors the shape ON the surface; the mouse
 		# then pushes it along the surface normal until the confirming click.
@@ -3335,7 +3342,8 @@ func _trim_walls_input(camera: Camera3D, event: InputEvent) -> int:
 			if is_double_click and trim_walls_tool.is_chosen(mesh, face):
 				_trim_walls_commit()
 				return AFTER_GUI_INPUT_STOP
-			var chosen: bool = trim_walls_tool.toggle_wall(mesh, face)
+			var chosen: bool = trim_walls_tool.toggle_wall(mesh, face,
+				pick.get("normal", Vector3.ZERO))
 			if logger:
 				logger.info("plugin", "Trim Walls: %s face %d (%s)"
 					% [mesh.name, face, "chosen" if chosen else "dropped"])
@@ -3370,6 +3378,7 @@ func _pick_wall_face(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var best_t := INF
 	var best_node: PBMesh = null
 	var best_face := -1
+	var best_normal := Vector3.ZERO
 	if scene_root != null:
 		for node in _collect_pbmeshes(scene_root):
 			if node == _trim_walls_preview or node.pb_mesh_data == null \
@@ -3383,12 +3392,20 @@ func _pick_wall_face(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 			var world_n: Vector3 = (node.global_transform.basis * n).normalized()
 			if absf(world_n.dot(Vector3.UP)) > 0.7:
 				continue  # a floor/ceiling — not a wall
+			# The visible face's normal opposes the viewing ray; inward-wound
+			# geometry (GLB sources) yields the flipped one — face the camera
+			# so the trim protrudes into the room, never into the wall.
+			if world_n.dot(ray_d) > 0.0:
+				world_n = -world_n
+			if absf(world_n.dot(Vector3.UP)) > 0.7:
+				continue
 			best_t = res.distance
 			best_node = node
 			best_face = res.face_index
+			best_normal = world_n
 	if best_node == null:
 		return {}
-	return {"node": best_node, "face": best_face}
+	return {"node": best_node, "face": best_face, "normal": best_normal}
 
 ## Mirrors the session state into the gizmo plugin (teal hover, amber chosen).
 func _sync_trim_walls_highlights() -> void:

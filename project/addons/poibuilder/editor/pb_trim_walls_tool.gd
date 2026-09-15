@@ -76,14 +76,17 @@ func is_active() -> bool:
 	return state != State.INACTIVE
 
 ## Adds the wall face, or drops it when already chosen. Returns true when the
-## face is chosen after the call.
-func toggle_wall(mesh: PBMesh, face: int) -> bool:
+## face is chosen after the call. `room_normal` is the camera-facing normal
+## from the pick — inward-wound meshes (GLB sources) yield the flipped
+## geometric normal, and the trim must protrude into the ROOM, never into
+## the wall, so the pick's correction wins over the raw geometric one.
+func toggle_wall(mesh: PBMesh, face: int, room_normal := Vector3.ZERO) -> bool:
 	for i in range(walls.size()):
 		var w: Dictionary = walls[i]
 		if w["mesh"] == mesh and int(w["face"]) == face:
 			walls.remove_at(i)
 			return false
-	walls.append({"mesh": mesh, "face": face})
+	walls.append({"mesh": mesh, "face": face, "normal": room_normal})
 	return true
 
 func drop_last() -> bool:
@@ -222,7 +225,9 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 		var poly := face_world_polygon(mesh, face)
 		if poly.size() < 3:
 			continue
-		var normal := face_world_normal(mesh, face)
+		var normal: Vector3 = w.get("normal", Vector3.ZERO)
+		if normal.length_squared() < 0.5:
+			normal = face_world_normal(mesh, face)
 		if absf(normal.dot(Vector3.UP)) > 0.7:
 			continue  # not a wall (a floor/ceiling face was clicked)
 		var base_y := _base_height_for(poly, normal, floor_probe, ceiling_probe)

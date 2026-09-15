@@ -961,6 +961,11 @@ func _add_vert_squares(gizmo, to_local: Transform3D, world_points: PackedVector3
 ## and squares at the drag start, drag end, and the lifted end corner. All
 ## overlays draw thick and on top (visible through geometry).
 func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreator) -> void:
+	# PARAMS: the shape is placed and the adjust modal is open — the cyan
+	# base/bounds box only buries the actual trim/shape the user is trying
+	# to see. Draw nothing but the mesh.
+	if creator.state == PBShapeCreator.State.PARAMS:
+		return
 	_creation_materials()
 	var node := gizmo.get_node_3d() as Node3D
 	if node == null:

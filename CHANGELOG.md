@@ -3009,4 +3009,18 @@ CSGCombiner3D baking, and the Trim Walls tool:
   gestures were the only raw-seed readers. Regression test in
   test_pb_element_gestures.gd (conversion group of two faces extrudes
   both and the commit carries both caps).
+- v0.9.109 addendum 2 — creation protrudes toward the viewer; params modal
+  no longer buried under the creation box: shapes are placed against the
+  picked face's normal, and inward-wound geometry (GLB-sourced meshes with
+  the opposite winding) yields the FLIPPED normal - a trim created on such
+  a wall protruded into/behind the surface and read as "completely flipped
+  windings". Creation now flips the captured normal when it points along
+  the view direction (correct geometry is untouched - its normals already
+  oppose the view); Trim Walls wall picks apply the same camera-facing
+  rule and carry the corrected normal into the trim. The thick cyan
+  creation box/arrow/end squares no longer draw while the adjust-params
+  modal is open (PARAMS state) - the placed shape is the thing to see.
+  Winding guard test: the placed trim's signed world volume must stay
+  positive (normals outward) across floor/ceiling/wall/ramp drags and the
+  placement basis is asserted never mirrored.
 - Version bump 0.9.108 -> 0.9.109.

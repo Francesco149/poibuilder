@@ -856,3 +856,40 @@ func test_trim_on_a_wall_stays_upright_when_dragged_up():
 	assert_almost_eq(hi.y - lo.y, 2.0, 0.001, "...and rises the vertical extent (upright)")
 	assert_almost_eq(lo.z, 0.0, 0.001, "the back is on the wall surface")
 	assert_almost_eq(hi.z - lo.z, 0.05, 0.001, "the depth protrudes out of the wall")
+
+## Winding guard: the placed trim is a closed tube — its signed volume must
+## stay POSITIVE (normals outward) for every surface and drag direction.
+## A negative volume means an inverted (inside-out) trim. The basis is built
+## x = y × z so it is always right-handed; this pins that contract.
+func test_trim_world_winding_is_outward_on_every_surface():
+	var cases := [
+		# [begin point, surface normal, drag end]
+		[Vector3(0, 0, 0), Vector3.UP, Vector3(4, 0, 0.2)],          # floor
+		[Vector3(0, 0, 0), Vector3.UP, Vector3(4, 0, -0.2)],         # floor, wobble -z
+		[Vector3(0, 3, 0), Vector3.DOWN, Vector3(3, 3, 0.3)],        # ceiling
+		[Vector3(0, 1, 0), Vector3.BACK, Vector3(3, 2.2, 0)],        # wall, drag up
+		[Vector3(0, 2.2, 0), Vector3.BACK, Vector3(3, 1.0, 0)],      # wall, drag down
+		[Vector3(0, 1, 0), Vector3.FORWARD, Vector3(3, 2.0, 0)],       # opposite wall
+		[Vector3(1, 1, 0), Vector3.RIGHT, Vector3(-1.5, 1.8, 0)],    # side wall
+		[Vector3(0, 1, 0), Vector3(1, 1, 0).normalized(), Vector3(2, 1.6, 0)],  # ramp
+	]
+	for tc in cases:
+		var creator := _armed_creator(&"trim")
+		creator.begin(tc[0], tc[1], Vector3(-1, 0, 0))
+		creator.update_base(tc[2])
+		if not creator.end_base():
+			continue
+		var data := creator.build_data()
+		var xf := creator.placement_transform(data)
+		var world: Array[Vector3] = []
+		for p in data.positions:
+			world.append(xf * p)
+		var vol := 0.0
+		for f in data.faces:
+			var idx := f.get_indexes()
+			for i in range(0, idx.size(), 3):
+				vol += world[idx[i]].dot(world[idx[i + 1]].cross(world[idx[i + 2]])) / 6.0
+		assert_gt(vol, 0.0,
+			"trim on %s points its normals OUTWARD (signed volume %f)" % [str(tc[1]), vol])
+		assert_almost_eq(xf.basis.determinant(), 1.0, 0.001,
+			"the placement basis is never mirrored")
