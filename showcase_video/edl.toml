@@ -537,10 +537,10 @@ captions = [
 [[clip]]
 id = "80-uv"
 source = "more:more/uv"
-region = "viewport_ui"
+crop = [280, 75, 1280, 720]
 at = 1.0
-dur = 5.8
-caption = { label = "UV", text = "Dedicated 2D UV editor — live 2D/3D sync", at = 0.2, dur = 5.4 }
+dur = 6.8
+caption = { label = "UV", text = "Dedicated 2D UV editor — live 2D/3D sync, transforms & unwraps", at = 0.2, dur = 6.4 }
 
 [[clip]]
 id = "81-bevel"
@@ -563,8 +563,8 @@ id = "83-trim-walls"
 source = "more:more/trim_walls"
 region = "viewport_ui"
 at = 0.4
-dur = 4.5
-caption = { label = "Trim Walls", text = "Click walls, mitred corners — concave, convex, shallow", at = 0.2, dur = 4.1 }
+dur = 5.0
+caption = { label = "Trim Walls", text = "Click walls, mitred corners — round profile, inside & outside", at = 0.2, dur = 4.6 }
 
 [[clip]]
 id = "84-csg"
