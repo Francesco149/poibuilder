@@ -45,7 +45,7 @@ signal element_drag_updated(active: bool, translation: Vector3, rotation_deg: Ve
 ## Emitted when a committed drag rewrote TOPOLOGY (shift+move extrude,
 ## shift+scale inset): face ids are stale, so the plugin must clear the
 ## engine subgizmo selection + mirrors and redraw.
-signal drag_topology_committed(node: PBMesh)
+signal drag_topology_committed(node: PBMesh, new_face_ids: PackedInt32Array)
 
 # ==============================================================================
 # Snapping & Proportional Editing Definitions
@@ -178,6 +178,9 @@ var _drag_side_tris: Array = []  # PackedInt32Array per side face (original)
 var _drag_side_base_e1: Array[Vector3] = []  # base edge (qa->qb) per side face
 var _drag_side_flipped: PackedByteArray = PackedByteArray()
 var _drag_cap_faces: Array[PBFace] = []
+## Face ids of the last gesture's op output (the moved caps) — the commit
+## selects them so the whole converted/grouped set stays the selection.
+var _drag_cap_face_ids: PackedInt32Array = PackedInt32Array()
 var _drag_cap_tris: Array = []  # PackedInt32Array per cap face (original)
 var _drag_cap_flipped: bool = false
 var _drag_extrude_region_center: Vector3 = Vector3.ZERO  # seed cap center
@@ -964,6 +967,7 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 	_drag_side_tris = []
 	_drag_side_base_e1 = []
 	_drag_cap_faces = []
+	_drag_cap_face_ids = PackedInt32Array()
 	_drag_cap_tris = []
 	_drag_cap_flipped = false
 	_drag_extrude_region_center = Vector3.ZERO
@@ -1024,6 +1028,14 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 ## drag can flip their winding when the cap crosses back through the base
 ## plane.
 func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+	# The engine selection may be ONE seed carrying a converted/grouped set
+	# (mode-switch conversion, select coplanar/similar, loops): expand it or
+	# the op extrudes the seed alone while highlights/moves act on the whole
+	# set ("coplanar faces select together but extrude alone").
+	if editor.select_mode == PBEditor.SelectMode.EDGE:
+		ids = expand_edge_ids(mesh_data, ids)
+	else:
+		ids = expand_face_ids(mesh_data, ids)
 	# Region normal(s) over the PRE-op geometry (the extrude direction the
 	# side quads will be wound for). Must be captured BEFORE the op rewrites
 	# the faces array.
@@ -1099,9 +1111,11 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	_drag_side_tris = []
 	_drag_side_base_e1 = []
 	_drag_cap_faces = []
+	_drag_cap_face_ids = PackedInt32Array()
 	_drag_cap_tris = []
 	if editor.select_mode != PBEditor.SelectMode.EDGE:
 		var caps: PackedInt32Array = result["cap_face_ids"]
+		_drag_cap_face_ids = caps.duplicate()
 		var cap_set := {}
 		for fi in caps:
 			cap_set[fi] = true
@@ -1164,6 +1178,8 @@ static func _face_area_normal(mesh_data: PBMeshData, face: PBFace) -> Vector3:
 ## inner-face indexes to the PRE-op corner positions — matched by per-face
 ## order (duplicate_face preserves the index sequence).
 func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
+	# Expand converted/grouped seeds first (see _begin_extrude_move).
+	ids = expand_face_ids(mesh_data, ids)
 	var pre := mesh_data.positions.duplicate()
 	var face_bases: Array = []
 	for id in ids:
@@ -1198,6 +1214,7 @@ func _begin_inset(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	# bind those (post-op) indexes to the (pre-op) outline + centroid.
 	var union := PackedInt32Array()
 	var cap_ids: PackedInt32Array = result["cap_face_ids"]
+	_drag_cap_face_ids = cap_ids.duplicate()
 	for i in range(cap_ids.size()):
 		var idxs := mesh_data.faces[cap_ids[i]].get_distinct_indexes()
 		for idx in idxs:
@@ -1924,6 +1941,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 		mesh_data.rebuild_welds()
 		var after := PBCommand.copy_mesh_data(mesh_data)
 		var before := _drag_before_op
+		var op_output := _drag_cap_face_ids.duplicate()
 		mesh_data.shape_edited = true
 		_log_face_orientation_audit(mesh_data)
 		_reset_drag_state()
@@ -1940,7 +1958,7 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 			undo.commit_action()
 			if logger != null:
 				logger.info("undo", "%s committed (topology)" % action_name)
-		drag_topology_committed.emit(node)
+		drag_topology_committed.emit(node, op_output)
 		return true
 
 	# Undo payload: only the affected (coincident-expanded) positions.
@@ -2132,6 +2150,7 @@ func _reset_drag_state() -> void:
 	_drag_side_tris = []
 	_drag_side_base_e1 = []
 	_drag_cap_faces = []
+	_drag_cap_face_ids = PackedInt32Array()
 	_drag_cap_tris = []
 	_drag_cap_flipped = false
 	_drag_extrude_region_center = Vector3.ZERO

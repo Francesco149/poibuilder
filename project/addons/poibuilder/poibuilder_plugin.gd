@@ -1559,12 +1559,20 @@ func _on_drag_updated(active: bool, _t: Vector3, _r: Vector3, _s: Vector3) -> vo
 ## A shift+move / shift+scale gesture committed — face ids shifted, so the
 ## engine's subgizmo selection and our mirrors are stale. Clear and redraw
 ## (same dance as an explicit mesh op).
-func _on_drag_topology_committed(mesh: PBMesh) -> void:
+func _on_drag_topology_committed(mesh: PBMesh, new_face_ids: PackedInt32Array = PackedInt32Array()) -> void:
 	editor.hover_id = -1
 	_hover_drawn_last = -1
 	editor.selection.clear_all()
 	gizmo_plugin.element_editor.reset_side_faces()
 	mesh.clear_subgizmo_selection()
+	# Ops that create faces select their output — same rule as the toolbar
+	# ops. Without this, a shift+drag extrude of a converted/grouped set
+	# (coplanar, similar, mode-switch) left NOTHING selected: the gizmo
+	# dropped back to the whole-object pivot and the overlay count went to
+	# zero/one even though the whole set had been extruded.
+	if not new_face_ids.is_empty() and editor.select_mode == PBEditor.SelectMode.FACE \
+			and is_instance_valid(mesh) and mesh.pb_mesh_data != null:
+		_apply_selection_set(mesh, new_face_ids, PackedInt32Array())
 	mesh.update_gizmos()
 
 # ==============================================================================

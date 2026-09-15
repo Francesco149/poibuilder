@@ -547,3 +547,55 @@ func test_center_drag_inset_commit_uses_snapshot_undo():
 	assert_eq(fake.actions[0]["name"], "Inset (Shift+Scale)")
 	logic._restore_full_mesh(mesh.get_instance_id(), fake.actions[0]["undo_snapshot"])
 	assert_eq(md.faces.size(), faces_before, "Undo restores the pre-inset topology")
+
+## REGRESSION ("coplanar faces select together but extrude alone"): a
+## converted/grouped selection (Alt+C coplanar, select similar, mode-switch)
+## lives in the engine as ONE seed id. The extrude gesture passed that raw
+## engine id list to the op, so only the seed face extruded while highlights
+## and plain moves acted on the whole set. The gesture must expand the seed
+## through the same maps every other consumer uses.
+func test_shift_move_extrude_expands_conversion_groups():
+	var s := _make_setup(PBEditor.SelectMode.FACE, PBEditor.ToolMode.MOVE)
+	var logic: PBElementEditor = s["logic"]
+	var mesh: PBMesh = s["mesh"]
+	var md: PBMeshData = mesh.pb_mesh_data
+	var faces_before := md.faces.size()
+
+	# The face OPPOSITE the seed shares no edge with it: two independent
+	# regions, each contributing 4 side quads when both extrude.
+	var seed := 0
+	var opposite := -1
+	var seed_center := Vector3.ZERO
+	for idx in md.faces[seed].get_distinct_indexes():
+		seed_center += md.positions[idx]
+	seed_center /= 4.0
+	var best := -INF
+	for fi in range(md.faces.size()):
+		if fi == seed:
+			continue
+		var c := Vector3.ZERO
+		for idx in md.faces[fi].get_distinct_indexes():
+			c += md.positions[idx]
+		c /= 4.0
+		if seed_center.distance_squared_to(c) > best:
+			best = seed_center.distance_squared_to(c)
+			opposite = fi
+	assert_gt(opposite, -1)
+
+	# Two faces ride as ONE engine seed (the state after Alt+C coplanar).
+	var captured := {}
+	logic.drag_topology_committed.connect(func(_n: PBMesh, ids: PackedInt32Array):
+		captured["ids"] = ids)
+
+	logic.set_conversion_group(seed, _ids([seed, opposite]))
+
+	var start: Transform3D = logic.get_subgizmo_transform(md, mesh, seed)
+	logic.set_subgizmo_transform_with_shift(mesh, _ids([seed]), seed,
+		start.translated(Vector3(0, 0.5, 0)), true)
+
+	assert_eq(md.faces.size(), faces_before + 8,
+		"BOTH converted faces extrude (opposite faces, 4 side quads each)")
+
+	logic.commit_subgizmos(mesh, _ids([seed]), false)
+	assert_eq(captured.get("ids", PackedInt32Array()).size(), 2,
+		"the commit selects the op output - both new caps, not just the seed")

@@ -2995,4 +2995,18 @@ CSGCombiner3D baking, and the Trim Walls tool:
   convention is now written into `.pi/orientation/architecture.md`.
 - Tests: 7 new trim placement regression tests (v0.9.108/109), 10 Trim Walls
   tests; full suite 1005/1005 across 65 suites; GUI harness failures=0.
+- v0.9.109 addendum — shift+drag extrude/inset of CONVERTED selections
+  fixed: Alt+C coplanar (and select similar/mode-switch) selections ride
+  ONE engine seed id; the shift+move and shift+scale gestures passed that
+  raw id list to the op, so only the seed face extruded/insetted while
+  highlights and plain moves acted on the whole set. The gesture begins
+  expand the seed through the same maps every other consumer uses, and
+  the topology commit now selects the op output (the moved caps) instead
+  of clearing the selection — the gizmo stays element-locked and the
+  overlay count reflects the whole extruded set. Selection consumers
+  audited: toolbar ops, snap-to-grid, pivot tools, material apply and
+  `_edge_ids_for_op` all read the mirrored/expanded PBSelection; the drag
+  gestures were the only raw-seed readers. Regression test in
+  test_pb_element_gestures.gd (conversion group of two faces extrudes
+  both and the commit carries both caps).
 - Version bump 0.9.108 -> 0.9.109.
