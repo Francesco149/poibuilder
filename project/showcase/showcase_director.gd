@@ -832,6 +832,8 @@ func toolbar_button(name: String) -> Button:
 		"recover": tb._btn_recover_overlay, "materials": tb._btn_materials,
 		"settings": tb._btn_settings, "env": tb._btn_env,
 		"export": tb._btn_export, "grid": tb._btn_grid_panel,
+		"uv": tb._btn_uv_editor, "docs": tb._btn_docs,
+		"trim_walls": tb._btn_trim_walls, "split": tb._btn_split_rows,
 	}
 	return map.get(name, null)
 

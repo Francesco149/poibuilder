@@ -531,8 +531,64 @@ captions = [
 ]
 
 # ===========================================================================
-# END
+# NEW FEATURES — appended after the existing film. Do not reorder earlier clips.
 # ===========================================================================
+
+[[clip]]
+id = "80-uv"
+source = "more:more/uv"
+region = "viewport_ui"
+at = -4.0
+dur = 4.0
+caption = { label = "UV", text = "Dedicated 2D UV editor — seams under control", at = 0.2, dur = 3.6 }
+
+[[clip]]
+id = "81-bevel"
+source = "more:more/bevel"
+region = "viewport_ui"
+at = -4.0
+dur = 4.0
+caption = { label = "Edit", text = "Bevel with live preview", at = 0.2, dur = 3.6 }
+
+[[clip]]
+id = "82-trim"
+source = "more:more/trim"
+region = "viewport_ui"
+at = -4.0
+dur = 4.0
+caption = { label = "Trim", text = "Skirting in one drag; six profiles", at = 0.2, dur = 3.6 }
+
+[[clip]]
+id = "83-trim-walls"
+source = "more:more/trim_walls"
+region = "viewport_ui"
+at = -5.0
+dur = 5.0
+caption = { label = "Trim Walls", text = "Click walls, mitred corners", at = 0.2, dur = 4.4 }
+
+[[clip]]
+id = "84-csg"
+source = "more:more/csg"
+region = "viewport_ui"
+at = -4.0
+dur = 4.0
+caption = { label = "CSG", text = "Booleans with real undo", at = 0.2, dur = 3.6 }
+
+[[clip]]
+id = "85-select-snap"
+source = "more:more/select_snap"
+region = "viewport_ui"
+at = -4.0
+dur = 4.0
+caption = { label = "Select", text = "Select smart, snap exact, soften freely", at = 0.2, dur = 3.6 }
+
+[[clip]]
+id = "86-poibuilderize"
+source = "more:more/poibuilderize"
+region = "viewport_ui"
+at = -5.0
+dur = 5.0
+caption = { label = "Import", text = "Import anything, edit it natively", at = 0.2, dur = 4.4 }
 
 [[clip]]
 id = "90-end"
