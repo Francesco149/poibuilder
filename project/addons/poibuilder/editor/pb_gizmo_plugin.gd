@@ -1101,9 +1101,9 @@ var _trim_walls_hover_mat: StandardMaterial3D = null
 var _trim_walls_hover_stroke_mat: StandardMaterial3D = null
 var _trim_walls_chosen_mat: StandardMaterial3D = null
 
-const TRIM_WALLS_TEAL := Color(0.0, 0.85, 0.75, 0.45)
-const TRIM_WALLS_TEAL_STROKE := Color(0.2, 1.0, 0.9, 0.95)
-const TRIM_WALLS_AMBER := Color(1.0, 0.65, 0.1, 0.5)
+const TRIM_WALLS_TEAL := Color(0.0, 0.85, 0.75, 0.4)
+const TRIM_WALLS_TEAL_STROKE := Color(0.2, 1.0, 0.9, 0.9)
+const TRIM_WALLS_AMBER := Color(1.0, 0.65, 0.1, 0.14)
 
 func _trim_walls_material(hover: bool, stroke := false) -> StandardMaterial3D:
 	if hover and stroke:
@@ -1126,7 +1126,8 @@ func _trim_walls_material(hover: bool, stroke := false) -> StandardMaterial3D:
 		_trim_walls_chosen_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_trim_walls_chosen_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		_trim_walls_chosen_mat.albedo_color = TRIM_WALLS_AMBER
-		_trim_walls_chosen_mat.no_depth_test = true
+		# Chosen faces stay DEPTH-TESTED and dim: a see-through amber wall
+		# drowns the scene (the "orange highlights are distracting" report).
 	return _trim_walls_chosen_mat
 
 ## Draws the polygon vertices, connecting lines, and live line to cursor for Knife / N-Gon drawing.

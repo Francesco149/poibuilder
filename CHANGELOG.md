@@ -3108,3 +3108,21 @@ v0.9.112 — Trim Walls around doors and stairs:
   (a wall at ceiling height vs a door front at the arch top no longer
   mitre into each other with an averaged, shifted corner).
 - Version bump 0.9.111 -> 0.9.112.
+
+v0.9.113 — Trim Walls chaining sanity, calmer highlights, live placement after commit:
+- WRAPPING RUNS: toggling a segment of a curved/extruded wall wrapped the
+  trim around the wall's free end — the chain admitted endpoints up to
+  1.5 m apart and let shallow-angle mitres extend up to 2x the segment
+  length. Chains now require endpoints within 0.6 m and mitre corners
+  within 0.6 m of both endpoints; real corners sit at the shared
+  endpoints and are unaffected.
+- CHOSEN-FACE HIGHLIGHTS: the amber fill was depth-test-off at 50% alpha
+  and drowned the scene through walls. It is now depth-tested and very
+  dim (14%); the teal hover keeps its visibility.
+- PLACEMENT STAYS LIVE AFTER COMMIT: the recorded runs now carry their
+  room-shell references (floor/ceiling Y from the placement probes), and
+  the Edit Params rebuild re-places the run — Bottom sits on the floor
+  (+offset), Top hangs under the ceiling (-height -offset) — so
+  Placement/Height/Offset all keep working after the trim is committed
+  ("changing top/bottom after the fact doesn't work").
+- Version bump 0.9.112 -> 0.9.113.

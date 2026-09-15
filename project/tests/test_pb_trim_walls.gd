@@ -366,3 +366,42 @@ func test_stair_sides_span_their_base_on_both_sides():
 		var span: float = (segs[0]["a"] as Vector3).distance_to(segs[0]["b"])
 		assert_almost_eq(span, 2.0, 0.01,
 			"the run spans the stair's full depth (outline order, not zigzag)")
+
+## Placement stays live AFTER the commit: the recorded run carries its
+## room-shell references (floor/ceiling), so Edit Params Bottom/Top/Height/
+## Offset re-place the SAME run instead of doing nothing.
+func test_rebuild_replaces_bottom_top_against_recorded_shell():
+	var wall := _wall(Vector3(4, 3, 0.2), Vector3(2, 1.5, -0.1))
+	var face := _face_with_normal(wall, Vector3(0, 0, 1))
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.params["height"] = 0.2
+	tool.toggle_wall(wall, face)
+	var floor_probe := func(_f: Vector3) -> float: return 0.0
+	var ceiling_probe := func(_f: Vector3) -> float: return 3.0
+	tool.build(floor_probe, ceiling_probe)
+	assert_eq(tool.last_paths.size(), 1)
+	assert_almost_eq(float(tool.last_paths[0]["floor_y"]), 0.0, 0.001,
+		"the run records its floor reference")
+	assert_almost_eq(float(tool.last_paths[0]["ceil_y"]), 3.0, 0.001,
+		"the run records its ceiling reference")
+	var recorded: Array = []
+	for p in tool.last_paths:
+		recorded.append({"points": p["points"], "closed": p["closed"],
+			"floor_y": p["floor_y"], "ceil_y": p["ceil_y"]})
+
+	# Committed at bottom; Edit Params switches to Top: the same run hangs
+	# under the ceiling.
+	var top_data := PBShapeParams.build(&"trim_walls",
+		{"wall_paths": recorded, "top": 1.0, "height": 0.2})
+	var hi := -INF
+	for p in top_data.positions:
+		hi = maxf(hi, p.y)
+	assert_almost_eq(hi, 3.0, 0.002, "Placement Top re-places the committed run")
+	# ...and Offset at Top slides DOWN off the ceiling.
+	var top_off := PBShapeParams.build(&"trim_walls",
+		{"wall_paths": recorded, "top": 1.0, "height": 0.2, "offset": 0.5})
+	var hi2 := -INF
+	for p in top_off.positions:
+		hi2 = maxf(hi2, p.y)
+	assert_almost_eq(hi2, 2.5, 0.002, "top offset slides the run down off the ceiling")

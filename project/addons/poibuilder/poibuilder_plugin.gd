@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.112"
+const VERSION := "0.9.113"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -3456,7 +3456,8 @@ func _trim_walls_commit() -> void:
 	var params := trim_walls_tool.params.duplicate()
 	var recorded: Array = []
 	for p in trim_walls_tool.last_paths:
-		recorded.append({"points": p["points"], "closed": p["closed"]})
+		recorded.append({"points": p["points"], "closed": p["closed"],
+			"floor_y": p.get("floor_y", 0.0), "ceil_y": p.get("ceil_y", 0.0)})
 	params["wall_paths"] = recorded
 	data.shape_params = params
 	if data.materials.is_empty():

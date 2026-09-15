@@ -30,13 +30,15 @@ enum State { INACTIVE, ARMED }
 
 ## Endpoints closer than this are the same joint (metres).
 const JOINT_TOLERANCE := 0.05
-## A mitre may extend a segment's end by at most this factor of its own
-## length (acute corners otherwise shoot the mitre off to infinity).
-const MAX_MITRE_FACTOR := 2.0
+## A mitre may extend a segment's end by at most this absolute distance
+## (metres): real corners sit AT (or within a slice of) the shared
+## endpoints, while shallow-angle intersections shoot far away - the
+## "wrap around the free end of a curved wall" artifact.
+const MAX_MITRE_EXTENT := 0.6
 ## Runs chain into one mitred path only when their endpoints are this close
 ## (metres) — nearby wall pieces of ONE room join; a wall across the room
-## never leaches onto the chain.
-const CHAIN_REACH := 1.5
+## (or the far end of an unclosed arc) never leaches onto the chain.
+const CHAIN_REACH := 0.6
 
 var state: State = State.INACTIVE
 
@@ -188,7 +190,8 @@ static func merge_colinear(segments: Array) -> Array:
 		# The base height MUST travel with the segment: dropping it here made
 		# every mitred corner fall back to y=0 (corners sinking to the floor,
 		# placement "applying" only to some runs).
-		normalized.append({"a": a, "b": b, "dir": dir, "y": s.get("y", 0.0)})
+		normalized.append({"a": a, "b": b, "dir": dir, "y": s.get("y", 0.0),
+			"floor_y": s.get("floor_y", 0.0), "ceil_y": s.get("ceil_y", 0.0)})
 	var used: Array = []
 	for i in range(normalized.size()):
 		used.append(false)
@@ -220,7 +223,8 @@ static func merge_colinear(segments: Array) -> Array:
 			run_a = run_a + dir * lo
 			run_b = run_a + dir * (hi - lo)
 			used[j] = true
-		out.append({"a": run_a, "b": run_b, "dir": dir, "y": normalized[i].get("y", 0.0)})
+		out.append({"a": run_a, "b": run_b, "dir": dir, "y": normalized[i].get("y", 0.0),
+			"floor_y": normalized[i].get("floor_y", 0.0), "ceil_y": normalized[i].get("ceil_y", 0.0)})
 	return out
 
 ## Builds the full trim mesh data for the current walls (null when nothing
@@ -244,7 +248,8 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 			normal = face_world_normal(mesh, face)
 		if absf(normal.dot(Vector3.UP)) > 0.7:
 			continue  # not a wall (a floor/ceiling face was clicked)
-		var base_y := _base_height_for(poly, normal, floor_probe, ceiling_probe)
+		var placement := _base_height_for(poly, normal, floor_probe, ceiling_probe)
+		var base_y: float = placement["base"]
 		for seg in run_segments_at_height(poly, base_y):
 			var dir: Vector3 = seg["dir"]
 			var room_dir: Vector3 = normal.cross(Vector3.UP).normalized()
@@ -254,6 +259,8 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 				seg["b"] = t
 				seg["dir"] = -dir
 			seg["y"] = base_y
+			seg["floor_y"] = placement["floor_y"]
+			seg["ceil_y"] = placement["ceil_y"]
 			segments.append(seg)
 	if segments.is_empty():
 		return null
@@ -283,7 +290,9 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 		var recorded := PackedVector3Array()
 		for pt in pts:
 			recorded.append(pt + Vector3(0, recorded_offset, 0))
-		last_paths.append({"points": recorded, "closed": path_info["closed"]})
+		last_paths.append({"points": recorded, "closed": path_info["closed"],
+			"floor_y": path_info.get("floor_y", 0.0),
+			"ceil_y": path_info.get("ceil_y", 0.0)})
 		var swept: PBMeshData = _sweep_path(pts, bool(path_info["closed"]))
 		if swept == null:
 			continue
@@ -299,7 +308,7 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 ## the result up or down. Probes are optional; the face's own edges are the
 ## fallback.
 func _base_height_for(poly: PackedVector3Array, normal: Vector3,
-		floor_probe: Callable, ceiling_probe: Callable) -> float:
+		floor_probe: Callable, ceiling_probe: Callable) -> Dictionary:
 	var lo := INF
 	var hi := -INF
 	var mid_sum := Vector3.ZERO
@@ -310,25 +319,31 @@ func _base_height_for(poly: PackedVector3Array, normal: Vector3,
 	var mid: Vector3 = mid_sum / float(poly.size()) + normal * 0.05
 	var height := maxf(0.02, float(params.get("height", 0.1)))
 	var offset := float(params.get("offset", 0.0))
+	var top := float(params.get("top", 0.0)) > 0.5
+	# The room-shell references ride along: the committed run records them
+	# so Edit Params can re-place Bottom/Top after the fact.
+	var floor_y := lo
+	var ceil_y := hi
 	var base_y: float
-	if float(params.get("top", 0.0)) > 0.5:
-		var top_y := hi
+	if top:
 		if ceiling_probe.is_valid():
 			var found: float = ceiling_probe.call(mid - Vector3.UP * 0.05)
 			if not is_nan(found):
-				top_y = minf(top_y, found)
-		base_y = top_y - height
+				ceil_y = minf(ceil_y, found)
+		base_y = ceil_y - height
 	else:
-		base_y = lo
 		if floor_probe.is_valid():
 			var found: float = floor_probe.call(mid + Vector3.UP * 0.05)
 			if not is_nan(found):
-				base_y = maxf(base_y, found)
+				floor_y = maxf(floor_y, found)
+		base_y = floor_y
 	# Offset is measured OFF the placement edge: Bottom slides UP from the
 	# floor, Top slides DOWN from the ceiling (positive = away from edge).
-	if float(params.get("top", 0.0)) > 0.5:
-		return base_y - offset
-	return base_y + offset
+	if top:
+		base_y -= offset
+	else:
+		base_y += offset
+	return {"base": base_y, "floor_y": floor_y, "ceil_y": ceil_y}
 
 ## Sweeps the trim profile along one mitred path (already at its base height,
 ## run-oriented into the room).
@@ -429,7 +444,9 @@ static func _chain_and_mitre(segments: Array) -> Array[Dictionary]:
 		var closed: bool = pts[0].distance_to(pts[pts.size() - 1]) <= JOINT_TOLERANCE
 		if closed:
 			pts[pts.size() - 1] = pts[0]
-		paths.append({"points": pts, "closed": closed})
+		paths.append({"points": pts, "closed": closed,
+			"floor_y": float(chain[0].get("floor_y", 0.0)),
+			"ceil_y": float(chain[0].get("ceil_y", 0.0))})
 	return paths
 
 ## Head-to-tail join between `seg`'s end and `next_seg`'s start: the corner
@@ -460,8 +477,7 @@ static func _mitre_join(seg: Dictionary, next_seg: Dictionary) -> Dictionary:
 	var corner := a + d1 * t
 	var len1: float = (seg["a"] as Vector3).distance_to(a)
 	var len2: float = b.distance_to(next_seg["b"] as Vector3)
-	if corner.distance_to(a) > MAX_MITRE_FACTOR * maxf(len1, CHAIN_REACH) \
-			or corner.distance_to(b) > MAX_MITRE_FACTOR * maxf(len2, CHAIN_REACH):
+	if corner.distance_to(a) > MAX_MITRE_EXTENT or corner.distance_to(b) > MAX_MITRE_EXTENT:
 		return {}
 	corner.y = (float(seg.get("y", 0.0)) + float(next_seg.get("y", 0.0))) * 0.5
 	return {"corner": corner}

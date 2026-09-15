@@ -231,13 +231,19 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 				var swept := PBShapeTrim.extrude_profile_along_path(
 					profile, pts, Vector3.UP, bool(rec.get("closed", false)), true, smooth_segs)
 				if swept != null:
-					# Offset slides the run AWAY from its placement edge
-					# (Bottom: up, Top: down) - matching the session tool.
-					var off := float(v.get("offset", 0.0))
+					# Re-place against the recorded room-shell references:
+					# Bottom sits on the floor (+offset), Top hangs under the
+					# ceiling (-height -offset) - so Placement, Height and
+					# Offset all stay live after the commit.
+					var base_rec: float = pts[0].y
+					var target: float
 					if bool(v.get("top", false)):
-						off = -off
-					if off != 0.0:
-						var lift := Vector3(0, off, 0)
+						target = float(rec.get("ceil_y", base_rec)) - float(v.get("height", 0.1)) - float(v.get("offset", 0.0))
+					else:
+						target = float(rec.get("floor_y", base_rec)) + float(v.get("offset", 0.0))
+					var delta: float = target - base_rec
+					if absf(delta) > 0.0001:
+						var lift := Vector3(0, delta, 0)
 						for i in range(swept.positions.size()):
 							swept.positions[i] += lift
 						swept.invalidate_caches()
