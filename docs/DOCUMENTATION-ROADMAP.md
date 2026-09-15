@@ -246,7 +246,10 @@ paper over.
   last-clicked mesh); "CSG did nothing" (read the Output log — watertight
   check); "my GLB has no gizmo" (Poibuilderize it first); "undo removed my
   cutter" (it comes back with CSG undo); "the overlay disappeared" (Panel
-  toggle / recover button); "textures stretch" (auto-UV + UV editor).
+  toggle / recover button); "textures stretch" (auto-UV + UV editor);
+  "trim walls at Top does something weird around my door" (KNOWN
+  LIMITATION — use Bottom placement for loops with openings, or move only
+  the simple faces to Top; see the Trim Walls page's limitation block).
 
 ## 4. Polish and bundling (session 9)
 
@@ -298,10 +301,13 @@ re-rendering the editor).
       adjust panel flips the profile Ogee → Upside Down → Apply. Caption:
       "Skirting in one drag; six profiles".
 - [ ] **Trim Walls (~15 s)**: arm the tool → click four wall faces around a
-      room (teal→amber flashes) → Enter → the mitred ring appears; then
-      Placement Top → the cornice tucks under the ceiling slab; click a
-      doorway wall to show the jamb break. Captions: "Click walls, mitred
-      corners", "Cornices tuck under the slab".
+      room (teal→amber flashes) → Enter → the mitred ring appears; adjust
+      Offset live (slides off the placement edge). Captions: "Click walls,
+      mitred corners". NOTE: do NOT demo Placement Top on a loop with a
+      door/arch — Top-swap around openings is a documented known
+      limitation (footguns §15); show Top only on a simple door-free wall
+      run ("Cornices tuck under the slab"), or show the Bottom cornice
+      profile swap via Upside Down instead.
 - [ ] **CSG booleans (~10 s)**: cube wall + cylinder cutter → select target,
       shift-select cutter → Subtract → hole appears → Ctrl+Z → cutter returns
       whole (this shot documents the fixed undo). Caption: "Booleans with

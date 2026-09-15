@@ -121,3 +121,30 @@ behave" questions in minutes.
 - Edge-loop gestures: a loop runs END TO END through 4-valence corners; a
   ring is the parallel walk (what loop cut consumes). They are different
   questions — the video review caught the plugin answering the wrong one.
+
+## 15. KNOWN BROKEN — Trim Walls: Top-swap of loops with openings (deliberate stop, v0.9.117)
+
+Switching a multi-segment loop with openings (doors/arches/stairs) from
+Bottom to Top placement does NOT produce a contiguous cornice at the
+structure's top edge. Observed despite five fix rounds (v0.9.109-117):
+runs around an opening place at the arch/lintel height (the ceiling probe
+hits real overhanging geometry; per-face top-edge cross-sections re-
+introduce arch-level runs; chains re-wrap through the opening).
+
+**ASSUME THE SIDE-SWAP PATH IS BROKEN for loops of more than one segment
+around openings.** Code involved: `PBTrimWallsTool.build/_chain_and_mitre/
+_mitre_join/run_segments_at_height/_base_height_for` plus the MIN_TOP_RUN
+segment filter. Everything else about the tool (Bottom placement, single
+door/stair selections, mitres, probe exclusion, outline reconstruction)
+is tested and behaves.
+
+Mitigations that WORK today: Bottom placement everywhere; or select only
+the simple faces, move them to Top, delete/re-place the opening-adjacent
+pieces manually. The panel's status line reports the wall->run count —
+if a swap "does nothing", it produced no runs at the placement edge.
+
+If ever revisited: the fix likely needs the placement line decoupled from
+the ceiling probe (a per-run "top edge" the user can set), and an
+explicit opening mask (faces flagged as reveal/arch excluded from Top
+runs by the user, not heuristically). Do not iterate the heuristics
+again blind — that is what v0.9.109-117 were.

@@ -3174,3 +3174,23 @@ v0.9.117 — Top-run filtering at the segment level; overlay thickness/offset:
   0.08/0.06 to 0.014/0.006 world units, and the selected/hover edge
   multipliers from 1.5x to 1.2x.
 - Version bump 0.9.116 -> 0.9.117.
+
+v0.9.118 — documentation round: Trim Walls Top-swap recorded as a known
+limitation (deliberate stop):
+- After five fix rounds (v0.9.109-117), Top-swap of a loop with openings
+  still places opening-adjacent runs at the arch/lintel height instead of
+  the structure's top edge. Documented as KNOWN BROKEN in
+  .pi/orientation/footguns.md §15 with the investigation summary, the
+  code involved, today's working mitigations (Bottom placement; select
+  only the simple faces for Top; delete/re-place opening-adjacent
+  pieces), and the shape a real fix would take (a per-run placement line
+  decoupled from the ceiling probe + user-flagged opening masks).
+- docs/DOCUMENTATION-ROADMAP.md: the Trim Walls page spec must state the
+  limitation verbatim plus the current semantics (placement-edge
+  cross-sections, offset off the placement edge, arc-only smoothing,
+  0.5 m top-run floor); the FAQ page gains the matching entry; the
+  showcase plan's Trim Walls beat no longer demos Top on loops with
+  openings (simple wall run only) and the README carries a one-line
+  limitation note.
+- No plugin code changed. Version bump 0.9.117 -> 0.9.118 marks the
+  documentation state.

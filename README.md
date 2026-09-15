@@ -113,7 +113,9 @@ workflow.
       tool that sweeps mitred trim along wall faces you click (teal hover /
       amber chosen, skirting lands on the floor slab even when wall cubes
       reach below it, cornices tuck under ceiling slabs, doorway jambs break
-      the run, perimeters close into rings)
+      the run, perimeters close into rings) — **known limitation:** Top
+      placement on loops containing doors/arches is not reliable yet (use
+      Bottom there, or trim the simple faces separately)
 - [x] **Dedicated 2D UV Editor**: interactive canvas with pan/zoom, texture
       underlay, wireframe, per-face/island selection sync, 2D transforms,
       projection buttons, and a pop-out window
