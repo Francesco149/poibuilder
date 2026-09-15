@@ -159,12 +159,14 @@ Plugin: `project/addons/poibuilder/`
   NEVER search descendants by "VBoxContainer" class (that found a hidden snap
   dialog's VBox = the invisible-toolbar bug). The row is inserted as a
   sibling AFTER the engine's toolbar MarginContainer; the engine's own VBox
-  layout then sizes the row and pushes the viewports down. Icon buttons (SVGs
-  in icons/), disabled when no PBMesh is selected; the row never hides.
-  Carries: tools (Move/Rotate/Scale), modes (Object/Vertex/Edge/Face), space
-  cycler, ALL mesh-op buttons (enable per selection context), New Shape menu,
-  Edit Params (pristine factory shapes only), and the Panel (overlay pin)
-  toggle.
+  layout then sizes the row and pushes the viewports down. Toolbar buttons MUST
+  always be SVG icons (16x16 vector line style in icons/), disabled when no PBMesh
+  is selected, unless there is a specific load-bearing reason for text (e.g. dynamic
+  state readouts like Space, snap step label, or numeric inputs); the row never
+  hides. Carries: tools (Move/Rotate/Scale), modes (Object/Vertex/Edge/Face/Texture),
+  space cycler, ALL mesh-op buttons (enable per selection context), extended tools
+  (Row 3 toggle: selection suite, object ops, CSG, auto-smooth), New Shape menu,
+  Edit Params (pristine factory shapes only), and the Panel (overlay pin) toggle.
 - `gui/overlays/pb_tool_overlay.gd` — Floating in-viewport PanelContainer
   (bottom-left) in standard panel language. COMPACT BY DEFAULT: carries NO
   op buttons and NO tool/space controls (toolbar has them) — it shows the

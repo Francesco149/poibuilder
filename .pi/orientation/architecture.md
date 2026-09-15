@@ -119,6 +119,10 @@ under the cursor (deferred; the engine is mid-selection-change).
   snap dialog = the invisible-toolbar bug). The row is inserted as a sibling
   AFTER the engine toolbar margin; the engine's VBox sizes it and pushes
   the viewports down.
+- Toolbar button icons: bar buttons MUST always be SVG icons (16x16 vector line
+  style matching `icons/*.svg`) unless there is a specific load-bearing reason
+  for text (e.g. dynamic state readouts like Space, snap step label, or numeric
+  inputs). Never ship bare text-only action buttons on the toolbar.
 - Overlay: parented to `viewport.get_parent().get_parent()` (the
   Node3DEditorViewport is a plain Control, no container sort — anchored
   children keep place and receive mouse first). Compact by default:

@@ -213,3 +213,7 @@ that blocks headless execution.
   use the same method as the built-in Inspector)
 - Silently degrade user parameters to make an algorithm succeed (the bevel
   "distance ping-pong" bug) — clamp deterministically and surface the limit
+- Ship bare text-only action buttons on the toolbar — bar buttons MUST always be
+  SVG icons (16x16 vector line style in icons/) unless there is a specific
+  load-bearing reason for text (e.g. dynamic state readouts like Space, snap step
+  label, or numeric inputs).
