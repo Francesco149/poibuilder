@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.105"
+const VERSION := "0.9.106"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -2802,7 +2802,17 @@ func _on_param_changed(param_name: String, value: float) -> void:
 			_params_edit_node.rebuild()
 			_params_edit_node.update_gizmos()
 
+## Re-entrancy guard for the params dispatch: committing or cancelling a
+## session switches select_mode, and the mode-change handler's "apply any
+## open modal first" rule re-enters the dispatch while it is running. With
+## two disagreeing mode assignments that ping-ponged EDGE<->FACE until the
+## stack blew (the v0.9.105 bevel-Apply crash).
+var _params_dispatch_underway := false
+
 func _on_params_applied() -> void:
+	if _params_dispatch_underway:
+		return
+	_params_dispatch_underway = true
 	if _params_session_kind == "create":
 		var node := shape_creator.preview_node
 		shape_creator.values = tool_overlay.get_param_values()
@@ -2814,8 +2824,12 @@ func _on_params_applied() -> void:
 		_commit_edit_params()
 	elif _params_session_kind == "bevel":
 		_commit_bevel_session()
+	_params_dispatch_underway = false
 
 func _on_params_canceled() -> void:
+	if _params_dispatch_underway:
+		return
+	_params_dispatch_underway = true
 	if _params_session_kind == "create":
 		var node := shape_creator.preview_node
 		shape_creator.cancel_params()
@@ -2852,6 +2866,7 @@ func _on_params_canceled() -> void:
 
 	if tool_overlay != null:
 		tool_overlay.close_params()
+	_params_dispatch_underway = false
 
 func _start_bevel_modal(mesh: PBMesh, is_face_bevel: bool, faces: PackedInt32Array, edges: Array[PBEdge], max_amount: float, eff_amount: float, new_face_ids: PackedInt32Array, pre_snapshot: PBMeshData) -> void:
 	_params_session_kind = "bevel"
@@ -2901,6 +2916,21 @@ func _commit_bevel_session() -> void:
 	var data := node.pb_mesh_data
 	var before := _bevel_session_snapshot
 	var after := PBCommand.copy_mesh_data(data)
+	var session_mode := _bevel_session_mode
+	var new_faces := _bevel_session_last_new_faces.duplicate()
+	# Tear the session down BEFORE touching mode/selection: the mode switch
+	# below fires _on_select_mode_changed, whose "apply any open modal first"
+	# rule re-enters this commit while the session is still marked open —
+	# and two disagreeing mode assignments (session mode vs FACE) then
+	# ping-ponged until the stack blew. (The _params_dispatch_underway guard
+	# is the second belt; this ordering is the actual fix.)
+	_params_session_kind = ""
+	_bevel_session_node = null
+	_bevel_session_snapshot = null
+	_bevel_session_faces = PackedInt32Array()
+	_bevel_session_edges = []
+	_bevel_session_last_new_faces = PackedInt32Array()
+
 	var cmd := CmdMeshOp.new(data, "Bevel", node)
 	cmd.before = before
 	cmd.after = after
@@ -2908,45 +2938,52 @@ func _commit_bevel_session() -> void:
 		cmd.logger = logger
 	cmd.add_to_undo_manager(get_undo_redo())
 
-	editor.select_mode = _bevel_session_mode
-	editor.selection.clear_all()
-	if is_instance_valid(node):
-		node.clear_subgizmo_selection()
 	# Dismissing the dialog does NOT deselect: the bevel's own output (the
 	# band/corner faces) becomes the selection, through the same path as an
-	# ordinary face selection — provided the op produced a valid band.
-	if not _bevel_session_last_new_faces.is_empty() and is_instance_valid(node):
+	# ordinary face selection — provided the op produced a valid band. Clear
+	# FIRST so the mode switch's conversion runs from a clean slate, then
+	# apply the set (works whether or not the FACE switch fires a signal).
+	if not new_faces.is_empty() and is_instance_valid(node):
+		editor.selection.clear_all()
+		node.clear_subgizmo_selection()
 		gizmo_plugin.element_editor.reset_side_faces()
 		editor.select_mode = PBEditor.SelectMode.FACE
-		_apply_selection_set(node, _bevel_session_last_new_faces, PackedInt32Array())
+		_apply_selection_set(node, new_faces, PackedInt32Array())
 		node.update_gizmos()
-	_params_session_kind = ""
-	_bevel_session_node = null
-	_bevel_session_snapshot = null
-	_bevel_session_faces = PackedInt32Array()
-	_bevel_session_edges = []
-	_bevel_session_last_new_faces = PackedInt32Array()
+	else:
+		editor.select_mode = session_mode
+		editor.selection.clear_all()
+		if is_instance_valid(node):
+			node.clear_subgizmo_selection()
+			node.update_gizmos()
 	if tool_overlay != null:
 		tool_overlay.close_params()
 	if logger:
 		logger.info("plugin", "Bevel operation committed")
 
 func _cancel_bevel_session() -> void:
-	if _bevel_session_node != null and is_instance_valid(_bevel_session_node) and _bevel_session_snapshot != null:
-		PBCommand.restore_mesh_data(_bevel_session_node.pb_mesh_data, _bevel_session_snapshot)
-		_bevel_session_node.rebuild()
-		_bevel_session_node.update_gizmos()
-		editor.select_mode = _bevel_session_mode
-		if _bevel_session_mode == PBEditor.SelectMode.FACE:
-			editor.selection.set_faces(_bevel_session_faces)
-		elif _bevel_session_mode == PBEditor.SelectMode.EDGE:
-			editor.selection.set_edges(_bevel_session_edges)
+	var node := _bevel_session_node
+	var snapshot := _bevel_session_snapshot
+	var session_mode := _bevel_session_mode
+	var faces := _bevel_session_faces
+	var edges := _bevel_session_edges
+	# Session closed before any state work — same re-entrancy contract as
+	# the commit path above.
 	_params_session_kind = ""
 	_bevel_session_node = null
 	_bevel_session_snapshot = null
 	_bevel_session_faces = PackedInt32Array()
 	_bevel_session_edges = []
 	_bevel_session_last_new_faces = PackedInt32Array()
+	if node != null and is_instance_valid(node) and snapshot != null:
+		PBCommand.restore_mesh_data(node.pb_mesh_data, snapshot)
+		node.rebuild()
+		node.update_gizmos()
+		editor.select_mode = session_mode
+		if session_mode == PBEditor.SelectMode.FACE:
+			editor.selection.set_faces(faces)
+		elif session_mode == PBEditor.SelectMode.EDGE:
+			editor.selection.set_edges(edges)
 	if tool_overlay != null:
 		tool_overlay.close_params()
 	if logger:

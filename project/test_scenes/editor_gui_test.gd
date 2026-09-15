@@ -1647,6 +1647,45 @@ func _run() -> void:
 					_fail("BEVEL-OP: bevel button unexpectedly disabled with selected face")
 		else:
 			_fail("BEVEL-OP: toolbar button OpBevel not found")
+
+		# ── Section: Bevel Apply from EDGE mode (crash regression) ────────
+		# v0.9.105: applying a bevel re-entered its own commit from the
+		# mode-change handler (the session was still marked open) and the two
+		# disagreeing mode assignments ping-ponged EDGE<->FACE until stack
+		# overflow. The commit must tear the session down BEFORE its mode
+		# switch, land in FACE mode, and select the bevel band.
+		var bevel_edge_node := root.get_node_or_null("GuiTestB") as PBMesh
+		if bevel_edge_node != null and plugin.editor != null and btn_bevel != null:
+			sel.clear()
+			sel.add_node(bevel_edge_node)
+			await _frames(6)
+			await _press_and_release_key(KEY_J)  # EDGE mode
+			await _frames(6)
+			var edge_click := _window_pos(vp, host, bevel_edge_node.global_position + Vector3(0.5, 0, 0.5))
+			_mouse_motion(edge_click)
+			await _frames(4)
+			await _click(edge_click)
+			await _frames(10)
+			if plugin.editor.selection.selected_edge_count() > 0 and not btn_bevel.disabled:
+				var faces_pre: int = bevel_edge_node.pb_mesh_data.faces.size()
+				btn_bevel.pressed.emit()  # opens the bevel modal
+				await _frames(6)
+				plugin._on_params_applied()  # APPLY from EDGE mode — the crash path
+				await _frames(10)
+				var mode_after: int = plugin.editor.select_mode
+				var faces_post: int = bevel_edge_node.pb_mesh_data.faces.size()
+				if mode_after == PBEditor.SelectMode.FACE \
+						and plugin.editor.selection.selected_face_count() > 0 \
+						and faces_post > faces_pre \
+						and not plugin.tool_overlay.params_open:
+					_pass("BEVEL-EDGE-APPLY: applied from EDGE mode without re-entry — FACE mode, band selected (%d -> %d faces)" % [faces_pre, faces_post])
+				else:
+					_fail("BEVEL-EDGE-APPLY: mode=%d sel_faces=%d faces %d -> %d modal_open=%s" % [
+						mode_after, plugin.editor.selection.selected_face_count(),
+						faces_pre, faces_post, str(plugin.tool_overlay.params_open)])
+			else:
+				_fail("BEVEL-EDGE-APPLY: could not select an edge (bevel disabled or no edge selected)")
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)

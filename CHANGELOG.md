@@ -2815,3 +2815,29 @@ v0.9.105 round complete ✓ — mode-switch selection conversion, done sanely:
   in a real editor). 957 tests, 19.6k assertions, 59 suites, all green;
   `run_gui_tests.sh` failures=0.
 - Version bump 0.9.104 -> 0.9.105.
+
+v0.9.106 round complete ✓ — fix bevel-Apply stack overflow (crash regression):
+- THE REPORT: beveling a cube EDGE and pressing Apply crashed the editor
+  with a stack overflow. The backtrace showed `_commit_bevel_session` →
+  `set_select_mode` → `_on_select_mode_changed` → `_on_params_applied` →
+  `_commit_bevel_session` ping-ponging forever.
+- CAUSE (introduced by the v0.9.105 selection-retention change): the commit
+  switched select_mode (to FACE, for the output band) while
+  `_params_session_kind` was still "bevel", so the mode-change handler's
+  "apply any open modal first" rule re-entered the commit mid-teardown —
+  and with TWO disagreeing mode assignments (session mode vs FACE) every
+  re-entry flipped EDGE<->FACE, the setter's equality early-return never
+  fired, and recursion ran away. The pre-0.9.105 code only ever assigned ONE
+  target mode, so the same re-entrancy accidentally terminated at depth 2.
+- FIX: the commit/cancel tear the session down FIRST (session kind, node,
+  snapshot, faces/edges into locals) before any mode or selection work, so
+  the handler's modal-apply rule finds no open session; plus a
+  `_params_dispatch_underway` guard in `_on_params_applied`/
+  `_on_params_canceled` as the second belt. Commit order is now: teardown →
+  undo action → clear selection/gizmo → FACE → select the band.
+- Regression case in the GUI harness (the FACE-mode apply path could never
+  trigger this — that's why the suite stayed green): EDGE mode → select
+  edge → bevel → Apply ⇒ lands in FACE with the band selected, modal closed,
+  no re-entry (BEVEL-EDGE-APPLY, 17 → 21 faces). Full suite 957/957, GUI
+  harness failures=0.
+- Version bump 0.9.105 -> 0.9.106.
