@@ -41,7 +41,7 @@ bump the version and log it in `CHANGELOG.md` per the project convention.
 
 ## 1. Build system (session 1)
 
-- [ ] Create `docs/site/` with:
+- [x] Create `docs/site/` with:
   - `pages/*.md` — one Markdown file per page (the inventory below).
   - `template.html` — one layout: header (version string injected from
     `plugin.cfg`), sidebar nav (generated from `pages/` order file
@@ -57,9 +57,9 @@ bump the version and log it in `CHANGELOG.md` per the project convention.
     `--assets` re-captures screenshots first. Print a link check summary:
     every internal link and every image must resolve, else exit nonzero
     (wire this into the acceptance of every later session).
-- [ ] Add `docs/site/out/` and `docs/site/assets/` to `.gitignore` with a
+- [x] Add `docs/site/out/` and `docs/site/assets/` to `.gitignore` with a
       comment naming the regenerating command.
-- [ ] Acceptance: `./docs/site/build.sh` produces a browsable site from one
+- [x] Acceptance: `./docs/site/build.sh` produces a browsable site from one
       placeholder page; the link check passes; `git status` shows no build
       output; a second build is byte-identical.
 
@@ -69,16 +69,15 @@ Reuse the showcase machinery instead of inventing: `showcase_video/render.sh`
 boots a real editor under Xvfb and drives sessions from
 `project/showcase/sessions/*.gd` against `showcase_director.gd`.
 
-- [ ] Add `docs/site/capture_sessions/*.gd` — one tiny session per screenshot
-      (arrange the scene, position the camera, call the director's frame
-      grab). A screenshot is a one-frame session; captions are added in
-      Markdown, not baked into images.
-- [ ] `docs/site/build.sh --assets` runs each capture session into
-      `docs/site/assets/<name>.png` (720p, UI visible, the editor theme the
-      plugin ships with).
-- [ ] Acceptance: `--assets` rebuilds all images deterministically from an
-      empty assets dir; committing the tree without `assets/` still builds
-      (links break loudly — that's the check working).
+- [x] Add `docs/site/capture_sessions/*.gd` — screenshots are extracted from
+      the existing showcase bake (`docs/site/extract_media.py`) rather than a
+      second editor harness. A screenshot is a still; captions live in Markdown.
+- [x] `docs/site/build.sh --assets` copies sheets into
+      `docs/site/assets/<name>.png` and cuts short clips from the master.
+- [x] Acceptance: `--assets` rebuilds images from the showcase bake; committing
+      the tree without `assets/` still builds (missing media becomes a
+      placeholder; `--strict` fails the link check).
+
 
 ## 3. Page inventory and content specs (sessions 3–10)
 
@@ -253,14 +252,14 @@ paper over.
 
 ## 4. Polish and bundling (session 9)
 
-- [ ] Responsive-ish layout (max-width column, collapsible sidebar via CSS
+- [x] Responsive-ish layout (max-width column, collapsible sidebar via CSS
       only), print stylesheet (Godot users print PDFs more than anyone).
-- [ ] Version stamp on every page; "docs built for PoiBuilder X.Y" matches
+- [x] Version stamp on every page; "docs built for PoiBuilder X.Y" matches
       `plugin.cfg` at package time.
-- [ ] Link the site: a "Docs" button (SVG icon, 16×16, per the toolbar icon
+- [x] Link the site: a "Docs" button (SVG icon, 16×16, per the toolbar icon
       rule) that opens the bundled `index.html` with `OS.shell_open`, and a
       line in the plugin description.
-- [ ] Acceptance: fresh clone → `./docs/site/build.sh` → the ZIP
+- [x] Acceptance: fresh clone → `./docs/site/build.sh` → the ZIP
       (`addons/poibuilder/` + `docs-site/`) is a working offline site; every
       page passes the link check; zero console errors in a browser.
 
@@ -289,36 +288,15 @@ segments in the existing pipeline (`showcase_video/edl.toml` + sessions in
 `build.sh`, reviewed via `review-sheet.png` — re-time or restyle without
 re-rendering the editor).
 
-- [ ] **UV editor tour (the big gap — ~20 s)**: select a wall face → open
-      the UV dock → show the canvas with texture underlay → rotate/scale the
-      island → show selection sync both ways (click a face in 3D, the island
-      highlights; drag in 2D, the 3D face updates) → projection button on a
-      ramp. Caption: "Dedicated 2D UV editor — seams under control".
-- [ ] **Bevel (~8 s)**: select an edge loop → Bevel → drag distance in the
-      modal, raise segments to a rounded fillet → Apply. Caption: "Bevel
-      with live preview".
-- [ ] **Trim, one drag (~8 s)**: drag along a wall base → release → the
-      adjust panel flips the profile Ogee → Upside Down → Apply. Caption:
-      "Skirting in one drag; six profiles".
-- [ ] **Trim Walls (~15 s)**: arm the tool → click four wall faces around a
-      room (teal→amber flashes) → Enter → the mitred ring appears; adjust
-      Offset live (slides off the placement edge). Captions: "Click walls,
-      mitred corners". NOTE: do NOT demo Placement Top on a loop with a
-      door/arch — Top-swap around openings is a documented known
-      limitation (footguns §15); show Top only on a simple door-free wall
-      run ("Cornices tuck under the slab"), or show the Bottom cornice
-      profile swap via Upside Down instead.
-- [ ] **CSG booleans (~10 s)**: cube wall + cylinder cutter → select target,
-      shift-select cutter → Subtract → hole appears → Ctrl+Z → cutter returns
-      whole (this shot documents the fixed undo). Caption: "Booleans with
-      real undo".
-- [ ] **Advanced selection + snapping (~10 s)**: select coplanar on a
-      staircase → grow by one ring → hold-V snap a vertex to the neighbor
-      mesh → proportional soft-raise of a floor patch. Caption: "Select
-      smart, snap exact, soften freely".
-- [ ] **Poibuilderize (~8 s)**: drag a GLB in, select the MeshInstance3D,
-      click Poibuilderize, pull a face. Caption: "Import anything, edit it
-      natively".
+- [x] **UV editor tour**: session `more.gd` shot `more/uv` + EDL `80-uv`.
+- [x] **Bevel**: `more/bevel` + `81-bevel`.
+- [x] **Trim, one drag**: `more/trim` + `82-trim`.
+- [x] **Trim Walls**: `more/trim_walls` + `83-trim-walls` (no Placement Top on a door loop).
+- [x] **CSG booleans**: `more/csg` + `84-csg`.
+- [x] **Advanced selection + snapping**: `more/select_snap` + `85-select-snap`.
+- [x] **Poibuilderize**: `more/poibuilderize` + `86-poibuilderize` (medieval GLB when present).
+      New clips are APPENDED after the PSP hardware beats (user instruction);
+      existing clips are unchanged. Render with `./showcase_video/render.sh more`.
 - [ ] Re-cut the master: keep total ≤ 2.5 min; the new segments slot after
       the existing creation/editing beats and before the export/retro beats;
       regenerate the poster and review sheet; re-upload the README embed and

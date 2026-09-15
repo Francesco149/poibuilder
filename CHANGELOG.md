@@ -3194,3 +3194,20 @@ limitation (deliberate stop):
   limitation note.
 - No plugin code changed. Version bump 0.9.117 -> 0.9.118 marks the
   documentation state.
+
+v0.9.119 — end-user docs site, retro export of plain meshes, showcase tail:
+- Static HTML docs (`docs/site/`, stdlib `build.py`) for GitHub Pages and a
+  bundled `addons/poibuilder/docs-site/` copy. Toolbar Docs button opens
+  the local site (or GitHub Pages if it has not been built). Pages cover
+  install, the 60-second win, every tool group, keys generated from
+  `pb_actions.gd`, and the Trim Walls Top-swap limitation.
+- Retro export now includes ordinary MeshInstance3D nodes (imported GLB
+  props), not only PBMesh. Albedo is sanitized to power-of-two dimensions
+  clamped at max_texture_size (default 512) in both the direct PBM writer
+  and the GLB converter — NPOT and 2048 atlases were a PSP texture-cache
+  cliff.
+- Showcase session `more.gd` plus EDL clips 80–86 appended after the
+  existing film (UV editor, bevel, trim, trim walls, CSG, selection,
+  poibuilderize). Earlier clips are unchanged.
+- Version bump 0.9.118 -> 0.9.119.
+

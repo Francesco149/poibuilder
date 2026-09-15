@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.118"
+const VERSION := "0.9.119"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -169,6 +169,7 @@ func _enter_tree():
 	toolbar.uv_editor_requested.connect(focus_uv_editor)
 	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
 	toolbar.export_requested.connect(_on_export_requested)
+	toolbar.docs_requested.connect(_on_docs_requested)
 	toolbar.env_preset_requested.connect(_on_env_preset_requested)
 	toolbar.split_rows_toggled.connect(_on_toolbar_split_rows_toggled)
 	toolbar.vertex_snap_toggled.connect(func(on: bool):
@@ -1351,6 +1352,29 @@ func _on_export_requested() -> void:
 	if scene == null and is_inside_tree():
 		scene = get_tree().root
 	_export_dialog.open_dialog(scene)
+
+func _on_docs_requested() -> void:
+	var script_res := get_script() as Script
+	var plugin_dir := ""
+	if script_res != null:
+		plugin_dir = script_res.resource_path.get_base_dir()
+	var candidates: PackedStringArray = PackedStringArray()
+	if plugin_dir != "":
+		candidates.append(ProjectSettings.globalize_path(plugin_dir.path_join("docs-site/index.html")))
+		var global_plugin := ProjectSettings.globalize_path(plugin_dir)
+		# project/addons/poibuilder → repo root
+		var repo := global_plugin.get_base_dir().get_base_dir().get_base_dir()
+		candidates.append(repo.path_join("docs/site/out/index.html"))
+	for path in candidates:
+		if FileAccess.file_exists(path):
+			OS.shell_open(path)
+			if logger:
+				logger.info("plugin", "Opened docs at %s" % path)
+			return
+	OS.shell_open("https://francesco149.github.io/poibuilder/")
+	if logger:
+		logger.info("plugin", "Opened docs on GitHub Pages (no local site built)")
+
 
 func _on_toolbar_split_rows_toggled(two_rows: bool) -> void:
 	if Engine.is_editor_hint():

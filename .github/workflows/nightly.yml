@@ -18,14 +18,18 @@ jobs:
       - name: Check out the latest master
         uses: actions/checkout@v4
 
+      - name: Build bundled docs
+        run: ./docs/site/build.sh --bundle
+
       - name: Zip the addon for Godot import
         run: |
           cd project
           # Top-level entries are `addons/...` so the zip extracts straight
-          # into a Godot project folder.
+          # into a Godot project folder. docs-site/ is produced by build.sh --bundle.
           zip -r ../PoiBuilder-nightly.zip addons/poibuilder
           cd ..
-          unzip -l PoiBuilder-nightly.zip | head -5
+          unzip -l PoiBuilder-nightly.zip | head -20
+
 
       - name: Publish the nightly release
         env:
