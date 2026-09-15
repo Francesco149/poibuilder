@@ -264,3 +264,54 @@ func test_recorded_paths_are_offset_free():
 	for p in data.positions:
 		lo = minf(lo, p.y)
 	assert_almost_eq(lo, 0.5, 0.001, "rebuild Offset slides the recorded run")
+
+## REGRESSION ("toggling smoothing makes the corner ping pong up and down",
+## "top only applies to the newest corner"): build() must be a PURE function
+## of (walls, params, probes) — same input, byte-identical geometry, and
+## placement params affect EVERY wall, not just the newest.
+func test_build_is_deterministic_and_params_are_global():
+	var wall_a := _wall(Vector3(4, 3, 0.2), Vector3(2, 1.5, -0.1))
+	var wall_b := _wall(Vector3(0.2, 3, 4), Vector3(4.1, 1.5, 2))
+	var face_a := _face_with_normal(wall_a, Vector3(0, 0, 1))
+	var face_b := _face_with_normal(wall_b, Vector3(-1, 0, 0))
+	var slab_y := 0.0
+	var ceiling_y := 3.0
+	var floor_probe := func(_f: Vector3) -> float: return slab_y
+	var ceiling_probe := func(_f: Vector3) -> float: return ceiling_y
+
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.toggle_wall(wall_a, face_a)
+	tool.toggle_wall(wall_b, face_b)
+
+	# Determinism: two builds with the same state are identical.
+	tool.params["top"] = 1.0
+	var d1 := tool.build(Callable(), ceiling_probe)
+	var d2 := tool.build(Callable(), ceiling_probe)
+	assert_ne(d1, null)
+	assert_eq(d1.positions.size(), d2.positions.size())
+	for i in range(d1.positions.size()):
+		assert_almost_eq(d1.positions[i].y, d2.positions[i].y, 0.0001,
+			"rebuilds never drift (the preview probe must not feed back)")
+
+	# Globality: Placement Top hangs EVERY wall's run under the ceiling,
+	# not just the newest pick's corner.
+	tool.params["top"] = 0.0
+	tool.params["height"] = 0.2
+	var bottom_build := tool.build(Callable(), ceiling_probe)
+	var bottom_lo := INF
+	for p in bottom_build.positions:
+		bottom_lo = minf(bottom_lo, p.y)
+	tool.params["top"] = 1.0
+	var top_build := tool.build(Callable(), ceiling_probe)
+	assert_ne(top_build, null)
+	# Bottom placement sits on the slab (y=0); top placement hangs under 3.0.
+	var top_lo := INF
+	var top_hi := -INF
+	for p in top_build.positions:
+		top_lo = minf(top_lo, p.y)
+		top_hi = maxf(top_hi, p.y)
+	assert_almost_eq(bottom_lo, 0.0, 0.001, "bottom run sits on the floor")
+	assert_almost_eq(top_hi, ceiling_y, 0.001,
+		"top run tucks under the ceiling on EVERY wall (global placement)")
+	assert_almost_eq(top_hi - top_lo, 0.2, 0.002)

@@ -290,6 +290,11 @@ func _ensure_ui() -> void:
 	_creation_label = _make_value_label()
 	_creation_label.name = "CreationValue"
 	_creation_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# Long hints MUST wrap: a one-line hint stretched the panel across the
+	# whole viewport (the Trim Walls hint). Cap the width and wrap.
+	_creation_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_creation_label.custom_minimum_size = Vector2(300, 0)
+	_creation_label.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
 	_creation_row.add_child(_creation_label)
 	_creation_row.visible = false
 

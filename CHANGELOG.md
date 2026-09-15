@@ -3050,4 +3050,30 @@ CSGCombiner3D baking, and the Trim Walls tool:
     plain vertical slide. Profile/Flip/Upside-Down/Placement changes
     mid-session were and remain GLOBAL (every change rebuilds all chosen
     walls).
-- Version bump 0.9.108 -> 0.9.109.
+- v0.9.110 — Trim Walls re-audit (root causes for the "broken panel" round):
+  - CORNERS SINKING / placement only partially applying:
+    `merge_colinear` rebuilt its segment dicts WITHOUT the per-segment
+    base height, so every mitred corner fell back to y=0 while endpoints
+    stayed right. Fixed; the new determinism/globality tests catch it.
+  - OFFSET PING-PONG / permanent upward drift: the room-shell probes
+    raycast against the session preview's own collider, so each rebuild's
+    heights fed back from the previous build. Probes now exclude every
+    trim (`trim`/`trim_walls` shape ids + the preview) and measure only
+    the room shell.
+  - Build purity is pinned by tests: identical state produces identical
+    geometry, and Placement Top/Bottom moves EVERY wall's run (verified
+    against a canned ceiling probe).
+  - The Trim Walls hint now reports the wall->run count and an explicit
+    reason when a selection produced no runs — the panel can no longer
+    look fine while broken. The hint label wraps at a fixed width (a
+    one-line hint used to stretch the panel across the viewport).
+  - Tooltips explain the Chamfer no-ops: Arc Segments and Smooth Shading
+    only act on the Round/Cove/Ogee profiles' curved runs (this is
+    correct moulding shading, not a dead control).
+  - Toolbar balance restored: Row 2 is back to its pre-Trim-Walls
+    composition (docks/Export included); Trim Walls stays on Row 4.
+  - Footguns documented in .pi/orientation/footguns.md §14 (probe
+    feedback, field-dropping intermediates, baked editable params,
+    always-right-handed placement bases, select-your-output, visible
+    build status, per-change version bumps).
+- Version bump 0.9.109 -> 0.9.110.

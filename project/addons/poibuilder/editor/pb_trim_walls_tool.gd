@@ -174,7 +174,10 @@ static func merge_colinear(segments: Array) -> Array:
 			var t: Vector3 = a
 			a = b
 			b = t
-		normalized.append({"a": a, "b": b, "dir": dir})
+		# The base height MUST travel with the segment: dropping it here made
+		# every mitred corner fall back to y=0 (corners sinking to the floor,
+		# placement "applying" only to some runs).
+		normalized.append({"a": a, "b": b, "dir": dir, "y": s.get("y", 0.0)})
 	var used: Array = []
 	for i in range(normalized.size()):
 		used.append(false)

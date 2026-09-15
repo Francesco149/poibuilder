@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.109"
+const VERSION := "0.9.110"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -3268,9 +3268,7 @@ func _on_trim_walls_requested() -> void:
 		tool_overlay.panel_enabled = true
 		tool_overlay.open_params("Trim Walls Parameters",
 			PBShapeParams.get_param_defs(&"trim_walls"), trim_walls_tool.params)
-	_set_creation_hint("Trim Walls: click wall faces — teal under cursor, amber chosen. "
-		+ "Click a chosen wall to drop it, Backspace drops the last, "
-		+ "Enter / double-click applies, Esc cancels")
+	_set_creation_hint("Trim Walls: click wall faces to trim (click again drops, Backspace undoes, Enter applies, Esc cancels)")
 	if logger:
 		logger.info("plugin", "Trim Walls armed — click wall faces to place the trim")
 
@@ -3430,6 +3428,16 @@ func _refresh_trim_walls_preview() -> void:
 	_trim_walls_preview.transform = Transform3D.IDENTITY
 	_trim_walls_preview.rebuild()
 	_trim_walls_preview.update_gizmos()
+	# The panel must always SAY what the tool understood — silent empty
+	# previews read as "broken".
+	var count := trim_walls_tool.wall_count()
+	if count == 0:
+		_set_creation_hint("Trim Walls: click wall faces to trim (click again drops, Backspace undoes, Enter applies, Esc cancels)")
+	elif data == null:
+		_set_creation_hint("Trim Walls: %d wall face(s) chosen, but none produced a horizontal run at the trim height — pick wall faces, not floors/ceilings" % count)
+	else:
+		_set_creation_hint("Trim Walls: %d wall face(s) -> %d trim run(s). Enter applies, Esc cancels"
+			% [count, trim_walls_tool.last_paths.size()])
 
 ## Enter / double-click / panel Apply: the result is ONE new object; its
 ## recorded paths keep the parameters live for the same walls (Edit Params).
@@ -3501,6 +3509,20 @@ func _probe_surface_y(from: Vector3, dir: Vector3) -> float:
 	if space == null:
 		return NAN
 	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 500.0)
+	# Trims are EXCLUDED from the probe: the probe must measure the room
+	# shell. Without this the previous preview's collider feeds back into
+	# the next build - drift, smoothing-toggle ping-pong, and placement
+	# "applying" only to the newest walls.
+	var exclude: Array[RID] = []
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root != null:
+		for node in _collect_pbmeshes(scene_root):
+			var sid: StringName = node.pb_mesh_data.shape_id if node.pb_mesh_data != null else &""
+			if node == _trim_walls_preview or sid == &"trim" or sid == &"trim_walls":
+				for child in node.get_children():
+					if child is StaticBody3D:
+						exclude.append((child as StaticBody3D).get_rid())
+	query.exclude = exclude
 	var hit := space.intersect_ray(query)
 	if hit.is_empty() or not hit.has("position"):
 		return NAN

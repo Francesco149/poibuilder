@@ -532,6 +532,7 @@ func _update_row_layout() -> void:
 	for c in grp_space: _row2.add_child(c)
 	for c in grp_grid: _row2.add_child(c)
 	for c in grp_shapes: _row2.add_child(c)
+	for c in grp_docks: _row2.add_child(c)
 
 	# Row 3 (Extended: Selection Suite + Auto-Smooth):
 	var grp_row3_sel: Array[Control] = [
@@ -565,7 +566,6 @@ func _update_row_layout() -> void:
 		for c in grp_row4_obj: _row4.add_child(c)
 		for c in grp_row4_csg: _row4.add_child(c)
 		for c in grp_row4_tools: _row4.add_child(c)
-		for c in grp_docks: _row4.add_child(c)
 ## Total number of controls and buttons across the toolbar rows.
 func get_item_count() -> int:
 	return _row1.get_child_count() + _row2.get_child_count() + _row3.get_child_count() + (_row4.get_child_count() if _row4 != null else 0)
