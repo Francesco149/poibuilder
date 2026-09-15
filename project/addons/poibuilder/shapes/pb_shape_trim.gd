@@ -114,6 +114,39 @@ static func get_profile_points(profile: ProfileType, width: float, height: float
 		return transformed
 	return pts
 
+## Profile SEGMENT indices (between point j and j+1) that are part of a
+## curved run and may shade smoothly. Every straight run (Flat/Chamfer/
+## Stepped faces, bottoms, tops, backs) stays HARD — smoothing the sharp
+## moulding corners is what produced the "weird normals" gradient on trim
+## sides. Honors the upside-down/flip point reversal so indices match
+## get_profile_points output for the same arguments.
+static func get_profile_smooth_segments(profile: ProfileType, segments: int = 4,
+		upside_down: bool = false, flip_side: bool = false) -> PackedInt32Array:
+	var segs := maxi(2, segments)
+	var smooth := PackedInt32Array()
+	var n := 0
+	match profile:
+		ProfileType.ROUND:
+			n = segs + 4
+			for j in range(2, 2 + segs):
+				smooth.append(j)
+		ProfileType.COVE:
+			n = segs + 3
+			for j in range(1, 1 + segs):
+				smooth.append(j)
+		ProfileType.OGEE:
+			n = 2 * segs + 3
+			for j in range(1, 1 + 2 * segs):
+				smooth.append(j)
+		_:
+			return smooth
+	if upside_down != flip_side:
+		var mapped := PackedInt32Array()
+		for j in smooth:
+			mapped.append(n - 2 - j)
+		smooth = mapped
+	return smooth
+
 # ==============================================================================
 # Path Extrusion & Sweeping
 # ==============================================================================
@@ -124,7 +157,8 @@ static func get_profile_points(profile: ProfileType, width: float, height: float
 ## - `up`: Upward normal vector along the wall.
 ## - `closed`: Whether the path forms a closed loop.
 static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: PackedVector3Array,
-		up: Vector3 = Vector3.UP, closed: bool = false, close_profile: bool = true) -> PBMeshData:
+		up: Vector3 = Vector3.UP, closed: bool = false, close_profile: bool = true,
+		smooth_profile_segments: PackedInt32Array = PackedInt32Array()) -> PBMeshData:
 	if profile_pts.size() < 2 or path.size() < 2:
 		return null
 
@@ -191,6 +225,9 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 	var vertex_counter := 0
 
 	var num_segments: int = n_pts if closed else n_pts - 1
+	var smooth_set := {}
+	for j in smooth_profile_segments:
+		smooth_set[j] = true
 
 	# Connect rings with quads
 	for seg in range(num_segments):
@@ -229,6 +266,8 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 				vertex_counter, vertex_counter + 2, vertex_counter + 3
 			]))
 			face.manual_uv = true
+			if smooth_set.has(j):
+				face.smoothing_group = 1
 			faces.append(face)
 			vertex_counter += 4
 
@@ -291,10 +330,10 @@ static func build_straight_trim(length: float, depth: float = 0.05, height: floa
 		Vector3(0.0, 0.0, l * 0.5)
 	])
 	var pts := get_profile_points(profile, d, h, segments, upside_down, flip_side)
-	var md := extrude_profile_along_path(pts, path, Vector3.UP, false, true)
-	if md != null and smooth:
-		for f in md.faces:
-			f.smoothing_group = 1
+	var smooth_segs := get_profile_smooth_segments(profile, segments, upside_down, flip_side) \
+		if smooth else PackedInt32Array()
+	var md := extrude_profile_along_path(pts, path, Vector3.UP, false, true, smooth_segs)
+	if md != null:
 		md.calculate_normals()
 	return md
 
@@ -303,9 +342,9 @@ static func create_wall_trim(path: PackedVector3Array, profile: ProfileType = Pr
 		depth: float = 0.05, height: float = 0.15, closed: bool = false,
 		upside_down: bool = false, flip_side: bool = false, smooth: bool = true) -> PBMeshData:
 	var pts := get_profile_points(profile, depth, height, 4, upside_down, flip_side)
-	var md := extrude_profile_along_path(pts, path, Vector3.UP, closed, true)
-	if md != null and smooth:
-		for f in md.faces:
-			f.smoothing_group = 1
+	var smooth_segs := get_profile_smooth_segments(profile, 4, upside_down, flip_side) \
+		if smooth else PackedInt32Array()
+	var md := extrude_profile_along_path(pts, path, Vector3.UP, closed, true, smooth_segs)
+	if md != null:
 		md.calculate_normals()
 	return md

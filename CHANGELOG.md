@@ -3023,4 +3023,31 @@ CSGCombiner3D baking, and the Trim Walls tool:
   Winding guard test: the placed trim's signed world volume must stay
   positive (normals outward) across floor/ceiling/wall/ramp drags and the
   placement basis is asserted never mirrored.
+- v0.9.109 addendum 3 — trim shading, placement visibility, panel width,
+  toolbar width, Trim Walls Offset memory:
+  - Trim sides shaded with a weird gradient because EVERY face shared one
+    smoothing group - the profile's sharp 90° corners blended into the
+    sides. `PBShapeTrim.get_profile_smooth_segments` now maps which
+    profile runs are actually curved (Round/Cove/Ogee arcs) and only those
+    quads shade smoothly; Flat/Chamfer/Stepped and all bottoms/tops/backs/
+    ends stay hard. Applies to the one-drag trim, Trim Walls, and the
+    Edit Params rebuild.
+  - A trim placed by base-release was INVISIBLE until the first parameter
+    touch: the BASE phase keeps the render mesh hidden for the outline,
+    and committing straight to PARAMS never un-hid it. The confirming
+    path refreshes the preview now.
+  - The Trim Walls panel was viewport-wide because the Profile row's
+    label carried the whole value mapping. The label is "Profile" and the
+    mapping (0 Flat ... 5 Stepped) is a tooltip on the row; param defs
+    support `tooltip` generally.
+  - Toolbar width rule: rows 1-2 must never exceed Godot's builtin 3D
+    toolbar. Docks/Export (Materials, UV, Panel, Recover, Settings,
+    Export) moved from Row 2 to Row 4, and the Trim Walls button moved
+    from Row 2 to Row 4 (after CSG).
+  - Trim Walls Offset was baked into the recorded mitred paths, so Edit
+    Params offsetting +0.3 then back to 0 never returned to the walls.
+    The recording is offset-free now and the rebuild applies Offset as a
+    plain vertical slide. Profile/Flip/Upside-Down/Placement changes
+    mid-session were and remain GLOBAL (every change rebuilds all chosen
+    walls).
 - Version bump 0.9.108 -> 0.9.109.

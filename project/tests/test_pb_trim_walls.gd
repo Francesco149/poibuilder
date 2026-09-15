@@ -227,3 +227,40 @@ func test_committed_shape_rebuilds_from_recorded_paths():
 		hi = maxf(hi, p.y)
 	assert_almost_eq(hi - lo, 0.3, 0.002, "the new height applies to the SAME walls")
 	assert_eq(data.textures0.size(), data.positions.size(), "UVs stay paired")
+
+## REGRESSION ("changing offset permanently shifts the trimming up even if I
+## put it back to zero"): the recorded paths baked the Offset in, so Edit
+## Params offsetting +0.3 then back to 0 never returned to the walls. The
+## recording must be offset-FREE; the rebuild applies Offset itself.
+func test_recorded_paths_are_offset_free():
+	var wall := _wall(Vector3(4, 3, 0.2), Vector3(2, 1.5, -0.1))
+	var face := _face_with_normal(wall, Vector3(0, 0, 1))
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.toggle_wall(wall, face)
+
+	tool.params["offset"] = 0.35
+	tool.build()
+	var shifted: Array = tool.last_paths.duplicate(true)
+
+	tool.params["offset"] = 0.0
+	tool.build()
+	var neutral: Array = tool.last_paths.duplicate(true)
+
+	assert_eq(shifted.size(), neutral.size(), "same walls, same paths")
+	for i in range(neutral.size()):
+		var a: PackedVector3Array = shifted[i]["points"]
+		var b: PackedVector3Array = neutral[i]["points"]
+		assert_eq(a.size(), b.size())
+		for j in range(b.size()):
+			assert_almost_eq(a[j].y, b[j].y, 0.001,
+				"the RECORD is offset-free - Offset is applied at sweep time")
+
+	# And the rebuild path applies Offset as a plain vertical shift.
+	var values := {"wall_paths": neutral.duplicate(true), "offset": 0.5}
+	var data := PBShapeParams.build(&"trim_walls", values)
+	assert_ne(data, null)
+	var lo := INF
+	for p in data.positions:
+		lo = minf(lo, p.y)
+	assert_almost_eq(lo, 0.5, 0.001, "rebuild Offset slides the recorded run")

@@ -105,7 +105,8 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			]
 		&"trim":
 			return [
-				_count_def("profile", "Profile (0:Flat,1:Chamfer,2:Round,3:Cove,4:Ogee,5:Stepped)", 0, 5, 1),
+				_count_def("profile", "Profile", 0, 5, 1,
+				"0 Flat, 1 Chamfer, 2 Round, 3 Cove, 4 Ogee, 5 Stepped"),
 				_value_def("length", "Length", 0.1, 100.0, 2.0, "m"),
 				_value_def("height", "Height", 0.02, 2.0, 0.15, "m"),
 				_value_def("depth", "Depth", 0.005, 1.0, 0.05, "m"),
@@ -116,7 +117,8 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			]
 		&"trim_walls":
 			return [
-				_count_def("profile", "Profile (0:Flat,1:Chamfer,2:Round,3:Cove,4:Ogee,5:Stepped)", 0, 5, 1),
+				_count_def("profile", "Profile", 0, 5, 1,
+				"0 Flat, 1 Chamfer, 2 Round, 3 Cove, 4 Ogee, 5 Stepped"),
 				_value_def("height", "Height", 0.02, 2.0, 0.1, "m"),
 				_value_def("depth", "Depth", 0.005, 1.0, 0.05, "m"),
 				_count_def("arc_segments", "Arc Segments", 2, 16, 4),
@@ -219,11 +221,21 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 					maxf(0.01, float(v.get("height", 0.1))),
 					int(v.get("arc_segments", 4)),
 					bool(v.get("upside_down", false)), false)
+				var smooth_segs := PBShapeTrim.get_profile_smooth_segments(
+					int(v.get("profile", 1)) as PBShapeTrim.ProfileType,
+					int(v.get("arc_segments", 4)),
+					bool(v.get("upside_down", false)), false) \
+					if bool(v.get("smooth", true)) else PackedInt32Array()
 				var swept := PBShapeTrim.extrude_profile_along_path(
-					profile, pts, Vector3.UP, bool(rec.get("closed", false)), true)
-				if bool(v.get("smooth", true)) and swept != null:
-					for f in swept.faces:
-						f.smoothing_group = 1
+					profile, pts, Vector3.UP, bool(rec.get("closed", false)), true, smooth_segs)
+				if swept != null:
+					# Offset is a plain vertical slide of the recorded path.
+					var off := float(v.get("offset", 0.0))
+					if off != 0.0:
+						var lift := Vector3(0, off, 0)
+						for i in range(swept.positions.size()):
+							swept.positions[i] += lift
+						swept.invalidate_caches()
 					swept.calculate_normals()
 				if swept == null:
 					continue
@@ -460,9 +472,12 @@ static func _value_def(name: String, label: String, min_v: float, max_v: float,
 		"default": default_v, "kind": KIND_VALUE}
 
 static func _count_def(name: String, label: String, min_v: int, max_v: int,
-		default_v: int) -> Dictionary:
-	return {"name": name, "label": label, "min": float(min_v), "max": float(max_v),
+		default_v: int, tooltip := "") -> Dictionary:
+	var out := {"name": name, "label": label, "min": float(min_v), "max": float(max_v),
 		"step": 1.0, "suffix": "", "default": float(default_v), "kind": KIND_COUNT}
+	if tooltip != "":
+		out["tooltip"] = tooltip
+	return out
 
 static func _bool_def(name: String, label: String, default_v: bool) -> Dictionary:
 	return {"name": name, "label": label, "min": 0.0, "max": 1.0,

@@ -2718,6 +2718,10 @@ func _creation_end_base() -> void:
 ## is always available afterwards).
 func _creation_confirm() -> void:
 	shape_creator.confirm_height()
+	# The BASE phase keeps the render mesh hidden (the outline shows); shapes
+	# that commit on base release (trim) go straight to PARAMS — restore the
+	# mesh NOW or the trim stays invisible until the first parameter touch.
+	_refresh_preview()
 	var node := shape_creator.preview_node
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	var undo := get_undo_redo()

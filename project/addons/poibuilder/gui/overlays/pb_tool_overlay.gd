@@ -545,11 +545,20 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		_params_grid.add_child(caption)
 		var param_name := str(def.get("name", ""))
 		_current_param_defs[param_name] = def
+		# Long value mappings ride the tooltip instead of widening the panel
+		# (the trim Profile row used to stretch it across the viewport).
+		if def.has("tooltip"):
+			caption.tooltip_text = str(def["tooltip"])
+			caption.mouse_filter = Control.MOUSE_FILTER_STOP
 		if str(def.get("kind", "")) == PBShapeParams.KIND_BOOL:
 			var check := CheckBox.new()
 			check.name = "Param" + param_name
 			check.button_pressed = float(values.get(param_name, 0.0)) > 0.5
 			check.focus_mode = Control.FOCUS_NONE
+			if def.has("tooltip"):
+				check.tooltip_text = str(def["tooltip"])
+				caption.tooltip_text = str(def["tooltip"])
+				caption.mouse_filter = Control.MOUSE_FILTER_STOP
 			check.toggled.connect(_on_param_toggled.bind(param_name))
 			_params_grid.add_child(check)
 			_param_checkboxes[param_name] = check
@@ -568,6 +577,10 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		spin.step = p_step
 		spin.suffix = str(def.get("suffix", ""))
 		spin.value = float(values.get(param_name, p_min))
+		if def.has("tooltip"):
+			spin.tooltip_text = str(def["tooltip"])
+			caption.tooltip_text = str(def["tooltip"])
+			caption.mouse_filter = Control.MOUSE_FILTER_STOP
 		spin.value_changed.connect(_on_param_value_changed.bind(param_name))
 		_params_grid.add_child(spin)
 		_param_spinboxes[param_name] = spin

@@ -251,12 +251,20 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 	var paths := _chain_and_mitre(merged)
 
 	# 4. Sweep every chain into ONE PBMeshData.
+	# The RECORDED paths must be offset-free: Edit Params applies the current
+	# Offset itself, so a baked offset would double-apply and a reset to 0
+	# could never undo an earlier slide ("offset permanently shifts the trim
+	# even at zero").
+	var recorded_offset := -float(params.get("offset", 0.0))
 	var out: PBMeshData = null
 	for path_info in paths:
 		var pts: PackedVector3Array = path_info["points"]
 		if pts.size() < 2:
 			continue
-		last_paths.append({"points": pts, "closed": path_info["closed"]})
+		var recorded := PackedVector3Array()
+		for pt in pts:
+			recorded.append(pt + Vector3(0, recorded_offset, 0))
+		last_paths.append({"points": recorded, "closed": path_info["closed"]})
 		var swept: PBMeshData = _sweep_path(pts, bool(path_info["closed"]))
 		if swept == null:
 			continue
@@ -309,10 +317,14 @@ func _sweep_path(pts: PackedVector3Array, closed: bool) -> PBMeshData:
 		int(params.get("arc_segments", 4.0)),
 		float(params.get("upside_down", 0.0)) > 0.5,
 		false)
-	var md := PBShapeTrim.extrude_profile_along_path(profile, pts, Vector3.UP, closed, true)
-	if md != null and float(params.get("smooth", 1.0)) > 0.5:
-		for f in md.faces:
-			f.smoothing_group = 1
+	var smooth_segs := PBShapeTrim.get_profile_smooth_segments(
+		int(params.get("profile", 1.0)) as PBShapeTrim.ProfileType,
+		int(params.get("arc_segments", 4.0)),
+		float(params.get("upside_down", 0.0)) > 0.5,
+		false) \
+		if float(params.get("smooth", 1.0)) > 0.5 else PackedInt32Array()
+	var md := PBShapeTrim.extrude_profile_along_path(profile, pts, Vector3.UP, closed, true, smooth_segs)
+	if md != null:
 		md.calculate_normals()
 	if md != null and md.materials.is_empty():
 		var def := PBMeshData.get_default_material()

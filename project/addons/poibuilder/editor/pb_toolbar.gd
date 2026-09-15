@@ -115,6 +115,7 @@ var _btn_new_shape: MenuButton
 var _btn_ngon: Button
 var _btn_edit_params: Button
 var _btn_trim_walls: Button
+var _sep_row4_tools: Control
 var _btn_overlay: Button
 var _btn_recover_overlay: Button
 var _btn_materials: Button
@@ -326,6 +327,7 @@ func _build_ui() -> void:
 	_make_op_button("CSG Intersect", "csg_intersect", "CSG: Solid intersection of the selected meshes (select target first, cutter last)", "icon_csg_intersect.svg")
 
 	_sep_row3_smooth = _make_sep()
+	_sep_row4_tools = _make_sep()
 	_make_op_button("Auto Smooth", "smooth_auto", "Auto-smooth faces by dihedral angle (45 deg)", "icon_auto_smooth.svg")
 	# Shapes group
 	_sep_shapes = _make_sep()
@@ -517,7 +519,7 @@ func _update_row_layout() -> void:
 	# Modes | Space | Grid | Shapes | Docks & Export
 	var grp_space: Array[Control] = [_sep_space, _btn_space]
 	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
-	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_trim_walls, _btn_ngon, _btn_edit_params]
+	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
 	var grp_docks: Array[Control] = [
 		_sep_docks, _btn_materials, _btn_uv_editor, _btn_overlay, _btn_recover_overlay,
 		_btn_settings, _sep_export, _btn_export
@@ -530,7 +532,6 @@ func _update_row_layout() -> void:
 	for c in grp_space: _row2.add_child(c)
 	for c in grp_grid: _row2.add_child(c)
 	for c in grp_shapes: _row2.add_child(c)
-	for c in grp_docks: _row2.add_child(c)
 
 	# Row 3 (Extended: Selection Suite + Auto-Smooth):
 	var grp_row3_sel: Array[Control] = [
@@ -557,9 +558,14 @@ func _update_row_layout() -> void:
 			_sep_row3_csg,
 			_op_buttons["csg_union"], _op_buttons["csg_subtract"], _op_buttons["csg_intersect"]
 		]
+		var grp_row4_tools: Array[Control] = [
+			_sep_row4_tools, _btn_trim_walls
+		]
 		for c in grp_row4_snap: _row4.add_child(c)
 		for c in grp_row4_obj: _row4.add_child(c)
 		for c in grp_row4_csg: _row4.add_child(c)
+		for c in grp_row4_tools: _row4.add_child(c)
+		for c in grp_docks: _row4.add_child(c)
 ## Total number of controls and buttons across the toolbar rows.
 func get_item_count() -> int:
 	return _row1.get_child_count() + _row2.get_child_count() + _row3.get_child_count() + (_row4.get_child_count() if _row4 != null else 0)
