@@ -48,6 +48,18 @@ const ACTIONS: Dictionary = {
 	"grid_lower":      { "label": "Grid: Lower Elevation", "keys": [[KEY_BRACKETLEFT, 0, 0, 0]] },
 	"grid_reset":      { "label": "Grid: Reset Elevation", "keys": [[KEY_BACKSLASH, 0, 0, 0]] },
 	"snap_selection":  { "label": "Snap Selection To Grid", "keys": [] },
+	# Selection actions
+	"select_all":          { "label": "Selection: Select All",         "keys": [[KEY_A, 1, 0, 0]] },
+	"invert_selection":    { "label": "Selection: Invert Selection",    "keys": [[KEY_I, 1, 0, 0]] },
+	"grow_selection":      { "label": "Selection: Grow Selection",      "keys": [[KEY_G, 0, 0, 1]] },
+	"shrink_selection":    { "label": "Selection: Shrink Selection",    "keys": [[KEY_G, 0, 1, 1]] },
+	"select_coplanar":     { "label": "Selection: Select Coplanar",     "keys": [[KEY_C, 0, 0, 1]] },
+	"select_similar":      { "label": "Selection: Select Similar",      "keys": [] },
+	"select_boundary":     { "label": "Selection: Select Boundary",     "keys": [] },
+	"select_face_loop":    { "label": "Selection: Face Loop",           "keys": [[KEY_L, 0, 0, 1]] },
+	"select_face_ring":    { "label": "Selection: Face Ring",           "keys": [[KEY_R, 0, 0, 1]] },
+	"toggle_vertex_snap":  { "label": "Snapping: Hold/Toggle Vertex Snap", "keys": [[KEY_V, 0, 0, 0]] },
+	"toggle_proportional": { "label": "Snapping: Toggle Proportional Editing", "keys": [[KEY_O, 0, 0, 0]] },
 	# Mesh operations (toolbar equivalents; extrude/inset keep ProBuilder's
 	# Alt defaults, the rest ship unbound but rebindable).
 	"op_extrude":      { "label": "Mesh Op: Extrude",         "keys": [[KEY_E, 0, 0, 1]] },
@@ -64,6 +76,18 @@ const ACTIONS: Dictionary = {
 	"op_connect":      { "label": "Mesh Op: Connect",        "keys": [] },
 	"op_collapse":     { "label": "Mesh Op: Collapse",       "keys": [] },
 	"op_fill_hole":    { "label": "Mesh Op: Fill Hole",      "keys": [] },
+	# Object operations
+	"obj_merge":            { "label": "Object: Merge Selected Objects",   "keys": [] },
+	"obj_mirror":           { "label": "Object: Mirror Across X",          "keys": [] },
+	"obj_center_pivot":     { "label": "Object: Center Pivot",             "keys": [] },
+	"obj_freeze_transform": { "label": "Object: Freeze Transform",         "keys": [] },
+	"obj_probuilderize":    { "label": "Object: Convert to PoiBuilder",    "keys": [] },
+	# CSG Booleans
+	"csg_union":            { "label": "CSG: Union Selected Objects",       "keys": [] },
+	"csg_subtract":         { "label": "CSG: Subtract From Active Object",  "keys": [] },
+	"csg_intersect":        { "label": "CSG: Intersect Selected Objects",   "keys": [] },
+	# Smoothing Groups & Normals
+	"smooth_auto":          { "label": "Normals: Auto-Smooth Mesh (45 deg)","keys": [] },
 	# Dedicated Tools
 	"tool_sprite":     { "label": "Tool: Place Billboard / Sprite", "keys": [[KEY_B, 0, 0, 0]] },
 	# Environment / Time of Day
@@ -78,6 +102,17 @@ const ACTIONS: Dictionary = {
 const OP_ACTION_TO_OPERATION: Dictionary = {
 	"op_extrude": "extrude_faces",
 	"op_inset": "inset_faces",
+	"select_all": "select_all",
+	"invert_selection": "invert_selection",
+	"grow_selection": "grow_selection",
+	"shrink_selection": "shrink_selection",
+	"select_coplanar": "select_coplanar",
+	"select_similar": "select_similar",
+	"select_boundary": "select_boundary",
+	"select_face_loop": "select_face_loop",
+	"select_face_ring": "select_face_ring",
+	"toggle_vertex_snap": "toggle_vertex_snap",
+	"toggle_proportional": "toggle_proportional",
 	"op_loop_cut": "insert_edge_loop",
 	"op_merge": "merge_faces",
 	"op_subdivide": "subdivide_faces",
@@ -90,6 +125,15 @@ const OP_ACTION_TO_OPERATION: Dictionary = {
 	"op_connect": "connect_edges",
 	"op_collapse": "collapse_elements",
 	"op_fill_hole": "fill_hole",
+	"obj_merge": "merge_objects",
+	"obj_mirror": "mirror_object",
+	"obj_center_pivot": "center_pivot",
+	"obj_freeze_transform": "freeze_transform",
+	"obj_probuilderize": "probuilderize",
+	"csg_union": "csg_union",
+	"csg_subtract": "csg_subtract",
+	"csg_intersect": "csg_intersect",
+	"smooth_auto": "smooth_auto",
 }
 
 # ==============================================================================

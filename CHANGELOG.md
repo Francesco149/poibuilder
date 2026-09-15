@@ -2841,3 +2841,38 @@ v0.9.106 round complete ✓ — fix bevel-Apply stack overflow (crash regression
   no re-entry (BEVEL-EDGE-APPLY, 17 → 21 faces). Full suite 957/957, GUI
   harness failures=0.
 - Version bump 0.9.105 -> 0.9.106.
+
+v0.9.107 round complete ✓ — feature gap implementation (Sessions 6, 7, 8, 9):
+- Session 6: Advanced Selection & Snapping Suite:
+  - Added `PBSelectionOps` (`editor/pb_selection_ops.gd`) with:
+    - Grow/shrink selection with normal angle threshold (preventing growth across sharp crease edges).
+    - Select coplanar faces (flood-fill adjacent faces on the same plane within angle tolerance).
+    - Select similar faces (matching Material slot `submesh_index`, Smoothing Group, Element Color, or Surface Area).
+    - Select boundary edges and hole loops (edges used by exactly 1 face).
+    - Face loop and face ring traversal (quad strip traversal via winged edges).
+    - Select All (`Ctrl+A`) and Invert Selection (`Ctrl+I`) integration via PBActions, toolbar, and plugin dispatcher.
+  - Precision Snapping & Proportional Editing (`editor/pb_element_editor.gd`):
+    - Hold `V` vertex snapping: snaps dragged element pivot to nearest vertex across any PBMesh in the scene.
+    - Proportional editing (Soft Selection): Smooth, Sphere, Linear, Sharp, Constant falloff curves with mouse-wheel radius adjustment while dragging.
+- Session 7: Object Tools & Pivots:
+  - Added `PBObjectOps` (`editor/pb_object_ops.gd`) with:
+    - `merge_meshes`: combines multiple PBMesh nodes into one, baking relative transforms and rebuilding weld groups.
+    - `mirror_mesh_data`: mirrors geometry across local X, Y, or Z Cartesian planes with winding reversal for outward normals.
+    - `center_pivot`: moves object pivot to bounding box center, translating vertices in local space and compensating node transform.
+    - `set_pivot_to_selection`: moves object pivot to selection centroid.
+    - `freeze_transform`: bakes node transform into vertex positions and resets transform to identity (with parity check).
+    - `probuilderize`: converts standard Godot `MeshInstance3D` / `ArrayMesh` surfaces into an editable `PBMesh`.
+- Session 8: CSG Booleans & Smoothing Groups:
+  - Added `PBCsg` (`mesh_ops/pb_csg.gd`): solid boolean engine supporting Union, Subtract, and Intersect operations between two PBMeshData operands with pre-flight watertightness validation and conversion to PBMeshData.
+  - Added `PBSmoothGroups` (`editor/pb_smooth_groups.gd`): smoothing groups 1..30 per face (0 = hard), dihedral angle auto-smoothing (`auto_smooth`), and normal preview line generation.
+- Session 9: Architectural Trims:
+  - Added `PBShapeTrim` (`shapes/pb_shape_trim.gd`): procedural architectural moulding profiles (Skirting, Cornice, Dado rail; Flat, Chamfer, Round, Cove, Ogee, Stepped) swept along 3D wall paths with mitred corners.
+  - Registered `&"trim"` in `PBShapeFactory` and `PBShapeParams`.
+- Tests: added 5 new test suites:
+  - `test_pb_selection_ops.gd` (14 tests)
+  - `test_pb_object_ops.gd` (5 tests)
+  - `test_pb_csg.gd` (4 tests)
+  - `test_pb_smooth_groups.gd` (4 tests)
+  - `test_pb_shape_trim.gd` (3 tests)
+  - Full test suite: 988/988 tests passing across 64 suites (19,971 assertions), zero errors; real-editor GUI harness `./run_gui_tests.sh` passes with 0 failures.
+- Version bump 0.9.106 -> 0.9.107.

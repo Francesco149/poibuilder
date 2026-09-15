@@ -103,6 +103,12 @@ static func get_param_defs(shape_id: StringName) -> Array:
 				_value_def("height", "Height", 0.1, 100.0, 2.0, "m"),
 				_count_def("sides", "Sides", 3, 64, 6),
 			]
+		&"trim":
+			return [
+				_value_def("length", "Length", 0.1, 100.0, 3.0, "m"),
+				_value_def("height", "Height", 0.05, 5.0, 0.2, "m"),
+				_value_def("width", "Width / Depth", 0.01, 2.0, 0.1, "m"),
+			]
 	return []
 
 ## Default value per parameter name (defaults live with the defs so the
@@ -165,6 +171,15 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 				var angle: float = float(i) * TAU / float(sides)
 				poly.append(Vector3(cos(angle) * radius, 0.0, sin(angle) * radius))
 			data = PBShapeComplex.create_ngon_prism(poly, height, Vector3.UP)
+		&"trim":
+			var l: float = float(v.get("length", 3.0))
+			var h: float = float(v.get("height", 0.2))
+			var w: float = float(v.get("width", 0.1))
+			var path := PackedVector3Array([
+				Vector3(-l * 0.5, 0.0, 0.0),
+				Vector3(l * 0.5, 0.0, 0.0)
+			])
+			data = PBShapeTrim.create_wall_trim(path, PBShapeTrim.ProfileType.CHAMFER, w, h, false)
 	if data != null:
 		data.shape_id = shape_id
 		data.shape_params = v.duplicate()

@@ -191,7 +191,7 @@ graph TD
 
 ---
 
-### Session 6: Advanced Selection & Snapping Suite
+### Session 6: Advanced Selection & Snapping Suite (Complete ✓)
 - **Goal**: Implement comprehensive selection utilities, vertex snapping, and proportional editing.
 - **Files**:
   - `editor/pb_selection_ops.gd`: Selection expansion and query algorithms.
@@ -205,7 +205,7 @@ graph TD
 
 ---
 
-### Session 7: Object Tools — Merge, Mirror, Probuilderize & Pivots
+### Session 7: Object Tools — Merge, Mirror, Probuilderize & Pivots (Complete ✓)
 - **Goal**: Implement whole-object manipulation actions.
 - **Files**:
   - `editor/pb_object_ops.gd`: Whole-object algorithms.
@@ -219,7 +219,7 @@ graph TD
 
 ---
 
-### Session 8: CSG Booleans & Smoothing Groups
+### Session 8: CSG Booleans & Smoothing Groups (Complete ✓)
 - **Goal**: Provide solid boolean modeling and normal smoothing groups.
 - **Files**:
   - `mesh_ops/pb_csg.gd`: Boolean engine (Union, Subtract, Intersect) using Godot's Manifold CSG kernel with clean n-gon reconstruction.
@@ -232,7 +232,7 @@ graph TD
 
 ---
 
-### Session 9: Architectural Trims (Trim & Trim Walls)
+### Session 9: Architectural Trims (Trim & Trim Walls) (Complete ✓)
 - **Goal**: Bring UniBuilder's room moulding and trim generation into PoiBuilder.
 - **Files**:
   - `shapes/pb_shape_trim.gd`: Procedural moulding profiles (Skirting, Cornice, Dado rail; Flat, Chamfer, Round, Cove, Ogee, Stepped).

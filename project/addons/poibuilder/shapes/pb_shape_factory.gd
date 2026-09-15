@@ -20,6 +20,7 @@ enum ShapeType {
 	ARCH,
 	SPHERE,
 	TORUS,
+	TRIM,
 }
 
 ## All valid shape type string keys, ordered to match ShapeType enum.
@@ -38,6 +39,7 @@ const TYPE_NAMES: Array[StringName] = [
 	&"sphere",
 	&"torus",
 	&"ngon",
+	&"trim",
 ]
 
 ## Returns all available shape type identifiers.
@@ -114,12 +116,19 @@ static func create_shape(id: StringName, size: Vector3 = Vector3.ONE) -> PBMeshD
 
 		&"ngon":
 			var radius: float = minf(size.x, size.z) * 0.5
+
 			var sides: int = 6
 			var poly := PackedVector3Array()
 			for i in range(sides):
 				var angle: float = float(i) * TAU / float(sides)
 				poly.append(Vector3(cos(angle) * radius, 0.0, sin(angle) * radius))
 			data = PBShapeComplex.create_ngon_prism(poly, size.y, Vector3.UP)
+		&"trim":
+			var path := PackedVector3Array([
+				Vector3(-size.x * 0.5, 0.0, 0.0),
+				Vector3(size.x * 0.5, 0.0, 0.0)
+			])
+			data = PBShapeTrim.create_wall_trim(path, PBShapeTrim.ProfileType.CHAMFER, maxf(0.05, size.z), maxf(0.1, size.y), false)
 		_:
 			push_warning("[PBShapeFactory] Unknown shape ID: %s" % id)
 			return null

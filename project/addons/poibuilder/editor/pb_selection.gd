@@ -297,8 +297,9 @@ func invert_selection(mode: PBEditor.SelectMode) -> void:
 					inverted.append(i)
 			set_faces(inverted)
 
-## Grows the selection by one ring of adjacent elements.
-func grow_selection(mode: PBEditor.SelectMode) -> void:
+## Grows the selection by one ring of adjacent elements, optionally restricted
+## by `max_angle_deg` in FACE mode.
+func grow_selection(mode: PBEditor.SelectMode, max_angle_deg: float = -1.0) -> void:
 	if mesh_data == null:
 		return
 	match mode:
@@ -307,8 +308,10 @@ func grow_selection(mode: PBEditor.SelectMode) -> void:
 		PBEditor.SelectMode.EDGE:
 			_grow_edge_selection()
 		PBEditor.SelectMode.FACE:
-			_grow_face_selection()
-
+			if max_angle_deg >= 0.0:
+				set_faces(PBSelectionOps.grow_faces_with_angle(mesh_data, selected_faces, max_angle_deg))
+			else:
+				_grow_face_selection()
 ## Shrinks the selection by removing boundary elements.
 func shrink_selection(mode: PBEditor.SelectMode) -> void:
 	if mesh_data == null:
@@ -531,6 +534,63 @@ func _shrink_face_selection() -> void:
 		if not boundary_faces.has(fi):
 			shrunk.append(fi)
 	set_faces(shrunk)
+
+# ==============================================================================
+# Advanced Selection Operations
+# ==============================================================================
+
+## Selects all coplanar adjacent faces starting from the current face selection.
+func select_coplanar(normal_threshold_deg: float = 1.0) -> void:
+	if mesh_data == null or selected_faces.is_empty():
+		return
+	set_faces(PBSelectionOps.select_coplanar_faces(mesh_data, selected_faces, normal_threshold_deg))
+
+## Selects all faces matching the given criteria with the current selection.
+## criteria: "material", "smoothing_group", "color", "area"
+func select_similar(criteria: String = "material") -> void:
+	if mesh_data == null or selected_faces.is_empty():
+		return
+	set_faces(PBSelectionOps.select_similar_faces(mesh_data, selected_faces, criteria))
+
+## Selects all open boundary edges on the mesh.
+func select_boundary_edges() -> void:
+	if mesh_data == null:
+		return
+	set_edges(PBSelectionOps.select_boundary_edges(mesh_data))
+
+## Selects quad strip face loop (or ring) starting from the current face selection.
+func select_face_loop(ring: bool = false) -> void:
+	if mesh_data == null or selected_faces.is_empty():
+		return
+	set_faces(PBSelectionOps.get_face_loop(mesh_data, selected_faces, ring))
+
+## Returns the current selection IDs packed for the given select mode.
+func get_selected_ids(mode: PBEditor.SelectMode) -> PackedInt32Array:
+	var ids := PackedInt32Array()
+	if mesh_data == null:
+		return ids
+	match mode:
+		PBEditor.SelectMode.VERTEX:
+			return selected_vertices.duplicate()
+		PBEditor.SelectMode.EDGE:
+			var common := mesh_data.get_common_edges()
+			var lookup := mesh_data.get_shared_vertex_lookup()
+			var common_map := {}
+			for i in range(common.size()):
+				var ce := common[i]
+				common_map[Vector2i(mini(ce.a, ce.b), maxi(ce.a, ce.b))] = i
+			for edge in selected_edges:
+				var ca: int = lookup.get(edge.a, -1)
+				var cb: int = lookup.get(edge.b, -1)
+				var key := Vector2i(mini(ca, cb), maxi(ca, cb))
+				if common_map.has(key):
+					var cid: int = common_map[key]
+					if not ids.has(cid):
+						ids.append(cid)
+			return ids
+		PBEditor.SelectMode.FACE, PBEditor.SelectMode.TEXTURE:
+			return selected_faces.duplicate()
+	return ids
 
 # ==============================================================================
 # Mode Conversion (ProBuilder parity: switching modes converts the selection)

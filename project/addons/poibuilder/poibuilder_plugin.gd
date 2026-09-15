@@ -78,7 +78,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.106"
+const VERSION := "0.9.107"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -492,6 +492,28 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
+	# Track holding V key for live vertex snapping during element drags
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		var code := k.physical_keycode if k.physical_keycode != KEY_NONE else k.keycode
+		if code == KEY_V and not k.ctrl_pressed and not k.alt_pressed and not k.meta_pressed:
+			gizmo_plugin.element_editor.vertex_snap_held = k.pressed
+
+	# Adjust proportional editing radius via mouse wheel while dragging
+	if event is InputEventMouseButton and gizmo_plugin.element_editor.drag_active \
+			and gizmo_plugin.element_editor.proportional_enabled:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			gizmo_plugin.element_editor.proportional_radius = minf(50.0, gizmo_plugin.element_editor.proportional_radius * 1.15 + 0.05)
+			if logger:
+				logger.info("tools", "Proportional radius: %.2f" % gizmo_plugin.element_editor.proportional_radius)
+			return AFTER_GUI_INPUT_STOP
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			gizmo_plugin.element_editor.proportional_radius = maxf(0.05, gizmo_plugin.element_editor.proportional_radius * 0.85 - 0.02)
+			if logger:
+				logger.info("tools", "Proportional radius: %.2f" % gizmo_plugin.element_editor.proportional_radius)
+			return AFTER_GUI_INPUT_STOP
+
 
 	# Remember press positions: a following selection change (clicking another
 	# object) auto-picks the element under this exact position.
@@ -566,6 +588,52 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			if not editing:
 				return AFTER_GUI_INPUT_PASS
 			_on_snap_selection_to_grid()
+		&"select_all":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_all()
+		&"invert_selection":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_invert_selection()
+		&"grow_selection":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_grow_selection()
+		&"shrink_selection":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_shrink_selection()
+		&"select_coplanar":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_coplanar()
+		&"select_similar":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_similar()
+		&"select_boundary":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_boundary()
+		&"select_face_loop":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_face_loop(false)
+		&"select_face_ring":
+			if not editing or editor.active_mesh == null:
+				return AFTER_GUI_INPUT_PASS
+			_perform_select_face_loop(true)
+		&"toggle_vertex_snap":
+			gizmo_plugin.element_editor.vertex_snap_enabled = not gizmo_plugin.element_editor.vertex_snap_enabled
+			if logger:
+				logger.info("tools", "Vertex Snap %s" % ["ON" if gizmo_plugin.element_editor.vertex_snap_enabled else "OFF"])
+		&"toggle_proportional":
+			gizmo_plugin.element_editor.proportional_enabled = not gizmo_plugin.element_editor.proportional_enabled
+			if logger:
+				logger.info("tools", "Proportional Editing %s (radius=%.2f)" % [
+					"ON" if gizmo_plugin.element_editor.proportional_enabled else "OFF",
+					gizmo_plugin.element_editor.proportional_radius])
 		&"env_dawn":
 			_on_env_preset_requested("dawn")
 		&"env_day":
@@ -1499,6 +1567,67 @@ func _on_operation_requested(op_name: String) -> void:
 		_start_knife_tool()
 		return
 
+	if op_name == "select_all":
+		_perform_select_all()
+		return
+	if op_name == "invert_selection":
+		_perform_invert_selection()
+		return
+	if op_name == "grow_selection":
+		_perform_grow_selection()
+		return
+	if op_name == "shrink_selection":
+		_perform_shrink_selection()
+		return
+	if op_name == "select_coplanar":
+		_perform_select_coplanar()
+		return
+	if op_name == "select_similar":
+		_perform_select_similar()
+		return
+	if op_name == "select_boundary":
+		_perform_select_boundary()
+		return
+	if op_name == "select_face_loop":
+		_perform_select_face_loop(false)
+		return
+	if op_name == "select_face_ring":
+		_perform_select_face_loop(true)
+		return
+	if op_name == "toggle_vertex_snap":
+		gizmo_plugin.element_editor.vertex_snap_enabled = not gizmo_plugin.element_editor.vertex_snap_enabled
+		return
+	if op_name == "toggle_proportional":
+		gizmo_plugin.element_editor.proportional_enabled = not gizmo_plugin.element_editor.proportional_enabled
+		return
+	if op_name == "merge_objects":
+		_perform_merge_objects()
+		return
+	if op_name == "mirror_object":
+		_perform_mirror_object()
+		return
+	if op_name == "center_pivot":
+		_perform_center_pivot()
+		return
+	if op_name == "freeze_transform":
+		_perform_freeze_transform()
+		return
+	if op_name == "probuilderize":
+		_perform_probuilderize()
+		return
+	if op_name == "csg_union":
+		_perform_csg_boolean(PBCsg.BooleanOp.UNION)
+		return
+	if op_name == "csg_subtract":
+		_perform_csg_boolean(PBCsg.BooleanOp.SUBTRACT)
+		return
+	if op_name == "csg_intersect":
+		_perform_csg_boolean(PBCsg.BooleanOp.INTERSECT)
+		return
+	if op_name == "smooth_auto":
+		_perform_auto_smooth()
+		return
+
 
 	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
 	if logger:
@@ -1683,6 +1812,7 @@ const OP_ACTION_NAMES := {
 	"detach_faces": "Detach Faces",
 	"extrude_edges": "Extrude Edges",
 	"insert_edge_loop": "Insert Edge Loop",
+
 	"weld_vertices": "Weld Vertices",
 	"knife_tool": "Knife Cut",
 	"bevel_edges": "Bevel Edges",
@@ -1692,6 +1822,208 @@ const OP_ACTION_NAMES := {
 	"collapse_elements": "Collapse",
 	"fill_hole": "Fill Hole",
 }
+func _perform_select_all() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var ids := PBSelectionOps.get_all_ids(mesh.pb_mesh_data, editor.select_mode)
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_invert_selection() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var cur_ids := editor.selection.get_selected_ids(editor.select_mode)
+	var inv_ids := PBSelectionOps.get_inverted_ids(mesh.pb_mesh_data, cur_ids, editor.select_mode)
+	if inv_ids.is_empty():
+		editor.selection.clear_all()
+		var gizmo := gizmo_plugin.gizmo_for_node(mesh)
+		if gizmo != null:
+			mesh.clear_subgizmo_selection()
+	else:
+		_apply_selection_set(mesh, inv_ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_grow_selection() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	editor.selection.grow_selection(editor.select_mode)
+	var ids := editor.selection.get_selected_ids(editor.select_mode)
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_shrink_selection() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	editor.selection.shrink_selection(editor.select_mode)
+	var ids := editor.selection.get_selected_ids(editor.select_mode)
+	if ids.is_empty():
+		editor.selection.clear_all()
+		var gizmo := gizmo_plugin.gizmo_for_node(mesh)
+		if gizmo != null:
+			mesh.clear_subgizmo_selection()
+	else:
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_select_coplanar() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null or editor.select_mode != PBEditor.SelectMode.FACE:
+		return
+	editor.selection.select_coplanar()
+	var ids := editor.selection.selected_faces.duplicate()
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_select_similar(criteria: String = "material") -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null or editor.select_mode != PBEditor.SelectMode.FACE:
+		return
+	editor.selection.select_similar(criteria)
+	var ids := editor.selection.selected_faces.duplicate()
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_select_boundary() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	editor.select_mode = PBEditor.SelectMode.EDGE
+	var ids := PBSelectionOps.select_boundary_edge_ids(mesh.pb_mesh_data)
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+
+func _perform_select_face_loop(ring: bool = false) -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null or editor.select_mode != PBEditor.SelectMode.FACE:
+		return
+	editor.selection.select_face_loop(ring)
+	var ids := editor.selection.selected_faces.duplicate()
+	if not ids.is_empty():
+		_apply_selection_set(mesh, ids, PackedInt32Array())
+	mesh.update_gizmos()
+func _perform_merge_objects() -> void:
+	var ei := get_editor_interface()
+	var selected_nodes: Array[Node] = []
+	if ei != null and ei.get_selection() != null:
+		selected_nodes = ei.get_selection().get_selected_nodes()
+	var pb_meshes: Array[PBMesh] = []
+	for n in selected_nodes:
+		if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
+			pb_meshes.append(n as PBMesh)
+	if pb_meshes.size() < 2:
+		if logger:
+			logger.warn("plugin", "Merge Objects requires at least 2 selected PBMesh nodes")
+		return
+	var target := pb_meshes[0]
+	var donors: Array[PBMesh] = []
+	for i in range(1, pb_meshes.size()):
+		donors.append(pb_meshes[i])
+	var success := PBObjectOps.merge_meshes(target, donors)
+	if success:
+		for d in donors:
+			if d.get_parent() != null:
+				d.get_parent().remove_child(d)
+		if logger:
+			logger.info("plugin", "Merged %d objects into %s" % [donors.size(), target.name])
+
+func _perform_mirror_object() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var success := PBObjectOps.mirror_mesh_data(mesh.pb_mesh_data, Vector3.AXIS_X)
+	if success:
+		mesh.rebuild()
+		mesh.update_gizmos()
+		if logger:
+			logger.info("plugin", "Mirrored %s across X" % mesh.name)
+
+func _perform_center_pivot() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var success := PBObjectOps.center_pivot(mesh)
+	if success:
+		mesh.update_gizmos()
+		if logger:
+			logger.info("plugin", "Centered pivot of %s" % mesh.name)
+
+func _perform_freeze_transform() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var success := PBObjectOps.freeze_transform(mesh)
+	if success:
+		mesh.update_gizmos()
+		if logger:
+			logger.info("plugin", "Froze transform of %s" % mesh.name)
+
+func _perform_probuilderize() -> void:
+	var ei := get_editor_interface()
+	var selected_nodes: Array[Node] = []
+	if ei != null and ei.get_selection() != null:
+		selected_nodes = ei.get_selection().get_selected_nodes()
+	var converted_count := 0
+	for n in selected_nodes:
+		if n is MeshInstance3D and not (n is PBMesh):
+			var pb := PBObjectOps.probuilderize(n as MeshInstance3D)
+			if pb != null:
+				var parent := n.get_parent()
+				if parent != null:
+					parent.add_child(pb)
+					pb.owner = n.owner if n.owner != null else parent
+					converted_count += 1
+	if logger:
+		logger.info("plugin", "Probuilderized %d MeshInstance3D nodes" % converted_count)
+
+func _perform_csg_boolean(op: PBCsg.BooleanOp) -> void:
+	var ei := get_editor_interface()
+	var selected_nodes: Array[Node] = []
+	if ei != null and ei.get_selection() != null:
+		selected_nodes = ei.get_selection().get_selected_nodes()
+	var pb_meshes: Array[PBMesh] = []
+	for n in selected_nodes:
+		if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
+			pb_meshes.append(n as PBMesh)
+	if pb_meshes.size() < 2:
+		if logger:
+			logger.warn("plugin", "CSG Booleans require at least 2 selected PBMesh nodes")
+		return
+	var mesh_a: PBMesh = pb_meshes[0]
+	var mesh_b: PBMesh = pb_meshes[1]
+	var a_xf: Transform3D = mesh_a.global_transform if mesh_a.is_inside_tree() else mesh_a.transform
+	var b_xf: Transform3D = mesh_b.global_transform if mesh_b.is_inside_tree() else mesh_b.transform
+	var rel_xf := a_xf.affine_inverse() * b_xf
+	var res := PBCsg.perform_boolean(mesh_a.pb_mesh_data, mesh_b.pb_mesh_data, op, rel_xf, get_tree())
+	if not res.get("success", false):
+		if logger:
+			logger.error("plugin", "CSG Error: %s" % res.get("error", "Unknown error"))
+		return
+	mesh_a.pb_mesh_data = res["mesh_data"]
+	mesh_a.rebuild()
+	mesh_a.update_gizmos()
+	if mesh_b.get_parent() != null:
+		mesh_b.get_parent().remove_child(mesh_b)
+	if logger:
+		logger.info("plugin", "CSG Boolean committed successfully")
+
+func _perform_auto_smooth() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var count := PBSmoothGroups.auto_smooth(mesh.pb_mesh_data, 45.0)
+	mesh.rebuild()
+	mesh.update_gizmos()
+	if logger:
+		logger.info("plugin", "Auto-smoothed %s: created %d smoothing groups" % [mesh.name, count])
 
 # ==============================================================================
 # Shape Creation (drag base → height → params, ProBuilder-style)
@@ -1737,6 +2069,7 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	# Arming is a PoiBuilder context change too: the engine grid hides and
 	# the elevated PB grid shows while drawing (engine-bridge a no-op).
 	_update_editing_context()
+
 	if shape_id == &"sprite":
 		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
 			% String(shape_id).capitalize())

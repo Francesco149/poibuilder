@@ -224,10 +224,10 @@ unparseable test scripts and still reports green.
 
 ## Current Status
 
-- Current version: **v0.9.105** (core phases 0–7 and sign-off rounds complete).
-- All headless tests passing (`./run_tests.sh`; 957 tests, 19.6k+ assertions
-  across 59 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`).
-- Architecture: native subgizmos, orientation space (Element/Object/World, X key), mesh ops (extrude, inset, loop cut, weld, detach, bevel, bridge, connect, collapse, fill hole), MODE-SWITCH SELECTION CONVERSION (face→verts etc.; see `.pi/orientation/selection.md`), UV/material editor, retro PSP hardware exporter.
+- Current version: **v0.9.107** (core phases 0–7, feature gap sessions 1–9 complete).
+- All headless tests passing (`./run_tests.sh`; 988 tests, 19.9k+ assertions
+  across 64 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`, 0 failures).
+- Architecture: native subgizmos, orientation space (Element/Object/World, X key), mesh ops (extrude, inset, loop cut, weld, detach, bevel, bridge, connect, collapse, fill hole), advanced selection (coplanar, similar, boundary, face loop/ring), precision snapping (Hold V vertex snap, proportional editing), object tools (merge, mirror, pivot tools, probuilderize), CSG booleans (union, subtract, intersect), smoothing groups & auto-smooth, architectural moulding/trims, UV/material editor, retro PSP hardware exporter.
 - Full historical development log and version-by-version notes are archived in [CHANGELOG.md](CHANGELOG.md).
 
 

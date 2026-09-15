@@ -48,6 +48,82 @@ signal element_drag_updated(active: bool, translation: Vector3, rotation_deg: Ve
 signal drag_topology_committed(node: PBMesh)
 
 # ==============================================================================
+# Snapping & Proportional Editing Definitions
+# ==============================================================================
+
+enum ProportionalFalloff {
+	SMOOTH,
+	SPHERE,
+	LINEAR,
+	SHARP,
+	CONSTANT,
+}
+
+## Hold V vertex snapping state
+var vertex_snap_enabled: bool = false
+var vertex_snap_held: bool = false
+
+## Proportional editing (soft selection) state
+var proportional_enabled: bool = false
+var proportional_radius: float = 2.0
+var proportional_falloff: ProportionalFalloff = ProportionalFalloff.SMOOTH
+
+## Computes the soft selection weight for a given distance and radius.
+static func calculate_proportional_weight(distance: float, radius: float,
+		falloff: ProportionalFalloff = ProportionalFalloff.SMOOTH) -> float:
+	if radius <= 0.0001 or distance > radius:
+		return 0.0
+	var t: float = clampf(distance / radius, 0.0, 1.0)
+	match falloff:
+		ProportionalFalloff.SMOOTH:
+			var inv := 1.0 - t
+			return inv * inv * (3.0 - 2.0 * inv)
+		ProportionalFalloff.SPHERE:
+			return sqrt(maxf(0.0, 1.0 - t * t))
+		ProportionalFalloff.LINEAR:
+			return 1.0 - t
+		ProportionalFalloff.SHARP:
+			var inv := 1.0 - t
+			return inv * inv
+		ProportionalFalloff.CONSTANT:
+			return 1.0
+	return 0.0
+
+## Finds the nearest vertex position in world space across all PBMesh nodes.
+func _find_nearest_scene_vertex(node: PBMesh, target_world: Vector3, max_dist: float = INF) -> Vector3:
+	var best_pos := target_world
+	var best_dist := max_dist
+	var meshes: Array[PBMesh] = []
+	var scene_root: Node = null
+	if node != null and node.is_inside_tree() and node.get_tree() != null:
+		scene_root = node.get_tree().current_scene
+	if scene_root != null:
+		var stack: Array[Node] = [scene_root]
+		while not stack.is_empty():
+			var n: Node = stack.pop_back()
+			if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
+				meshes.append(n as PBMesh)
+			for child in n.get_children():
+				stack.append(child)
+	elif node != null:
+		meshes = [node]
+	for m in meshes:
+		var xf := m.global_transform if m.is_inside_tree() else m.transform
+		var md: PBMeshData = m.pb_mesh_data
+		if md == null:
+			continue
+		var is_self := (m == node)
+		for idx in range(md.positions.size()):
+			if is_self and _drag_union.has(idx):
+				continue
+			var v_world := xf * md.positions[idx]
+			var d := target_world.distance_to(v_world)
+			if d < best_dist:
+				best_dist = d
+				best_pos = v_world
+	return best_pos
+
+# ==============================================================================
 # Drag gestures (tool + modifier keys decide how a drag applies)
 # ==============================================================================
 
@@ -1470,6 +1546,18 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 				for idx in union:
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = _drag_original_positions[idx] + motion
+				if proportional_enabled and proportional_radius > 0.001 and _drag_start_xf.has(_drag_latest_id):
+					var pivot_pos: Vector3 = _drag_start_xf[_drag_latest_id].origin
+					var union_set: Dictionary = {}
+					for idx in union:
+						union_set[idx] = true
+					for i in range(pos_count):
+						if not union_set.has(i):
+							var d: float = pivot_pos.distance_to(_drag_original_positions[i])
+							if d <= proportional_radius:
+								var w := calculate_proportional_weight(d, proportional_radius, proportional_falloff)
+								if w > 0.0:
+									new_positions[i] = _drag_original_positions[i] + motion * w
 				if logger != null and PBLogger.verbose:
 					logger.debug("drag", "apply %s: rel_origin=%s motion=%s union=%d mouse_driven=%s" % [
 						DragGesture.keys()[_drag_gesture], str(rel.origin), str(motion),
@@ -1495,6 +1583,20 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 					if idx >= 0 and idx < pos_count:
 						new_positions[idx] = applied_rel * _drag_original_positions[idx]
 				_emit_drag_update(true, applied_rel.origin, _rel_rotation_deg(applied_rel), applied_rel.basis.get_scale())
+				if proportional_enabled and proportional_radius > 0.001 and _drag_start_xf.has(_drag_latest_id):
+					var pivot_pos: Vector3 = _drag_start_xf[_drag_latest_id].origin
+					var union_set: Dictionary = {}
+					for idx in union:
+						union_set[idx] = true
+					for i in range(pos_count):
+						if not union_set.has(i):
+							var d: float = pivot_pos.distance_to(_drag_original_positions[i])
+							if d <= proportional_radius:
+								var w := calculate_proportional_weight(d, proportional_radius, proportional_falloff)
+								if w > 0.0:
+									var orig := _drag_original_positions[i]
+									var target := applied_rel * orig
+									new_positions[i] = orig.lerp(target, w)
 
 	mesh_data.positions = new_positions
 
@@ -1507,7 +1609,10 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 	# (index pairs/groups), and only the drag union's normals change —
 	# incremental updates keep the per-motion cost flat instead of
 	# rebuilding every normal on each mouse move.
-	mesh_data.update_normals_for(union)
+	if proportional_enabled:
+		mesh_data.calculate_normals()
+	else:
+		mesh_data.update_normals_for(union)
 	node.rebuild_positions()
 	return true
 
@@ -1550,6 +1655,13 @@ func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
 ## Even if an element starts with an off-grid position (fractional dimensions or
 ## centered geometry), dragging it snaps the landing position directly onto the grid ticks.
 func _snap_move_motion(node: PBMesh, motion: Vector3) -> Vector3:
+	if (vertex_snap_held or vertex_snap_enabled) and _drag_start_xf.has(_drag_latest_id):
+		var xf := node.global_transform if node.is_inside_tree() else node.transform
+		var start_pivot_world: Vector3 = xf * _drag_start_xf[_drag_latest_id].origin
+		var target_pivot_world := start_pivot_world + (xf.basis * motion)
+		var snapped_world := _find_nearest_scene_vertex(node, target_pivot_world)
+		return xf.basis.inverse() * (snapped_world - start_pivot_world)
+
 	if grid == null or not grid.enabled or node == null:
 		return motion
 	if not _drag_start_xf.has(_drag_latest_id):
@@ -1840,6 +1952,10 @@ func commit_subgizmos(node: PBMesh, ids: PackedInt32Array, cancel: bool) -> bool
 				seen[idx] = true
 				union.append(idx)
 
+	for idx in range(mesh_data.positions.size()):
+		if not seen.has(idx) and not mesh_data.positions[idx].is_equal_approx(_drag_original_positions[idx]):
+			seen[idx] = true
+			union.append(idx)
 	var before := PackedVector3Array()
 	var after := PackedVector3Array()
 	for idx in union:

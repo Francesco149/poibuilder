@@ -5,7 +5,7 @@ extends GutTest
 func test_shape_ids_not_empty():
 	var ids := PBShapeFactory.get_shape_ids()
 	assert_gt(ids.size(), 0, "Must have at least one shape")
-	assert_eq(ids.size(), 14, "Factory exposes 14 shape types")
+	assert_eq(ids.size(), 15, "Factory exposes 15 shape types")
 
 func test_shape_ids_unique():
 	var ids := PBShapeFactory.get_shape_ids()
@@ -18,7 +18,7 @@ func test_shape_ids_contain_all_types():
 	var ids := PBShapeFactory.get_shape_ids()
 	for expected in [&"cube", &"prism", &"plane", &"sprite",
 		&"cylinder", &"cone", &"pipe",
-		&"sphere", &"torus", &"arch", &"stair", &"curved_stair", &"door", &"ngon"]:
+		&"sphere", &"torus", &"arch", &"stair", &"curved_stair", &"door", &"ngon", &"trim"]:
 		assert_true(ids.has(expected), "Missing shape: %s" % expected)
 
 # = is_valid_shape =
@@ -151,6 +151,12 @@ func test_all_shapes_produce_valid_normals():
 		var normals := md.calculate_normals()
 		assert_eq(normals.size(), md.vertex_count(),
 			"Shape %s has %d normals for %d verts" % [id, normals.size(), md.vertex_count()])
+
 		for i in range(normals.size()):
 			assert_almost_eq(normals[i].length(), 1.0, 0.01,
 				"Shape %s normal[%d] is unit" % [id, i])
+func test_create_trim():
+	var md := PBShapeFactory.create_shape(&"trim")
+	assert_not_null(md)
+	assert_eq(md.validate(), "")
+	assert_gt(md.face_count(), 0)
