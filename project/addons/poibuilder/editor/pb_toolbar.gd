@@ -319,9 +319,9 @@ func _build_ui() -> void:
 	_op_buttons["probuilderize"] = p_btn
 
 	_sep_row3_csg = _make_sep()
-	_make_op_button("CSG Union", "csg_union", "CSG: Solid union of selected meshes", "icon_csg_union.svg")
-	_make_op_button("CSG Subtract", "csg_subtract", "CSG: Subtract secondary mesh from active mesh", "icon_csg_subtract.svg")
-	_make_op_button("CSG Intersect", "csg_intersect", "CSG: Solid intersection of selected meshes", "icon_csg_intersect.svg")
+	_make_op_button("CSG Union", "csg_union", "CSG: Solid union of the selected meshes (select target first, cutter last)", "icon_csg_union.svg")
+	_make_op_button("CSG Subtract", "csg_subtract", "CSG: Subtract the LAST-selected mesh from the FIRST-selected mesh", "icon_csg_subtract.svg")
+	_make_op_button("CSG Intersect", "csg_intersect", "CSG: Solid intersection of the selected meshes (select target first, cutter last)", "icon_csg_intersect.svg")
 
 	_sep_row3_smooth = _make_sep()
 	_make_op_button("Auto Smooth", "smooth_auto", "Auto-smooth faces by dihedral angle (45 deg)", "icon_auto_smooth.svg")
@@ -733,12 +733,14 @@ func _on_selection_info_changed(_arg = null) -> void:
 	if _op_buttons.has("probuilderize"):
 		_op_buttons["probuilderize"].disabled = false
 
+	# CSG booleans are object-level ops on the scene selection (PBMesh,
+	# MeshInstance3D, or CSG nodes) — they never need an active element edit.
 	if _op_buttons.has("csg_union"):
-		_op_buttons["csg_union"].disabled = not has_mesh
+		_op_buttons["csg_union"].disabled = false
 	if _op_buttons.has("csg_subtract"):
-		_op_buttons["csg_subtract"].disabled = not has_mesh
+		_op_buttons["csg_subtract"].disabled = false
 	if _op_buttons.has("csg_intersect"):
-		_op_buttons["csg_intersect"].disabled = not has_mesh
+		_op_buttons["csg_intersect"].disabled = false
 	if _op_buttons.has("smooth_auto"):
 		_op_buttons["smooth_auto"].disabled = not has_mesh
 	_btn_edit_params.disabled = not _active_mesh_editable()

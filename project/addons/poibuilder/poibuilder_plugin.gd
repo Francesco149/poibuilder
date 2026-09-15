@@ -1579,6 +1579,22 @@ func _edge_ids_for_op(mesh_data: PBMeshData) -> PackedInt32Array:
 ## goes through full-mesh snapshots (CmdMeshOp) — ops rewrite topology, so
 ## per-index payloads don't apply.
 func _on_operation_requested(op_name: String) -> void:
+	# Object-level ops act on the SCENE selection (plain MeshInstance3D /
+	# CSGShape3D nodes, or several PBMeshes at once) — they must run even when
+	# nothing is being element-edited: poibuilderizing a raw GLB mesh happens
+	# exactly when NO PBMesh is active, so these sit BEFORE the editing gate.
+	if op_name == "poibuilderize" or op_name == "probuilderize":
+		_perform_poibuilderize()
+		return
+	if op_name == "csg_union":
+		_perform_csg_boolean(PBCsg.BooleanOp.UNION)
+		return
+	if op_name == "csg_subtract":
+		_perform_csg_boolean(PBCsg.BooleanOp.SUBTRACT)
+		return
+	if op_name == "csg_intersect":
+		_perform_csg_boolean(PBCsg.BooleanOp.INTERSECT)
+		return
 	if not editor.is_editing() or editor.active_mesh == null:
 		return
 	# Extrude is ONE action: face mode extrudes faces, edge mode extrudes
@@ -1645,18 +1661,6 @@ func _on_operation_requested(op_name: String) -> void:
 		return
 	if op_name == "freeze_transform":
 		_perform_freeze_transform()
-		return
-	if op_name == "poibuilderize" or op_name == "probuilderize":
-		_perform_poibuilderize()
-		return
-	if op_name == "csg_union":
-		_perform_csg_boolean(PBCsg.BooleanOp.UNION)
-		return
-	if op_name == "csg_subtract":
-		_perform_csg_boolean(PBCsg.BooleanOp.SUBTRACT)
-		return
-	if op_name == "csg_intersect":
-		_perform_csg_boolean(PBCsg.BooleanOp.INTERSECT)
 		return
 	if op_name == "smooth_auto":
 		_perform_auto_smooth()
@@ -2036,7 +2040,11 @@ func _perform_poibuilderize() -> void:
 
 	var undo_mgr := get_undo_redo()
 	if undo_mgr != null:
-		undo_mgr.create_action("Poibuilderize Meshes")
+		# Scene-history context (see the CSG action above): scene_root is
+		# always in the edited scene; a context-less action would land in the
+		# GLOBAL history and interleave with the engine's own scene actions.
+		undo_mgr.create_action("Poibuilderize Meshes", UndoRedo.MERGE_DISABLE,
+			scene_root if scene_root != null else candidates[0])
 
 	var created_nodes: Array[PBMesh] = []
 	for n in candidates:
@@ -2095,14 +2103,18 @@ func _perform_csg_boolean(op: PBCsg.BooleanOp) -> void:
 			logger.warn("plugin", "CSG Booleans require 2 selected objects (Target and Cutter). Select both with Shift/Ctrl.")
 		return
 
+	# The SELECTION ORDER decides the operands — there is no hidden "active
+	# mesh" when several nodes are selected: the FIRST-selected node is the
+	# target, the LAST-selected node (the one you Shift/Ctrl-clicked last) is
+	# the cutter. Select target first, then add the cutter.
 	var target_node: Node = candidates[0]
-	var cutter_node: Node = candidates[1]
-	if editor.active_mesh != null and editor.active_mesh in candidates:
-		target_node = editor.active_mesh
-		for c in candidates:
-			if c != target_node:
-				cutter_node = c
-				break
+	var cutter_node: Node = candidates[candidates.size() - 1]
+	if target_node == cutter_node:
+		if logger:
+			logger.warn("plugin", "CSG Booleans require 2 different objects (target first, cutter last).")
+		return
+	if logger:
+		logger.info("plugin", "CSG target: %s   cutter: %s" % [target_node.name, cutter_node.name])
 
 	var target_mesh: PBMesh = null
 	if target_node is PBMesh:
@@ -2152,14 +2164,36 @@ func _perform_csg_boolean(op: PBCsg.BooleanOp) -> void:
 	var op_name_str: String = ["Union", "Intersect", "Subtract"][op]
 	var undo_mgr := get_undo_redo()
 	if undo_mgr != null:
-		undo_mgr.create_action("CSG %s" % op_name_str)
+		# The context object routes this action into the SCENE undo history.
+		# Without it the action lands in the GLOBAL history, interleaves with
+		# the engine's own scene actions (Translate etc.), and produces
+		# "UndoRedo history mismatch" plus resync undos that detached the
+		# restored cutter all over again.
+		undo_mgr.create_action("CSG %s" % op_name_str, UndoRedo.MERGE_DISABLE, target_node)
 		undo_mgr.add_do_method(self, "_restore_csg_mesh", target_mesh, after_data)
 		undo_mgr.add_undo_method(self, "_restore_csg_mesh", target_mesh, before_data)
 		var cutter_parent := cutter_node.get_parent()
 		if cutter_parent != null:
-			undo_mgr.add_do_method(cutter_parent, "remove_child", cutter_node)
-			undo_mgr.add_undo_method(cutter_parent, "add_child", cutter_node)
+			# The cutter swap follows the engine's own "Remove Node(s)"
+			# convention (scene_tree_dock.cpp): a node REMOVED by the do gets
+			# an UNDO reference — the detached cutter is freed only if the
+			# action falls off the history tail, in its detached state. A DO
+			# reference here was a crash: discard_redo() (the very next
+			# commit after an undo) deletes do-referenced objects, so it
+			# memdeleted the re-attached cutter under the editor — "invalid
+			# callable" in add_do_method, then SIGSEGV.
+			undo_mgr.add_undo_reference(cutter_node)
+			undo_mgr.add_do_method(self, "_detach_node", cutter_node)
+			undo_mgr.add_undo_method(self, "_reattach_csg_cutter", cutter_node, cutter_parent)
 		undo_mgr.commit_action()
+		# The cutter may have been the editor selection — a dangling selection
+		# on a detached node breaks viewport picking until the next change.
+		if ei != null and ei.get_selection() != null:
+			var sel := ei.get_selection()
+			sel.clear()
+			if target_mesh.is_inside_tree():
+				sel.add_node(target_mesh)
+		editor.active_mesh = target_mesh
 	else:
 		target_mesh.pb_mesh_data = after_data
 		target_mesh.rebuild()
@@ -2169,6 +2203,21 @@ func _perform_csg_boolean(op: PBCsg.BooleanOp) -> void:
 
 	if logger:
 		logger.info("plugin", "CSG %s committed successfully onto %s" % [op_name_str, target_mesh.name])
+
+## Undo half of a CSG boolean: back into the tree, ownership restored to the
+## edited scene, gizmo re-requested (a node whose gizmos were torn down on
+## detach still renders — but no longer picks or draws its outline — until
+## this runs).
+func _reattach_csg_cutter(node: Node, parent: Node) -> void:
+	if node == null or not is_instance_valid(node) \
+			or parent == null or not is_instance_valid(parent):
+		return
+	if node.get_parent() == parent:
+		return
+	parent.add_child(node)
+	node.owner = get_editor_interface().get_edited_scene_root()
+	if node is Node3D:
+		(node as Node3D).update_gizmos()
 
 func _restore_csg_mesh(mesh: PBMesh, data: PBMeshData) -> void:
 	if mesh != null and is_instance_valid(mesh):

@@ -392,7 +392,9 @@ static func poibuilderize_csg(csg_node: CSGShape3D) -> PBMesh:
 	dummy.name = csg_node.name
 	dummy.transform = csg_node.transform
 	dummy.mesh = baked
-	if csg_node.material != null:
+	# CSGCombiner3D has no `material` property (only the primitive CSG nodes
+	# do) — probe before touching it or combining a combiner errors out.
+	if "material" in csg_node and csg_node.material != null:
 		dummy.material_override = csg_node.material
 	var res := poibuilderize(dummy)
 	dummy.free()
