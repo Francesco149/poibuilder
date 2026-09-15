@@ -443,8 +443,10 @@ func _handles(object: Object) -> bool:
 func _edit(object: Object) -> void:
 	if object is PBMesh:
 		editor.active_mesh = object as PBMesh
-	else:
-		editor.active_mesh = null
+	# A non-PBMesh primary (mixed selection, plain GLB mesh) does NOT clear the
+	# active mesh here — _on_selection_changed owns that decision and runs after
+	# this (the engine's selection_changed signal is deferred), so clearing
+	# would only race the authoritative update.
 
 func _make_visible(visible: bool) -> void:
 	if not visible:
@@ -787,10 +789,24 @@ func _on_selection_changed() -> void:
 	for node in nodes:
 		if node is PBMesh:
 			pb_mesh = node as PBMesh
-			break
+	# The LAST PBMesh in the list wins: get_selected_nodes() is in click order,
+	# so this is the node the user clicked most recently — the same "primary"
+	# object the engine hands _edit(). (Taking the first used to make a
+	# two-mesh selection edit the OLDER mesh while the gizmo sat on the newer
+	# one.) A mixed selection (PBMesh + plain MeshInstance3D, e.g. while
+	# picking a CSG cutter) keeps the PBMesh active.
 	# Unconditionally update active_mesh: if a non-PBMesh (or nothing) is selected,
 	# active_mesh becomes null so PoiBuilder mode deactivates cleanly.
 	editor.active_mesh = pb_mesh
+
+	# While an element mode is active the scene selection stays narrowed to
+	# ONE mesh (see _collapse_selection_to_active): ctrl/shift-adding another
+	# node while editing therefore SWITCHES the edit target instead of
+	# stacking a second whole-object gizmo that swallows element clicks.
+	# (Multi-select workflows — moving several objects, CSG booleans, merge —
+	# belong to object mode, where nothing is collapsed.)
+	if editor.is_editing():
+		_collapse_selection_to_active.call_deferred()
 
 	# Selecting something else while a params session is open cancels it:
 	# unconfirmed changes are reverted like clicking Cancel.
@@ -893,9 +909,34 @@ func _on_select_mode_changed(_mode: PBEditor.SelectMode) -> void:
 			_apply_selection_set(editor.active_mesh, converted, source_faces)
 		editor.active_mesh.update_gizmos()
 	_update_editing_context()
+	# Element modes edit exactly ONE mesh: with several nodes selected the
+	# engine keeps a whole-object transform gizmo on every one of them, and
+	# that multi-node gizmo swallows the element clicks (faces hover but never
+	# select). Entering an element mode therefore narrows the engine
+	# selection to the active PBMesh — object mode stays free for the
+	# multi-select workflows (move both, CSG booleans, merge).
+	if editor.select_mode != PBEditor.SelectMode.OBJECT:
+		_collapse_selection_to_active.call_deferred()
 	if material_dock != null:
 		material_dock.sync_selection()
 	_sync_uv_editor_selection()
+
+## Narrows the engine's scene selection to just the active PBMesh (deferred —
+## the engine is still finishing its own selection change when the mode
+## switch fires). No-op for single/empty selections.
+func _collapse_selection_to_active() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or not is_instance_valid(mesh):
+		return
+	var sel: EditorSelection = get_editor_interface().get_selection()
+	if sel == null or sel.get_selected_nodes().size() <= 1:
+		return
+	if not mesh.is_inside_tree():
+		return
+	if logger:
+		logger.info("plugin", "Element mode edits one mesh — selection narrowed to '%s'" % mesh.name)
+	sel.clear()
+	sel.add_node(mesh)
 
 ## The element mode the selection currently lives in — the conversion's
 ## SOURCE when the mode changes (select_mode is already the TARGET by the

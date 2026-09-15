@@ -146,6 +146,8 @@ func build_data() -> PBMeshData:
 ## shapes SHRINK on a negative drag rather than flipping underground, and the
 ## sprite/plane ride the normal offset on top of their plane-aligned base.
 func placement_transform(data: PBMeshData) -> Transform3D:
+	if shape_id == &"trim":
+		return _trim_placement()
 	var f := arrow_direction()
 	var x_axis := plane_normal.cross(f).normalized()
 	var basis := Basis(x_axis, plane_normal, f)
@@ -158,6 +160,75 @@ func placement_transform(data: PBMeshData) -> Transform3D:
 	var aabb_center_local := aabb.get_center()
 	var center_offset: Vector3 = basis * Vector3(aabb_center_local.x, 0.0, aabb_center_local.z)
 	return Transform3D(basis, rect_center - center_offset + plane_normal * lift)
+
+## Trim placement — the drawn rect is the strip's FACE (its length by its
+## height; the depth is never dragged). Unlike every other shape the strip is
+## NOT centered on the rect: the Unibuilder spec stands it on the drag's start
+## edge so a drag begun at the wall leaves the trim's back flush with it.
+##   - Horizontal surface (floor): the strip STANDS UP on the line through the
+##     drag start along its RUN — the longer side of the drawn rect — with the
+##     depth running toward the drift along the other side ("on a floor ...
+##     start at the wall"). Which side is longer must not depend on the u
+##     lock (the first centimetres of motion): mapping u→length literally let
+##     an accidental perpendicular wobble stand the whole drag length TALL.
+##   - Any other surface (a wall): the strip lies FLAT ON the surface — face
+##     in the surface plane, bottom on the drag's lower edge, depth
+##     protruding along the surface normal (out of the wall). The height axis
+##     is world-up in the surface plane and the run is the more horizontal
+##     side, so mouldings sit upright whatever the lock did.
+## The trim's local space: +Z = length (centered span), +X = depth from the
+## back (x=0) out, +Y = height from the bottom (y=0) up — so the placement
+## basis directly maps those axes onto the drag geometry, and later Depth /
+## Height retypes in the adjust panel keep the back-bottom corner pinned.
+func _trim_placement() -> Transform3D:
+	var u := u_dir
+	var v_dir := plane_normal.cross(u).normalized()
+	var drag := base_end - base_start
+	var along_u := drag.dot(u)
+	var along_v := drag.dot(v_dir)
+	var z_axis: Vector3
+	var y_axis: Vector3
+	var origin: Vector3
+	if absf(plane_normal.dot(Vector3.UP)) > 0.999:
+		var run_is_u := u_size >= v_size
+		var run_unsigned := u if run_is_u else v_dir
+		var run_signed := along_u if run_is_u else along_v
+		var side_dir := v_dir if run_is_u else u
+		var side_signed := along_v if run_is_u else along_u
+		# Floor (or ceiling): stand up on the start line.
+		y_axis = plane_normal
+		z_axis = run_unsigned
+		# x = y × z is ±side_dir; flip the RUN (a straight strip is symmetric
+		# along its length) until the depth axis points along the drag side.
+		if y_axis.cross(z_axis).dot(side_dir * signf(side_signed)) < 0.0:
+			z_axis = -z_axis
+		origin = base_start + run_unsigned * (run_signed * 0.5)
+	else:
+		# Wall / tilted surface: lie flat on the surface, protrude along its
+		# normal, bottom on the lower edge of the drag.
+		var in_plane_up := Vector3.UP - plane_normal * Vector3.UP.dot(plane_normal)
+		if in_plane_up.length_squared() < 0.0001:
+			in_plane_up = v_dir
+		in_plane_up = in_plane_up.normalized()
+		var run_is_u := absf(u.dot(in_plane_up)) <= absf(v_dir.dot(in_plane_up))
+		var run_unsigned := u if run_is_u else v_dir
+		var run_signed := along_u if run_is_u else along_v
+		var side_dir := v_dir if run_is_u else u
+		var side_signed := along_v if run_is_u else along_u
+		z_axis = run_unsigned
+		if in_plane_up.cross(z_axis).dot(plane_normal) < 0.0:
+			z_axis = -z_axis
+		y_axis = (in_plane_up - z_axis * in_plane_up.dot(z_axis)).normalized()
+		if y_axis.dot(Vector3.UP) < 0.0:
+			# Keep the profile upright; flipping y requires flipping z too so
+			# x = y × z still points out of the wall.
+			y_axis = -y_axis
+			z_axis = -z_axis
+		var along_height := side_signed * side_dir.dot(y_axis)
+		origin = base_start + run_unsigned * (run_signed * 0.5) \
+			+ y_axis * minf(0.0, along_height)
+	var x_axis := y_axis.cross(z_axis).normalized()
+	return Transform3D(Basis(x_axis, y_axis, z_axis), origin)
 
 # ── Transitions ──────────────────────────────────────────────────────────────
 
@@ -366,6 +437,24 @@ func _update_facing(point: Vector3) -> void:
 	if lock_direction or PBShapeParams.world_aligned_in_plane(shape_id):
 		_last_point = point
 		return
+	if shape_id == &"trim":
+		# The arrow tracks the RUN — the longer side on a floor, the more
+		# horizontal side on a wall (matching _trim_placement) — signed away
+		# from the drag start. No aspect-flip heuristic churn.
+		_last_point = point
+		if u_size < 0.05 and v_size < 0.05:
+			return
+		var v2 := plane_normal.cross(u_dir).normalized()
+		var cum := point - base_start
+		var run_dir: Vector3
+		if absf(plane_normal.dot(Vector3.UP)) > 0.999:
+			run_dir = u_dir if u_size >= v_size else v2
+		else:
+			var in_plane_up := (Vector3.UP - plane_normal * Vector3.UP.dot(plane_normal)).normalized()
+			run_dir = u_dir if absf(u_dir.dot(in_plane_up)) <= absf(v2.dot(in_plane_up)) else v2
+		var s := cum.dot(run_dir)
+		facing = run_dir * (signf(s) if s != 0.0 else 1.0)
+		return
 	var step := _project_on_plane(point - _last_point, plane_normal)
 	_last_point = point
 	var cum := point - base_start
@@ -472,6 +561,28 @@ func get_cursor_extents_text() -> String:
 func _apply_drag_extents() -> void:
 	if state == State.OFFSET:
 		return  # anchor flow (sprite): the drag drives the normal offset only
+	if shape_id == &"trim":
+		# Trim: the drag IS the strip's face — the LONGER side of the rect is
+		# the run (length), the shorter is the height, and the DEPTH is never
+		# dragged (it keeps the project's last value). The u axis locks to the
+		# first centimetres of motion, so a literal u→length mapping let a
+		# perpendicular wobble at the drag start stand the strip the whole
+		# drag length TALL. On walls the split is by WORLD direction instead:
+		# the vertical extent is the height, the horizontal one the length —
+		# mouldings sit upright whatever the lock did.
+		if absf(plane_normal.dot(Vector3.UP)) > 0.999:
+			values["length"] = maxf(0.1, maxf(u_size, v_size))
+			var short_side := minf(u_size, v_size)
+			if short_side > 0.03:
+				values["height"] = maxf(0.03, short_side)
+		else:
+			var v_dir := plane_normal.cross(u_dir).normalized()
+			var u_is_vertical := absf(u_dir.dot(Vector3.UP)) > absf(v_dir.dot(Vector3.UP))
+			values["length"] = maxf(0.1, v_size if u_is_vertical else u_size)
+			var vertical := u_size if u_is_vertical else v_size
+			if vertical > 0.03:
+				values["height"] = maxf(0.03, vertical)
+		return
 	var height_value: float = height if state >= State.HEIGHT else NAN
 	var v_dir := plane_normal.cross(u_dir).normalized()
 	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))

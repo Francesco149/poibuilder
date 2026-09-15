@@ -711,3 +711,148 @@ func test_plane_on_a_floor_keeps_world_axes():
 	assert_almost_eq(xf.basis.y.dot(Vector3.UP), 1.0, 0.001)
 	assert_almost_eq(xf.basis.z.dot(Vector3.BACK), 1.0, 0.001,
 		"The floor pool's flow axis runs +Z, away from the wall it was drawn against")
+
+# ==============================================================================
+# Trim placement (v0.9.108): the strip stands on the drag's start edge
+# ==============================================================================
+
+## REGRESSION: the trim used to be CENTERED on the drawn rect like every other
+## shape, so a strip dragged along the base of a wall floated half a height
+## off the wall instead of sitting flush against it. Per the Unibuilder spec
+## the strip "stands up on the edge you started the drag from, so start at
+## the wall": the back-bottom edge lands ON the start edge, the depth runs
+## toward the drag side, and the drawn rect maps u → length, v → height (the
+## depth is never dragged).
+func test_trim_on_a_floor_stands_flush_on_the_start_edge():
+	var creator := _armed_creator(&"trim")
+	# Floor at y=0; a wall runs along X with its body at z < 0. The drag
+	# starts at the wall base and wobbles slightly into the room (+z).
+	_begin_base(creator, Vector3(0, 0, 0))
+	creator.update_base(Vector3(4, 0, 0.2))
+	creator.end_base()
+	assert_almost_eq(creator.values["length"], 4.0, 0.0001, "u extent = length")
+	assert_almost_eq(creator.values["height"], 0.2, 0.0001, "v extent = height")
+	assert_almost_eq(creator.values["depth"], 0.05, 0.0001, "the depth is never dragged")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	for p in data.positions:
+		var w: Vector3 = xf * p
+		lo = lo.min(w)
+		hi = hi.max(w)
+	assert_almost_eq(lo.y, 0.0, 0.001, "the strip stands ON the floor")
+	assert_almost_eq(hi.y - lo.y, 0.2, 0.001, "...risks its height vertically")
+	assert_almost_eq(lo.z, 0.0, 0.001, "the BACK sits on the start edge — flush with the wall at z=0")
+	assert_almost_eq(hi.z - lo.z, 0.05, 0.001, "the depth runs toward the drag side (into the room)")
+	assert_almost_eq(lo.x, 0.0, 0.001, "the strip spans the drag from its start")
+	assert_almost_eq(hi.x - lo.x, 4.0, 0.001, "...to its end (length = u extent)")
+
+## A drag that runs mostly toward -v flips the depth side, not the height:
+## the strip's body must always end up on the side the mouse went.
+func test_trim_depth_follows_the_drag_side():
+	var creator := _armed_creator(&"trim")
+	# Same wall, dragged with the wobble to -z (v_dir is -Z here, so the
+	# perpendicular component is POSITIVE along v_dir).
+	_begin_base(creator, Vector3(0, 0, 0))
+	creator.update_base(Vector3(4, 0, -0.2))
+	creator.end_base()
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var lo := INF
+	var hi := -INF
+	for p in data.positions:
+		var z: float = (xf * p).z
+		lo = minf(lo, z)
+		hi = maxf(hi, z)
+	assert_almost_eq(hi, 0.0, 0.001, "the back still sits on the start edge")
+	assert_almost_eq(lo, -0.05, 0.001, "the body follows the drag to -z")
+
+## With Draw on Surface pointed at a wall the trim "lies flat on the wall,
+## its bottom on the lower edge of the drag", protruding along the wall's
+## normal into the room.
+func test_trim_on_a_wall_lies_flat_with_its_bottom_on_the_lower_edge():
+	var creator := _armed_creator(&"trim")
+	# Wall plane z=0, its normal +Z (into the room). Drag 3 m along the wall
+	# and 1.2 m UP the wall.
+	_begin_base(creator, Vector3(0, 1, 0), Vector3.BACK)
+	creator.update_base(Vector3(3, 2.2, 0))
+	creator.end_base()
+	assert_almost_eq(creator.values["length"], 3.0, 0.0001)
+	assert_almost_eq(creator.values["height"], 1.2, 0.0001)
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	for p in data.positions:
+		var w: Vector3 = xf * p
+		lo = lo.min(w)
+		hi = hi.max(w)
+	assert_almost_eq(lo.z, 0.0, 0.001, "the back is ON the wall surface")
+	assert_almost_eq(hi.z - lo.z, 0.05, 0.001, "the depth protrudes OUT of the wall")
+	assert_almost_eq(lo.y, 1.0, 0.001, "the bottom sits on the drag's LOWER edge")
+	assert_almost_eq(hi.y - lo.y, 1.2, 0.001, "the height spans the drag's vertical extent")
+	assert_almost_eq(hi.x - lo.x, 3.0, 0.001, "the length runs along the drag")
+
+func test_trim_faces_along_the_drag_not_the_aspect_heuristic():
+	var creator := _armed_creator(&"trim")
+	_begin_base(creator, Vector3(0, 0, 0))
+	creator.update_base(Vector3(4, 0, 0.2))
+	assert_almost_eq(creator.facing.normalized().dot(Vector3.RIGHT), 1.0, 0.001,
+		"the run arrow follows the drag direction")
+	# Growing the perpendicular extent must NOT re-point the run (no aspect
+	# flip mid-drag — the strip keeps running the way it was drawn).
+	creator.update_base(Vector3(4, 0, 2.0))
+	assert_almost_eq(creator.facing.normalized().dot(Vector3.RIGHT), 1.0, 0.001,
+		"the run never flips to the longer perpendicular extent")
+
+## REGRESSION (the "trim goes UP instead" report): the u axis locks to the
+## first centimetres of motion — a wall-base drag begun with a perpendicular
+## wobble locked u INTO the room, the long along-wall extent landed in v, and
+## the old u→length / v→height mapping stood the strip the whole drag length
+## TALL. The longer side of the drawn rect is the run now, and the strip
+## stands on the line through the drag start along it, so the back stays
+## flush with the wall line no matter which way the lock picked.
+func test_trim_run_follows_the_longer_side_not_the_u_lock():
+	var creator := _armed_creator(&"trim")
+	_begin_base(creator, Vector3(0, 0, 0))
+	creator.update_base(Vector3(0, 0, 0.3))  # first motion locks u INTO the room (+Z)
+	creator.update_base(Vector3(4, 0, 0.3))  # the real drag: along the wall
+	creator.end_base()
+	assert_almost_eq(creator.values["length"], 4.0, 0.0001, "the longer side of the rect is the run")
+	assert_almost_eq(creator.values["height"], 0.3, 0.0001, "the perpendicular drift is the height")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	for p in data.positions:
+		var w: Vector3 = xf * p
+		lo = lo.min(w)
+		hi = hi.max(w)
+	assert_almost_eq(hi.y - lo.y, 0.3, 0.001, "the strip rises its height — NOT the drag length")
+	assert_almost_eq(lo.x, 0.0, 0.001, "the run spans the drag along the wall")
+	assert_almost_eq(hi.x - lo.x, 4.0, 0.001)
+	assert_almost_eq(lo.z, 0.0, 0.001, "the back sits on the wall line through the drag start")
+	assert_almost_eq(hi.z - lo.z, 0.05, 0.001, "the depth runs toward the room (the drift side)")
+
+## A mostly-vertical drag on a wall still comes out an upright moulding: the
+## vertical extent is the height, the horizontal one the length.
+func test_trim_on_a_wall_stays_upright_when_dragged_up():
+	var creator := _armed_creator(&"trim")
+	_begin_base(creator, Vector3(0, 1, 0), Vector3.BACK)
+	creator.update_base(Vector3(0.2, 3.0, 0))  # mostly UP the wall
+	creator.end_base()
+	assert_almost_eq(creator.values["length"], 0.2, 0.0001, "the horizontal extent is the length")
+	assert_almost_eq(creator.values["height"], 2.0, 0.0001, "the vertical extent is the height")
+	var data := creator.build_data()
+	var xf := creator.placement_transform(data)
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	for p in data.positions:
+		var w: Vector3 = xf * p
+		lo = lo.min(w)
+		hi = hi.max(w)
+	assert_almost_eq(lo.y, 1.0, 0.001, "the bottom sits on the drag's lower edge")
+	assert_almost_eq(hi.y - lo.y, 2.0, 0.001, "...and rises the vertical extent (upright)")
+	assert_almost_eq(lo.z, 0.0, 0.001, "the back is on the wall surface")
+	assert_almost_eq(hi.z - lo.z, 0.05, 0.001, "the depth protrudes out of the wall")
