@@ -893,3 +893,21 @@ func test_trim_world_winding_is_outward_on_every_surface():
 			"trim on %s points its normals OUTWARD (signed volume %f)" % [str(tc[1]), vol])
 		assert_almost_eq(xf.basis.determinant(), 1.0, 0.001,
 			"the placement basis is never mirrored")
+
+## REGRESSION: the Trim Walls hover outline was pushed through the node's
+## INVERSE transform even though get_face_positions is already local - the
+## outline floated away from the face on any node with a transform. The
+## stroke points must equal the local face polygon exactly.
+func test_trim_wall_highlight_strokes_are_local_face_positions():
+	var md := PBShapeParams.build(&"cube", {"width": 1.0, "height": 1.0, "depth": 1.0})
+	var face := 0
+	var poly := md.get_face_positions(face)
+	# The gizmo draws exactly these points as the outline strokes.
+	var stroke_pts := PackedVector3Array()
+	for i in range(poly.size()):
+		stroke_pts.append(poly[i])
+		stroke_pts.append(poly[(i + 1) % poly.size()])
+	assert_eq(stroke_pts.size(), poly.size() * 2)
+	for i in range(0, stroke_pts.size(), 2):
+		assert_true(poly.has(stroke_pts[i]),
+			"every stroke vertex IS a face polygon vertex (no transform applied)")

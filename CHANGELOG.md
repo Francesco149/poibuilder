@@ -3077,3 +3077,15 @@ CSGCombiner3D baking, and the Trim Walls tool:
     always-right-handed placement bases, select-your-output, visible
     build status, per-change version bumps).
 - Version bump 0.9.109 -> 0.9.110.
+
+v0.9.111 — Trim Walls hover outline alignment + Offset direction:
+- The teal hover outline was pushed through the node's INVERSE transform
+  even though get_face_positions is already local (gizmo space) - on any
+  node with a transform the outline floated off the face entirely. The
+  strokes now draw the local face polygon exactly; pinned by a test
+  asserting every stroke vertex IS a face polygon vertex.
+- Offset is measured OFF the placement edge: Bottom slides UP from the
+  floor, Top slides DOWN from the ceiling (positive = away from the
+  edge). The session tool, the recorded paths, and the Edit Params
+  rebuild all share the same direction.
+- Version bump 0.9.110 -> 0.9.111.

@@ -186,13 +186,14 @@ func test_cornice_hangs_from_the_top_and_tucks_under_the_ceiling():
 		hi = maxf(hi, p.y)
 	assert_almost_eq(hi, 2.8, 0.001, "the cornice tucks UNDER the ceiling slab")
 	assert_almost_eq(hi - lo, 0.2, 0.002, "its height hangs from there")
-	# Offset slides it down.
-	tool.params["offset"] = -0.5
+	# Offset is measured OFF the placement edge: at Top, positive moves the
+	# strip DOWN (away from the ceiling).
+	tool.params["offset"] = 0.5
 	data = tool.build(Callable(), ceiling_probe)
 	hi = -INF
 	for p in data.positions:
 		hi = maxf(hi, p.y)
-	assert_almost_eq(hi, 2.3, 0.001, "a negative offset slides the cornice down")
+	assert_almost_eq(hi, 2.3, 0.001, "positive top offset slides the cornice DOWN off the ceiling")
 
 func test_no_walls_builds_nothing_and_floor_faces_are_not_walls():
 	var tool := PBTrimWallsTool.new()

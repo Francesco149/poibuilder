@@ -1074,7 +1074,6 @@ func _draw_trim_walls_highlights(gizmo, mesh_data: PBMeshData, node: PBMesh) -> 
 		return false
 	if node == null:
 		return false
-	var inv := node.global_transform.affine_inverse()
 	var fill_offset := _live_fill_offset
 	if is_hover:
 		var hover_fill := element_editor.build_face_fill_mesh(mesh_data, trim_walls_hover_face, fill_offset)
@@ -1088,9 +1087,12 @@ func _draw_trim_walls_highlights(gizmo, mesh_data: PBMeshData, node: PBMesh) -> 
 	if is_hover:
 		var stroke_pts := PackedVector3Array()
 		var poly := mesh_data.get_face_positions(trim_walls_hover_face)
+		# get_face_positions is already LOCAL (gizmo space) - pushing it
+		# through the inverse node transform displaced the outline off the
+		# face entirely.
 		for i in range(poly.size()):
-			stroke_pts.append(inv * poly[i])
-			stroke_pts.append(inv * poly[(i + 1) % poly.size()])
+			stroke_pts.append(poly[i])
+			stroke_pts.append(poly[(i + 1) % poly.size()])
 		if stroke_pts.size() >= 2:
 			_add_thick_lines(gizmo, stroke_pts, _trim_walls_material(true, true), _live_stroke_offset, 1)
 	return true

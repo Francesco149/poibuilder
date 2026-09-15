@@ -231,8 +231,11 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 				var swept := PBShapeTrim.extrude_profile_along_path(
 					profile, pts, Vector3.UP, bool(rec.get("closed", false)), true, smooth_segs)
 				if swept != null:
-					# Offset is a plain vertical slide of the recorded path.
+					# Offset slides the run AWAY from its placement edge
+					# (Bottom: up, Top: down) - matching the session tool.
 					var off := float(v.get("offset", 0.0))
+					if bool(v.get("top", false)):
+						off = -off
 					if off != 0.0:
 						var lift := Vector3(0, off, 0)
 						for i in range(swept.positions.size()):

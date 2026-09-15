@@ -258,7 +258,12 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 	# Offset itself, so a baked offset would double-apply and a reset to 0
 	# could never undo an earlier slide ("offset permanently shifts the trim
 	# even at zero").
-	var recorded_offset := -float(params.get("offset", 0.0))
+	# recorded = placed - applied_offset (applied is +offset at Bottom,
+	# -offset at Top; see _base_height_for)
+	var applied := float(params.get("offset", 0.0))
+	if float(params.get("top", 0.0)) > 0.5:
+		applied = -applied
+	var recorded_offset := -applied
 	var out: PBMeshData = null
 	for path_info in paths:
 		var pts: PackedVector3Array = path_info["points"]
@@ -308,6 +313,10 @@ func _base_height_for(poly: PackedVector3Array, normal: Vector3,
 			var found: float = floor_probe.call(mid + Vector3.UP * 0.05)
 			if not is_nan(found):
 				base_y = maxf(base_y, found)
+	# Offset is measured OFF the placement edge: Bottom slides UP from the
+	# floor, Top slides DOWN from the ceiling (positive = away from edge).
+	if float(params.get("top", 0.0)) > 0.5:
+		return base_y - offset
 	return base_y + offset
 
 ## Sweeps the trim profile along one mitred path (already at its base height,
