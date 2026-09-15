@@ -2850,10 +2850,15 @@ v0.9.107 round complete ✓ — feature gap implementation (Sessions 6, 7, 8, 9)
     - Select similar faces (matching Material slot `submesh_index`, Smoothing Group, Element Color, or Surface Area).
     - Select boundary edges and hole loops (edges used by exactly 1 face).
     - Face loop and face ring traversal (quad strip traversal via winged edges).
-    - Select All (`Ctrl+A`) and Invert Selection (`Ctrl+I`) integration via PBActions, toolbar, and plugin dispatcher.
-  - Precision Snapping & Proportional Editing (`editor/pb_element_editor.gd`):
-    - Hold `V` vertex snapping: snaps dragged element pivot to nearest vertex across any PBMesh in the scene.
-    - Proportional editing (Soft Selection): Smooth, Sphere, Linear, Sharp, Constant falloff curves with mouse-wheel radius adjustment while dragging.
+    - Select All and Invert Selection helpers in PBActions and PBSelectionOps.
+  - Precision Snapping & Proportional Editing:
+    - Vertex snapping toggle button (`V-Snap`) on Row 2: snaps dragged element pivot to nearest vertex across any PBMesh in the scene.
+    - Proportional editing toggle button (`Soft`) and radius input (`r: 2.0m`) on Row 2: Smooth, Sphere, Linear, Sharp, Constant falloff curves.
+    - Live 3D wireframe preview sphere gizmo (3 orthogonal circles) centered at the selection pivot displaying the influence radius.
+    - Unbound conflicting default shortcuts (Ctrl+A, O, V) and removed mouse-wheel interception so viewport zoom remains responsive.
+  - Toolbar Reorganization (3-Row Layout):
+    - Permanent 2-row base layout: Row 1 holds tools, primary mesh operations, and environment presets; Row 2 holds modes, space, snapping controls, shape generators, and docks.
+    - Toggleable Row 3 (Extended Tools): Button toggles Row 3 on and off, exposing the full Selection Suite (All, Invert, Grow, Shrink, Coplanar, Similar, Boundary, Loop, Ring), Object Tools (Merge, Mirror, Center Pivot, Freeze, Probuilderize), CSG Booleans (Union, Subtract, Intersect), and Auto-Smooth.
 - Session 7: Object Tools & Pivots:
   - Added `PBObjectOps` (`editor/pb_object_ops.gd`) with:
     - `merge_meshes`: combines multiple PBMesh nodes into one, baking relative transforms and rebuilding weld groups.
@@ -2874,5 +2879,6 @@ v0.9.107 round complete ✓ — feature gap implementation (Sessions 6, 7, 8, 9)
   - `test_pb_csg.gd` (4 tests)
   - `test_pb_smooth_groups.gd` (4 tests)
   - `test_pb_shape_trim.gd` (3 tests)
-  - Full test suite: 988/988 tests passing across 64 suites (19,971 assertions), zero errors; real-editor GUI harness `./run_gui_tests.sh` passes with 0 failures.
-- Version bump 0.9.106 -> 0.9.107.
+  - Full test suite: 989/989 tests passing across 64 suites (20,102 assertions), zero errors; real-editor GUI harness `./run_gui_tests.sh` passes with 0 failures.
+  - Fix: preserve toroidal and spherical UVs on compile (`manual_uv = true`) with aspect-ratio scaling.
+  - Version bump 0.9.106 -> 0.9.107.
