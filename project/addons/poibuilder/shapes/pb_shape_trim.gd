@@ -27,7 +27,7 @@ enum TrimKind {
 
 ## Returns 2D cross-section profile points (x = depth from wall, y = height along wall).
 static func get_profile_points(profile: ProfileType, width: float, height: float,
-		segments: int = 4) -> PackedVector2Array:
+		segments: int = 4, upside_down: bool = false, flip_side: bool = false) -> PackedVector2Array:
 	var w := maxf(0.01, width)
 	var h := maxf(0.01, height)
 	var segs := maxi(2, segments)
@@ -103,6 +103,15 @@ static func get_profile_points(profile: ProfileType, width: float, height: float
 			pts.append(Vector2(w * 0.35, h))
 			pts.append(Vector2(0.0, h))
 
+	if upside_down or flip_side:
+		var transformed := PackedVector2Array()
+		for p in pts:
+			var px := -p.x if flip_side else p.x
+			var py := (h - p.y) if upside_down else p.y
+			transformed.append(Vector2(px, py))
+		if (upside_down and not flip_side) or (flip_side and not upside_down):
+			transformed.reverse()
+		return transformed
 	return pts
 
 # ==============================================================================
@@ -270,7 +279,33 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 	return mesh_data
 
 ## Convenience builder for a straight or perimeter wall trim moulding.
+## Builds a single straight trim strip along local Z from (0, 0, 0) to (0, 0, length).
+static func build_straight_trim(length: float, depth: float = 0.05, height: float = 0.15,
+		profile: ProfileType = ProfileType.CHAMFER, segments: int = 4,
+		upside_down: bool = false, flip_side: bool = false, smooth: bool = true) -> PBMeshData:
+	var l := maxf(0.01, length)
+	var d := maxf(0.005, depth)
+	var h := maxf(0.01, height)
+	var path := PackedVector3Array([
+		Vector3(0.0, 0.0, -l * 0.5),
+		Vector3(0.0, 0.0, l * 0.5)
+	])
+	var pts := get_profile_points(profile, d, h, segments, upside_down, flip_side)
+	var md := extrude_profile_along_path(pts, path, Vector3.UP, false, true)
+	if md != null and smooth:
+		for f in md.faces:
+			f.smoothing_group = 1
+		md.calculate_normals()
+	return md
+
+## Convenience builder for a straight or perimeter wall trim moulding.
 static func create_wall_trim(path: PackedVector3Array, profile: ProfileType = ProfileType.CHAMFER,
-		width: float = 0.1, height: float = 0.2, closed: bool = false) -> PBMeshData:
-	var pts := get_profile_points(profile, width, height)
-	return extrude_profile_along_path(pts, path, Vector3.UP, closed)
+		depth: float = 0.05, height: float = 0.15, closed: bool = false,
+		upside_down: bool = false, flip_side: bool = false, smooth: bool = true) -> PBMeshData:
+	var pts := get_profile_points(profile, depth, height, 4, upside_down, flip_side)
+	var md := extrude_profile_along_path(pts, path, Vector3.UP, closed, true)
+	if md != null and smooth:
+		for f in md.faces:
+			f.smoothing_group = 1
+		md.calculate_normals()
+	return md

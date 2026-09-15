@@ -110,3 +110,16 @@ func test_probuilderize_box_mesh() -> void:
 		var norm: Vector3 = PBMath.normal_from_positions(md.positions, f.get_indexes())
 		var centroid: Vector3 = PBMath.average(md.positions, f.get_distinct_indexes())
 		assert_gt(norm.dot(centroid), 0.0, "Face %d normal must point outward" % fi)
+
+func test_poibuilderize_csg_box() -> void:
+	var csg_box := CSGBox3D.new()
+	csg_box.size = Vector3(2.0, 2.0, 2.0)
+	get_tree().root.add_child(csg_box)
+	var result: PBMesh = autofree(PBObjectOps.poibuilderize_csg(csg_box))
+	get_tree().root.remove_child(csg_box)
+	csg_box.free()
+
+	assert_not_null(result, "Poibuilderize CSG should return PBMesh")
+	assert_not_null(result.pb_mesh_data)
+	assert_gt(result.pb_mesh_data.faces.size(), 0)
+	assert_gt(result.pb_mesh_data.positions.size(), 0)

@@ -89,8 +89,9 @@ var rows_mode: RowsMode = RowsMode.TWO_ROWS
 var _row1: HBoxContainer
 var _row2: HBoxContainer
 var _row3: HBoxContainer
+var _row4: HBoxContainer
 var _two_rows: bool = true
-var _row3_visible: bool = false
+var _extended_visible: bool = false
 var _btn_split_rows: Button
 var _btn_vertex_snap: Button
 var _btn_proportional: Button
@@ -181,6 +182,13 @@ func _build_ui() -> void:
 	_row3.add_theme_constant_override("separation", 4)
 	_row3.visible = false
 	add_child(_row3)
+
+	_row4 = HBoxContainer.new()
+	_row4.name = "Row4"
+	_row4.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
+	_row4.add_theme_constant_override("separation", 4)
+	_row4.visible = false
+	add_child(_row4)
 
 	# Header: Logo + Split Rows button (placed on the left so it's never cut off)
 	_logo = TextureRect.new()
@@ -307,7 +315,8 @@ func _build_ui() -> void:
 	_make_op_button("Mirror", "mirror_object", "Mirror object geometry across X", "icon_mirror.svg")
 	_make_op_button("Center Pivot", "center_pivot", "Center pivot to bounding box", "icon_center_pivot.svg")
 	_make_op_button("Freeze Xform", "freeze_transform", "Freeze transform into vertex positions", "icon_freeze_transform.svg")
-	_make_op_button("Probuilderize", "probuilderize", "Convert selected MeshInstance3D to editable PBMesh", "icon_probuilderize.svg")
+	var p_btn := _make_op_button("Poibuilderize", "poibuilderize", "Convert selected MeshInstance3D or CSG to editable PBMesh", "icon_poibuilderize.svg")
+	_op_buttons["probuilderize"] = p_btn
 
 	_sep_row3_csg = _make_sep()
 	_make_op_button("CSG Union", "csg_union", "CSG: Solid union of selected meshes", "icon_csg_union.svg")
@@ -440,7 +449,7 @@ func set_rows_mode(mode: int) -> void:
 	_update_split_button_tooltip()
 ## Sets whether the toolbar is split across 2 horizontal rows.
 func set_two_rows(value: bool) -> void:
-	_row3_visible = value
+	_extended_visible = value
 	if _btn_split_rows != null and _btn_split_rows.button_pressed != value:
 		_btn_split_rows.set_pressed_no_signal(value)
 	_update_row_layout()
@@ -449,8 +458,10 @@ func _check_auto_split() -> void:
 	pass
 
 func _on_split_rows_button_toggled(pressed: bool) -> void:
-	_row3_visible = pressed
+	_extended_visible = pressed
 	_row3.visible = pressed
+	if _row4 != null:
+		_row4.visible = pressed
 	split_rows_toggled.emit(pressed)
 
 func _on_split_rows_button_gui_input(_event: InputEvent) -> void:
@@ -458,7 +469,7 @@ func _on_split_rows_button_gui_input(_event: InputEvent) -> void:
 
 func _update_split_button_tooltip() -> void:
 	if _btn_split_rows != null:
-		_btn_split_rows.tooltip_text = "Extended Tools (Row 3): Advanced Selection, Object Tools, CSG Booleans, Smoothing"
+		_btn_split_rows.tooltip_text = "Extended Tools: Toggle Rows 3 & 4 (Selection, Object Tools, CSG, Snapping)"
 func _update_row_layout() -> void:
 	for c in _row1.get_children():
 		_row1.remove_child(c)
@@ -469,7 +480,9 @@ func _update_row_layout() -> void:
 
 	_row1.visible = true
 	_row2.visible = true
-	_row3.visible = _row3_visible
+	_row3.visible = _extended_visible
+	if _row4 != null:
+		_row4.visible = _extended_visible
 
 	# Row 1: Header | Tools | Mesh Operations | Env
 	var grp_header: Array[Control] = [_logo, _btn_split_rows]
@@ -488,12 +501,10 @@ func _update_row_layout() -> void:
 	for c in grp_ops: _row1.add_child(c)
 	_row1.add_child(_btn_env)
 
-	# Row 2: Modes | Space | Snapping & Proportional | Shapes | Docks & Controls
+	# Row 2 (Compact, never exceeding "Mesh"):
+	# Modes | Space | Grid | Shapes | Docks & Export
 	var grp_space: Array[Control] = [_sep_space, _btn_space]
-	var grp_snapping: Array[Control] = [
-		_sep_grid, _btn_grid_panel, _lbl_grid_state,
-		_btn_vertex_snap, _btn_proportional, _spin_prop_radius
-	]
+	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
 	var grp_docks: Array[Control] = [
 		_sep_docks, _btn_materials, _btn_uv_editor, _btn_overlay, _btn_recover_overlay,
@@ -505,36 +516,41 @@ func _update_row_layout() -> void:
 	_row2.add_child(_btn_face)
 	_row2.add_child(_btn_texture)
 	for c in grp_space: _row2.add_child(c)
-	for c in grp_snapping: _row2.add_child(c)
+	for c in grp_grid: _row2.add_child(c)
 	for c in grp_shapes: _row2.add_child(c)
 	for c in grp_docks: _row2.add_child(c)
 
-	# Row 3: Extended Tools (Advanced Selection, Objects, CSG, Smoothing)
+	# Row 3 (Extended: Selection Suite + Auto-Smooth):
 	var grp_row3_sel: Array[Control] = [
 		_op_buttons["select_all"], _op_buttons["invert_selection"], _op_buttons["grow_selection"],
 		_op_buttons["shrink_selection"], _op_buttons["select_coplanar"], _op_buttons["select_similar"],
-		_op_buttons["select_boundary"], _op_buttons["select_face_loop"], _op_buttons["select_face_ring"]
-	]
-	var grp_row3_obj: Array[Control] = [
-		_sep_row3_obj,
-		_op_buttons["merge_objects"], _op_buttons["mirror_object"], _op_buttons["center_pivot"],
-		_op_buttons["freeze_transform"], _op_buttons["probuilderize"]
-	]
-	var grp_row3_csg: Array[Control] = [
-		_sep_row3_csg,
-		_op_buttons["csg_union"], _op_buttons["csg_subtract"], _op_buttons["csg_intersect"]
-	]
-	var grp_row3_smooth: Array[Control] = [
-		_sep_row3_smooth,
-		_op_buttons["smooth_auto"]
+		_op_buttons["select_boundary"], _op_buttons["select_face_loop"], _op_buttons["select_face_ring"],
+		_sep_row3_smooth, _op_buttons["smooth_auto"]
 	]
 	for c in grp_row3_sel: _row3.add_child(c)
-	for c in grp_row3_obj: _row3.add_child(c)
-	for c in grp_row3_csg: _row3.add_child(c)
-	for c in grp_row3_smooth: _row3.add_child(c)
+
+	# Row 4 (Extended: Snapping Controls + Object Tools + CSG Booleans):
+	if _row4 != null:
+		for c in _row4.get_children():
+			_row4.remove_child(c)
+		var grp_row4_snap: Array[Control] = [
+			_btn_vertex_snap, _btn_proportional, _spin_prop_radius
+		]
+		var grp_row4_obj: Array[Control] = [
+			_sep_row3_obj,
+			_op_buttons["merge_objects"], _op_buttons["mirror_object"], _op_buttons["center_pivot"],
+			_op_buttons["freeze_transform"], _op_buttons["poibuilderize"]
+		]
+		var grp_row4_csg: Array[Control] = [
+			_sep_row3_csg,
+			_op_buttons["csg_union"], _op_buttons["csg_subtract"], _op_buttons["csg_intersect"]
+		]
+		for c in grp_row4_snap: _row4.add_child(c)
+		for c in grp_row4_obj: _row4.add_child(c)
+		for c in grp_row4_csg: _row4.add_child(c)
 ## Total number of controls and buttons across the toolbar rows.
 func get_item_count() -> int:
-	return _row1.get_child_count() + _row2.get_child_count()
+	return _row1.get_child_count() + _row2.get_child_count() + _row3.get_child_count() + (_row4.get_child_count() if _row4 != null else 0)
 
 static func _load_icon(icon_name: String) -> Texture2D:
 	var path := ICON_DIR + icon_name
@@ -712,6 +728,8 @@ func _on_selection_info_changed(_arg = null) -> void:
 		_op_buttons["center_pivot"].disabled = not has_mesh
 	if _op_buttons.has("freeze_transform"):
 		_op_buttons["freeze_transform"].disabled = not has_mesh
+	if _op_buttons.has("poibuilderize"):
+		_op_buttons["poibuilderize"].disabled = false
 	if _op_buttons.has("probuilderize"):
 		_op_buttons["probuilderize"].disabled = false
 

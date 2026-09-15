@@ -274,9 +274,9 @@ static func freeze_transform(mesh: PBMesh) -> bool:
 # ==============================================================================
 
 ## Converts a standard MeshInstance3D into an editable PBMesh.
-## Duplicates corner positions for Position-Privacy, rebuilds welds, and
-## sets outward normal winding.
-static func probuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
+## Duplicates corner positions for Position-Privacy, rebuilds welds, copies materials,
+## and sets outward normal winding.
+static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 	if mesh_instance == null or mesh_instance.mesh == null:
 		return null
 
@@ -349,6 +349,16 @@ static func probuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 
 			vertex_counter += 3
 
+
+	# Copy surface materials
+	for surface_idx in range(source_mesh.get_surface_count()):
+		var mat: Material = mesh_instance.get_surface_override_material(surface_idx)
+		if mat == null:
+			mat = source_mesh.surface_get_material(surface_idx)
+		if mat != null:
+			pb_mesh_data.materials.append(mat)
+		else:
+			pb_mesh_data.materials.append(PBMeshData.get_default_material())
 	if split_positions.is_empty():
 		return null
 
@@ -365,3 +375,25 @@ static func probuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 	pb_mesh.pb_mesh_data = pb_mesh_data
 	pb_mesh.rebuild()
 	return pb_mesh
+
+## Backward-compatible alias for poibuilderize.
+static func probuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
+	return poibuilderize(mesh_instance)
+
+## Converts a Godot CSGShape3D into an editable PBMesh.
+static func poibuilderize_csg(csg_node: CSGShape3D) -> PBMesh:
+	if csg_node == null:
+		return null
+	csg_node._update_shape()
+	var baked: ArrayMesh = csg_node.bake_static_mesh()
+	if baked == null or baked.get_surface_count() == 0:
+		return null
+	var dummy := MeshInstance3D.new()
+	dummy.name = csg_node.name
+	dummy.transform = csg_node.transform
+	dummy.mesh = baked
+	if csg_node.material != null:
+		dummy.material_override = csg_node.material
+	var res := poibuilderize(dummy)
+	dummy.free()
+	return res

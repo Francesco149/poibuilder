@@ -1605,8 +1605,8 @@ func _on_operation_requested(op_name: String) -> void:
 	if op_name == "freeze_transform":
 		_perform_freeze_transform()
 		return
-	if op_name == "probuilderize":
-		_perform_probuilderize()
+	if op_name == "poibuilderize" or op_name == "probuilderize":
+		_perform_poibuilderize()
 		return
 	if op_name == "csg_union":
 		_perform_csg_boolean(PBCsg.BooleanOp.UNION)
@@ -1959,55 +1959,182 @@ func _perform_freeze_transform() -> void:
 		if logger:
 			logger.info("plugin", "Froze transform of %s" % mesh.name)
 
-func _perform_probuilderize() -> void:
+func _collect_convertible_nodes(nodes: Array[Node]) -> Array[Node]:
+	var result: Array[Node] = []
+	var seen: Dictionary = {}
+	for root in nodes:
+		if root == null:
+			continue
+		var stack: Array[Node] = [root]
+		while not stack.is_empty():
+			var n: Node = stack.pop_back()
+			if seen.has(n):
+				continue
+			seen[n] = true
+			if (n is MeshInstance3D and not (n is PBMesh)) or (n is CSGShape3D):
+				result.append(n)
+			for child in n.get_children():
+				stack.append(child)
+	return result
+
+func _perform_poibuilderize() -> void:
 	var ei := get_editor_interface()
 	var selected_nodes: Array[Node] = []
 	if ei != null and ei.get_selection() != null:
 		selected_nodes = ei.get_selection().get_selected_nodes()
-	var converted_count := 0
-	for n in selected_nodes:
+	if selected_nodes.is_empty() and editor.active_mesh != null:
+		selected_nodes = [editor.active_mesh]
+
+	var scene_root: Node = ei.get_edited_scene_root() if ei != null else null
+	var candidates := _collect_convertible_nodes(selected_nodes)
+
+	if candidates.is_empty():
+		if logger:
+			logger.warn("plugin", "Poibuilderize: select a MeshInstance3D, CSGShape3D, or a node with mesh children")
+		return
+
+	var undo_mgr := get_undo_redo()
+	if undo_mgr != null:
+		undo_mgr.create_action("Poibuilderize Meshes")
+
+	var created_nodes: Array[PBMesh] = []
+	for n in candidates:
+		var pb: PBMesh = null
 		if n is MeshInstance3D and not (n is PBMesh):
-			var pb := PBObjectOps.probuilderize(n as MeshInstance3D)
-			if pb != null:
-				var parent := n.get_parent()
-				if parent != null:
-					parent.add_child(pb)
-					pb.owner = n.owner if n.owner != null else parent
-					converted_count += 1
-	if logger:
-		logger.info("plugin", "Probuilderized %d MeshInstance3D nodes" % converted_count)
+			pb = PBObjectOps.poibuilderize(n as MeshInstance3D)
+		elif n is CSGShape3D:
+			pb = PBObjectOps.poibuilderize_csg(n as CSGShape3D)
+
+		if pb != null:
+			var parent := n.get_parent()
+			if parent == null and scene_root != null:
+				parent = scene_root
+			if parent != null:
+				parent.add_child(pb)
+				pb.owner = scene_root if scene_root != null else parent
+				pb.transform = n.transform
+				created_nodes.append(pb)
+				if undo_mgr != null:
+					undo_mgr.add_do_reference(pb)
+					undo_mgr.add_do_method(parent, "add_child", pb)
+					undo_mgr.add_do_method(parent, "remove_child", n)
+					undo_mgr.add_undo_method(parent, "add_child", n)
+					undo_mgr.add_undo_method(parent, "remove_child", pb)
+				else:
+					parent.remove_child(n)
+
+	if undo_mgr != null:
+		undo_mgr.commit_action()
+
+	if not created_nodes.is_empty():
+		if ei != null and ei.get_selection() != null:
+			ei.get_selection().clear()
+			for pb in created_nodes:
+				ei.get_selection().add_node(pb)
+			editor.active_mesh = created_nodes[0]
+		if logger:
+			logger.info("plugin", "Poibuilderized %d node(s) into editable PBMesh" % created_nodes.size())
+
+func _perform_probuilderize() -> void:
+	_perform_poibuilderize()
 
 func _perform_csg_boolean(op: PBCsg.BooleanOp) -> void:
 	var ei := get_editor_interface()
 	var selected_nodes: Array[Node] = []
 	if ei != null and ei.get_selection() != null:
 		selected_nodes = ei.get_selection().get_selected_nodes()
-	var pb_meshes: Array[PBMesh] = []
+
+	var candidates: Array[Node] = []
 	for n in selected_nodes:
-		if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
-			pb_meshes.append(n as PBMesh)
-	if pb_meshes.size() < 2:
+		if (n is PBMesh and (n as PBMesh).pb_mesh_data != null) or (n is CSGShape3D) or (n is MeshInstance3D and not (n is PBMesh)):
+			candidates.append(n)
+
+	if candidates.size() < 2:
 		if logger:
-			logger.warn("plugin", "CSG Booleans require at least 2 selected PBMesh nodes")
+			logger.warn("plugin", "CSG Booleans require 2 selected objects (Target and Cutter). Select both with Shift/Ctrl.")
 		return
-	var mesh_a: PBMesh = pb_meshes[0]
-	var mesh_b: PBMesh = pb_meshes[1]
-	var a_xf: Transform3D = mesh_a.global_transform if mesh_a.is_inside_tree() else mesh_a.transform
-	var b_xf: Transform3D = mesh_b.global_transform if mesh_b.is_inside_tree() else mesh_b.transform
-	var rel_xf := a_xf.affine_inverse() * b_xf
-	var res := PBCsg.perform_boolean(mesh_a.pb_mesh_data, mesh_b.pb_mesh_data, op, rel_xf, get_tree())
+
+	var target_node: Node = candidates[0]
+	var cutter_node: Node = candidates[1]
+	if editor.active_mesh != null and editor.active_mesh in candidates:
+		target_node = editor.active_mesh
+		for c in candidates:
+			if c != target_node:
+				cutter_node = c
+				break
+
+	var target_mesh: PBMesh = null
+	if target_node is PBMesh:
+		target_mesh = target_node as PBMesh
+	elif target_node is CSGShape3D:
+		target_mesh = PBObjectOps.poibuilderize_csg(target_node as CSGShape3D)
+	elif target_node is MeshInstance3D:
+		target_mesh = PBObjectOps.poibuilderize(target_node as MeshInstance3D)
+
+	if target_mesh == null or target_mesh.pb_mesh_data == null:
+		if logger:
+			logger.error("plugin", "CSG Error: Target object has no valid mesh")
+		return
+
+	var cutter_data: PBMeshData = null
+	if cutter_node is PBMesh:
+		cutter_data = (cutter_node as PBMesh).pb_mesh_data
+	elif cutter_node is CSGShape3D:
+		var tmp := PBObjectOps.poibuilderize_csg(cutter_node as CSGShape3D)
+		if tmp != null:
+			cutter_data = tmp.pb_mesh_data
+			tmp.free()
+	elif cutter_node is MeshInstance3D:
+		var tmp := PBObjectOps.poibuilderize(cutter_node as MeshInstance3D)
+		if tmp != null:
+			cutter_data = tmp.pb_mesh_data
+			tmp.free()
+
+	if cutter_data == null:
+		if logger:
+			logger.error("plugin", "CSG Error: Cutter object has no valid mesh")
+		return
+
+	var target_xf: Transform3D = target_node.global_transform if target_node.is_inside_tree() else target_node.transform
+	var cutter_xf: Transform3D = cutter_node.global_transform if cutter_node.is_inside_tree() else cutter_node.transform
+	var rel_xf := target_xf.affine_inverse() * cutter_xf
+
+	var res := PBCsg.perform_boolean(target_mesh.pb_mesh_data, cutter_data, op, rel_xf, get_tree())
 	if not res.get("success", false):
 		if logger:
 			logger.error("plugin", "CSG Error: %s" % res.get("error", "Unknown error"))
 		return
-	mesh_a.pb_mesh_data = res["mesh_data"]
-	mesh_a.rebuild()
-	mesh_a.update_gizmos()
-	if mesh_b.get_parent() != null:
-		mesh_b.get_parent().remove_child(mesh_b)
-	if logger:
-		logger.info("plugin", "CSG Boolean committed successfully")
 
+	var before_data := PBCommand.copy_mesh_data(target_mesh.pb_mesh_data)
+	var after_data: PBMeshData = res["mesh_data"]
+
+	var op_name_str: String = ["Union", "Intersect", "Subtract"][op]
+	var undo_mgr := get_undo_redo()
+	if undo_mgr != null:
+		undo_mgr.create_action("CSG %s" % op_name_str)
+		undo_mgr.add_do_method(self, "_restore_csg_mesh", target_mesh, after_data)
+		undo_mgr.add_undo_method(self, "_restore_csg_mesh", target_mesh, before_data)
+		var cutter_parent := cutter_node.get_parent()
+		if cutter_parent != null:
+			undo_mgr.add_do_method(cutter_parent, "remove_child", cutter_node)
+			undo_mgr.add_undo_method(cutter_parent, "add_child", cutter_node)
+		undo_mgr.commit_action()
+	else:
+		target_mesh.pb_mesh_data = after_data
+		target_mesh.rebuild()
+		target_mesh.update_gizmos()
+		if cutter_node.get_parent() != null:
+			cutter_node.get_parent().remove_child(cutter_node)
+
+	if logger:
+		logger.info("plugin", "CSG %s committed successfully onto %s" % [op_name_str, target_mesh.name])
+
+func _restore_csg_mesh(mesh: PBMesh, data: PBMeshData) -> void:
+	if mesh != null and is_instance_valid(mesh):
+		mesh.pb_mesh_data = PBCommand.copy_mesh_data(data)
+		mesh.pb_mesh_data.shape_edited = true
+		mesh.rebuild()
+		mesh.update_gizmos()
 func _perform_auto_smooth() -> void:
 	var mesh := editor.active_mesh
 	if mesh == null or mesh.pb_mesh_data == null:
@@ -2066,6 +2193,8 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	if shape_id == &"sprite":
 		_set_creation_hint("%s — click a surface to anchor it (Esc cancels)"
 			% String(shape_id).capitalize())
+	elif PBShapeParams.commits_on_base_release(shape_id):
+		_set_creation_hint("Trim — drag base along wall, release to commit (Esc cancels)")
 	elif PBShapeParams.height_drags_offset(shape_id):
 		_set_creation_hint("%s — drag out a sheet on any surface, then move to offset it (Ctrl: lock direction, Esc cancels)"
 			% String(shape_id).capitalize())
@@ -2433,6 +2562,9 @@ func _creation_end_base() -> void:
 		# A stray click (no real drag) — ProBuilder creates nothing either.
 		_creation_abort("base drag too small")
 		return
+	if PBShapeParams.commits_on_base_release(shape_creator.shape_id):
+		_creation_confirm()
+		return
 	# Rebuild NOW: the solid preview appears immediately as a flat slab ON
 	# the surface (height 0) instead of popping in below it with a jump at
 	# the first mouse move.
@@ -2533,6 +2665,9 @@ func _finish_creation_session(node: PBMesh) -> void:
 		# re-attach before selecting so add_node sees a live tree node.
 		if not node.is_inside_tree():
 			_attach_detached(node, get_editor_interface().get_edited_scene_root())
+	if PBShapeParams.commits_on_base_release(shape_creator.shape_id):
+		_creation_confirm()
+		return
 
 func _update_cursor_extents(screen_pos: Vector2) -> void:
 	if _cursor_extents_label == null:

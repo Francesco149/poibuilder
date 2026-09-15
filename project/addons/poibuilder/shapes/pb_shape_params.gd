@@ -105,9 +105,14 @@ static func get_param_defs(shape_id: StringName) -> Array:
 			]
 		&"trim":
 			return [
-				_value_def("length", "Length", 0.1, 100.0, 3.0, "m"),
-				_value_def("height", "Height", 0.05, 5.0, 0.2, "m"),
-				_value_def("width", "Width / Depth", 0.01, 2.0, 0.1, "m"),
+				_count_def("profile", "Profile (0:Flat,1:Chamfer,2:Round,3:Cove,4:Ogee,5:Stepped)", 0, 5, 1),
+				_value_def("length", "Length", 0.1, 100.0, 2.0, "m"),
+				_value_def("height", "Height", 0.02, 2.0, 0.15, "m"),
+				_value_def("depth", "Depth", 0.005, 1.0, 0.05, "m"),
+				_count_def("arc_segments", "Arc Segments", 2, 16, 4),
+				_bool_def("upside_down", "Upside Down (Cornice)", false),
+				_bool_def("flip_side", "Flip Side", false),
+				_bool_def("smooth", "Smooth Shading", true),
 			]
 	return []
 
@@ -172,14 +177,16 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 				poly.append(Vector3(cos(angle) * radius, 0.0, sin(angle) * radius))
 			data = PBShapeComplex.create_ngon_prism(poly, height, Vector3.UP)
 		&"trim":
-			var l: float = float(v.get("length", 3.0))
-			var h: float = float(v.get("height", 0.2))
-			var w: float = float(v.get("width", 0.1))
-			var path := PackedVector3Array([
-				Vector3(-l * 0.5, 0.0, 0.0),
-				Vector3(l * 0.5, 0.0, 0.0)
-			])
-			data = PBShapeTrim.create_wall_trim(path, PBShapeTrim.ProfileType.CHAMFER, w, h, false)
+			var p_type: int = int(v.get("profile", 1))
+			var l: float = float(v.get("length", 2.0))
+			var h: float = float(v.get("height", 0.15))
+			var d: float = float(v.get("depth", 0.05))
+			var segs: int = int(v.get("arc_segments", 4))
+			var upside_down: bool = bool(v.get("upside_down", false))
+			var flip_side: bool = bool(v.get("flip_side", false))
+			var smooth: bool = bool(v.get("smooth", true))
+			data = PBShapeTrim.build_straight_trim(l, d, h, p_type as PBShapeTrim.ProfileType,
+				segs, upside_down, flip_side, smooth)
 	if data != null:
 		data.shape_id = shape_id
 		data.shape_params = v.duplicate()
@@ -282,6 +289,10 @@ static func plane_flow_axis(normal: Vector3) -> Vector3:
 static func height_drags_offset(shape_id: StringName) -> bool:
 	return shape_id == &"sprite" or shape_id == &"plane"
 
+## True when shape creation commits immediately on mouse release (no height drag phase).
+static func commits_on_base_release(shape_id: StringName) -> bool:
+	return shape_id == &"trim"
+
 ## Maps a creation drag (base rect extents u/v in the surface plane + height
 ## along the normal) onto the shape's parameter values. The mapping is the
 ## same for EVERY surface because the placement basis already orients the
@@ -306,7 +317,13 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		# 1 cm wafer sitting inside the grid ("the floor is placed with zero
 		# height, z-fighting the grid").
 		values["height"] = maxf(0.1, absf(height))
-	if values.has("depth"):
+	if values.has("length") and values.has("depth"):
+		var drag_len := maxf(u_size, v_size)
+		var drag_h := minf(u_size, v_size)
+		values["length"] = maxf(0.1, drag_len)
+		if drag_h > 0.03:
+			values["height"] = maxf(0.03, drag_h)
+	elif values.has("depth"):
 		values["depth"] = maxf(0.1, v_size)
 	if values.has("width"):
 		if values.has("opening_height"):
