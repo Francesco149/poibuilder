@@ -3138,3 +3138,14 @@ v0.9.114 — Trim Walls cross-sections follow the placement edge:
 - Tests: door bottom=2/top=1, stair side top=short run on the top step
   with bottom=full depth.
 - Version bump 0.9.113 -> 0.9.114.
+
+v0.9.115 — Trim Walls Top placement marks the structure's top edge:
+- Moving a full loop to Top kept runs on faces that never reach the top
+  edge - the door's inner reveal faces kept arch-level rings, and runs
+  appeared to wrap oddly. At Top the trim marks the top edge of the
+  TALLEST chosen face: faces more than 0.1 m below it (door reveals,
+  arch inners, stair sides in a room) yield nothing, while in isolation
+  (only the door or stair chosen) those same faces are the tallest and
+  still work. Bottom placement is unchanged (every face trims at the
+  floor).
+- Version bump 0.9.114 -> 0.9.115.

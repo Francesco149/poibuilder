@@ -237,10 +237,24 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 	# 1. World runs: every chosen face's horizontal cross-section at its base
 	# height, oriented so that UP × run points into the room.
 	var segments: Array = []
+	# First pass: world polygons + the tallest chosen face. At TOP the trim
+	# marks the STRUCTURE'S top edge, so faces well below it (door reveals,
+	# arch inners) yield nothing - while in isolation (only the door or
+	# stair chosen) the same faces are the tallest and still work.
+	var polys: Array[PackedVector3Array] = []
+	var top_ref := -INF
+	for w in walls:
+		var poly := face_world_polygon(w["mesh"], int(w["face"]))
+		polys.append(poly)
+		if poly.size() >= 3:
+			for p in poly:
+				top_ref = maxf(top_ref, p.y)
+	var index := 0
 	for w in walls:
 		var mesh: PBMesh = w["mesh"]
 		var face: int = int(w["face"])
-		var poly := face_world_polygon(mesh, face)
+		var poly := polys[index]
+		index += 1
 		if poly.size() < 3:
 			continue
 		var normal: Vector3 = w.get("normal", Vector3.ZERO)
@@ -248,6 +262,12 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 			normal = face_world_normal(mesh, face)
 		if absf(normal.dot(Vector3.UP)) > 0.7:
 			continue  # not a wall (a floor/ceiling face was clicked)
+		var hi := -INF
+		for p in poly:
+			hi = maxf(hi, p.y)
+		var top := float(params.get("top", 0.0)) > 0.5
+		if top and hi < top_ref - 0.1:
+			continue  # below the structure's top edge - no cornice here
 		var placement := _base_height_for(poly, normal, floor_probe, ceiling_probe)
 		var base_y: float = placement["base"]
 		for seg in run_segments_at_height(poly, placement["cross_y"]):

@@ -455,3 +455,42 @@ func test_stair_side_at_top_stops_on_the_top_step():
 	# ...while the bottom still runs the full depth.
 	var bottom := PBTrimWallsTool.run_segments_at_height(poly, 0.05)
 	assert_eq(bottom.size(), 1, "bottom placement runs the full depth")
+
+## REGRESSION (full loop to Top): the door's INNER reveal faces kept their
+## arch-level runs at Top placement. At Top the trim marks the structure's
+## top edge - faces well below the tallest chosen face yield nothing -
+## while in ISOLATION (only the door chosen) the door front still works.
+func test_top_placement_skips_faces_below_the_structure_top():
+	var wall := _wall(Vector3(6, 3, 0.2), Vector3(3, 1.5, -0.1))   # tall wall, hi=3
+	var door := _wall(Vector3(1.2, 2, 0.2), Vector3(5, 1.0, -0.1)) # door-ish face, hi=2
+	var tall_face := _face_with_normal(wall, Vector3(0, 0, 1))
+	var door_face := _face_with_normal(door, Vector3(0, 0, 1))
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.params["top"] = 1.0
+	tool.toggle_wall(wall, tall_face)
+	tool.toggle_wall(door, door_face)
+	var data := tool.build()
+	assert_ne(data, null)
+	var hi := -INF
+	for p in data.positions:
+		hi = maxf(hi, p.y)
+	assert_almost_eq(hi, 3.0, 0.002,
+		"at Top the trim runs the structure's top edge - the door face below it yields nothing")
+	var lo := INF
+	for p in data.positions:
+		lo = minf(lo, p.y)
+	assert_almost_eq(lo, 3.0 - float(tool.params["height"]), 0.002,
+		"the strip hangs under the top edge")
+
+	# In ISOLATION (only the short face chosen) it is the tallest and works.
+	var solo := PBTrimWallsTool.new()
+	solo.arm()
+	solo.params["top"] = 1.0
+	solo.toggle_wall(door, door_face)
+	var solo_data := solo.build()
+	assert_ne(solo_data, null)
+	var solo_hi := -INF
+	for p in solo_data.positions:
+		solo_hi = maxf(solo_hi, p.y)
+	assert_almost_eq(solo_hi, 2.0, 0.002, "isolated, the short face is its own top edge")
