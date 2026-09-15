@@ -5,6 +5,10 @@ lead: A dedicated 2D canvas. Click a face in 3D, the island lights up. Drag in 2
 
 Toolbar **UV** opens the bottom panel. Pop-out detaches it to a floating window.
 
+:::shot uv-editor.png
+Dedicated 2D UV canvas with bidirectional live sync.
+:::
+
 ## Canvas
 
 - Pan, zoom, a unit quad, optional texture underlay and tiling.

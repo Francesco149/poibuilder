@@ -455,6 +455,8 @@ func apply_selection_ids(ids: PackedInt32Array, settle := true) -> void:
 		mesh.set_subgizmo_selection(g, ids[0],
 			ed.get_subgizmo_transform(mesh.pb_mesh_data, mesh, ids[0]))
 	mesh.update_gizmos()
+	if plugin != null and plugin.toolbar != null:
+		plugin.toolbar._on_selection_info_changed()
 	if settle:
 		await frames(4)
 

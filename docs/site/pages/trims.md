@@ -39,6 +39,10 @@ Toolbar **Trim Walls** (row 4). Parameters appear immediately. Then click wall f
 - **Placement Bottom / Top** + **Offset**: skirting on the slab even when wall cubes reach below it; cornice tucks under the ceiling.
 - Result is **one** object. Edit Params stays live for the same walls — change profile, height, depth, offset without re-clicking.
 
+:::shot trim-walls.png
+Mitred corners across inside, outside, and shallow angles.
+:::
+
 ### Use case — dress a room
 
 1. Arm Trim Walls. Height 0.1 m, depth 0.05 m, profile Chamfer.

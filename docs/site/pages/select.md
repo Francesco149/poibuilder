@@ -46,6 +46,10 @@ Object mode moves several meshes. Entering an element mode **narrows editing to 
 | Loop | [[kbd:Alt]]+[[kbd:L]] | Face loop along a quad strip |
 | Ring | [[kbd:Alt]]+[[kbd:R]] | Perpendicular face ring |
 
+
+:::shot select-smart.png
+Smart selection helpers: face loops, grow, shrink, coplanar, and invert.
+:::
 ## Use cases
 
 ### Retexture one wall

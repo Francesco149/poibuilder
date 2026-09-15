@@ -5,6 +5,10 @@ lead: Chamfer or fillet selected edges or faces. Distance and segments live in a
 
 Toolbar **Bevel**. Key [[kbd:Ctrl]]+[[kbd:B]].
 
+:::shot edit-bevel.png
+Bevel with live preview — distance and segment rounding.
+:::
+
 ## When
 
 Round a tabletop, chamfer a stone block, fillet a pipe intersection, knock the corner off a doorway so light catches it.

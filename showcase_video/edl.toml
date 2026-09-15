@@ -538,17 +538,17 @@ captions = [
 id = "80-uv"
 source = "more:more/uv"
 region = "viewport_ui"
-at = -2.8
-dur = 2.8
-caption = { label = "UV", text = "Dedicated 2D UV editor — seams under control", at = 0.2, dur = 2.4 }
+at = 1.0
+dur = 5.8
+caption = { label = "UV", text = "Dedicated 2D UV editor — live 2D/3D sync", at = 0.2, dur = 5.4 }
 
 [[clip]]
 id = "81-bevel"
 source = "more:more/bevel"
 region = "viewport_ui"
-at = -4.0
-dur = 4.0
-caption = { label = "Edit", text = "Bevel with live preview", at = 0.2, dur = 3.6 }
+at = 0.6
+dur = 5.2
+caption = { label = "Edit", text = "Bevel with live preview — chamfer to rounded fillet", at = 0.2, dur = 4.8 }
 
 [[clip]]
 id = "82-trim"
@@ -562,34 +562,33 @@ caption = { label = "Trim", text = "Skirting in one drag; six profiles", at = 0.
 id = "83-trim-walls"
 source = "more:more/trim_walls"
 region = "viewport_ui"
-at = -4.0
-dur = 4.0
-caption = { label = "Trim Walls", text = "Click walls, mitred corners", at = 0.2, dur = 3.6 }
+at = 0.4
+dur = 4.5
+caption = { label = "Trim Walls", text = "Click walls, mitred corners — concave, convex, shallow", at = 0.2, dur = 4.1 }
 
 [[clip]]
 id = "84-csg"
 source = "more:more/csg"
 region = "viewport_ui"
-at = -2.2
-dur = 2.2
-caption = { label = "CSG", text = "Booleans with real undo", at = 0.2, dur = 2.0 }
+at = 0.5
+dur = 4.4
+caption = { label = "CSG", text = "Booleans with real undo — non-destructive", at = 0.2, dur = 4.0 }
 
 [[clip]]
 id = "85-select-snap"
 source = "more:more/select_snap"
 region = "viewport_ui"
-at = -3.0
-dur = 3.0
-caption = { label = "Select", text = "Select smart, snap exact, soften freely", at = 0.2, dur = 2.6 }
+at = 0.5
+dur = 6.8
+caption = { label = "Select", text = "Select smart — face loops, grow/shrink, coplanar, invert", at = 0.2, dur = 6.2 }
 
 [[clip]]
 id = "86-poibuilderize"
 source = "more:more/poibuilderize"
 region = "viewport_ui"
-at = -3.2
-dur = 3.2
-caption = { label = "Import", text = "Import anything, edit it natively", at = 0.2, dur = 2.8 }
-
+at = 0.4
+dur = 3.4
+caption = { label = "Import", text = "Import any GLB, edit it natively", at = 0.2, dur = 3.0 }
 
 [[clip]]
 id = "90-end"

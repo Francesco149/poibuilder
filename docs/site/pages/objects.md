@@ -24,6 +24,10 @@ Imported GLBs and Godot primitives are not editable as faces until you convert t
 3. **Poibuilderize**. A new `PBMesh` appears with per-triangle corners, welds rebuilt, materials copied.
 4. Pull a face. It is a PoiBuilder mesh now.
 
+
+:::shot poibuilderize.png
+Import any GLB, convert with one click, and edit its faces natively.
+:::
 Heavy meshes stay heavy — every triangle is a face. Collapsing and merging after convert is the usual cleanup.
 
 A MeshInstance3D you **do not** convert still **exports** to retro `.pbm`. Textures are sanitized (power-of-two, clamped to max size) on the way out. Convert only if you need to edit faces.
@@ -39,6 +43,10 @@ A MeshInstance3D you **do not** convert still **exports** to retro `.pbm`. Textu
 Works across PoiBuilder meshes, ordinary MeshInstance3D, and CSG nodes. Operands must be **watertight**; a failure names the open-boundary count in the Output log.
 
 Undo puts the cutter back in the tree (the node was removed on do, referenced on undo).
+
+:::shot csg-booleans.png
+CSG boolean subtraction with real undo — non-destructive and reversible.
+:::
 
 ### Use case — a round window
 

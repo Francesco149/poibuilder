@@ -46,6 +46,12 @@ SHOTS = {
     "map-export": "67-map-export",
     "psp-court": "70-psp-court",
     "psp-hud": "75-psp-hud",
+    "uv-editor": "80-uv",
+    "edit-bevel": "81-bevel",
+    "trim-walls": "83-trim-walls",
+    "csg-booleans": "84-csg",
+    "select-smart": "85-select-snap",
+    "poibuilderize": "86-poibuilderize",
 }
 
 # Short loops cut from the assembled master (seconds).

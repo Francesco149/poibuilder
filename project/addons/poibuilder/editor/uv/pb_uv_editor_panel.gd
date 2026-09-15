@@ -386,6 +386,8 @@ func _build_ui() -> void:
 	add_child(canvas_container)
 	canvas = PBUvCanvas.new()
 	canvas.name = "UvCanvas"
+	canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	canvas.selection_changed.connect(_on_canvas_selection_changed)
 	canvas.view_changed.connect(_on_canvas_view_changed)
 	canvas.tool_changed.connect(_on_canvas_tool_changed)
@@ -835,6 +837,9 @@ func set_floating(floating: bool) -> void:
 		if parent:
 			parent.remove_child(self)
 		_floating_window.add_child(self)
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_floating_window.size_changed.connect(func():
+			set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT))
 
 		var base_control := EditorInterface.get_base_control() if Engine.is_editor_hint() else null
 		if base_control:
