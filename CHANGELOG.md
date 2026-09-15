@@ -3159,3 +3159,18 @@ v0.9.116 — Trim Walls Top placement keeps the simple runs:
   the fiddly parts stay out. An all-short build (only a door or stair
   chosen) keeps its short runs, so that flow still works.
 - Version bump 0.9.115 -> 0.9.116.
+
+v0.9.117 — Top-run filtering at the segment level; overlay thickness/offset:
+- TOP-RUN FILTER REBUILT: the short-run drop happened AFTER chaining, so
+  chained side-face runs rode INSIDE the long path and the corners still
+  wrapped (the overshoot tabs at wall corners). The filter now removes
+  short SEGMENTS before chaining - long runs chain only with long runs;
+  an all-short build (door/stair alone) still keeps its runs.
+- OVERLAY THICKNESS/OFFSET: the thick-line volume straddled the edge
+  symmetrically, so its outward half depth-tested away and the visible
+  half floated off the surface - up close that read as a thick band
+  hovering off the mesh. The solid quads are now BIASED TOWARD THE
+  CAMERA (75% of the offset), the stroke/fill clamp maxima drop from
+  0.08/0.06 to 0.014/0.006 world units, and the selected/hover edge
+  multipliers from 1.5x to 1.2x.
+- Version bump 0.9.116 -> 0.9.117.

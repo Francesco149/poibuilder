@@ -380,8 +380,8 @@ func _redraw(gizmo) -> void:
 		var aabb: AABB = node.global_transform * node.get_aabb()
 		var target: Vector3 = cam.global_position.clamp(aabb.position, aabb.end)
 		var cam_dist: float = target.distance_to(cam.global_position)
-		_live_stroke_offset = clampf(cam_dist * STROKE_SCREEN_SCALE, 0.0015, 0.08)
-		_live_fill_offset = clampf(cam_dist * FILL_SCREEN_SCALE, 0.001, 0.06)
+		_live_stroke_offset = clampf(cam_dist * STROKE_SCREEN_SCALE, 0.0015, 0.014)
+		_live_fill_offset = clampf(cam_dist * FILL_SCREEN_SCALE, 0.0008, 0.006)
 	# N-gon drawing session (Knife tool or N-Gon shape extrusion)
 	# Checked FIRST: preview_node draws its overlay without requiring mesh_data!
 	if ngon_drawer != null and ngon_drawer.is_active():
@@ -632,11 +632,17 @@ func _commit_handle(gizmo, handle_id: int, secondary: bool, restore: Variant,
 ## filled cross-quads (plus a center line for guaranteed subpixel visibility at
 ## distance). This eliminates the fuzzy, multi-line "wire comb" artifact when
 ## zoomed in, maintaining a solid, clean beam at any zoom level.
-static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material,
+func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Material,
 		offset: float = THICK_LINE_OFFSET, stacks: int = 2) -> void:
 	var n: int = pairs.size()
 	if n < 2:
 		return
+	# Bias the solid quads TOWARD the camera: a symmetric volume straddles
+	# the edge, its outward half depth-tests away and the visible half
+	# floats off the surface (the "overlays offset up close" reports).
+	var bias := offset * 0.75
+	var cam := _overlay_camera(gizmo.get_node_3d() as Node3D)
+	var cam_pos: Vector3 = cam.global_position if cam != null else Vector3.ZERO
 
 	# 1. Center hardware lines: guaranteed min 1px visibility at any distance
 	gizmo.add_lines(pairs, material)
@@ -660,6 +666,9 @@ static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Materia
 		var dir := b - a
 		if dir.length_squared() > 0.000000001:
 			dir = dir.normalized()
+			var toward := Vector3.ZERO
+			if cam != null:
+				toward = (cam_pos - (a + b) * 0.5).normalized() * bias
 			var perp1 := dir.cross(Vector3.UP)
 			if perp1.length_squared() < 0.25:
 				perp1 = dir.cross(Vector3.RIGHT)
@@ -667,10 +676,10 @@ static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Materia
 
 			# Quad 1 (along perp1)
 			var base_v := v_idx
-			verts[v_idx]     = a - perp1
-			verts[v_idx + 1] = a + perp1
-			verts[v_idx + 2] = b + perp1
-			verts[v_idx + 3] = b - perp1
+			verts[v_idx]     = a - perp1 + toward
+			verts[v_idx + 1] = a + perp1 + toward
+			verts[v_idx + 2] = b + perp1 + toward
+			verts[v_idx + 3] = b - perp1 + toward
 			v_idx += 4
 
 			indices[i_idx]     = base_v
@@ -684,10 +693,10 @@ static func _add_thick_lines(gizmo, pairs: PackedVector3Array, material: Materia
 			if stacks >= 2:
 				var perp2 := dir.cross(perp1.normalized()).normalized() * o
 				var base_v2 := v_idx
-				verts[v_idx]     = a - perp2
-				verts[v_idx + 1] = a + perp2
-				verts[v_idx + 2] = b + perp2
-				verts[v_idx + 3] = b - perp2
+				verts[v_idx]     = a - perp2 + toward
+				verts[v_idx + 1] = a + perp2 + toward
+				verts[v_idx + 2] = b + perp2 + toward
+				verts[v_idx + 3] = b - perp2 + toward
 				v_idx += 4
 
 				indices[i_idx]     = base_v2
@@ -794,7 +803,7 @@ func _draw_selected_edges(gizmo, mesh_data: PBMeshData) -> void:
 	if write_idx < lines.size():
 		lines.resize(write_idx)
 	if lines.size() >= 2:
-		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo), _live_stroke_offset * 1.5, 2)
+		_add_thick_lines(gizmo, lines, get_material("pb_selected_edge", gizmo), _live_stroke_offset * 1.2, 2)
 ## The hovered (not selected) edge as a translucent yellow on-top stroke.
 func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	var hover_id: int = editor.hover_id
@@ -809,7 +818,7 @@ func _draw_hover_edge(gizmo, mesh_data: PBMeshData) -> void:
 	if edge.a < 0 or edge.a >= positions.size() or edge.b < 0 or edge.b >= positions.size():
 		return
 	_add_thick_lines(gizmo, PackedVector3Array([positions[edge.a], positions[edge.b]]),
-		get_material("pb_hover_edge", gizmo), _live_stroke_offset * 1.5, 2)
+		get_material("pb_hover_edge", gizmo), _live_stroke_offset * 1.2, 2)
 
 ## All shared vertices as gray dots, selected ones as opaque yellow dots, the
 ## hovered one (when not selected) as a slightly more transparent yellow dot.

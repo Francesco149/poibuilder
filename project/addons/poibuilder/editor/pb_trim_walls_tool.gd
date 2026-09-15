@@ -295,29 +295,22 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 	var merged := merge_colinear(segments)
 
 	# 3. Chain + mitre.
+	# 4b. Top placement keeps the SIMPLE runs at the SEGMENT level: short
+	# runs (door reveal tops, stair step tops, wall end wraps) are removed
+	# from the chains entirely - chained inside a long path they produced
+	# the corner wraps and overshoot tabs. An all-short build (only a door
+	# or stair chosen) keeps its runs - that IS the placement there.
+	if float(params.get("top", 0.0)) > 0.5 and not merged.is_empty():
+		var longest := 0.0
+		for seg in merged:
+			longest = maxf(longest, (seg["a"] as Vector3).distance_to(seg["b"]))
+		if longest >= MIN_TOP_RUN:
+			merged = merged.filter(func(seg):
+				return (seg["a"] as Vector3).distance_to(seg["b"]) >= MIN_TOP_RUN)
+
 	var paths := _chain_and_mitre(merged)
 
-	# 4b. Top placement keeps the SIMPLE runs: when longer runs exist, drop
-	# the short ones (door reveal tops, stair step tops) — they are the
-	# confusing wraps; the simple runs move to the top and the rest can be
-	# deleted and replaced. An all-short build keeps its runs.
-	if float(params.get("top", 0.0)) > 0.5 and paths.size() > 0:
-		var longest := 0.0
-		for path_info in paths:
-			var pts: PackedVector3Array = path_info["points"]
-			var length := 0.0
-			for i in range(pts.size() - 1):
-				length += pts[i].distance_to(pts[i + 1])
-			longest = maxf(longest, length)
-		if longest >= MIN_TOP_RUN:
-			paths = paths.filter(func(path_info):
-				var pts: PackedVector3Array = path_info["points"]
-				var length := 0.0
-				for i in range(pts.size() - 1):
-					length += pts[i].distance_to(pts[i + 1])
-				return length >= MIN_TOP_RUN)
-
-	# 4. Sweep every chain into ONE PBMeshData.
+	# 5. Sweep every chain into ONE PBMeshData.
 	# The RECORDED paths must be offset-free: Edit Params applies the current
 	# Offset itself, so a baked offset would double-apply and a reset to 0
 	# could never undo an earlier slide ("offset permanently shifts the trim
