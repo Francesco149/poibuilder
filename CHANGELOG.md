@@ -3149,3 +3149,13 @@ v0.9.115 — Trim Walls Top placement marks the structure's top edge:
   still work. Bottom placement is unchanged (every face trims at the
   floor).
 - Version bump 0.9.114 -> 0.9.115.
+
+v0.9.116 — Trim Walls Top placement keeps the simple runs:
+- Reveal faces (door sides, stair tops) reach the structure's top edge,
+  and their tiny top runs chained into the wall runs - the trim wrapped
+  into the doorway's top corners ("goes into the door's top geometry").
+  At Top placement, when longer runs exist in the build, runs shorter
+  than 0.5 m are dropped: the simple runs move to the top and connect,
+  the fiddly parts stay out. An all-short build (only a door or stair
+  chosen) keeps its short runs, so that flow still works.
+- Version bump 0.9.115 -> 0.9.116.

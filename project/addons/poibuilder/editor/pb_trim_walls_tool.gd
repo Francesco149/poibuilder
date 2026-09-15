@@ -39,6 +39,12 @@ const MAX_MITRE_EXTENT := 0.6
 ## (metres) — nearby wall pieces of ONE room join; a wall across the room
 ## (or the far end of an unclosed arc) never leaches onto the chain.
 const CHAIN_REACH := 0.6
+## At TOP placement, runs shorter than this are dropped WHENEVER longer
+## runs exist in the same build: reveal faces and stair tops reach the top
+## edge but their tiny runs wrapped/mitred confusingly ("goes into the
+## door's top geometry"). An all-short build (only a door or stair chosen)
+## keeps its short runs - that IS the placement there.
+const MIN_TOP_RUN := 0.5
 
 var state: State = State.INACTIVE
 
@@ -290,6 +296,26 @@ func build(floor_probe := Callable(), ceiling_probe := Callable()) -> PBMeshData
 
 	# 3. Chain + mitre.
 	var paths := _chain_and_mitre(merged)
+
+	# 4b. Top placement keeps the SIMPLE runs: when longer runs exist, drop
+	# the short ones (door reveal tops, stair step tops) — they are the
+	# confusing wraps; the simple runs move to the top and the rest can be
+	# deleted and replaced. An all-short build keeps its runs.
+	if float(params.get("top", 0.0)) > 0.5 and paths.size() > 0:
+		var longest := 0.0
+		for path_info in paths:
+			var pts: PackedVector3Array = path_info["points"]
+			var length := 0.0
+			for i in range(pts.size() - 1):
+				length += pts[i].distance_to(pts[i + 1])
+			longest = maxf(longest, length)
+		if longest >= MIN_TOP_RUN:
+			paths = paths.filter(func(path_info):
+				var pts: PackedVector3Array = path_info["points"]
+				var length := 0.0
+				for i in range(pts.size() - 1):
+					length += pts[i].distance_to(pts[i + 1])
+				return length >= MIN_TOP_RUN)
 
 	# 4. Sweep every chain into ONE PBMeshData.
 	# The RECORDED paths must be offset-free: Edit Params applies the current

@@ -494,3 +494,34 @@ func test_top_placement_skips_faces_below_the_structure_top():
 	for p in solo_data.positions:
 		solo_hi = maxf(solo_hi, p.y)
 	assert_almost_eq(solo_hi, 2.0, 0.002, "isolated, the short face is its own top edge")
+
+## REGRESSION ("it goes into the door's top geometry"): reveal faces reach
+## the structure's top edge and their tiny top runs chained into the wall
+## runs, wrapping the trim into the doorway. At Top, when longer runs
+## exist, the short ones are dropped: the simple runs move to the top and
+## the fiddly parts are left as separate (deletable) pieces.
+func test_top_drops_short_runs_when_longer_exist():
+	var wall := _wall(Vector3(6, 3, 0.2), Vector3(3, 1.5, -0.1))   # hi=3, wide
+	var reveal := _wall(Vector3(0.25, 3, 0.25), Vector3(6.2, 1.5, -0.1))  # hi=3, narrow
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.params["top"] = 1.0
+	tool.toggle_wall(wall, _face_with_normal(wall, Vector3(0, 0, 1)))
+	tool.toggle_wall(reveal, _face_with_normal(reveal, Vector3(0, 0, 1)))
+	var data := tool.build()
+	assert_ne(data, null)
+	# The long wall run survives; the narrow reveal run is dropped.
+	assert_eq(tool.last_paths.size(), 1, "only the simple (long) run survives at Top")
+	var length := 0.0
+	var pts: PackedVector3Array = tool.last_paths[0]["points"]
+	for i in range(pts.size() - 1):
+		length += pts[i].distance_to(pts[i + 1])
+	assert_gt(length, 3.0, "the surviving run is the wall run")
+
+	# Isolation: an all-short build (only the narrow reveal) keeps its run.
+	var solo := PBTrimWallsTool.new()
+	solo.arm()
+	solo.params["top"] = 1.0
+	solo.toggle_wall(reveal, _face_with_normal(reveal, Vector3(0, 0, 1)))
+	var solo_data := solo.build()
+	assert_ne(solo_data, null, "an all-short build (door/stair alone) keeps its runs")
