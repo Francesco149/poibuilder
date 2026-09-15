@@ -366,6 +366,7 @@ static func create_sphere(radius: float = 0.5, subdivisions: int = 2, smooth: bo
 
 		var face := PBFace.new(PackedInt32Array([base + 0, base + 1, base + 2]))
 		face.smoothing_group = smooth_grp
+		face.manual_uv = true
 		faces.append(face)
 
 	mesh_data.positions = positions
@@ -398,7 +399,7 @@ static func create_torus(
 	var faces: Array[PBFace] = []
 
 	var smooth_grp: int = 1 if smooth else 0
-
+	var u_tiles: float = maxf(1.0, roundf(major_radius / maxf(0.001, minor_radius)))
 	for j in range(num_cols):
 		var j1: int = j
 		var j2: int = (j + 1) % num_cols
@@ -411,8 +412,8 @@ static func create_torus(
 		var cos_t2: float = cos(theta2)
 		var sin_t2: float = sin(theta2)
 
-		var u1: float = float(j1) / float(num_cols)
-		var u2: float = float(j + 1) / float(num_cols)
+		var u1: float = (float(j1) / float(num_cols)) * u_tiles
+		var u2: float = (float(j + 1) / float(num_cols)) * u_tiles
 
 		for i in range(num_rows):
 			var i1: int = i
@@ -452,6 +453,9 @@ static func create_torus(
 	mesh_data.positions = positions
 	mesh_data.textures0 = textures0
 	mesh_data.faces = faces
+	for f in faces:
+		if f != null:
+			f.manual_uv = true
 	mesh_data.shared_vertices = _build_shared_vertices(positions)
 	mesh_data.shared_textures = []
 	mesh_data.invalidate_caches()

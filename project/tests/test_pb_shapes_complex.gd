@@ -111,6 +111,19 @@ func test_torus_smoothing_groups():
 	for f in md_flat.faces:
 		assert_eq(f.smoothing_group, 0)
 
+func test_torus_uvs_preserved_on_compile():
+	var md = PBShapeComplex.create_torus(0.5, 0.15, 8, 12)
+	for f in md.faces:
+		assert_true(f.manual_uv, "Torus faces should be flagged manual_uv to preserve toroidal coordinates")
+	var initial_uvs: PackedVector2Array = md.textures0.duplicate()
+	var mesh := md.to_array_mesh()
+	assert_not_null(mesh)
+	# Verify textures0 was not overwritten by auto-planar projection
+	assert_eq(md.textures0.size(), initial_uvs.size())
+	for i in range(min(20, md.textures0.size())):
+		assert_almost_eq(md.textures0[i].x, initial_uvs[i].x, 0.0001)
+		assert_almost_eq(md.textures0[i].y, initial_uvs[i].y, 0.0001)
+
 # ==============================================================================
 # Arch Tests
 # ==============================================================================
