@@ -202,3 +202,147 @@ func test_export_retro_pbm_format() -> void:
 
 	# Cleanup
 	DirAccess.remove_absolute(pbm_path)
+
+func _make_npot_texture(w: int = 300, h: int = 180) -> ImageTexture:
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.8, 0.2, 0.1, 1.0))
+	return ImageTexture.create_from_image(img)
+
+func _is_pot(n: int) -> bool:
+	return n > 0 and (n & (n - 1)) == 0
+
+func test_plain_meshinstance_is_exported() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	var mi := MeshInstance3D.new()
+	mi.name = "PropCrate"
+	var box := BoxMesh.new()
+	box.size = Vector3(1.0, 1.0, 1.0)
+	mi.mesh = box
+	root.add_child(mi)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	settings.bake_textures = false
+	var tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(tree)
+	autofree(tree)
+	var exported := tree.get_node_or_null("PropCrate") as MeshInstance3D
+	assert_not_null(exported, "A regular MeshInstance3D must survive retro export")
+	assert_not_null(exported.mesh)
+	assert_gt(exported.mesh.get_surface_count(), 0)
+
+func test_walkable_meshinstance_is_not_drawn() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	var walk := MeshInstance3D.new()
+	walk.name = "Walkable_Courtyard"
+	walk.mesh = BoxMesh.new()
+	root.add_child(walk)
+	var prop := MeshInstance3D.new()
+	prop.name = "PropCrate"
+	prop.mesh = BoxMesh.new()
+	root.add_child(prop)
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	var tree := PBMapExporter.build_export_tree(root, settings)
+	autofree(tree)
+	assert_null(tree.get_node_or_null("Walkable_Courtyard"), "Walkable meshes are metadata, not a draw")
+	assert_not_null(tree.get_node_or_null("PropCrate"), "Ordinary props still export")
+
+
+func test_plain_and_poibuilderized_both_export() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+
+	var mi := MeshInstance3D.new()
+	mi.name = "ImportedBarrel"
+	var box := BoxMesh.new()
+	box.size = Vector3(0.8, 1.1, 0.8)
+	mi.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _make_npot_texture()
+	mi.material_override = mat
+	root.add_child(mi)
+
+	var pb: PBMesh = PBObjectOps.poibuilderize(mi)
+	assert_not_null(pb)
+	pb.name = "ImportedBarrel_PB"
+	root.add_child(pb)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	settings.bake_textures = false
+	settings.max_texture_size = 256
+	var tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(tree)
+	autofree(tree)
+	assert_not_null(tree.get_node_or_null("ImportedBarrel"), "Unconverted MeshInstance3D is exported")
+	assert_not_null(tree.get_node_or_null("ImportedBarrel_PB"), "Poibuilderized mesh is exported")
+
+	var pbm_path := "user://test_plain_and_pb.pbm"
+	if FileAccess.file_exists(pbm_path):
+		DirAccess.remove_absolute(pbm_path)
+	var err := PBMapExporter.export_retro_pbm(root, pbm_path, settings)
+	assert_eq(err, OK)
+	assert_true(FileAccess.file_exists(pbm_path))
+	var f := FileAccess.open(pbm_path, FileAccess.READ)
+	assert_not_null(f)
+	assert_eq(f.get_32(), PBMapExporter.PBM_MAGIC)
+	assert_eq(f.get_32(), PBMapExporter.PBM_VERSION)
+	var n_tex := f.get_32()
+	var n_mesh := f.get_32()
+	assert_gt(n_mesh, 0, "PBM must contain geometry from both meshes")
+	assert_gte(n_tex, 1, "NPOT albedo must be registered as a texture")
+	f.get_32() # colliders
+	f.get_32() # metadata
+	for i in range(4):
+		f.get_float() # spawn xyz + rot
+	for i in range(6):
+		f.get_float() # bounds
+	for ti in range(n_tex):
+		f.get_buffer(32)
+		var w := f.get_16()
+		var h := f.get_16()
+		var fmt := f.get_16()
+		var _alpha := f.get_16()
+		var data_size := f.get_32()
+		assert_true(_is_pot(w), "exported texture width %d must be power-of-two" % w)
+		assert_true(_is_pot(h), "exported texture height %d must be power-of-two" % h)
+		assert_lte(w, 256, "exported texture width must respect max_texture_size")
+		assert_lte(h, 256, "exported texture height must respect max_texture_size")
+		var bpp := 4 if fmt == PBMapExporter.PBM_TEX_FMT_RGBA8888 else 2
+		assert_eq(data_size, w * h * bpp)
+		f.seek(f.get_position() + data_size)
+	f.close()
+	DirAccess.remove_absolute(pbm_path)
+
+func test_npot_albedo_sanitized_on_export_tree() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	var mi := MeshInstance3D.new()
+	mi.name = "Prop"
+	mi.mesh = BoxMesh.new()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _make_npot_texture(300, 180)
+	mi.material_override = mat
+	root.add_child(mi)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	settings.max_texture_size = 512
+	var tree := PBMapExporter.build_export_tree(root, settings)
+	autofree(tree)
+	var exported := tree.get_node_or_null("Prop") as MeshInstance3D
+	assert_not_null(exported)
+	var out_mat := exported.get_active_material(0) as StandardMaterial3D
+	assert_not_null(out_mat)
+	assert_not_null(out_mat.albedo_texture)
+	var out_img := out_mat.albedo_texture.get_image()
+	assert_not_null(out_img)
+	assert_true(_is_pot(out_img.get_width()))
+	assert_true(_is_pot(out_img.get_height()))
+	assert_lte(out_img.get_width(), 512)
+	assert_lte(out_img.get_height(), 512)
+	assert_ne(out_img.get_width(), 300, "NPOT width must have been resized")
+

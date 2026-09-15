@@ -313,6 +313,16 @@ static func _is_billboard(node: Node) -> bool:
 			return true
 	return false
 
+## Nav / walkable meshes are collected as metadata, not drawn. Exporting them
+## as ordinary geometry duplicates the floor on the PSP.
+static func _is_non_drawn_mesh(node: Node) -> bool:
+	if node == null or not (node is MeshInstance3D) or node is PBMesh:
+		return false
+	if node.has_meta("poi_walkable"):
+		return true
+	var n := String(node.name).to_lower()
+	return n.begins_with("walkable") or n.contains("navmesh")
+
 static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node]) -> void:
 	if source_node == null:
 		return
@@ -322,12 +332,22 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 		return
 	if source_node is CollisionShape3D:
 		return
+	if _is_non_drawn_mesh(source_node):
+		# Walkable/navmesh meshes are metadata, not a draw. Recurse so nested
+		# lights/emitters still export.
+		for child in source_node.get_children():
+			_collect_export_nodes_recursive(child, out)
+		return
 
 	if _is_billboard(source_node):
 		out.append(source_node)
 	elif source_node is PBMesh:
 		var pb := source_node as PBMesh
 		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
+			out.append(source_node)
+	elif source_node is MeshInstance3D:
+		var mi := source_node as MeshInstance3D
+		if mi.mesh != null:
 			out.append(source_node)
 	elif source_node is Light3D:
 		out.append(source_node)
@@ -350,7 +370,8 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 				_export_retro_pb_mesh(pb, parent_export_node, lights, grid, base_material_cache, settings)
 			else:
 				_export_modern_pb_mesh(pb, parent_export_node, lights, grid, base_material_cache, settings)
-
+	elif source_node is MeshInstance3D:
+		_export_plain_mesh(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
@@ -392,8 +413,13 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		return
 	if source_node is CollisionShape3D:
 		return
+	if _is_non_drawn_mesh(source_node):
+		for child in source_node.get_children():
+			_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings)
+		return
 
 	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings)
+
 
 	for child in source_node.get_children():
 		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings)
@@ -649,7 +675,48 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 
 	parent.add_child(export_mi)
 
-## Exports a light node.
+## Exports a non-PBMesh MeshInstance3D (an imported GLB prop, a primitive, a
+## CSG bake the user did not Poibuilderize). Retro mode sanitizes albedo to
+## power-of-two dimensions clamped at max_texture_size so the PSP texture
+## cache is not handed a 2048 atlas.
+static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[Light3D],
+		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:
+	if mi == null or mi.mesh == null:
+		return
+	var export_mi := MeshInstance3D.new()
+	export_mi.name = mi.name
+	export_mi.transform = mi.transform
+	var src_mesh: Mesh = mi.mesh
+	var node_xf := _get_world_transform(mi)
+	var am := ArrayMesh.new()
+	for s in range(src_mesh.get_surface_count()):
+		var arrays := src_mesh.surface_get_arrays(s)
+		if arrays.is_empty() or arrays[Mesh.ARRAY_VERTEX] == null:
+			continue
+		var pos: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		if pos.is_empty():
+			continue
+		var norm: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL] if arrays[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+		if norm.size() != pos.size():
+			norm = PackedVector3Array()
+			norm.resize(pos.size())
+			for i in range(pos.size()):
+				norm[i] = Vector3.UP
+			arrays[Mesh.ARRAY_NORMAL] = norm
+		if settings.bake_lighting:
+			arrays[Mesh.ARRAY_COLOR] = PBLightBaker.bake_vertex_colors(
+				pos, norm, node_xf, lights, grid, true, settings.bake_shadows,
+				settings.bake_ao, settings.ao_samples, settings.ao_distance,
+				settings.ao_intensity, settings.ambient_color)
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mat: Material = mi.get_active_material(s)
+		am.surface_set_material(am.get_surface_count() - 1, _sanitize_material_for_retro(mat, settings))
+	if am.get_surface_count() == 0:
+		export_mi.free()
+		return
+	export_mi.mesh = am
+	parent.add_child(export_mi)
+
 static func _export_light(light: Light3D, parent: Node) -> void:
 	var dup := light.duplicate() as Light3D
 	parent.add_child(dup)
@@ -695,7 +762,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 ## when the art's alpha is genuinely 1-bit, and falls back to 8888 when it is not
 ## (a soft gradient quantised to one alpha bit would become a hard cutout).
 static func _register_texture(textures: Array, tex_map: Dictionary, albedo_tex: Texture2D,
-		alpha_mode: int, prefer_binary_5551: bool = false) -> int:
+		alpha_mode: int, prefer_binary_5551: bool = false, max_size: int = 512) -> int:
 	if albedo_tex == null:
 		return PBM_EMITTER_GLOW_TEXTURE
 	var tex_key = albedo_tex.get_rid()
@@ -704,16 +771,14 @@ static func _register_texture(textures: Array, tex_map: Dictionary, albedo_tex: 
 	var img := albedo_tex.get_image()
 	if img == null:
 		return PBM_EMITTER_GLOW_TEXTURE
-	if img.is_compressed():
-		img.decompress()
+	# PSP (and every other retro consumer of this format) wants power-of-two
+	# dimensions at or below max_texture_size. An imported GLB's 1024/2048
+	# atlas is legal in Godot and a texture-cache cliff on the device.
+	img = PBTileBaker.enforce_pot_image(img, max_size)
+	if img == null or img.is_empty():
+		return PBM_EMITTER_GLOW_TEXTURE
 	var w := img.get_width()
 	var h := img.get_height()
-	var pot_w := _next_pot(w)
-	var pot_h := _next_pot(h)
-	if pot_w != w or pot_h != h:
-		img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
-		w = pot_w
-		h = pot_h
 
 	img.convert(Image.FORMAT_RGBA8)
 	var raw_bytes := img.get_data()
@@ -785,6 +850,46 @@ static func material_alpha_mode(mat: Material) -> int:
 				return PBM_ALPHA_BLEND
 	return PBM_ALPHA_NONE
 
+## Albedo Texture2D on a StandardMaterial3D or a ShaderMaterial using the
+## common parameter names Godot's glTF importer writes.
+static func _albedo_texture_of(mat: Material) -> Texture2D:
+	if mat is StandardMaterial3D:
+		return (mat as StandardMaterial3D).albedo_texture
+	if mat is ShaderMaterial:
+		var sh := mat as ShaderMaterial
+		for pname in ["texture_albedo", "albedo_texture", "base_texture", "diffuse_texture"]:
+			var t: Variant = sh.get_shader_parameter(pname)
+			if t is Texture2D:
+				return t as Texture2D
+	return null
+
+## Duplicate a material and force its albedo onto power-of-two dimensions
+## clamped at settings.max_texture_size. ShaderMaterials become a Standard
+## so the PBM writer and the glTF path see the same sanitized pixels.
+static func _sanitize_material_for_retro(mat: Material, settings: ExportSettings) -> Material:
+	if mat == null:
+		return mat
+	if settings == null or settings.export_mode != ExportMode.RETRO or not settings.enforce_power_of_two:
+		return mat
+	var sm: StandardMaterial3D
+	if mat is StandardMaterial3D:
+		sm = (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+	else:
+		sm = StandardMaterial3D.new()
+		sm.resource_name = mat.resource_name
+		var tex := _albedo_texture_of(mat)
+		if tex != null:
+			sm.albedo_texture = tex
+		if mat is ShaderMaterial:
+			var col: Variant = (mat as ShaderMaterial).get_shader_parameter("albedo")
+			if col is Color:
+				sm.albedo_color = col
+	if sm.albedo_texture != null:
+		sm.albedo_texture = PBTileBaker.enforce_pot_texture(sm.albedo_texture, settings.max_texture_size)
+	sm.vertex_color_use_as_albedo = true
+	return sm
+
+
 static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: String, settings: ExportSettings) -> Error:
 	var f := FileAccess.open(file_path, FileAccess.WRITE)
 	if f == null:
@@ -846,9 +951,10 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 				var scroll := PBUv.get_scroll_speed(mat)
 				var mat_alpha := material_alpha_mode(mat)
 				var tex_id := -1
-				if mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture != null:
-					tex_id = _register_texture(textures, tex_map,
-						(mat as StandardMaterial3D).albedo_texture, mat_alpha)
+				var albedo := _albedo_texture_of(mat)
+				if albedo != null:
+					tex_id = _register_texture(textures, tex_map, albedo, mat_alpha,
+						false, settings.max_texture_size)
 
 				var tri_verts: Array[Dictionary] = []
 				var idx_list: Array = []
@@ -907,7 +1013,7 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	var emitter_nodes: Array[GPUParticles3D] = []
 	_collect_emitters_recursive(root, emitter_nodes)
 	if not emitter_nodes.is_empty():
-		metadata_entries.append(_emitters_metadata_entry(emitter_nodes, textures, tex_map))
+		metadata_entries.append(_emitters_metadata_entry(emitter_nodes, textures, tex_map, settings.max_texture_size))
 
 
 	# Header (64 bytes)
@@ -1404,7 +1510,7 @@ static func _emitter_from_node(node: GPUParticles3D) -> Dictionary:
 ## Packs the collected emitters into the standard "emitters" lump, registering
 ## each emitter's texture as it goes.
 static func _emitters_metadata_entry(emitter_nodes: Array[GPUParticles3D], textures: Array,
-		tex_map: Dictionary) -> Dictionary:
+		tex_map: Dictionary, max_size: int = 512) -> Dictionary:
 	var records: Array[Dictionary] = []
 	for node in emitter_nodes:
 		records.append(_emitter_from_node(node))
@@ -1421,7 +1527,7 @@ static func _emitters_metadata_entry(emitter_nodes: Array[GPUParticles3D], textu
 		var tex_id := PBM_EMITTER_GLOW_TEXTURE
 		if rec.get("albedo") != null:
 			tex_id = _register_texture(textures, tex_map, rec["albedo"],
-				int(rec.get("alpha_mode", PBM_ALPHA_NONE)), true)
+				int(rec.get("alpha_mode", PBM_ALPHA_NONE)), true, max_size)
 		var name_bytes: PackedByteArray = (rec["name"] as String).to_ascii_buffer()
 		name_bytes.resize(24)
 		for bi in range(24):

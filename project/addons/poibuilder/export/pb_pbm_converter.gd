@@ -443,14 +443,13 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	# 4a. Base Textures
 	for base in base_images:
 		var orig_img: Image = base["image"]
+		# Same sanitization as the direct PBM writer: power-of-two, capped at
+		# the retro default (512). Oversized imported atlases are a PSP
+		# texture-cache cliff; NPOT never samples correctly on the GE.
+		orig_img = PBTileBaker.enforce_pot_image(orig_img, 512)
 		var w := orig_img.get_width()
 		var h := orig_img.get_height()
-		var pot_w := next_pot(w)
-		var pot_h := next_pot(h)
-		if pot_w != w or pot_h != h:
-			orig_img.resize(pot_w, pot_h, Image.INTERPOLATE_BILINEAR)
-			w = pot_w
-			h = pot_h
+
 
 		var b_idx: int = base["index"]
 		var tints: Array = img_tints.get(b_idx, [Vector3.ONE])

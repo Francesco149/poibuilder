@@ -65,3 +65,25 @@ func test_stamped_face_bakes_only_touched_tile() -> void:
 
 	assert_eq(baked_count, 1, "Exactly 1 fragment must use the BakedTile material")
 	assert_eq(base_count, 3, "The other 3 fragments must reuse the unpainted base material")
+
+func test_enforce_pot_image_clamps_to_max_size() -> void:
+	var img := Image.create(1024, 768, false, Image.FORMAT_RGBA8)
+	img.fill(Color.WHITE)
+	var out := PBTileBaker.enforce_pot_image(img, 256)
+	assert_not_null(out)
+	assert_lte(out.get_width(), 256)
+	assert_lte(out.get_height(), 256)
+	assert_eq(out.get_width() & (out.get_width() - 1), 0, "width must be power-of-two")
+	assert_eq(out.get_height() & (out.get_height() - 1), 0, "height must be power-of-two")
+
+func test_enforce_pot_image_lifts_npot() -> void:
+	var img := Image.create(300, 180, false, Image.FORMAT_RGBA8)
+	img.fill(Color.RED)
+	var out := PBTileBaker.enforce_pot_image(img, 512)
+	assert_ne(out.get_width(), 300)
+	assert_ne(out.get_height(), 180)
+	assert_eq(out.get_width() & (out.get_width() - 1), 0)
+	assert_eq(out.get_height() & (out.get_height() - 1), 0)
+	assert_lte(out.get_width(), 512)
+	assert_lte(out.get_height(), 512)
+
