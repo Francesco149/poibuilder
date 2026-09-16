@@ -3286,3 +3286,9 @@ needed, and the device texture budget they were measured against:
   * FIX: Decoupled vertex snapping from grid snapping: vertex snap now operates independently of `grid.enabled`. When both are active, vertex snap takes precedence when near a vertex and falls back to grid snapping when outside the snap threshold.
   * Added `tests/test_pb_vertex_snap.gd` (9 tests, 34 asserts) validating axis constraints, zero-height collapse prevention, adjacent mesh catching, dislodging, screen cursor targeting, and element/object space constraints.
 - Version bump 0.9.128 -> 0.9.129.
+- Precision Vertex Snapping — Vertex-level distance & Strict Axis Isolation (v0.9.130):
+  * FIX: Vertex-level snapping on elongated faces and edges. Replaced centroid-based distance checking with true source-vertex evaluation (`_get_source_vertices`). For elongated or large faces/edges, the snap now measures from each corner/endpoint of the moved element to nearby target vertices, allowing long walls and beams to cleanly snap their ends to adjacent geometry regardless of total length.
+  * FIX: Strict single-axis isolation in Element space (edge drags). Fixed a matrix row-vs-column dot product decomposition bug in Element space (`elem_b.x` in GDScript returns row 0, not column 0, which caused motion along one gizmo handle to leak into adjacent axes on rotated edges). Decomposing via `elem_b.inverse() * motion` guarantees exact coordinates along the gizmo axes, strictly zeroing motion along inactive axes.
+  * FIX: Filtered coincident duplicate vertices at drag start and skipped $t_v \approx 0$ displacements, preventing drags from magnetically locking at zero movement.
+  * Added `test_elongated_face_snaps_at_corner_vertex` and `test_edge_drag_single_axis_strictly_constrained` in `test_pb_vertex_snap.gd` (total suite: 11 tests, 43 asserts).
+- Version bump 0.9.129 -> 0.9.130.

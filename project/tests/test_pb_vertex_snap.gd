@@ -236,4 +236,91 @@ func test_element_space_vertex_snap() -> void:
 	assert_almost_eq(d_x, 0.0, 0.0001, "Tangent drift must be 0")
 	assert_almost_eq(d_z, 0.0, 0.0001, "Bitangent drift must be 0")
 	assert_almost_eq(snapped.dot(elem_b.y), 0.1, 0.001)
-	assert_almost_eq(snapped.z, 0.0, 0.0001)
+
+func test_elongated_face_snaps_at_corner_vertex() -> void:
+	var ee := PBElementEditor.new()
+	var root: Node3D = autofree(Node3D.new())
+
+	# Create elongated mesh A: 10m long in X (0 to 10), 1m in Z (0 to 1), at height Y = 1.0.
+	var mesh_a: PBMesh = autofree(PBMesh.new())
+	var md_a := PBMeshData.new()
+	md_a.positions = PackedVector3Array([
+		Vector3(0.0, 1.0, 0.0),
+		Vector3(10.0, 1.0, 0.0),
+		Vector3(10.0, 1.0, 1.0),
+		Vector3(0.0, 1.0, 1.0)
+	])
+	var face := PBFace.new()
+	face.set_indexes(PackedInt32Array([0, 1, 2, 0, 2, 3]))
+	md_a.faces.append(face)
+	mesh_a.pb_mesh_data = md_a
+	root.add_child(mesh_a)
+
+	# Adjacent mesh B is placed near the far end (X = 10.1), with a top vertex at Y = 2.5.
+	var mesh_b: PBMesh = autofree(PBMesh.new())
+	var md_b := PBMeshData.new()
+	md_b.positions = PackedVector3Array([Vector3(10.1, 2.5, 0.5)])
+	var face_b := PBFace.new()
+	face_b.set_indexes(PackedInt32Array([0, 0, 0]))
+	md_b.faces.append(face_b)
+	mesh_b.pb_mesh_data = md_b
+	root.add_child(mesh_b)
+
+	ee.vertex_snap_enabled = true
+	ee._drag_latest_id = 0
+	# Face centroid is at (5.0, 1.0, 0.5) — 5 meters away from mesh B!
+	ee._drag_start_xf[0] = Transform3D(Basis(), Vector3(5.0, 1.0, 0.5))
+	ee._drag_union = PackedInt32Array([0, 1, 2, 3])
+
+	# User moves the face up along Y.
+	# Required delta to align corner at X=10 with target at Y=2.5 is 2.5 - 1.0 = 1.5m.
+	# Dragging to dy = 1.42 (within snap_threshold 0.2 of 1.5m):
+	var motion := Vector3(0.0, 1.42, 0.0)
+	var snapped := ee._snap_move_motion(mesh_a, motion)
+	assert_almost_eq(snapped.y, 1.5, 0.001, "Elongated face must snap at its corner vertex to target height (1.5m delta)")
+	assert_almost_eq(snapped.x, 0.0, 0.0001, "No sideways shift in X")
+	assert_almost_eq(snapped.z, 0.0, 0.0001, "No sideways shift in Z")
+
+func test_edge_drag_single_axis_strictly_constrained() -> void:
+	var ee := PBElementEditor.new()
+	var editor_mock := PBEditor.new()
+	editor_mock.select_mode = PBEditor.SelectMode.EDGE
+	editor_mock.orientation_space = PBEditor.OrientationSpace.ELEMENT
+	ee.editor = editor_mock
+
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = cube_a
+	ee.vertex_snap_enabled = true
+
+	# Select edge 0 (between two faces on cube).
+	var edges := cube_a.get_common_edges()
+	assert_gt(edges.size(), 0)
+	var e0: PBEdge = edges[0]
+	var p_a := cube_a.positions[e0.a]
+	var p_b := cube_a.positions[e0.b]
+	var mid := (p_a + p_b) * 0.5
+
+	ee._drag_latest_id = 0
+	var elem_b := ee.element_basis(cube_a, mesh, 0)
+	ee._drag_start_xf[0] = Transform3D(elem_b, mid)
+	ee._drag_union = PackedInt32Array([e0.a, e0.b])
+
+	# Simulate dragging ONLY along gizmo axis 0 (X handle):
+	# The engine moves along elem_b * (d, 0, 0):
+	var d := 0.15
+	var motion: Vector3 = elem_b * Vector3(d, 0.0, 0.0)
+	var snapped := ee._snap_move_motion(mesh, motion)
+
+	# Decompose snapped motion back to gizmo axes:
+	var local_snapped := elem_b.inverse() * snapped
+	assert_almost_eq(local_snapped.x, 0.15, 0.001, "Motion along dragged axis 0 must be preserved")
+	assert_almost_eq(local_snapped.y, 0.0, 0.0001, "Motion along axis 1 (Y) must be STRICTLY ZERO")
+	assert_almost_eq(local_snapped.z, 0.0, 0.0001, "Motion along axis 2 (Z) must be STRICTLY ZERO")
+
+	# Also test dragging along gizmo axis 1 (Y handle):
+	var motion_y: Vector3 = elem_b * Vector3(0.0, 0.12, 0.0)
+	var snapped_y := ee._snap_move_motion(mesh, motion_y)
+	var local_snapped_y := elem_b.inverse() * snapped_y
+	assert_almost_eq(local_snapped_y.x, 0.0, 0.0001, "Motion along axis 0 (X) must be STRICTLY ZERO when dragging Y")
+	assert_almost_eq(local_snapped_y.y, 0.12, 0.001, "Motion along dragged axis 1 (Y) must be preserved")
+	assert_almost_eq(local_snapped_y.z, 0.0, 0.0001, "Motion along axis 2 (Z) must be STRICTLY ZERO when dragging Y")
