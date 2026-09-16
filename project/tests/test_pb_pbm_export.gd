@@ -43,12 +43,20 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	# meshes never reference an atlas.
 	assert_gte(num_textures, 12, "Texture table must be present")
 
+	# The mesh/vertex totals are DERIVED from the GLB under test rather than
+	# frozen: a count copied from one export goes stale the moment the showcase
+	# gains geometry (it did, twice), while what the format actually promises is
+	# conservation — every triangle vertex of the scene reaches the PBM, split
+	# into spatial chunks of at most 384. `_glb_geometry_budget` reads the same
+	# file the converter read.
+	var budget := _glb_geometry_budget(TEST_GLB_PATH)
 	var num_meshes := f.get_32()
-	# 23: the two wet-tiles materials used to embed the SAME tiles_wet_4x4
-	# pixels twice (one in-memory copy, one file-backed), producing a
-	# duplicate mesh chunk; the lossless texture imports let the glTF writer
-	# dedupe them into one image, so the duplicate chunk is gone.
-	assert_eq(num_meshes, 23, "Mesh count must match Oracle (23 chunks)")
+	assert_gt(budget["verts"], 0, "The GLB must carry drawable geometry")
+	assert_gte(num_meshes, budget["min_chunks"],
+		"Chunking can only ADD chunks: %d meshes for %d vertices" % [num_meshes, budget["verts"]])
+	assert_lte(num_meshes, budget["max_chunks"],
+		"A mesh per (surface, 384-vertex chunk) is the worst case; %d meshes is more than the map has geometry for"
+			% num_meshes)
 	var num_colliders := f.get_32()
 	assert_eq(num_colliders, 9, "Collider count must match Oracle (9 colliders)")
 
@@ -125,7 +133,8 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 		assert_lte(n_verts, 384, "Each spatial mesh chunk must be <= 384 vertices")
 		f.seek(f.get_position() + n_verts * 24)
 
-	assert_eq(total_verts, 4290, "Total vertex count must exactly match Oracle (4290 vertices)")
+	assert_eq(total_verts, budget["verts"],
+		"Every triangle vertex in the GLB must reach the PBM (chunking is spatial, never lossy)")
 
 	# The waterfall demo's five surfaces must come through as scrolling meshes,
 	# at the speeds authored in the Godot scene. The sign is a direction, and
@@ -265,3 +274,43 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_almost_eq(ent_data.decode_float(44), 2.5, 0.01)
 	assert_eq(ent_data.decode_u32(48), 3)
 	f.close()
+
+## What the converter has to work with, read back out of the GLB it converts:
+## the total vertex stream (one PBM vertex per index) and the chunk bounds a
+## 384-vertex spatial chunking can land in. Emitter texture carriers and
+## collider meshes are excluded — they are not drawn geometry.
+func _glb_geometry_budget(glb_path: String) -> Dictionary:
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	if doc.append_from_file(glb_path, state) != OK:
+		return { "verts": -1, "min_chunks": -1, "max_chunks": -1 }
+	var scene := doc.generate_scene(state)
+	if scene == null:
+		return { "verts": -1, "min_chunks": -1, "max_chunks": -1 }
+	var verts := 0
+	var max_chunks := 0
+	var pending: Array[Node] = [scene]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		var name_str := String(node.name)
+		var drawn: bool = node is MeshInstance3D \
+			and not node.has_meta("poi_emitter_holder") \
+			and not name_str.begins_with("Collider_") \
+			and not name_str.begins_with("collider_") \
+			and not name_str.begins_with("EmitterTex_")
+		if drawn:
+			var mi := node as MeshInstance3D
+			if mi.mesh != null:
+				for s in range(mi.mesh.get_surface_count()):
+					var arrays := mi.mesh.surface_get_arrays(s)
+					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+					var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays[Mesh.ARRAY_VERTEX] != null else PackedVector3Array()
+					var n: int = indices.size() if not indices.is_empty() else positions.size()
+					if n == 0:
+						continue
+					verts += n
+					max_chunks += int(ceilf(float(n) / 384.0))
+		for child in node.get_children():
+			pending.append(child)
+	scene.free()
+	return { "verts": verts, "min_chunks": int(ceilf(float(verts) / 384.0)), "max_chunks": max_chunks }

@@ -184,7 +184,43 @@ cheaper, and the shipped +1 is already at the cache boundary**), `mips=0/1`,
 
 ---
 
-## 6. Pitfalls
+## 7. Props from an asset pack (a .glb you did NOT build with the plugin)
+
+Drag a `.glb` into the scene and export: it is included, no Poibuilderize step,
+no manual texture work. The exporter treats every ordinary `MeshInstance3D` as
+drawable geometry and hands the device a sane version of each texture it
+samples — all of it at export time, none of it your problem:
+
+| what the asset ships | what the map carries |
+|---|---|
+| a 704x704 pack atlas, of which the prop samples a 51x9 corner | a 64x16 texture (1:1 copy of that corner) |
+| a 128x128 texture (routine pack art) | its own 128x128 texture — never packed into a tile atlas |
+| a material declared `BLEND` whose pixels are all opaque | an opaque RGBA5551 texture, drawn in the opaque pass |
+| the same texture on 12 instances | one texture, one upload |
+| a wrapper node holding the prop's position | baked into the geometry (the map is world space) |
+
+Rules of thumb (all measured — see `psp/HARDWARE-TESTING.md`, "Imported props"):
+
+- **Placement is world space.** The prop's transform comes from the wrapper node
+  a glTF import creates, so move/rotate the wrapper, not just the mesh.
+- **The crop is the memory fix, not the framerate fix.** A screen-filling prop
+  costs ~2 ms gpu whether its texture is 256² native or 512x256 upscaled; what
+  changes is memory (128 KB vs 256 KB) and sharpness. Keep textures on the
+  prop's own detail level rather than upscaling them.
+- **Many props are a CPU cost** (~0.19 ms per extra barrel in the display list),
+  not a GPU one. Prefer instances of a few props over dozens of one-off models.
+- **The pack's atlas is usually shared**: props from one pack collapse to one
+  texture per distinct region, so a market stall of barrels and crates is cheap.
+- **Lighting is baked per vertex**, so a prop that should read as shaded needs
+  its own vertices (a 4-triangle wall gets a flat gradient, not a shadow).
+- **Export time scales with vertices, not objects**: the AO bake runs per vertex
+  at the dialog's sample count (~10 ms/vertex at the 16-sample default), so a
+  32-instance map of 500-vertex props is minutes of export. Lower the AO samples
+  or skip AO for prop-heavy maps.
+- A prop with **no UVs** exports untextured (vertex colours only); one with a
+  **non-uniform scale** is fine (normals are renormalized after the transform).
+
+## 8. Pitfalls
 
 - **Looks fine in Godot, costs on the device.** The viewer renders the same
   `.glb`/`.pbm` but with a modern GPU; it cannot show fill cost, cache misses or
@@ -206,7 +242,7 @@ cheaper, and the shipped +1 is already at the cache boundary**), `mips=0/1`,
 
 ---
 
-## 7. Before you ship a map
+## 9. Before you ship a map
 
 1. Every surface has a material (unassigned faces fall back to the default).
 2. Base-material tiling matches the tile-bake density on painted floors.

@@ -11,6 +11,7 @@ import struct
 import json
 import io
 import math
+import hashlib
 from PIL import Image
 
 PBM_MAGIC = 0x334D4250 # "PBM3"
@@ -307,10 +308,13 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         
         name = img_info.get("name", f"img_{img_idx}")
-        # An image is an individual tile if its size is 128x128 or its name
-        # says BakedTile -- unless a scrolling or blending material samples it,
-        # in which case it stays a standalone base texture (see above).
-        if img_idx not in atlas_exempt_images and (pil_img.size == (128, 128) or "BakedTile" in name):
+        # An image is an individual tile if its NAME says so -- the tile baker
+        # stamps every cell it writes with BakedTile_<face>_<x>_<y>. Testing the
+        # size instead swept up ordinary 128x128 pack art, which then lost its
+        # wrap and was packed into an atlas slot it did not belong in. Unless a
+        # scrolling or blending material samples it, in which case it stays a
+        # standalone base texture (see above).
+        if img_idx not in atlas_exempt_images and "BakedTile" in name:
             tile_images.append((img_idx, name, pil_img))
         else:
             base_images.append((img_idx, name, pil_img))
@@ -384,6 +388,7 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
     # Assemble Final Textures Table
     textures = []
     img_to_tex_mapping = {} # (raw_img_idx, tint) -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
+    base_tex_by_content = {} # (pixels_sha1, alpha_mode) -> tex_id
     # 1. Base textures
     for img_idx, name, orig_pil in base_images:
         w, h = orig_pil.size
@@ -430,12 +435,21 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
                 # Opaque material, transparent art: the pixels still need the alpha pass, as a cutout.
                 mode = PBM_ALPHA_CUTOUT
             tex_id = len(textures)
-            textures.append({
-                "name": tex_name[:31],
-                "width": w, "height": h,
-                "format": fmt, "alpha_mode": mode,
-                "data": tex_data
-            })
+            # Two props shipping the same image (the same model imported twice,
+            # or several models sharing a pack atlas) must cost ONE texture on
+            # the device; dedup on the converted pixels, which is what it pays
+            # for.
+            content_key = (hashlib.sha1(tex_data).hexdigest(), mode)
+            if content_key in base_tex_by_content:
+                tex_id = base_tex_by_content[content_key]
+            else:
+                textures.append({
+                    "name": tex_name[:31],
+                    "width": w, "height": h,
+                    "format": fmt, "alpha_mode": mode,
+                    "data": tex_data
+                })
+                base_tex_by_content[content_key] = tex_id
             img_to_tex_mapping[(img_idx, tint)] = { "tex_id": tex_id, "is_atlas": False, "col": 0, "row": 0 }
             # Also provide fallback without tint key
             if (img_idx, None) not in img_to_tex_mapping or tint == (1.0, 1.0, 1.0):

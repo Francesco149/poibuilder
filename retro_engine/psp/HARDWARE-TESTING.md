@@ -473,6 +473,62 @@ All four knobs are live in `poi_render.txt` — no rebuild: `cutout_mips=`,
 
 
 
+## Imported props (a .glb dropped into the scene, not poibuilderized)
+
+Measured on the device with the showcase courtyard and N copies of a pack prop
+(`./run_psp_hw.sh`; the map under test is the shipping `.pbm`, so the rows move
+whenever its content does — re-run rather than trusting a copy of this table).
+
+| map | view | cpu | gpu | frame |
+|---|---|---|---|---|
+| showcase + 2 barrels | spawn | 2.99 | 0.53 | 3.52 |
+| showcase + 2 barrels | waterfall foot | 2.54 | 2.72 | 5.27 |
+| showcase + 8 barrels | spawn | 4.13 | 0.11 | 4.24 |
+| showcase + 8 barrels | waterfall foot | 3.56 | 2.72 | 6.27 |
+| + 6 wall pieces filling the spawn view | spawn | 2.99 | **2.03** | 5.02 |
+| + 24 walls, a UNIQUE texture per instance | spawn | 4.34 | 2.90 | 7.24 |
+| + 24 walls, a UNIQUE texture per instance | waterfall foot | 4.40 | 2.15 | 6.55 |
+
+(The showcase rows without props, for reference: 0.43-0.55 gpu at the spawn and
+2.71 at the waterfall foot, from the LOD-round table above.)
+
+Readings that matter:
+
+- **Two 1.1 m barrels are free**: the spawn view reads 0.53 gpu against the
+  0.43-0.55 the same view ranged over before they existed, and the map's worst
+  view did not move (2.71 → 2.72 gpu). The crops the exporter ships (128x128
+  wood, 64x16 hoops, both RGBA5551, 34 KB together) are cache-resident.
+- **A prop that fills the screen is the expensive case**, and it is fill, not
+  texture size: six wall pieces 1.2 m from the camera cost 2.03 gpu ms — the
+  same whether their texture shipped as a 512x256 upscale of a 258x194 atlas
+  crop or a native 256x256 one. Shipping the native rect halved that texture's
+  memory (256 KB → 128 KB) for no measurable frame difference, which is the
+  argument for the crop: it buys memory (and sharpness), not framerate.
+- **Many props are a CPU story**: each extra barrel added ~0.19 ms of
+  display-list CPU in the 8-instance map (4.13 vs 2.99 at the spawn). They are
+  still nowhere near the 16.67 ms budget, but a courtyard of 50+ props is a CPU
+  question, not a GPU one — the per-draw cost floor (~0.94 µs) is not what
+  dominates; per-mesh work is.
+- **The texture table scales further than the pack ever needs**: 44 textures /
+  7.5 MB of payload loaded and rendered with no loader `FATAL` (the log prints
+  `total_free`/`max_free` and the failing texture index when it does run out).
+  The pack's props all share one 704x704 atlas, and the crop plus the
+  content-dedup collapse them to one texture per distinct region.
+
+### Authoring rules that follow
+
+- Keep a prop's texture to the region it samples — the exporter does this for
+  you at export time, but the *authoring* rule is the same one §4.1 states:
+  what costs is a surface whose sampled footprint covers the screen at
+  ~1 texel/pixel.
+- Prefer many instances of one prop over many one-off props: instances share
+  the texture, the dedup is by content, and the per-instance cost is geometry.
+- The device cap that matters for props is `max_texture_size` (512 default);
+  after the crop it is a ceiling, not a target — a 1 m barrel with a 64x16
+  hoop texture renders correctly and costs 2 KB.
+
+
+
 ## Grazing-angle seams on tiled surfaces (investigated, partly inherent)
 
 Thin lines at tile boundaries on a floor seen at a shallow angle. What was

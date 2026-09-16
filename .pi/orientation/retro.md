@@ -34,3 +34,15 @@ More non-negotiables (moved from CLAUDE.md, still current):
    shared memory bus — it happily reports 60 fps for a build that spends
    27 ms of a 16.6 ms budget on the device. Never cite it for speed, and
    never conclude from it that a slowdown is fixed.
+
+8. **Imported props have one texture plan, not a second export path.** Any plain
+   `MeshInstance3D` (a `.glb` dragged in from an asset pack) is exported by
+   `_export_plain_mesh` and its textures are sanitized once per export run by
+   `pb_map_exporter.plan_imported_textures`: the sampled atlas region is cropped
+   to the nearest power-of-two rect (UVs remapped by `(uv - origin) * scale`),
+   alpha is taken from the pixels rather than the material, identical textures
+   are shared by content, and the node's WORLD transform is used (the export
+   tree is flat; the placement of a glTF import lives on its wrapper node).
+   Both the GLB route and the direct `.pbm` writer read the same plan — read it
+   before touching either. `retro_engine/RETRO-AUTHORING.md` §7 is the
+   authoring-side summary; the device rows are in HARDWARE-TESTING.md.

@@ -211,6 +211,16 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	root.add_child(pillar2)
 
 	# ==========================================================================
+	# 5b. Imported props: barrels by the archway (plain GLB, NOT poibuilderized)
+	# ==========================================================================
+	# Deliberately left as ordinary MeshInstance3D nodes with their imported glTF
+	# materials: this is the "user dropped a prop from an asset pack into the
+	# scene" case, and the retro exporter has to draw it like anything else
+	# (pb_map_exporter._export_plain_mesh). Converting them with Poibuilderize
+	# first would test a path real users do not take.
+	_add_courtyard_props(root)
+
+	# ==========================================================================
 	# 6. Geometry: Sloped Ramp (Prism)
 	# ==========================================================================
 	var ramp := PBMesh.new()
@@ -724,6 +734,53 @@ static func create_emitter(name_str: String, pos: Vector3, tex_path: String,
 	p.draw_pass_1 = qm
 	p.set_meta("poi_y_locked", y_locked)
 	return p
+
+## ── Imported props (plain MeshInstance3D nodes, never poibuilderized) ────────
+##
+## The props come from an asset pack that lives on the dev machine, not in the
+## repo (the same path `project/showcase/sessions/more.gd` uses for its beat):
+## when the pack is absent the showcase simply has no props, so the plugin's own
+## tests still run on a machine that does not have it. Everything about the
+## export path itself is covered by test_pb_map_exporter's generated fixtures.
+const PROP_LIBRARY_DIR := "/mnt/ephemeral/assets/PSX_Modular_Medieval/Market"
+
+## Loads a .glb the way it arrives in a user's scene after a FileSystem-dock
+## drag: the glTF scene subtree with its own MeshInstance3D(s) and glTF
+## materials, NOT converted into a PBMesh. Returns null (and says why) when the
+## file is missing or unreadable.
+static func load_prop_glb(path: String) -> Node3D:
+	var logger := PBLogger.new()
+	if not FileAccess.file_exists(path):
+		logger.info("io", "Showcase prop '%s' is not on this machine; skipped" % path)
+		return null
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	var err := doc.append_from_buffer(FileAccess.get_file_as_bytes(path), path.get_base_dir(), state)
+	if err != OK:
+		logger.warn("io", "Showcase prop '%s' failed to parse (err %d)" % [path, err])
+		return null
+	var scene := doc.generate_scene(state)
+	if scene == null:
+		logger.warn("io", "Showcase prop '%s' produced no scene" % path)
+	return scene
+
+## Barrels flanking the archway, on the courtyard side and inside the spawn
+## view's frame. They are ordinary imported props: two meshes each (the barrel
+## body at 128x128 wood, and the metal hoops off a 704x704 pack atlas), which is
+## what makes them a useful case for the retro export of plain meshes.
+static func _add_courtyard_props(root: Node3D) -> void:
+	var spots := [
+		{"file": "barrel.glb", "name": "Prop_Barrel", "pos": Vector3(2.30, 0.0, -4.30), "yaw": 0.35},
+		{"file": "barrel_open.glb", "name": "Prop_BarrelOpen", "pos": Vector3(3.10, 0.0, -3.45), "yaw": -0.8},
+	]
+	for spot in spots:
+		var prop := load_prop_glb(PROP_LIBRARY_DIR.path_join(spot["file"]))
+		if prop == null:
+			continue
+		prop.name = spot["name"]
+		prop.position = spot["pos"]
+		prop.rotation.y = spot["yaw"]
+		root.add_child(prop)
 
 static func create_billboard(name_str: String, tex_path: String,
 		size: Vector2, pos: Vector3, is_lit: bool, soft_alpha: bool = false) -> MeshInstance3D:

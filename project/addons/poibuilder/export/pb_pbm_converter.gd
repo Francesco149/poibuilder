@@ -352,7 +352,12 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			continue
 
 		var name_str: String = img_info.get("name", "img_%d" % img_idx)
-		if not atlas_exempt_images.has(img_idx) and ((img.get_width() == 128 and img.get_height() == 128) or name_str.contains("BakedTile")):
+		# A baked tile is identified by its NAME — the tile baker names every
+		# cell it writes (BakedTile_<face>_<x>_<y>_albedo). The old size test
+		# ("any 128x128 image") swept up ordinary art: an asset pack's 128x128
+		# texture became a tile, lost its wrap, and was blitted into an atlas
+		# slot that rejected its RGB8 data, i.e. the prop came out black.
+		if not atlas_exempt_images.has(img_idx) and name_str.contains("BakedTile"):
 			tile_images.append({ "index": img_idx, "name": name_str, "image": img })
 		else:
 			base_images.append({ "index": img_idx, "name": name_str, "image": img })
@@ -378,6 +383,12 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	for item in sorted_unique:
 		var uid: int = item["id"]
 		var t_img: Image = item["image"]
+		if t_img.get_format() != Image.FORMAT_RGBA8:
+			# The atlas is RGBA8 and blit_rect refuses a mismatched source; a
+			# tile that arrives in another format would otherwise vanish into a
+			# black slot without failing the conversion.
+			t_img = t_img.duplicate()
+			t_img.convert(Image.FORMAT_RGBA8)
 		var atlas_idx := uid / 16
 		var slot := uid % 16
 		var col := slot % 4
@@ -440,6 +451,7 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 	# 4. Assemble Textures Table
 	var textures: Array[Dictionary] = []
 	var img_to_tex_mapping: Dictionary = {} # "img_idx|r|g|b" -> { "tex_id": int, "is_atlas": bool, "col": int, "row": int }
+	var base_tex_by_content: Dictionary = {} # "base|pixels_hash|alpha_mode" -> tex_id
 	# 4a. Base Textures
 	for base in base_images:
 		var orig_img: Image = base["image"]
@@ -487,14 +499,24 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 			var converted := convert_image_to_bytes(img, format_16bit and mode != PBM_ALPHA_BLEND)
 			if mode == PBM_ALPHA_NONE and int(converted["has_alpha"]) != 0:
 				mode = PBM_ALPHA_CUTOUT
+			# Two props that ship the same image (the same barrel imported
+			# twice, or several models from one pack sharing an atlas) must cost
+			# one texture on the device, not one each: an image is deduplicated
+			# by its converted PIXELS, which is what the runtime pays for.
+			var content_key := "base|%d|%d" % [hash(converted["data"]), mode]
+			var existing_tex_id: int = base_tex_by_content.get(content_key, -1)
 			var tex_id := textures.size()
-			textures.append({
-				"name": tex_name.substr(0, 31),
-				"width": w, "height": h,
-				"format": converted["format"],
-				"alpha_mode": mode,
-				"data": converted["data"]
-			})
+			if existing_tex_id >= 0:
+				tex_id = existing_tex_id
+			else:
+				textures.append({
+					"name": tex_name.substr(0, 31),
+					"width": w, "height": h,
+					"format": converted["format"],
+					"alpha_mode": mode,
+					"data": converted["data"]
+				})
+				base_tex_by_content[content_key] = tex_id
 			var key := "%d|%.3f|%.3f|%.3f" % [b_idx, tint.x, tint.y, tint.z]
 			img_to_tex_mapping[key] = { "tex_id": tex_id, "is_atlas": false, "col": 0, "row": 0 }
 			var fallback_key := "%d|fallback" % b_idx

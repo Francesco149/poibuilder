@@ -199,6 +199,7 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 
 	var nodes_to_export: Array[Node] = []
 	_collect_export_nodes_recursive(root, nodes_to_export)
+	var texture_plan := plan_imported_textures(root, settings)
 
 	var total_nodes := nodes_to_export.size()
 	for ni in range(total_nodes):
@@ -213,7 +214,7 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 		if Engine.get_main_loop() != null:
 			await Engine.get_main_loop().process_frame
 
-		_export_single_node(n, export_root, lights, grid, base_material_cache, settings)
+		_export_single_node(n, export_root, lights, grid, base_material_cache, settings, texture_plan)
 
 	if cancel_token != null and cancel_token.cancelled:
 		export_root.free()
@@ -278,7 +279,8 @@ static func build_export_tree(root: Node, settings: ExportSettings = null) -> No
 	var base_material_cache: Dictionary = {}
 
 	# Process nodes recursively
-	_export_node_recursive(root, export_root, lights, grid, base_material_cache, settings)
+	_export_node_recursive(root, export_root, lights, grid, base_material_cache, settings,
+		plan_imported_textures(root, settings))
 
 	# Set owner recursively so GLTFDocument in editor mode exports all descendant nodes
 	_set_owner_recursive(export_root, export_root)
@@ -359,7 +361,8 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 
 static func _export_single_node(source_node: Node, parent_export_node: Node,
 		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
-		base_material_cache: Dictionary, settings: ExportSettings) -> void:
+		base_material_cache: Dictionary, settings: ExportSettings,
+		texture_plan: Dictionary) -> void:
 	if _is_billboard(source_node):
 		if settings.export_billboards and source_node is MeshInstance3D:
 			_export_billboard(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
@@ -371,7 +374,7 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 			else:
 				_export_modern_pb_mesh(pb, parent_export_node, lights, grid, base_material_cache, settings)
 	elif source_node is MeshInstance3D:
-		_export_plain_mesh(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
+		_export_plain_mesh(source_node as MeshInstance3D, parent_export_node, lights, grid, settings, texture_plan)
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
@@ -388,7 +391,7 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 static func _export_emitter_holder(node: GPUParticles3D, parent: Node) -> void:
 	var holder := MeshInstance3D.new()
 	holder.name = "EmitterTex_%s" % node.name
-	holder.transform = node.transform
+	holder.transform = _get_world_transform(node)
 	var qm := QuadMesh.new()
 	qm.size = Vector2(0.001, 0.001)
 	holder.mesh = qm
@@ -404,7 +407,8 @@ static func _export_emitter_holder(node: GPUParticles3D, parent: Node) -> void:
 
 static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		lights: Array[Light3D], grid: PBLightBaker.SpatialGrid,
-		base_material_cache: Dictionary, settings: ExportSettings) -> void:
+		base_material_cache: Dictionary, settings: ExportSettings,
+		texture_plan: Dictionary) -> void:
 	if source_node == null:
 		return
 
@@ -415,14 +419,14 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		return
 	if _is_non_drawn_mesh(source_node):
 		for child in source_node.get_children():
-			_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings)
+			_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
 		return
 
-	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings)
+	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
 
 
 	for child in source_node.get_children():
-		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings)
+		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
 
 ## Exports a PBMesh in Retro Baked mode.
 static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3D],
@@ -502,7 +506,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = pb.name
 	export_mi.mesh = array_mesh
-	export_mi.transform = pb.transform
+	export_mi.transform = _get_world_transform(pb)
 	parent.add_child(export_mi)
 
 	# Export separate collider mesh if enabled
@@ -536,7 +540,7 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = pb.name
 	export_mi.mesh = am
-	export_mi.transform = pb.transform
+	export_mi.transform = _get_world_transform(pb)
 
 	# Encode stamp placements and paint state as metadata
 	var stamps := PBSplat.collect_stamp_data(pb)
@@ -571,7 +575,7 @@ static func _export_collider_mesh(pb: PBMesh, parent: Node) -> void:
 	var col_mi := MeshInstance3D.new()
 	col_mi.name = "Collider_" + pb.name
 	col_mi.mesh = _get_collider_mesh(pb)
-	col_mi.transform = pb.transform
+	col_mi.transform = _get_world_transform(pb)
 	col_mi.visible = false # Colliders default to hidden
 	parent.add_child(col_mi)
 
@@ -621,7 +625,7 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = mi.name
-	export_mi.transform = mi.transform
+	export_mi.transform = _get_world_transform(mi)
 
 	var src_mesh: Mesh = null
 	if mi is PBMesh:
@@ -676,16 +680,18 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 	parent.add_child(export_mi)
 
 ## Exports a non-PBMesh MeshInstance3D (an imported GLB prop, a primitive, a
-## CSG bake the user did not Poibuilderize). Retro mode sanitizes albedo to
-## power-of-two dimensions clamped at max_texture_size so the PSP texture
-## cache is not handed a 2048 atlas.
+## CSG bake the user did not Poibuilderize). Retro mode hands the device the
+## sanitized version of every texture the prop samples — power of two, capped,
+## cropped to what the prop actually uses (see `plan_imported_textures`) — and
+## rewrites the surface UVs to match.
 static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[Light3D],
-		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:
+		grid: PBLightBaker.SpatialGrid, settings: ExportSettings,
+		texture_plan: Dictionary = {}) -> void:
 	if mi == null or mi.mesh == null:
 		return
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = mi.name
-	export_mi.transform = mi.transform
+	export_mi.transform = _get_world_transform(mi)
 	var src_mesh: Mesh = mi.mesh
 	var node_xf := _get_world_transform(mi)
 	var am := ArrayMesh.new()
@@ -708,19 +714,63 @@ static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[L
 				pos, norm, node_xf, lights, grid, true, settings.bake_shadows,
 				settings.bake_ao, settings.ao_samples, settings.ao_distance,
 				settings.ao_intensity, settings.ambient_color)
-		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mat: Material = mi.get_active_material(s)
-		am.surface_set_material(am.get_surface_count() - 1, _sanitize_material_for_retro(mat, settings))
+		var plan_entry := _texture_plan_entry(texture_plan, mat)
+		arrays = _apply_texture_plan_to_uvs(arrays, plan_entry)
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		am.surface_set_material(am.get_surface_count() - 1, _sanitize_material_for_retro(mat, settings, plan_entry))
 	if am.get_surface_count() == 0:
 		export_mi.free()
 		return
 	export_mi.mesh = am
 	parent.add_child(export_mi)
 
+## The plan entry for a material's albedo texture, or {} when there is none (an
+## untextured material, or a texture the plan deliberately left alone).
+static func _texture_plan_entry(texture_plan: Dictionary, mat: Material) -> Dictionary:
+	if texture_plan.is_empty():
+		return {}
+	var albedo := _albedo_texture_of(mat)
+	if albedo == null:
+		return {}
+	var entry: Variant = texture_plan.get(albedo.get_rid(), null)
+	return entry if entry is Dictionary else {}
+
+## Rewrites a surface's UVs into the cropped texture's frame:
+## `uv' = (uv - origin) * scale`, so the sampled texels are the same ones the
+## source texture had. The power-of-two resize that follows the crop cancels out
+## of that transform, so it holds whatever the crop was rounded up to.
+static func _apply_texture_plan_to_uvs(arrays: Array, plan_entry: Dictionary) -> Array:
+	if plan_entry.is_empty():
+		return arrays
+	var origin: Vector2 = plan_entry.get("origin", Vector2.ZERO)
+	var scale: Vector2 = plan_entry.get("scale", Vector2.ONE)
+	if origin == Vector2.ZERO and scale == Vector2.ONE:
+		return arrays
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+	if uvs.is_empty():
+		return arrays
+	var remapped := PackedVector2Array()
+	remapped.resize(uvs.size())
+	for i in range(uvs.size()):
+		remapped[i] = (uvs[i] - origin) * scale
+	arrays[Mesh.ARRAY_TEX_UV] = remapped
+	return arrays
+
 static func _export_light(light: Light3D, parent: Node) -> void:
 	var dup := light.duplicate() as Light3D
 	parent.add_child(dup)
 
+## The world transform of a node that may not be inside the tree (a detached
+## source scene, an export-time copy): walk the parents by hand.
+##
+## INVARIANT: every geometry node the exporter puts into the export tree carries
+## this WORLD transform, and the tree is otherwise flat. A prop dragged in from
+## the FileSystem dock arrives as a wrapper Node3D with the MeshInstance3D
+## underneath it, so its placement lives on an ANCESTOR — reading the node's own
+## `transform` shipped every such prop to the map origin, in both the GLB and
+## the .pbm route. Local mesh data + world node transform is the same convention
+## the PBM writer bakes vertices with, so the two agree.
 static func _get_world_transform(node: Node3D) -> Transform3D:
 	if node == null:
 		return Transform3D.IDENTITY
@@ -850,6 +900,201 @@ static func material_alpha_mode(mat: Material) -> int:
 				return PBM_ALPHA_BLEND
 	return PBM_ALPHA_NONE
 
+## ── Imported-prop texture plan ───────────────────────────────────────────────
+##
+## A dropped-in prop arrives with whatever its author packed. A barrel's metal
+## hoops sample a 49x8 texel corner of a 704x704 atlas; its body maps a 128x128
+## texture over a 1 m object; the atlas material declares BLEND over fully
+## opaque pixels. None of that is the device's problem to solve at runtime —
+## the export is the only stage that can fix it, and everything downstream (GLB
+## or .pbm) then carries the fix.
+##
+## The plan is one entry per SOURCE texture, shared by every mesh that samples
+## it, holding:
+##   "texture"    the sanitized texture (power of two, capped, cropped),
+##   "origin" / "scale"  the UV transform every mesh sampling it must apply,
+##   "alpha_mode" the mode its PIXELS need (opaque art is never blended).
+## A texture is left alone when cropping it cannot save texels: it is sampled
+## outside 0..1 by someone (a repeating axis has no unused region to drop), it
+## is a PBMesh's or a billboard's (their UVs are authored per surface), or the
+## crop rounds up to the same power of two anyway.
+const UV_TRIM_EPS := 0.001
+
+## Builds the plan for one export run. Empty in modern mode: a modern engine
+## takes the textures as authored.
+static func plan_imported_textures(root: Node, settings: ExportSettings) -> Dictionary:
+	if root == null or settings == null:
+		return {}
+	if settings.export_mode != ExportMode.RETRO or not settings.enforce_power_of_two:
+		return {}
+	var usage: Dictionary = {}
+	_collect_texture_usage_recursive(root, usage)
+	var plan: Dictionary = {}
+	var by_content: Dictionary = {}
+	for key in usage:
+		var entry := _plan_one_texture(usage[key], settings)
+		if entry.is_empty():
+			continue
+		# Two props that ship the same art — the same model imported twice, or
+		# several pack models sharing one atlas — must carry ONE texture: the
+		# entry is shared by content, so the GLB gets one image and the device
+		# one upload.
+		var content_key: String = entry["content_key"]
+		if by_content.has(content_key):
+			plan[key] = by_content[content_key]
+		else:
+			by_content[content_key] = entry
+			plan[key] = entry
+	return plan
+
+static func _collect_texture_usage_recursive(node: Node, out: Dictionary) -> void:
+	if node == null:
+		return
+	if node is CollisionShape3D:
+		return
+	var node_name := String(node.name)
+	if node_name == "PBStamps" or node_name.begins_with("Collider") or node.has_meta("poi_emitter_holder"):
+		return
+	if _is_non_drawn_mesh(node):
+		for child in node.get_children():
+			_collect_texture_usage_recursive(child, out)
+		return
+	if node is PBMesh:
+		# A PBMesh bakes its own UVs from its face data and the material's
+		# tiling, so its textures are used exactly as authored.
+		var pb := node as PBMesh
+		if pb.pb_mesh_data != null:
+			for face in pb.pb_mesh_data.faces:
+				_note_texture_usage(out, pb.pb_mesh_data.get_face_material(face),
+					PackedVector2Array(), true)
+	elif node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			# A billboard's quad samples its whole texture by construction.
+			var whole_texture := _is_billboard(mi)
+			for s in range(mi.mesh.get_surface_count()):
+				var arrays := mi.mesh.surface_get_arrays(s)
+				var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+				_note_texture_usage(out, mi.get_active_material(s), uvs, whole_texture)
+	for child in node.get_children():
+		_collect_texture_usage_recursive(child, out)
+
+static func _note_texture_usage(out: Dictionary, mat: Material, uvs: PackedVector2Array, tiled: bool) -> void:
+	var tex := _albedo_texture_of(mat)
+	if tex == null:
+		return
+	var key := tex.get_rid()
+	var entry: Dictionary = out.get(key, {})
+	if entry.is_empty():
+		entry = {
+			"texture": tex,
+			"uv_min": Vector2(INF, INF),
+			"uv_max": Vector2(-INF, -INF),
+			"wraps": false,
+			"tiled": false,
+			"alpha_mode": PBM_ALPHA_NONE,
+		}
+		out[key] = entry
+	entry["alpha_mode"] = maxi(int(entry["alpha_mode"]), material_alpha_mode(mat))
+	if tiled:
+		entry["tiled"] = true
+		return
+	for uv in uvs:
+		entry["uv_min"] = (entry["uv_min"] as Vector2).min(uv)
+		entry["uv_max"] = (entry["uv_max"] as Vector2).max(uv)
+		if uv.x < -UV_TRIM_EPS or uv.x > 1.0 + UV_TRIM_EPS \
+				or uv.y < -UV_TRIM_EPS or uv.y > 1.0 + UV_TRIM_EPS:
+			entry["wraps"] = true
+
+static func _plan_one_texture(usage: Dictionary, settings: ExportSettings) -> Dictionary:
+	var tex: Texture2D = usage["texture"]
+	var src_img := tex.get_image()
+	if src_img == null or src_img.is_empty():
+		return {}
+	var src_w := src_img.get_width()
+	var src_h := src_img.get_height()
+	if src_w <= 0 or src_h <= 0:
+		return {}
+	# The baseline every plan starts from: power of two, capped. The crop is an
+	# improvement on top of it, never a substitute for it.
+	var out_img := PBTileBaker.enforce_pot_image(src_img, settings.max_texture_size)
+	var origin := Vector2.ZERO
+	var scale := Vector2.ONE
+	var uv_min: Vector2 = usage["uv_min"]
+	var uv_max: Vector2 = usage["uv_max"]
+	var have_uv: bool = uv_min.x != INF and uv_min.y != INF and uv_max.x != -INF and uv_max.y != -INF
+
+	if not bool(usage["tiled"]) and not bool(usage["wraps"]) and have_uv:
+		# The rect has to be a power of two *rect*, not just a power-of-two
+		# image: resizing a 258-pixel-wide crop up to 512 ships four times the
+		# texels AND blurs them, when growing (or shrinking) the rect by two
+		# pixels instead gives a 1:1 copy of exactly what the prop samples.
+		var used_x0 := clampi(int(floorf(uv_min.x * float(src_w))), 0, src_w - 1)
+		var used_y0 := clampi(int(floorf(uv_min.y * float(src_h))), 0, src_h - 1)
+		var used_x1 := clampi(int(ceilf(uv_max.x * float(src_w))), used_x0 + 1, src_w)
+		var used_y1 := clampi(int(ceilf(uv_max.y * float(src_h))), used_y0 + 1, src_h)
+		var used_w := used_x1 - used_x0
+		var used_h := used_y1 - used_y0
+		var pot_w := _nearest_pot(used_w, settings.max_texture_size)
+		var pot_h := _nearest_pot(used_h, settings.max_texture_size)
+		# The rect must always CONTAIN the used region. When the target power of
+		# two is larger than the region, the slack comes out of the unused part
+		# of the atlas (a 1:1 copy, no resampling); when it is smaller, the rect
+		# stays exact and the resize shrinks it — either way the UV rewrite above
+		# keeps sampling the same texels.
+		var rect_w := maxi(pot_w, used_w)
+		var rect_h := maxi(pot_h, used_h)
+		var x0 := clampi(used_x0 - (rect_w - used_w) / 2, 0, maxi(0, src_w - rect_w))
+		var y0 := clampi(used_y0 - (rect_h - used_h) / 2, 0, maxi(0, src_h - rect_h))
+		var crop_w := mini(rect_w, src_w - x0)
+		var crop_h := mini(rect_h, src_h - y0)
+		if crop_w < src_w or crop_h < src_h:
+			var pot := PBTileBaker.enforce_pot_image(
+				src_img.get_region(Rect2i(x0, y0, crop_w, crop_h)), settings.max_texture_size)
+			# Only take the crop when it saves texels: rounding both the crop
+			# and the full image to power-of-two sizes can land on the same
+			# dimensions, and then the UV rewrite buys nothing.
+			if pot.get_width() * pot.get_height() < out_img.get_width() * out_img.get_height():
+				out_img = pot
+				origin = Vector2(float(x0) / float(src_w), float(y0) / float(src_h))
+				scale = Vector2(float(src_w) / float(crop_w), float(src_h) / float(crop_h))
+
+	var alpha_mode := _narrow_alpha_mode(int(usage["alpha_mode"]), out_img)
+	return {
+		"texture": ImageTexture.create_from_image(out_img),
+		"origin": origin,
+		"scale": scale,
+		"alpha_mode": alpha_mode,
+		"content_key": "%d|%d" % [hash(out_img.get_data()), alpha_mode],
+	}
+
+## The power of two a crop rect should be: the CLOSEST one (ties round up),
+## clamped to the device cap, never below 16 texels. Rounding up
+## unconditionally is what turns a 258-pixel-wide crop into a 512-pixel
+## texture — twice the memory for no more detail.
+static func _nearest_pot(x: int, max_size: int) -> int:
+	var target := clampi(x, 1, max_size)
+	var down := 1
+	while down * 2 <= target:
+		down *= 2
+	var up := mini(down * 2, max_size)
+	var pot := up if (target - down) >= (up - target) else down
+	return clampi(pot, 16, max_size)
+
+## The alpha handling a texture's PIXELS need, which is what the device cares
+## about. An asset pack's atlas declared BLEND over fully opaque texels costs
+## RGBA8888 (1 MB at 512x512) and a blended pass for nothing; a 1-bit alpha is
+## a cutout whatever the material said. This only ever narrows the declared
+## mode, so a genuinely soft texture still blends.
+static func _narrow_alpha_mode(declared: int, img: Image) -> int:
+	match img.detect_alpha():
+		Image.ALPHA_NONE:
+			return PBM_ALPHA_NONE
+		Image.ALPHA_BLEND:
+			return PBM_ALPHA_BLEND if declared == PBM_ALPHA_BLEND else PBM_ALPHA_CUTOUT
+		_:
+			return PBM_ALPHA_CUTOUT
+
 ## Albedo Texture2D on a StandardMaterial3D or a ShaderMaterial using the
 ## common parameter names Godot's glTF importer writes.
 static func _albedo_texture_of(mat: Material) -> Texture2D:
@@ -863,10 +1108,13 @@ static func _albedo_texture_of(mat: Material) -> Texture2D:
 				return t as Texture2D
 	return null
 
-## Duplicate a material and force its albedo onto power-of-two dimensions
-## clamped at settings.max_texture_size. ShaderMaterials become a Standard
-## so the PBM writer and the glTF path see the same sanitized pixels.
-static func _sanitize_material_for_retro(mat: Material, settings: ExportSettings) -> Material:
+## Duplicate a material and force its albedo onto the planned texture: power-of-
+## two dimensions clamped at settings.max_texture_size, cropped to the region
+## the meshes actually sample, and the alpha mode its PIXELS need rather than
+## the one the asset pack declared. ShaderMaterials become a Standard so the PBM
+## writer and the glTF path see the same sanitized pixels.
+static func _sanitize_material_for_retro(mat: Material, settings: ExportSettings,
+		plan_entry: Dictionary = {}) -> Material:
 	if mat == null:
 		return mat
 	if settings == null or settings.export_mode != ExportMode.RETRO or not settings.enforce_power_of_two:
@@ -884,7 +1132,16 @@ static func _sanitize_material_for_retro(mat: Material, settings: ExportSettings
 			var col: Variant = (mat as ShaderMaterial).get_shader_parameter("albedo")
 			if col is Color:
 				sm.albedo_color = col
-	if sm.albedo_texture != null:
+	if not plan_entry.is_empty():
+		sm.albedo_texture = plan_entry.get("texture", sm.albedo_texture)
+		match int(plan_entry.get("alpha_mode", PBM_ALPHA_NONE)):
+			PBM_ALPHA_NONE:
+				sm.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+			PBM_ALPHA_CUTOUT:
+				sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			PBM_ALPHA_BLEND:
+				sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	elif sm.albedo_texture != null:
 		sm.albedo_texture = PBTileBaker.enforce_pot_texture(sm.albedo_texture, settings.max_texture_size)
 	sm.vertex_color_use_as_albedo = true
 	return sm

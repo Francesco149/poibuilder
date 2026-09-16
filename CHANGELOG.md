@@ -3211,3 +3211,53 @@ v0.9.119 — end-user docs site, retro export of plain meshes, showcase tail:
   poibuilderize). Earlier clips are unchanged.
 - Version bump 0.9.118 -> 0.9.119.
 
+
+v0.9.120–v0.9.126 — docs site rounds (versions bumped, entries not written
+here; see the site's own pages and git history).
+
+v0.9.127 — imported GLB props: courtyard barrels, the export fixes they
+needed, and the device texture budget they were measured against:
+- Demo content: two barrels from the PSX_Modular_Medieval pack stand beside
+  the archway in the showcase courtyard (`test_map_showcase_builder.gd`
+  `_add_courtyard_props`), left as ordinary imported MeshInstance3D nodes —
+  NOT poibuilderized, which is the path a user takes when they drag a .glb
+  from the FileSystem dock. The pack lives on the dev machine, so a machine
+  without it builds the map without props (the export path itself is covered
+  by generated fixtures in `test_pb_map_exporter.gd`).
+- FIX, nested prop placement: the export tree is flat, and every geometry
+  node read only its OWN transform — so a prop whose placement lives on the
+  wrapper node a GLB import creates landed at the map origin, in both the
+  GLB and the .pbm route. Exported geometry now carries its WORLD transform
+  (`_get_world_transform`), which is also the convention the PBM writer's
+  vertex bake always assumed.
+- FIX, 128x128 textures were atlased as baked tiles: the GLB→PBM converter
+  classified any 128x128 image as a baked tile. An asset pack's 128x128 wood
+  texture became a TileAtlas slot — its wrap was destroyed, the RGB source
+  was rejected by the RGBA8 atlas blit (silently leaving a black slot), and
+  the texture grew to a 512x512 atlas. Tiles are identified by name now
+  (`BakedTile_*`) in both `pb_pbm_converter.gd` and the `pbm_conv.py` oracle,
+  and the atlas blit converts the source format instead of refusing it.
+- Imported textures are now PLANNED per export run (`plan_imported_textures`):
+  * CROPPED to the UV region their meshes actually sample, at the nearest
+    power-of-two rect. The barrels' metal hoops sample a 51x9 texel corner of
+    the pack's 704x704 atlas: 512x512 RGBA8888 (1 MB) → 64x16 RGBA5551 (2 KB).
+    The showcase map's texture payload drops from 6448 KB to 4434 KB *with the
+    props included*.
+  * The rect is grown out of the atlas's unused area when the target power of
+    two is larger (a 1:1 copy, no resampling) and resized down when it is
+    smaller; UVs are remapped by `(uv - origin) * scale`, which is independent
+    of the power-of-two resize, so the sampled texels are unchanged.
+  * Alpha is taken from the PIXELS, not just the material: an atlas declaring
+    BLEND over fully opaque texels ships as opaque (RGBA5551, opaque pass).
+  * Textures are shared by content, so N instances of a prop (or several pack
+    models sharing one atlas) cost one texture and one upload.
+- Device, PSP over PSPLink (`./run_psp_hw.sh`), showcase courtyard spawn view:
+  two barrels cost +0.1 gpu / +0.1 cpu ms and are drawn correctly (wood 128x128,
+  hoops 64x16, both RGBA5551); the worst view stays at 2.72 gpu / 5.27 frame
+  against the 16.67 ms budget. Eight barrels: 4.13 cpu / 0.11 gpu at the spawn.
+  Six wall pieces filling the spawn view: 2.03 gpu. A 24-instance map with a
+  UNIQUE texture per instance (44 textures, 7.5 MB payload) loads and renders
+  with no loader FATAL. Rows and what they mean for authoring: 
+  `retro_engine/psp/HARDWARE-TESTING.md` ("Imported props") and
+  `retro_engine/RETRO-AUTHORING.md` §7.
+- Version bump 0.9.126 -> 0.9.127.
