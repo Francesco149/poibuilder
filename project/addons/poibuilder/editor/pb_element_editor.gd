@@ -132,14 +132,20 @@ func _get_candidate_vertices(node: PBMesh) -> PackedVector3Array:
 	elif node != null:
 		meshes = [node]
 
-	# Collect source positions at drag start to exclude coincident duplicates on same mesh
+	# Collect the drag's START positions to exclude coincident duplicates on
+	# the same mesh. Measured from the same snapshot the snap solver uses:
+	# live positions wander with the drag, and stale keys would wrongly drop
+	# scene vertices the selection has snapped onto (un-catch on the next
+	# motion — the ping-pong bug).
 	var source_positions := {}
 	if node != null and node.pb_mesh_data != null:
 		var xf := _node_world_xf(node)
 		var md: PBMeshData = node.pb_mesh_data
+		var base: PackedVector3Array = _drag_original_positions \
+			if _drag_original_positions.size() > 0 else md.positions
 		for idx in _drag_union:
-			if idx >= 0 and idx < md.positions.size():
-				var p: Vector3 = xf * md.positions[idx]
+			if idx >= 0 and idx < base.size():
+				var p: Vector3 = xf * base[idx]
 				var key := Vector3i(roundi(p.x * 1000.0), roundi(p.y * 1000.0), roundi(p.z * 1000.0))
 				source_positions[key] = true
 
@@ -163,23 +169,28 @@ func _get_candidate_vertices(node: PBMesh) -> PackedVector3Array:
 			candidates.append(v_world)
 	return candidates
 
-## Gathers the world positions of all vertices being moved by the current drag.
-## Used by vertex snapping so that elongated faces and edges snap at their actual
-## vertices rather than the centroid of the selection.
+## Gathers the world positions of the dragged element's corners AT DRAG START.
+## Vertex snapping measures displacements from the drag-start snapshot (the
+## engine's rel is a displacement from that same snapshot); reading live
+## positions instead made each caught snap un-catch on the next motion and
+## re-catch at the raw cursor position — the "ping-pong" bug.
 func _get_source_vertices(node: PBMesh) -> PackedVector3Array:
 	var sources := PackedVector3Array()
 	if node == null or node.pb_mesh_data == null:
 		return sources
 	var xf := _node_world_xf(node)
-	var md: PBMeshData = node.pb_mesh_data
-	var seen: Dictionary = {}
-	for idx in _drag_union:
-		if idx >= 0 and idx < md.positions.size():
-			var v_world: Vector3 = xf * md.positions[idx]
-			var key := Vector3i(roundi(v_world.x * 1000.0), roundi(v_world.y * 1000.0), roundi(v_world.z * 1000.0))
-			if not seen.has(key):
-				seen[key] = true
-				sources.append(v_world)
+	if not _drag_union.is_empty():
+		var md: PBMeshData = node.pb_mesh_data
+		var base: PackedVector3Array = _drag_original_positions \
+			if _drag_original_positions.size() > 0 else md.positions
+		var seen: Dictionary = {}
+		for idx in _drag_union:
+			if idx >= 0 and idx < base.size():
+				var v_world: Vector3 = xf * base[idx]
+				var key := Vector3i(roundi(v_world.x * 1000.0), roundi(v_world.y * 1000.0), roundi(v_world.z * 1000.0))
+				if not seen.has(key):
+					seen[key] = true
+					sources.append(v_world)
 	if sources.is_empty() and _drag_start_xf.has(_drag_latest_id):
 		sources.append(xf * _drag_start_xf[_drag_latest_id].origin)
 	return sources
@@ -195,22 +206,6 @@ func _find_nearest_scene_vertex(node: PBMesh, target_world: Vector3, max_dist: f
 			best_dist = d
 			best_pos = v
 	return best_pos
-
-## Identifies a candidate vertex hovered/pointed to by the mouse cursor on screen (Unity/Godot style).
-func _find_cursor_snap_vertex(candidates: PackedVector3Array) -> Vector3:
-	if not mouse_has or mouse_camera == null:
-		return Vector3.INF
-	var best_dist := 35.0  # pixels screen threshold
-	var best_vert := Vector3.INF
-	for v in candidates:
-		if mouse_camera.is_position_behind(v):
-			continue
-		var s_pos := mouse_camera.unproject_position(v)
-		var s_dist := s_pos.distance_to(mouse_screen)
-		if s_dist < best_dist:
-			best_dist = s_dist
-			best_vert = v
-	return best_vert
 
 # ==============================================================================
 # Drag gestures (tool + modifier keys decide how a drag applies)
@@ -1571,22 +1566,6 @@ func _apply_drag(node: PBMesh, mesh_data: PBMeshData, ids: PackedInt32Array) -> 
 						new_positions[idx] = pre[i].lerp(centroid, amount)
 			_apply_ring_lerp(new_positions, pos_count, amount)
 			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
-		DragGesture.INSET_SCALE:
-			# The engine delivers a per-axis scale about the subgizmo origin;
-			# the inset amount is the dominant scale deviation from 1.
-			var s := _dominant_scale_factor(rel.basis)
-			var amount := clampf(1.0 - s, -1.0, 0.95)
-			_last_inset_amount = amount
-			for base in _drag_inset_bases:
-				var idxs: PackedInt32Array = base["idxs"]
-				var centroid: Vector3 = base["centroid"]
-				var pre: PackedVector3Array = base["pre"]
-				for i in range(idxs.size()):
-					var idx: int = idxs[i]
-					if idx >= 0 and idx < pos_count:
-						new_positions[idx] = pre[i].lerp(centroid, amount)
-			_apply_ring_lerp(new_positions, pos_count, amount)
-			_emit_drag_update(true, Vector3(amount, 0, 0), Vector3.ZERO, Vector3.ONE)
 		DragGesture.CENTER_SCALE:
 			var pivot := _center_pivot
 			if logger != null and PBLogger.verbose:
@@ -1737,9 +1716,43 @@ static func _rotation_center(rel: Transform3D, axis_anchor: Vector3) -> Vector3:
 	var center := 0.5 * o_perp + axis.cross(o_perp) * (0.5 / tan(angle * 0.5))
 	return center + axis * axis.dot(axis_anchor)
 
-## Snaps an EXTRUDE motion's world-space distance along the extrude normal.
-## When vertex snapping is active, attempts to snap the cap distance to candidate scene vertices.
-## Otherwise quantizes to grid step if grid is enabled.
+# ==============================================================================
+# Vertex snapping (V-Snap / hold-V) — pair-magnet model
+# ==============================================================================
+# A snap is a (dragged corner s, scene vertex v) PAIR. The selection
+# translates rigidly by a world delta W that the drag constraint confines to
+# an axis, a gizmo plane, or free space. A pair CATCHES when some W' on the
+# constraint lands s within the magnet radius of v; the catch output is that
+# exact W' (constraint-pure, corner-on-vertex). No pair catching → the raw
+# drag delta passes through (grid snapping gets its turn next).
+#
+# This replaces the projection-only solver: it accepted any vertex whose
+# displacement ALONG the drag axis matched the drag distance regardless of
+# lateral distance, so vertices meters away yanked the selection to heights
+# nothing visible justified; a 35px screen-space cursor override additionally
+# teleported the selection to whatever vertex sat under the mouse. Both are
+# gone — only geometry the dragged corners can actually REACH can catch,
+# which makes face/edge drags snap at their real corners (a single dragged
+# vertex degenerates to one source: snapping off that one point).
+
+## Magnet radius from a grid state (static so the creation tools share it):
+## half a snap step, clamped to a sane band; 0.2 m when the grid is off.
+static func vertex_snap_radius(grid: PBGrid) -> float:
+	if grid != null and grid.step() > 0.001:
+		return clampf(grid.step() * 0.5, 0.1, 0.5)
+	return 0.2
+
+func _vertex_snap_radius() -> float:
+	return vertex_snap_radius(grid)
+
+static func _unit_axis(i: int) -> Vector3:
+	var v := Vector3.ZERO
+	v[i] = 1.0
+	return v
+
+## Snaps an EXTRUDE motion: vertex snap when active (normal-dominant sweeps
+## solve along the extrude normal; tangential sweeps solve free), else the
+## grid quantizes the cap distance along the normal.
 func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
 	if is_vertex_snap_active():
 		var v_res := _snap_vertex_extrude_motion(node, motion)
@@ -1761,319 +1774,207 @@ func _snap_extrude_motion(node: PBMesh, motion: Vector3) -> Vector3:
 	# Sideways / tangential cap sweep: snap local delta preserving tangential motion
 	return grid.snap_local_delta(basis, motion)
 
-## Snaps an EXTRUDE motion's distance to the nearest candidate vertex along the normal.
+## Vertex snap for an EXTRUDE cap drag. Sources are the cap corners at drag
+## start; a catch locks the cap distance so a corner lands on a scene vertex.
 func _snap_vertex_extrude_motion(node: PBMesh, motion: Vector3) -> Dictionary:
 	var result := { "caught": false, "motion": motion }
-	if node == null:
+	if node == null or node.pb_mesh_data == null:
 		return result
-	var xf := _node_world_xf(node)
-	var basis := xf.basis
-	var world := basis * motion
-	var world_normal := _extrude_normal_world.normalized()
+	var world_normal := _extrude_normal_world
 	if world_normal.length_squared() < 0.5:
 		return result
-
-	var dist := world.dot(world_normal)
+	world_normal = world_normal.normalized()
+	var sources := _get_source_vertices(node)
+	if sources.is_empty():
+		return result
 	var candidates := _get_candidate_vertices(node)
 	if candidates.is_empty():
 		return result
+	var basis := _node_world_xf(node).basis
+	var world := basis * motion
+	var radius := _vertex_snap_radius()
 
-	var source_verts := _get_source_vertices(node)
-	var cursor_vert := _find_cursor_snap_vertex(candidates)
-	var snap_threshold := 0.2
-	if grid != null and grid.step() > 0.001:
-		snap_threshold = clampf(grid.step() * 0.5, 0.1, 0.35)
-	var P_0: Vector3 = _extrude_pivot_world
-	var snap_res := _solve_axis_vertex_snap(P_0, world_normal, dist, candidates, source_verts, cursor_vert, snap_threshold)
-	if snap_res["caught"]:
-		var snapped_dist: float = snap_res["snapped_d"]
-		result["caught"] = true
-		if absf(dist) >= world.length() * 0.5:
-			result["motion"] = basis.inverse() * (world_normal * snapped_dist)
-		else:
-			result["motion"] = basis.inverse() * (world - world_normal * dist + world_normal * snapped_dist)
+	if absf(world.dot(world_normal)) >= world.length() * 0.5:
+		# Normal-dominant sweep: the cap distance catches along the normal.
+		var res := snap_axis_delta(sources, candidates, world_normal,
+			world.dot(world_normal), radius)
+		if res["caught"]:
+			result["caught"] = true
+			result["motion"] = basis.inverse() * (world_normal * float(res["d"]))
+	else:
+		# Tangential sweep (multi-normal region, unconstrained): free solve.
+		var res := snap_free_delta(sources, candidates, world, radius)
+		if res["caught"]:
+			result["caught"] = true
+			result["motion"] = basis.inverse() * (res["world"] as Vector3)
 	return result
 
-## Snaps element translation:
-## 1. Vertex snap (if active via V-Snap toggle or hold V): snaps along the active
-##    axes to the nearest scene vertex within snap threshold or under the cursor.
-## 2. Grid snap (if enabled): snaps active axes to absolute world grid lines.
+## Vertex snap for a plain MOVE drag: solve the active constraint, fall
+## through to grid snapping when nothing caught.
 func _snap_move_motion(node: PBMesh, motion: Vector3) -> Vector3:
-	if is_vertex_snap_active() and _drag_start_xf.has(_drag_latest_id):
+	if is_vertex_snap_active():
 		var v_res := _snap_vertex_move_motion(node, motion)
 		if v_res.get("caught", false):
 			return v_res["motion"]
-		# If no vertex caught within threshold, fall through to grid snap below.
 
 	return _snap_grid_move_motion(node, motion)
 
-## Snaps element motion to candidate scene vertices along active axes.
+## Classifies the MOVE drag's constraint from the active orientation space and
+## solves it. `motion` is the engine's node-space translation delta; gizmo
+## axis i maps to node space by g (ELEMENT: the element basis, OBJECT:
+## identity, WORLD: the node basis), and the delivered component along that
+## axis is the constrained degree of freedom.
 func _snap_vertex_move_motion(node: PBMesh, motion: Vector3) -> Dictionary:
 	var result := { "caught": false, "motion": motion }
-	if node == null or not _drag_start_xf.has(_drag_latest_id):
+	if node == null or node.pb_mesh_data == null:
 		return result
-
-	var xf := _node_world_xf(node)
-	var basis := xf.basis
-	var start_pivot_world: Vector3 = xf * _drag_start_xf[_drag_latest_id].origin
+	var sources := _get_source_vertices(node)
+	if sources.is_empty():
+		return result
 	var candidates := _get_candidate_vertices(node)
 	if candidates.is_empty():
 		return result
+	var radius := _vertex_snap_radius()
+	var basis := _node_world_xf(node).basis
 
-	var source_verts := _get_source_vertices(node)
-	var cursor_vert := _find_cursor_snap_vertex(candidates)
-	var snap_threshold := 0.2
-	if grid != null and grid.step() > 0.001:
-		snap_threshold = clampf(grid.step() * 0.5, 0.1, 0.35)
+	var g := Basis.IDENTITY
+	var space: int = PBEditor.OrientationSpace.WORLD
+	if editor != null:
+		space = editor.orientation_space
+	match space:
+		PBEditor.OrientationSpace.ELEMENT:
+			g = element_basis(node.pb_mesh_data, node, _drag_latest_id)
+		PBEditor.OrientationSpace.OBJECT:
+			g = Basis.IDENTITY
+		_:
+			g = basis.orthonormalized()  # WORLD: gizmo space == world space
 
-	# 1. ELEMENT space: snap along the element's local gizmo axes (face normal, tangent, bitangent)
-	if editor != null and editor.orientation_space == PBEditor.OrientationSpace.ELEMENT:
-		var elem_b := element_basis(node.pb_mesh_data, node, _drag_latest_id)
-		# Decompose motion into local coordinates along the gizmo axes:
-		var local_motion: Vector3 = elem_b.inverse() * motion
-		var d_x: float = local_motion.x
-		var d_y: float = local_motion.y
-		var d_z: float = local_motion.z
-		var act_x := absf(d_x) > 0.0001
-		var act_y := absf(d_y) > 0.0001
-		var act_z := absf(d_z) > 0.0001
-		var count := (1 if act_x else 0) + (1 if act_y else 0) + (1 if act_z else 0)
-		if count == 0:
-			return result
-
-		# Gizmo axes in world space:
-		var world_x := (basis * (elem_b * Vector3.RIGHT)).normalized()
-		var world_y := (basis * (elem_b * Vector3.UP)).normalized()
-		var world_z := (basis * (elem_b * Vector3.BACK)).normalized()
-
-		if count == 1:
-			# Single axis drag: ONLY move along the active axis, ZERO motion on other axes
-			var world_axis := world_x if act_x else (world_y if act_y else world_z)
-			var d := d_x if act_x else (d_y if act_y else d_z)
-			var snap_res := _solve_axis_vertex_snap(start_pivot_world, world_axis, d, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				result["caught"] = true
-				var snapped_local := Vector3(snap_res["snapped_d"], 0.0, 0.0) if act_x else (Vector3(0.0, snap_res["snapped_d"], 0.0) if act_y else Vector3(0.0, 0.0, snap_res["snapped_d"]))
-				result["motion"] = elem_b * snapped_local
-				return result
-		elif count == 2:
-			# Plane drag: constrain strictly to the 2 active element axes
-			var plane_normal := world_x if not act_x else (world_y if not act_y else world_z)
-			var active_local_motion := Vector3(d_x if act_x else 0.0, d_y if act_y else 0.0, d_z if act_z else 0.0)
-			var world_target := start_pivot_world + basis * (elem_b * active_local_motion)
-			var snap_res := _solve_plane_vertex_snap(start_pivot_world, plane_normal, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				var local_delta: Vector3 = elem_b.inverse() * (basis.inverse() * delta_w)
-				var snapped_local := Vector3(local_delta.x if act_x else 0.0, local_delta.y if act_y else 0.0, local_delta.z if act_z else 0.0)
-				result["caught"] = true
-				result["motion"] = elem_b * snapped_local
-				return result
-		else:
-			# Free 3D drag
-			var world_target := start_pivot_world + basis * motion
-			var snap_res := _solve_free_vertex_snap(start_pivot_world, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				result["caught"] = true
-				result["motion"] = basis.inverse() * delta_w
-				return result
-
-	# 2. OBJECT space: snap along object local axes
-	elif editor != null and editor.orientation_space == PBEditor.OrientationSpace.OBJECT:
-		var d_x: float = motion.x
-		var d_y: float = motion.y
-		var d_z: float = motion.z
-		var act_x := absf(d_x) > 0.0001
-		var act_y := absf(d_y) > 0.0001
-		var act_z := absf(d_z) > 0.0001
-		var count := (1 if act_x else 0) + (1 if act_y else 0) + (1 if act_z else 0)
-		if count == 0:
-			return result
-
-		var world_x := (basis * Vector3.RIGHT).normalized()
-		var world_y := (basis * Vector3.UP).normalized()
-		var world_z := (basis * Vector3.BACK).normalized()
-
-		if count == 1:
-			var world_axis := world_x if act_x else (world_y if act_y else world_z)
-			var d := d_x if act_x else (d_y if act_y else d_z)
-			var snap_res := _solve_axis_vertex_snap(start_pivot_world, world_axis, d, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				result["caught"] = true
-				if act_x: result["motion"] = Vector3(snap_res["snapped_d"], 0.0, 0.0)
-				elif act_y: result["motion"] = Vector3(0.0, snap_res["snapped_d"], 0.0)
-				else: result["motion"] = Vector3(0.0, 0.0, snap_res["snapped_d"])
-				return result
-		elif count == 2:
-			var plane_normal := world_x if not act_x else (world_y if not act_y else world_z)
-			var active_motion := Vector3(d_x if act_x else 0.0, d_y if act_y else 0.0, d_z if act_z else 0.0)
-			var world_target := start_pivot_world + basis * active_motion
-			var snap_res := _solve_plane_vertex_snap(start_pivot_world, plane_normal, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				var local_delta := basis.inverse() * delta_w
-				var applied_local := Vector3(local_delta.x if act_x else 0.0, local_delta.y if act_y else 0.0, local_delta.z if act_z else 0.0)
-				result["caught"] = true
-				result["motion"] = applied_local
-				return result
-		else:
-			var world_target := start_pivot_world + basis * motion
-			var snap_res := _solve_free_vertex_snap(start_pivot_world, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				result["caught"] = true
-				result["motion"] = basis.inverse() * delta_w
-				return result
-
-	# 3. WORLD space (default)
-	else:
-		var world_motion := basis * motion
-		var act_x := absf(world_motion.x) > 0.0001
-		var act_y := absf(world_motion.y) > 0.0001
-		var act_z := absf(world_motion.z) > 0.0001
-		var count := (1 if act_x else 0) + (1 if act_y else 0) + (1 if act_z else 0)
-		if count == 0:
-			return result
-
-		if count == 1:
-			var world_axis := Vector3.RIGHT if act_x else (Vector3.UP if act_y else Vector3.BACK)
-			var d := world_motion.x if act_x else (world_motion.y if act_y else world_motion.z)
-			var snap_res := _solve_axis_vertex_snap(start_pivot_world, world_axis, d, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var applied_world := Vector3(snap_res["snapped_d"], 0.0, 0.0) if act_x else (Vector3(0.0, snap_res["snapped_d"], 0.0) if act_y else Vector3(0.0, 0.0, snap_res["snapped_d"]))
-				result["caught"] = true
-				result["motion"] = basis.inverse() * applied_world
-				return result
-		elif count == 2:
-			var plane_normal := Vector3.RIGHT if not act_x else (Vector3.UP if not act_y else Vector3.BACK)
-			var active_world_motion := Vector3(world_motion.x if act_x else 0.0, world_motion.y if act_y else 0.0, world_motion.z if act_z else 0.0)
-			var world_target := start_pivot_world + active_world_motion
-			var snap_res := _solve_plane_vertex_snap(start_pivot_world, plane_normal, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				var applied_world := Vector3(delta_w.x if act_x else 0.0, delta_w.y if act_y else 0.0, delta_w.z if act_z else 0.0)
-				result["caught"] = true
-				result["motion"] = basis.inverse() * applied_world
-				return result
-		else:
-			var world_target := start_pivot_world + world_motion
-			var snap_res := _solve_free_vertex_snap(start_pivot_world, world_target, candidates, source_verts, cursor_vert, snap_threshold)
-			if snap_res["caught"]:
-				var delta_w: Vector3 = snap_res["snapped_world"] - start_pivot_world
-				result["caught"] = true
-				result["motion"] = basis.inverse() * delta_w
-				return result
-
-	return result
-
-## Solves vertex snapping along a single unit axis A (passing through P_0).
-## Evaluates candidate target vertices against source_verts so elongated faces
-## and edges snap at their actual vertices rather than the centroid.
-func _solve_axis_vertex_snap(P_0: Vector3, A: Vector3, d: float, candidates: PackedVector3Array, source_verts: PackedVector3Array, cursor_vert: Vector3, snap_threshold: float) -> Dictionary:
-	var result := { "caught": false, "snapped_d": d }
-	if cursor_vert != Vector3.INF:
-		result["caught"] = true
-		var best_s := P_0
-		var best_dist := INF
-		for s in source_verts:
-			var dist := s.distance_squared_to(cursor_vert)
-			if dist < best_dist:
-				best_dist = dist
-				best_s = s
-		result["snapped_d"] = (cursor_vert - best_s).dot(A)
+	# local[i] = delivered displacement along gizmo axis i.
+	var local := g.inverse() * motion
+	var axes: Array[int] = []
+	for i in range(3):
+		if absf(local[i]) > 0.0001:
+			axes.append(i)
+	if axes.is_empty():
 		return result
 
-	var best_diff := snap_threshold
-	for v in candidates:
-		# For candidate target v, find the closest source vertex s on the moved element
-		var best_s := P_0
-		var best_dist_sq := INF
-		for s in source_verts:
-			var dist_sq := s.distance_squared_to(v)
-			if dist_sq < best_dist_sq:
-				best_dist_sq = dist_sq
-				best_s = s
-
-		var t_v: float = (v - best_s).dot(A)
-		# Skip candidate vertices that share the starting position (t_v ~ 0) to avoid trapping at 0 displacement
-		if absf(t_v) < 0.001:
-			continue
-
-		var diff := absf(t_v - d)
-		if diff <= best_diff:
-			best_diff = diff
-			result["snapped_d"] = t_v
+	if axes.size() == 1:
+		# Single-axis drag: motion stays EXACTLY on the axis; a catch only
+		# rescales the signed distance so a corner lands on a vertex.
+		var i: int = axes[0]
+		var axis_node := _unit_axis(i)
+		var world_axis := (basis * (g * axis_node)).normalized()
+		var res := snap_axis_delta(sources, candidates, world_axis, local[i], radius)
+		if res["caught"]:
 			result["caught"] = true
-	return result
-
-## Solves vertex snapping on a 2D plane with normal N (passing through P_0).
-func _solve_plane_vertex_snap(P_0: Vector3, N: Vector3, world_target: Vector3, candidates: PackedVector3Array, source_verts: PackedVector3Array, cursor_vert: Vector3, snap_threshold: float) -> Dictionary:
-	var result := { "caught": false, "snapped_world": world_target }
-	var world_motion: Vector3 = world_target - P_0
-	if cursor_vert != Vector3.INF:
-		result["caught"] = true
-		var best_s := P_0
-		var best_dist := INF
-		for s in source_verts:
-			var dist := s.distance_to(cursor_vert)
-			if dist < best_dist:
-				best_dist = dist
-				best_s = s
-		var v_disp: Vector3 = cursor_vert - best_s
-		var v_plane: Vector3 = v_disp - N * (v_disp.dot(N))
-		result["snapped_world"] = P_0 + v_plane
+			result["motion"] = g * (axis_node * float(res["d"]))
 		return result
 
-	var best_diff := snap_threshold
-	for v in candidates:
-		var best_s := P_0
-		var best_dist := INF
-		for s in source_verts:
-			var dist := s.distance_squared_to(v)
-			if dist < best_dist:
-				best_dist = dist
-				best_s = s
-		var v_disp: Vector3 = v - best_s
-		var v_plane: Vector3 = v_disp - N * (v_disp.dot(N))
-		var diff := world_motion.distance_to(v_plane)
-		if diff <= best_diff:
-			best_diff = diff
-			result["snapped_world"] = P_0 + v_plane
+	var world := basis * motion
+	if axes.size() == 2:
+		# Plane drag: the in-plane delta snaps so a corner lands on a vertex
+		# whose out-of-plane offset from the drag plane is within the radius.
+		var a1 := (basis * (g * _unit_axis(axes[0]))).normalized()
+		var a2 := (basis * (g * _unit_axis(axes[1]))).normalized()
+		var plane_normal := a1.cross(a2).normalized()
+		var res := snap_plane_delta(sources, candidates, world, plane_normal, radius)
+		if res["caught"]:
+			var node_delta := basis.inverse() * (res["world"] as Vector3)
+			# Purity guard: kill the inactive gizmo component (float noise
+			# on skewed node transforms).
+			var lc := g.inverse() * node_delta
+			for i in range(3):
+				if not axes.has(i):
+					lc[i] = 0.0
 			result["caught"] = true
-	return result
-
-## Solves vertex snapping in unconstrained 3D space.
-func _solve_free_vertex_snap(P_0: Vector3, world_target: Vector3, candidates: PackedVector3Array, source_verts: PackedVector3Array, cursor_vert: Vector3, snap_threshold: float) -> Dictionary:
-	var result := { "caught": false, "snapped_world": world_target }
-	var world_motion: Vector3 = world_target - P_0
-	if cursor_vert != Vector3.INF:
-		result["caught"] = true
-		var best_s := P_0
-		var best_dist := INF
-		for s in source_verts:
-			var dist := s.distance_to(cursor_vert)
-			if dist < best_dist:
-				best_dist = dist
-				best_s = s
-		result["snapped_world"] = P_0 + (cursor_vert - best_s)
+			result["motion"] = g * lc
 		return result
 
-	var best_diff := snap_threshold
+	# Free (view-plane) drag: a corner snaps onto a vertex in 3D.
+	var res := snap_free_delta(sources, candidates, world, radius)
+	if res["caught"]:
+		result["caught"] = true
+		result["motion"] = basis.inverse() * (res["world"] as Vector3)
+	return result
+
+## Axis-constrained solve: catches the (source, candidate) pair whose required
+## signed displacement `t` along `axis` is nearest the dragged distance `d`
+## among pairs whose source passes within `radius` of the candidate — i.e.
+## the perpendicular offset of (v − s) from the axis line through s must be
+## inside the radius, so only REACHABLE geometry catches. Pairs with t ≈ 0
+## never catch (that would pin the drag at its start position).
+static func snap_axis_delta(sources: PackedVector3Array, candidates: PackedVector3Array,
+		axis: Vector3, d: float, radius: float) -> Dictionary:
+	var result := { "caught": false, "d": d }
+	if sources.is_empty() or candidates.is_empty() or radius <= 0.0:
+		return result
+	var a := axis.normalized()
+	if a.length_squared() < 0.5:
+		return result
+	var best_diff := radius
 	for v in candidates:
-		var best_s := P_0
-		var best_dist := INF
-		for s in source_verts:
-			var dist := s.distance_squared_to(v)
-			if dist < best_dist:
-				best_dist = dist
-				best_s = s
-		var v_disp: Vector3 = v - best_s
-		var diff := world_motion.distance_to(v_disp)
-		if diff <= best_diff:
-			best_diff = diff
-			result["snapped_world"] = P_0 + v_disp
-			result["caught"] = true
+		for s in sources:
+			var disp := v - s
+			var t := disp.dot(a)
+			if absf(t) < 0.001:
+				continue
+			var perp := disp - a * t
+			if perp.length_squared() > radius * radius:
+				continue
+			var diff := absf(t - d)
+			if diff <= best_diff:
+				best_diff = diff
+				result["caught"] = true
+				result["d"] = t
+	return result
+
+## Plane-constrained solve: catches the pair whose in-plane displacement t is
+## nearest the dragged in-plane delta; the candidate must sit within `radius`
+## of the drag plane (its out-of-plane offset along `plane_normal` ≤ radius).
+## Candidates coincident with a source in-plane (t ≈ 0) never catch.
+static func snap_plane_delta(sources: PackedVector3Array, candidates: PackedVector3Array,
+		world_delta: Vector3, plane_normal: Vector3, radius: float) -> Dictionary:
+	var result := { "caught": false, "world": world_delta }
+	if sources.is_empty() or candidates.is_empty() or radius <= 0.0:
+		return result
+	var n := plane_normal.normalized()
+	if n.length_squared() < 0.5:
+		return result
+	var best_diff := radius
+	for v in candidates:
+		for s in sources:
+			var disp := v - s
+			var off := disp.dot(n)
+			if absf(off) > radius:
+				continue
+			var t := disp - n * off
+			if t.length_squared() < 0.000001:
+				continue
+			var diff := (world_delta - t).length()
+			if diff <= best_diff:
+				best_diff = diff
+				result["caught"] = true
+				result["world"] = t
+	return result
+
+## Free (view-plane) solve: catches the pair whose full 3D displacement is
+## nearest the dragged delta — the corner lands exactly on the vertex.
+static func snap_free_delta(sources: PackedVector3Array, candidates: PackedVector3Array,
+		world_delta: Vector3, radius: float) -> Dictionary:
+	var result := { "caught": false, "world": world_delta }
+	if sources.is_empty() or candidates.is_empty() or radius <= 0.0:
+		return result
+	var best_diff := radius
+	for v in candidates:
+		for s in sources:
+			var t := v - s
+			if t.length_squared() < 0.000001:
+				continue
+			var diff := (world_delta - t).length()
+			if diff <= best_diff:
+				best_diff = diff
+				result["caught"] = true
+				result["world"] = t
 	return result
 ## Snaps element translation to absolute world grid lines along active axes.
 ## Even if an element starts with an off-grid position (fractional dimensions or

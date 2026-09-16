@@ -911,3 +911,55 @@ func test_trim_wall_highlight_strokes_are_local_face_positions():
 	for i in range(0, stroke_pts.size(), 2):
 		assert_true(poly.has(stroke_pts[i]),
 			"every stroke vertex IS a face polygon vertex (no transform applied)")
+
+# ==============================================================================
+# Vertex snap (V-Snap) on the height/offset drag
+# ==============================================================================
+
+## The base rect drawn from (0,0,0) to (2,0,2) on the floor has corners at
+## (0,0,0), (2,0,0), (2,0,2), (0,0,2) — snap sources for the rising shape.
+func _height_state_creator() -> PBShapeCreator:
+	var creator := PBShapeCreator.new()
+	creator.arm(&"cube")
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(-1, 0, 0))
+	creator.update_base(Vector3(2, 0, 2))
+	creator.end_base()
+	return creator
+
+func test_height_drags_onto_a_nearby_vertex_when_v_snap_is_on():
+	var creator := _height_state_creator()
+	creator.vertex_snap_active_fn = func() -> bool: return true
+	# A wall vertex 1.6m up, directly above the base corner at the origin.
+	creator.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(0, 1.6, 0)])
+	creator.update_height_point(Vector3(1, 1.45, 1))
+	assert_almost_eq(creator.height, 1.6, 0.001,
+		"height locks onto the vertex 0.15m from the raw drag (within the magnet radius)")
+
+func test_height_passes_through_when_no_vertex_is_reachable():
+	var creator := _height_state_creator()
+	creator.vertex_snap_active_fn = func() -> bool: return true
+	creator.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(0, 5.0, 0)])
+	creator.update_height_point(Vector3(1, 1.45, 1))
+	assert_almost_eq(creator.height, 1.45, 0.001,
+		"a vertex 3.5m beyond the drag never catches")
+
+func test_height_ignores_vertices_when_v_snap_is_off():
+	var creator := _height_state_creator()
+	creator.vertex_snap_active_fn = func() -> bool: return false
+	creator.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(0, 1.6, 0)])
+	creator.update_height_point(Vector3(1, 1.45, 1))
+	assert_almost_eq(creator.height, 1.45, 0.001, "V-snap off → raw height")
+
+func test_height_snap_sources_are_the_base_corners():
+	# A candidate directly above the base CENTER (not a corner) must not
+	# catch: corners are the sources, centers are not.
+	var creator := _height_state_creator()
+	creator.vertex_snap_active_fn = func() -> bool: return true
+	creator.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(1, 1.5, 1)])
+	creator.update_height_point(Vector3(1, 1.45, 1))
+	assert_almost_eq(creator.height, 1.45, 0.001,
+		"only base corners catch; the rect center is not a snap source")

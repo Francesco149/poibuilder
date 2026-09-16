@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.130"
+const VERSION := "0.9.131"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -113,6 +113,7 @@ func _enter_tree():
 	shape_creator.grid = grid
 	gizmo_plugin.ngon_drawer = ngon_drawer
 	ngon_drawer.grid = grid
+	_wire_creation_vertex_snap()
 	sprite_placer.plugin = self
 	sprite_placer.grid = grid
 	sprite_placer.sprite_placed.connect(_on_sprite_placed)
@@ -2624,6 +2625,39 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 			_clear_creation_hover()
 		_:
 			_update_creation_hover(camera, screen_pos)
+
+## Creation tools (shape creator / n-gon drawer) raise their shapes against
+## the same V-snap state and scene vertices the element editor drags use.
+func _wire_creation_vertex_snap() -> void:
+	var ee := gizmo_plugin.element_editor
+	shape_creator.vertex_snap_active_fn = func() -> bool:
+		return ee.is_vertex_snap_active()
+	shape_creator.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return _scene_vertex_candidates(shape_creator.preview_node)
+	ngon_drawer.vertex_snap_active_fn = func() -> bool:
+		return ee.is_vertex_snap_active()
+	ngon_drawer.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return _scene_vertex_candidates(ngon_drawer.preview_node)
+
+## World-space vertices of every PBMesh except `skip` (the live creation
+## preview, whose corners ride the drag and must never catch themselves).
+func _scene_vertex_candidates(skip: PBMesh) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		return out
+	var seen := {}
+	for m in _collect_pbmeshes(scene_root):
+		if m == skip or m.pb_mesh_data == null:
+			continue
+		var xf: Transform3D = m.global_transform
+		for p in m.pb_mesh_data.positions:
+			var w := xf * p
+			var key := Vector3i(roundi(w.x * 1000.0), roundi(w.y * 1000.0), roundi(w.z * 1000.0))
+			if not seen.has(key):
+				seen[key] = true
+				out.append(w)
+	return out
 
 ## Cyan face highlight under the cursor while creating (skips the preview).
 func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:

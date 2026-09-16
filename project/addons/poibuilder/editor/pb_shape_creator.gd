@@ -113,6 +113,13 @@ var preview_node: PBMesh = null
 ## extents and the height quantize to the snap step.
 var grid: PBGrid = null
 
+## Vertex-snap hooks for the height/offset drag, injected by the plugin
+## (inert when unset, so headless shape tests need nothing). The first
+## reports whether V-snap is active (toolbar toggle or held V); the second
+## returns the scene's candidate vertices with the preview node excluded.
+var vertex_snap_active_fn: Callable = Callable()
+var vertex_snap_candidates_fn: Callable = Callable()
+
 # ── Queries ──────────────────────────────────────────────────────────────────
 
 func is_active() -> bool:
@@ -359,9 +366,30 @@ func update_height_point(world_point: Vector3) -> void:
 	height = (world_point - plane_point).dot(plane_normal)
 	if grid != null and grid.enabled:
 		height = grid.snap_val(height)
+	height = _vertex_snap_height(height)
 	if state == State.OFFSET:
 		height = maxf(0.0, height)
 	_apply_drag_extents()
+
+## Magnetic vertex snap for the rising shape: the base rect corners are the
+## snap sources; when one of them would pass within the magnet radius of a
+## scene vertex along the surface normal, the height locks onto that vertex
+## (a catch overrides the grid-quantized height — vertices win while V-snap
+## is active).
+func _vertex_snap_height(raw_height: float) -> float:
+	if not (vertex_snap_active_fn.is_valid() and vertex_snap_active_fn.call()):
+		return raw_height
+	if not vertex_snap_candidates_fn.is_valid():
+		return raw_height
+	var candidates: PackedVector3Array = vertex_snap_candidates_fn.call()
+	if candidates.is_empty():
+		return raw_height
+	var n := plane_normal.normalized()
+	if n.length_squared() < 0.5:
+		return raw_height
+	var res := PBElementEditor.snap_axis_delta(base_rect_corners(), candidates, n,
+		raw_height, PBElementEditor.vertex_snap_radius(grid))
+	return float(res["d"]) if res["caught"] else raw_height
 
 ## The dragged base rect's four corners IN WORLD SPACE (on the captured
 ## plane) — the BASE-phase outline the gizmo draws while the mesh preview is

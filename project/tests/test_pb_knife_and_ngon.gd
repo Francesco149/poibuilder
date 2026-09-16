@@ -497,3 +497,37 @@ func test_knife_shading_pinch_normals_clean():
 				assert_almost_eq(normals[idx].z, 1.0, 0.01, "Normal at vertex %d must be exactly +Z (no shading pinch)" % idx)
 				assert_almost_eq(normals[idx].x, 0.0, 0.01)
 				assert_almost_eq(normals[idx].y, 0.0, 0.01)
+
+## V-Snap on the N-Gon HEIGHT phase: the placed polygon corners are the snap
+## sources; a scene vertex within the magnet radius above a corner locks the
+## height (raise-a-drawn-shape parity with the shape creator).
+func test_ngon_height_snaps_to_vertex_above_a_polygon_corner():
+	var drawer := PBNgonDrawer.new()
+	drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
+	drawer.begin(Vector3(0, 0, 0), Vector3.UP)
+	drawer.add_point(Vector3(2, 0, 0))
+	drawer.add_point(Vector3(1, 0, 2))
+	assert_eq(drawer.state, PBNgonDrawer.State.DRAWING)
+	assert_true(drawer.complete().get("ok", false), "triangle completes into HEIGHT")
+	assert_eq(drawer.state, PBNgonDrawer.State.HEIGHT)
+
+	drawer.vertex_snap_active_fn = func() -> bool: return true
+	drawer.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(2, 1.55, 0)])
+	drawer.update_height_point(Vector3(0, 1.4, 0))
+	assert_almost_eq(drawer.height, 1.55, 0.001,
+		"height locks onto the vertex above the corner at (2,0,0)")
+
+func test_ngon_height_ignores_vertices_when_v_snap_is_off():
+	var drawer := PBNgonDrawer.new()
+	drawer.arm(PBNgonDrawer.Mode.NGON_EXTRUDE)
+	drawer.begin(Vector3(0, 0, 0), Vector3.UP)
+	drawer.add_point(Vector3(2, 0, 0))
+	drawer.add_point(Vector3(1, 0, 2))
+	drawer.state = PBNgonDrawer.State.HEIGHT
+
+	drawer.vertex_snap_active_fn = func() -> bool: return false
+	drawer.vertex_snap_candidates_fn = func() -> PackedVector3Array:
+		return PackedVector3Array([Vector3(2, 1.55, 0)])
+	drawer.update_height_point(Vector3(0, 1.4, 0))
+	assert_almost_eq(drawer.height, 1.4, 0.001, "V-snap off → raw height")

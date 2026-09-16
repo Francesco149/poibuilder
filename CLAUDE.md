@@ -103,10 +103,10 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.130** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.131** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool).
-- All headless tests passing (`./run_tests.sh`; 1005 tests, 20.2k+ assertions
-  across 65 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`,
+- All headless tests passing (`./run_tests.sh`; 1054 tests, 20.5k+ assertions
+  across 66 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`,
   failures=0).
 - Feature surface: primitives + drag-to-create (incl. one-drag Trim and the
   Trim Walls wall-picker with mitres), object/vertex/edge/face/texture modes

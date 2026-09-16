@@ -59,6 +59,12 @@ var preview_node: PBMesh = null
 ## Plugin grid for snapping
 var grid: PBGrid = null
 
+## Vertex-snap hooks for the HEIGHT phase, injected by the plugin (inert when
+## unset, so headless tests need nothing). Same semantics as the shape
+## creator's: the drawn polygon's corners are the snap sources.
+var vertex_snap_active_fn: Callable = Callable()
+var vertex_snap_candidates_fn: Callable = Callable()
+
 # ==============================================================================
 # Lifecycle & State Management
 # ==============================================================================
@@ -149,7 +155,26 @@ func update_height_point(ref_point: Vector3) -> void:
 	var raw := plane_normal.dot(ref_point - plane_point)
 	if grid != null and grid.enabled:
 		raw = grid.snap_val(raw)
+	raw = _vertex_snap_height(raw)
 	height = raw
+
+## Magnetic vertex snap for the rising polygon: the placed corners are the
+## snap sources; when one would pass within the magnet radius of a scene
+## vertex along the surface normal, the height locks onto that vertex.
+func _vertex_snap_height(raw_height: float) -> float:
+	if not (vertex_snap_active_fn.is_valid() and vertex_snap_active_fn.call()):
+		return raw_height
+	if not vertex_snap_candidates_fn.is_valid():
+		return raw_height
+	var candidates: PackedVector3Array = vertex_snap_candidates_fn.call()
+	if candidates.is_empty() or points.is_empty():
+		return raw_height
+	var n := plane_normal.normalized()
+	if n.length_squared() < 0.5:
+		return raw_height
+	var res := PBElementEditor.snap_axis_delta(PackedVector3Array(points), candidates, n,
+		raw_height, PBElementEditor.vertex_snap_radius(grid))
+	return float(res["d"]) if res["caught"] else raw_height
 
 func complete() -> Dictionary:
 	if state != State.DRAWING and state != State.DRAGGING_VERT:
