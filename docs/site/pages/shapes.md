@@ -31,6 +31,10 @@ Shapes with parameters the drag cannot express (step count, arch, sides…) open
 
 **Edit Params** reopens that modal. It is enabled only while the mesh still has a `shape_id` and has not been topology-edited. Extrude, knife, delete — anything that rewrites faces — marks it edited, and the factory parameters no longer describe the mesh.
 
+:::shot create-params.png
+Live parameter modal — adjusting step count updates the preview mesh in real time.
+:::
+
 ## The fifteen
 
 | Shape | Use it for | Parameters (defaults) |

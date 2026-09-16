@@ -447,6 +447,7 @@ def render_md(src: str, out_dir: Path, strict: bool) -> str:
                     f"<figcaption>{inline(cap.strip())}</figcaption></figure>"
                 )
             i += 1
+            continue
         if re.match(r"^:::(?:op|toolbar)\s+", line):
             flush_para(para)
             op_id = line.split(None, 1)[1].strip()

@@ -28,9 +28,11 @@ STD_VIEWPORT_CROP = (287, 80, 1266, 712)
 # crop_box is (x, y, w, h) in 1920x1080 coordinate space.
 DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     # Bevel: show modal with 8 segments & distance 0.35m + smooth rounded fillet preview
-    "edit-bevel": ("more", "more_bevel", 300, (287, 80, 1266, 712)),
+    "edit-bevel": ("more", "more_bevel", 310, (140, 60, 1400, 788)),
     # UV editor: 16:9 view showing 3D cube on left + full floating UV Editor on right
     "uv-editor": ("more", "more_uv", 350, (280, 75, 1280, 720)),
+    # Trim: show live Trim Parameters modal on wall
+    "trim-one-drag": ("more", "more_trim", 200, (140, 60, 1400, 788)),
     # Trim walls: close-up on the mitred corner showing round wood skirting against stone
     "trim-walls": ("more", "more_trim_walls", 400, (287, 80, 1266, 712)),
     # Poibuilderize: medieval wooden barrel with face pulled up and element gizmos
@@ -45,7 +47,7 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "create-wall": ("create", "create_surfaces", 380, (287, 80, 1266, 712)),
     "create-stairs": ("create", "create_stairs", 220, (287, 80, 1266, 712)),
     "create-door": ("create", "create_door", 200, (287, 80, 1266, 712)),
-    "create-params": ("create", "create_params", 140, (287, 80, 1266, 712)),
+    "create-params": ("create", "create_params", 60, (140, 100, 1380, 750)),
     
     # Shapes
     "shapes-lineup": ("shapes", "shapes_lineup", 260, (287, 80, 1266, 712)),
@@ -55,11 +57,11 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "select-modes": ("edit", "edit_select", 110, (287, 80, 1266, 712)),
     "edge-loop": ("edit", "edit_edge_loop", 180, (287, 80, 1266, 712)),
     "edit-move": ("edit", "edit_move", 200, (287, 80, 1266, 712)),
-    "edit-extrude": ("edit", "edit_extrude", 130, (287, 80, 1266, 712)),
+    "edit-extrude": ("edit", "edit_extrude", 150, (287, 80, 1266, 712)),
     "edit-inset": ("edit", "edit_inset", 260, (287, 80, 1266, 712)),
     "edit-subdiv": ("edit", "edit_subdivide", 220, (287, 80, 1266, 712)),
-    # Toolbar: crop around the full 3D toolbar row
-    "toolbar": ("edit", "edit_subdivide", 10, (287, 117, 1266, 360)),
+    # Toolbar: crop around the full 4-row 3D toolbar layout
+    "toolbar": ("more", "more_select_snap", 50, (287, 44, 1266, 230)),
     "edit-loopcut": ("edit", "edit_loopcut", 320, (287, 80, 1266, 712)),
     "edit-merge": ("edit", "edit_merge", 280, (287, 80, 1266, 712)),
     "edit-weld": ("edit", "edit_weld", 190, (287, 80, 1266, 712)),
@@ -69,9 +71,8 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "edit-ngon": ("edit", "edit_ngon", 220, (287, 80, 1266, 712)),
     
     # Paint: wide crop showing 3D viewport AND the Material & UV dock on the right
-    "paint-splat": ("paint", "paint_splat", 160, (287, 44, 1620, 850)),
-    "paint-stamp": ("paint", "paint_stamp", 140, (287, 44, 1620, 850)),
-    "paint-scroll": ("paint", "paint_scroll", 100, (287, 80, 1266, 712)),
+    "paint-splat": ("paint", "paint_splat", 160, (287, 44, 1620, 740)),
+    "paint-stamp": ("paint", "paint_stamp", 140, (287, 44, 1620, 740)),
     
     # Map
     "hero-courtyard": ("map", "map_night", 180, (287, 44, 1266, 712)),

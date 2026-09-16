@@ -17,8 +17,8 @@ Profiles (0–5): **Flat, Chamfer, Round, Cove, Ogee, Stepped**.
 - **Flip Side** mirrors across the wall.
 - **Arc Segments** only affect Round, Cove, Ogee.
 
-:::shot create-params.png
-Parameter modal on a live shape — the same panel Trim uses for profile and depth.
+:::shot trim-one-drag.png
+Trim Parameters modal on a live skirting run — profile, height, depth, and cornice flips.
 :::
 
 ### Use case — a skirting board
