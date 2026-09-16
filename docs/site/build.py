@@ -29,7 +29,290 @@ KEY_NAMES = {
     "KEY_BRACKETRIGHT": "]", "KEY_BRACKETLEFT": "[", "KEY_BACKSLASH": "\\",
 }
 
+ICONS_SRC = REPO / "project" / "addons" / "poibuilder" / "icons"
 
+# Complete catalog of operations, modes, and tools with toolbar location metadata.
+OPS_CATALOG: dict[str, dict] = {
+    # Row 1: Mesh Operations
+    "extrude": {
+        "label": "Extrude", "icon": "icon_extrude.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Shift + Move / Alt + E", "req": "Face or Edge selection",
+        "desc": "Extrude selected faces outward along normals, or pull edge fins to extend boundaries."
+    },
+    "inset": {
+        "label": "Inset", "icon": "icon_inset.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Shift + Scale / I", "req": "Face selection",
+        "desc": "Insets selected faces, creating an outer border and shrinking the inner face."
+    },
+    "bevel": {
+        "label": "Bevel", "icon": "icon_bevel.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Ctrl + B", "req": "Face or Edge selection",
+        "desc": "Chamfer or fillet selected edges or face perimeters into smooth rounded bands."
+    },
+    "bridge": {
+        "label": "Bridge", "icon": "icon_bridge.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + B", "req": "2 open boundary edges",
+        "desc": "Connects two open boundary edges with bridging quad faces."
+    },
+    "connect": {
+        "label": "Connect", "icon": "icon_connect.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + E", "req": "2+ vertices or edges",
+        "desc": "Inserts an edge connecting selected vertices or edge midpoints."
+    },
+    "collapse": {
+        "label": "Collapse", "icon": "icon_collapse.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + C", "req": "Vertices, edges, or faces",
+        "desc": "Collapses selected vertices, edges, or faces to a single geometric center."
+    },
+    "fill_hole": {
+        "label": "Fill Hole", "icon": "icon_fill_hole.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + F", "req": "Open boundary edge loop",
+        "desc": "Fills open mesh holes and perimeter loops with a new polygon face."
+    },
+    "knife": {
+        "label": "Knife Tool", "icon": "icon_knife.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "K", "req": "Face selection",
+        "desc": "Cuts across faces along an interactive clicked path, splitting geometry."
+    },
+    "loopcut": {
+        "label": "Insert Edge Loop", "icon": "icon_loop_cut.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + R", "req": "Edge selection",
+        "desc": "Inserts a continuous edge loop that turns all four corners of a quad mesh."
+    },
+    "merge": {
+        "label": "Merge Faces", "icon": "icon_merge.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + M", "req": "Coplanar faces",
+        "desc": "Merges adjacent coplanar faces into a single flat n-gon."
+    },
+    "subdivide": {
+        "label": "Subdivide", "icon": "icon_subdivide.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + S", "req": "Face or edge selection",
+        "desc": "Splits selected faces or edges into smaller subdivisions."
+    },
+    "weld": {
+        "label": "Weld Vertices", "icon": "icon_weld.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + V", "req": "2+ vertices",
+        "desc": "Welds coincident vertices together within a distance threshold."
+    },
+    "detach": {
+        "label": "Detach Faces", "icon": "icon_detach.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Alt + D", "req": "Face selection",
+        "desc": "Detaches selected faces into a separate new PBMesh object."
+    },
+    "delete": {
+        "label": "Delete Elements", "icon": "icon_delete.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
+        "key": "Delete", "req": "Selected elements",
+        "desc": "Deletes selected faces, edges, or vertices from the mesh."
+    },
+    # Row 2: Modes & Docks
+    "object": {
+        "label": "Object Mode", "icon": "icon_object.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "Click empty / Esc", "req": "Node selection",
+        "desc": "Transforms whole PBMesh nodes with the engine transform gizmo."
+    },
+    "vertex": {
+        "label": "Vertex Mode", "icon": "icon_vertex.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "H", "req": "PBMesh active",
+        "desc": "Picks and transforms shared vertices with hold-V vertex snapping."
+    },
+    "edge": {
+        "label": "Edge Mode", "icon": "icon_edge.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "J", "req": "PBMesh active",
+        "desc": "Picks and transforms common edges; supports Alt-click loop and Shift-Alt ring."
+    },
+    "face": {
+        "label": "Face Mode", "icon": "icon_face.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "K", "req": "PBMesh active",
+        "desc": "Picks and transforms faces; Shift-move extrudes and Shift-scale insets live."
+    },
+    "texture": {
+        "label": "Texture Mode", "icon": "icon_texture_mode.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "6", "req": "Face selection",
+        "desc": "In-scene 3D viewport planar gizmo to slide, rotate, and scale face UVs live."
+    },
+    "uv": {
+        "label": "UV Editor", "icon": "icon_uv_unwrap.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "Toolbar UV", "req": "PBMesh active",
+        "desc": "Opens the dedicated 2D UV canvas panel or floating window with full 2D/3D sync."
+    },
+    "materials": {
+        "label": "Material Dock", "icon": "icon_materials.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "Toolbar Material", "req": "PBMesh active",
+        "desc": "Opens the material palette dock for texture assignment, texture splatting, and decals."
+    },
+    "ngon": {
+        "label": "N-Gon Tool", "icon": "icon_ngon.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "Toolbar N-Gon", "req": "None",
+        "desc": "Click points on any surface to draw a custom polygon base, Enter to extrude height."
+    },
+    # Row 3: Selection Suite
+    "select_all": {
+        "label": "Select All", "icon": "icon_select_all.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Ctrl + A", "req": "Active mode",
+        "desc": "Selects all elements of the current mode on the active mesh."
+    },
+    "invert_selection": {
+        "label": "Invert Selection", "icon": "icon_invert_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Ctrl + I", "req": "Active selection",
+        "desc": "Inverts selection between unselected and selected elements."
+    },
+    "grow_selection": {
+        "label": "Grow Selection", "icon": "icon_grow_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Alt + G", "req": "Active selection",
+        "desc": "Expands the current selection outward by one ring of adjacent elements."
+    },
+    "shrink_selection": {
+        "label": "Shrink Selection", "icon": "icon_shrink_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Shift + Alt + G", "req": "Active selection",
+        "desc": "Contracts the current selection by peeling away boundary elements."
+    },
+    "select_coplanar": {
+        "label": "Select Coplanar", "icon": "icon_select_coplanar.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Alt + C", "req": "Face selection",
+        "desc": "Flood-selects all adjacent coplanar faces sharing the same geometric plane."
+    },
+    "face_loop": {
+        "label": "Select Face Loop", "icon": "icon_face_loop.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
+        "key": "Alt + L", "req": "Face selection",
+        "desc": "Selects the full quad-strip face loop passing through the selected face."
+    },
+    # Row 4: Objects, CSG & Trims
+    "poibuilderize": {
+        "label": "Poibuilderize", "icon": "icon_poibuilderize.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
+        "key": "Toolbar Poibuilderize", "req": "MeshInstance3D or CSG selected",
+        "desc": "Converts any standard MeshInstance3D or CSGShape3D into an editable native PBMesh."
+    },
+    "csg_subtract": {
+        "label": "CSG Subtract", "icon": "icon_csg_subtract.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
+        "key": "Toolbar Subtract", "req": "Target mesh + cutter mesh",
+        "desc": "Boolean subtract: cuts the second mesh out of the first mesh with full undo/redo."
+    },
+    "csg_union": {
+        "label": "CSG Union", "icon": "icon_csg_union.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
+        "key": "Toolbar Union", "req": "2 selected meshes",
+        "desc": "Boolean union: merges two meshes into a single solid watertight volume."
+    },
+    "csg_intersect": {
+        "label": "CSG Intersect", "icon": "icon_csg_intersect.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
+        "key": "Toolbar Intersect", "req": "2 selected meshes",
+        "desc": "Boolean intersection: retains only the overlapping volume of two meshes."
+    },
+    "trim_walls": {
+        "label": "Trim Walls", "icon": "icon_trim_walls.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
+        "key": "Toolbar Trim Walls", "req": "Wall face clicks",
+        "desc": "Interactive wall-clicking tool that generates continuous mitred skirting and cornices."
+    },
+}
+
+ROW_BUTTON_LISTS = {
+    1: [
+        ("move", "icon_move.svg", "Move"), ("rotate", "icon_rotate.svg", "Rotate"), ("scale", "icon_scale.svg", "Scale"),
+        ("extrude", "icon_extrude.svg", "Extrude"), ("inset", "icon_inset.svg", "Inset"),
+        ("bevel", "icon_bevel.svg", "Bevel"), ("bridge", "icon_bridge.svg", "Bridge"),
+        ("connect", "icon_connect.svg", "Connect"), ("collapse", "icon_collapse.svg", "Collapse"),
+        ("fill_hole", "icon_fill_hole.svg", "Fill Hole"), ("knife", "icon_knife.svg", "Knife"),
+        ("loopcut", "icon_loop_cut.svg", "Loop Cut"), ("merge", "icon_merge.svg", "Merge"),
+        ("subdivide", "icon_subdivide.svg", "Subdivide"), ("weld", "icon_weld.svg", "Weld"),
+        ("detach", "icon_detach.svg", "Detach"), ("delete", "icon_delete.svg", "Delete")
+    ],
+    2: [
+        ("object", "icon_object.svg", "Object"), ("vertex", "icon_vertex.svg", "Vertex"),
+        ("edge", "icon_edge.svg", "Edge"), ("face", "icon_face.svg", "Face"),
+        ("texture", "icon_texture_mode.svg", "Texture"), ("new_shape", "icon_new_shape.svg", "New Shape"),
+        ("ngon", "icon_ngon.svg", "N-Gon"), ("edit_params", "icon_edit_params.svg", "Edit Params"),
+        ("materials", "icon_materials.svg", "Materials"), ("uv", "icon_uv_unwrap.svg", "UV Editor"),
+        ("export", "icon_docs.svg", "Export")
+    ],
+    3: [
+        ("select_all", "icon_select_all.svg", "All"), ("invert_selection", "icon_invert_selection.svg", "Invert"),
+        ("grow_selection", "icon_grow_selection.svg", "Grow"), ("shrink_selection", "icon_shrink_selection.svg", "Shrink"),
+        ("select_coplanar", "icon_select_coplanar.svg", "Coplanar"), ("select_similar", "icon_select_similar.svg", "Similar"),
+        ("select_boundary", "icon_select_boundary.svg", "Boundary"), ("face_loop", "icon_face_loop.svg", "Loop"),
+        ("face_ring", "icon_face_ring.svg", "Ring"), ("smooth_auto", "icon_auto_smooth.svg", "Smooth")
+    ],
+    4: [
+        ("merge_objects", "icon_merge_objects.svg", "Merge"), ("mirror", "icon_mirror.svg", "Mirror"),
+        ("center_pivot", "icon_center_pivot.svg", "Center"), ("freeze_transform", "icon_freeze_transform.svg", "Freeze"),
+        ("poibuilderize", "icon_poibuilderize.svg", "Poibuilderize"), ("csg_union", "icon_csg_union.svg", "Union"),
+        ("csg_subtract", "icon_csg_subtract.svg", "Subtract"), ("csg_intersect", "icon_csg_intersect.svg", "Intersect"),
+        ("trim_walls", "icon_trim_walls.svg", "Trim Walls")
+    ]
+}
+
+
+def render_toolbar_locator(op_id: str, custom_desc: str = "") -> str:
+    info = OPS_CATALOG.get(op_id)
+    if not info:
+        return f"<!-- unknown operation: {html.escape(op_id)} -->"
+
+    row_num = info["row"]
+    buttons = ROW_BUTTON_LISTS.get(row_num, [])
+    
+    btn_html = []
+    target_idx = 0
+    for idx, (bid, icon_name, name) in enumerate(buttons):
+        is_target = (bid == op_id)
+        if is_target:
+            target_idx = idx
+        cls = "tl-btn tl-target" if is_target else "tl-btn"
+        ring = '<span class="tl-target-ring"></span>' if is_target else ""
+        btn_html.append(
+            f'<div class="{cls}" title="{html.escape(name)}">'
+            f'<img src="assets/icons/{icon_name}" width="16" height="16" alt="{html.escape(name)}">'
+            f'{ring}</div>'
+        )
+
+    strip_markup = "".join(btn_html)
+    # Button is 28px wide with 3px gap = 31px pitch; padding is ~10px
+    target_x = 24 + target_idx * 31
+
+    desc_text = custom_desc if custom_desc else info["desc"]
+
+    svg_arrow = f'''<svg class="tl-arrow-svg">
+      <defs>
+        <marker id="tl-arr-{op_id}" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto">
+          <path d="M0 0 L6 3 L0 6 Z" fill="#7c5cff" />
+        </marker>
+      </defs>
+      <path d="M 46 36 C 46 16, {target_x} 24, {target_x} 4"
+            fill="none" stroke="#7c5cff" stroke-width="2.4" stroke-linecap="round"
+            marker-end="url(#tl-arr-{op_id})" />
+    </svg>'''
+
+    key_badge = f'<kbd class="tl-key">{html.escape(info["key"])}</kbd>' if info.get("key") else ""
+
+    return f'''<div class="toolbar-locator">
+  <div class="tl-bar-wrapper">
+    <div class="tl-bar-header">
+      <span class="tl-bar-title"><span class="tl-bar-dot"></span> PoiBuilder Toolbar</span>
+      <span class="tl-bar-row">{html.escape(info["row_name"])}</span>
+    </div>
+    <div class="tl-strip">
+      {strip_markup}
+    </div>
+  </div>
+  
+  <div class="tl-pointer-track">
+    {svg_arrow}
+  </div>
+
+  <div class="tl-card">
+    <div class="tl-zoom-icon">
+      <img src="assets/icons/{info['icon']}" width="38" height="38" alt="{html.escape(info['label'])}">
+    </div>
+    <div class="tl-card-body">
+      <div class="tl-card-header">
+        <strong class="tl-card-title">{html.escape(info['label'])}</strong>
+        {key_badge}
+      </div>
+      <p class="tl-card-desc">{inline(desc_text)}</p>
+      <div class="tl-card-badges">
+        <span class="tl-badge tl-badge-req">✓ {html.escape(info['req'])}</span>
+        <span class="tl-badge tl-badge-row">{html.escape(info['row_name'].split('·')[0].strip())}</span>
+      </div>
+    </div>
+  </div>
+</div>'''
 def plugin_version() -> str:
     text = PLUGIN_CFG.read_text(encoding="utf-8")
     m = re.search(r'^version="([^"]+)"', text, re.M)
@@ -164,6 +447,17 @@ def render_md(src: str, out_dir: Path, strict: bool) -> str:
                     f"<figcaption>{inline(cap.strip())}</figcaption></figure>"
                 )
             i += 1
+        if re.match(r"^:::(?:op|toolbar)\s+", line):
+            flush_para(para)
+            op_id = line.split(None, 1)[1].strip()
+            custom_desc = ""
+            i += 1
+            while i < len(lines) and lines[i].strip() != ":::":
+                custom_desc += lines[i] + " "
+                i += 1
+            if i < len(lines) and lines[i].strip() == ":::":
+                i += 1
+            out.append(render_toolbar_locator(op_id, custom_desc.strip()))
             continue
         if line.strip() == "<!-- KEYS_TABLE -->":
             flush_para(para)
@@ -250,6 +544,26 @@ def parse_nav() -> list[tuple[str | None, str | None, str]]:
         else:
             items.append((None, None, line))
     return items
+def get_page_sections() -> dict[str, str]:
+    sections = {}
+    cur = "Docs"
+    for stem, href, title in parse_nav():
+        if href is None:
+            cur = title
+        else:
+            sections[stem] = cur
+    return sections
+
+
+GROUP_GLYPHS = {
+    "Start here": "◈",
+    "Create": "⬡",
+    "Edit": "❖",
+    "Surface": "◬",
+    "Objects": "⬢",
+    "Retro": "▲",
+    "Reference": "≡",
+}
 
 
 def nav_html(current: str) -> str:
@@ -259,7 +573,8 @@ def nav_html(current: str) -> str:
         if href is None:
             if open_group:
                 chunks.append("</div>")
-            chunks.append(f'<div class="group"><div class="group-title">{html.escape(title)}</div>')
+            glyph = GROUP_GLYPHS.get(title, "•")
+            chunks.append(f'<div class="group"><div class="group-title"><span class="grp-glyph">{glyph}</span> {html.escape(title)}</div>')
             open_group = True
             continue
         cur = ' class="current"' if stem == current else ""
@@ -281,14 +596,15 @@ def pager(stem: str) -> str:
     prev_h = next_h = ""
     if idx > 0:
         s, t = seq[idx - 1]
-        prev_h = f'<a href="{s}.html"><span class="dir">Previous</span>{html.escape(t)}</a>'
+        prev_h = f'<a class="pager-card pager-prev" href="{s}.html"><span class="dir">← Previous</span><strong class="pager-title">{html.escape(t)}</strong></a>'
     else:
-        prev_h = "<span></span>"
+        prev_h = '<div class="pager-spacer"></div>'
     if idx + 1 < len(seq):
         s, t = seq[idx + 1]
-        next_h = f'<a href="{s}.html"><span class="dir">Next</span>{html.escape(t)}</a>'
-    return prev_h + next_h
-
+        next_h = f'<a class="pager-card pager-next" href="{s}.html"><span class="dir">Next →</span><strong class="pager-title">{html.escape(t)}</strong></a>'
+    else:
+        next_h = '<div class="pager-spacer"></div>'
+    return f'<div class="pager-grid">{prev_h}{next_h}</div>'
 
 def keys_table() -> str:
     text = ACTIONS_GD.read_text(encoding="utf-8")
@@ -347,6 +663,11 @@ def copy_static(out: Path) -> None:
         ofl = FONT_SRC / "OFL.txt"
         if ofl.is_file():
             shutil.copy2(ofl, font_dir / "OFL.txt")
+    out_assets_icons = out / "assets" / "icons"
+    out_assets_icons.mkdir(parents=True, exist_ok=True)
+    if ICONS_SRC.is_dir():
+        for f in ICONS_SRC.glob("*.svg"):
+            shutil.copy2(f, out_assets_icons / f.name)
     if ASSETS.is_dir():
         for child in sorted(ASSETS.iterdir()):
             dest = out / child.name if child.suffix.lower() in {".png", ".jpg", ".webp", ".svg"} else out / child.name
@@ -395,6 +716,7 @@ def build(strict: bool = False, bundle: bool = False) -> int:
     pages = sorted(PAGES.glob("*.md"))
     if not pages:
         raise SystemExit("no pages in docs/site/pages")
+    page_sections = get_page_sections()
 
     for md in pages:
         meta, body = parse_front(md.read_text(encoding="utf-8"))
@@ -421,6 +743,7 @@ def build(strict: bool = False, bundle: bool = False) -> int:
         html_out = (
             tpl.replace("{{title}}", html.escape(title))
             .replace("{{version}}", html.escape(version))
+            .replace("{{section}}", html.escape(page_sections.get(stem, "Docs")))
             .replace("{{lead}}", html.escape(lead or title))
             .replace("{{body_class}}", body_class)
             .replace("{{nav}}", nav_html(stem))

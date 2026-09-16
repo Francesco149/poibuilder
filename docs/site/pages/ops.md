@@ -7,6 +7,10 @@ All of these live on toolbar row 1. Grey means the current selection cannot feed
 
 ## Extrude
 
+:::op extrude
+Extrudes selected faces outward along normals, or pulls edge fins to extend boundaries.
+:::
+
 **When:** pull a wall, a rim, a new storey.
 
 - Faces: the originals are removed; you get a cap plus side quads (ProBuilder region extrude).
@@ -24,6 +28,10 @@ The cap leaves, the sides fill in.
 
 ## Inset
 
+:::op inset
+Insets selected faces, creating an outer border and shrinking the inner face.
+:::
+
 **When:** a window recess, a panel, a frame.
 
 - Planar ring around the selected faces.
@@ -36,6 +44,10 @@ The ring it leaves, then the face lifted out of it.
 
 ## Loop cut
 
+:::op loopcut
+Inserts an edge loop crossing a selected quad strip, turning corners cleanly.
+:::
+
 Select an edge that **crosses** a quad strip (a ring edge). **Loop Cut** inserts a loop through that ring. Faces with only one ring edge (fans, boundaries) stay unsplit — a T-junction is expected. Corner turns that cannot walk fail cleanly.
 
 :::shot edit-loopcut.png
@@ -43,6 +55,10 @@ The loop turns all four corners of the box.
 :::
 
 ## Subdivide
+
+:::op subdivide
+Splits selected quad faces into four sub-quads and inserts new interior edges.
+:::
 
 Selected quads become four. Then drag the new edge.
 
@@ -52,6 +68,10 @@ Subdivide, then drag the edge it created.
 
 ## Merge faces
 
+:::op merge
+Collapses adjacent coplanar faces into a single flat n-gon.
+:::
+
 Edge-adjacent selected faces collapse into one n-gon per region, fan-triangulated. Coplanar is the common case; you can also merge across a crease into a bent n-gon.
 
 :::shot edit-merge.png
@@ -60,6 +80,10 @@ Merge coplanar faces, then move them as one.
 
 ## Knife
 
+:::op knife
+Cuts across faces along an interactive clicked path, splitting geometry.
+:::
+
 Click points across a face (edge-to-edge, or an interior hole). [[kbd:Enter]] completes the cut. Restricts points to the current face; edges can belong to more than one candidate.
 
 :::shot edit-knife.png
@@ -67,6 +91,10 @@ Cut a face along a drawn path.
 :::
 
 ## N-gon prism
+
+:::op ngon
+Click points on any surface to draw a custom polygon base, Enter to extrude height.
+:::
 
 Toolbar **N-Gon**: click a polygon on a surface, [[kbd:Enter]], drag height. Any floor plan becomes a volume.
 

@@ -34,6 +34,18 @@ Object mode moves several meshes. Entering an element mode **narrows editing to 
 
 ## Advanced suite (row 3)
 
+:::op grow_selection
+Expands the active selection outward by one ring of adjacent elements.
+:::
+
+:::op select_coplanar
+Flood-selects all adjacent coplanar faces sharing the same geometric plane.
+:::
+
+:::op face_loop
+Selects the full quad-strip face loop passing through the selected face.
+:::
+
 | Button | Default key | Effect |
 |---|---|---|
 | All | — | Every element of the current mode |

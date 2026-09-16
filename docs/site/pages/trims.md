@@ -29,6 +29,10 @@ Parameter modal on a live shape — the same panel Trim uses for profile and dep
 
 ## Trim Walls (click faces)
 
+:::op trim_walls
+Interactive wall-clicking tool that generates continuous mitred skirting and cornices.
+:::
+
 Toolbar **Trim Walls** (row 4). Parameters appear immediately. Then click wall faces on any PoiBuilder mesh, in any order.
 
 - Hover: teal. Chosen: amber.

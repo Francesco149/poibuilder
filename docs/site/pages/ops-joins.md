@@ -5,23 +5,43 @@ lead: Bridge two open edges, fill a loop, weld corners, detach a piece into its 
 
 ## Bridge
 
+:::op bridge
+Connect two boundary open edges with bridging quad faces.
+:::
+
 Connect two **boundary** (open) edges with a face. [[kbd:Alt]]+[[kbd:B]].
 
 Select exactly two open edges. If a button is grey, one of them is welded interior.
 
 ## Connect
 
+:::op connect
+Insert an edge joining edge midpoints or selected vertices.
+:::
+
 Insert an edge joining edge midpoints or selected vertices.
 
 ## Collapse
+
+:::op collapse
+Selected vertices, edges or faces collapse to a single geometric center.
+:::
 
 Selected vertices, edges or faces collapse to a single point.
 
 ## Fill Hole
 
+:::op fill_hole
+Cap an open boundary loop with a new polygon face.
+:::
+
 Cap an open boundary loop with a new face. Select the loop (or use **Boundary**) first.
 
 ## Weld
+
+:::op weld
+Selected vertices snap to their centroid and weld into one shared vertex group.
+:::
 
 Selected shared-vertex groups snap to their centroid and become one group. Positions move; indexes do not. After a weld, those corners select as one vertex — dragging will not tear them apart.
 
@@ -31,6 +51,10 @@ Weld vertices to their centroid.
 
 ## Delete
 
+:::op delete
+Deletes selected faces, edges, or vertices from the mesh.
+:::
+
 Deletes selected faces. Orphans compact. Look through the opening and you should see the interior.
 
 :::shot edit-delete.png
@@ -38,6 +62,10 @@ Delete faces — and look into the opening.
 :::
 
 ## Detach
+
+:::op detach
+Detaches selected faces into a separate new PBMesh sibling object.
+:::
 
 Selected faces become a new `PBMesh` sibling. Undo restores them to the original (node undo, not a mesh snapshot). Move the new object away.
 

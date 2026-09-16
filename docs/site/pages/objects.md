@@ -7,6 +7,10 @@ Row 4 of the toolbar (Extended Tools).
 
 ## Object ops
 
+:::op merge_objects
+Combines multiple selected PBMesh nodes into one, baking relative transforms.
+:::
+
 | Button | Effect |
 |---|---|
 | Merge Objs | Selected `PBMesh` nodes become one |
@@ -16,6 +20,10 @@ Row 4 of the toolbar (Extended Tools).
 | Poibuilderize | Convert selected MeshInstance3D or CSGShape3D (including CSGCombiner3D) into a `PBMesh` |
 
 ## Poibuilderize
+
+:::op poibuilderize
+Converts any standard MeshInstance3D or CSG node into an editable native PBMesh.
+:::
 
 Imported GLBs and Godot primitives are not editable as faces until you convert them.
 
@@ -33,6 +41,10 @@ Heavy meshes stay heavy — every triangle is a face. Collapsing and merging aft
 A MeshInstance3D you **do not** convert still **exports** to retro `.pbm`. Textures are sanitized (power-of-two, clamped to max size) on the way out. Convert only if you need to edit faces.
 
 ## CSG booleans
+
+:::op csg_subtract
+Subtracts the cutter mesh from the target mesh with full scene Undo/Redo.
+:::
 
 | Button | Tooltip rule |
 |---|---|

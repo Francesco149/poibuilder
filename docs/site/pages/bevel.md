@@ -5,6 +5,10 @@ lead: Chamfer or fillet selected edges or faces. Distance and segments live in a
 
 Toolbar **Bevel**. Key [[kbd:Ctrl]]+[[kbd:B]].
 
+:::op bevel
+Chamfer or fillet selected edges or face perimeters into smooth rounded bands.
+:::
+
 :::shot edit-bevel.png
 Bevel with live preview — distance and segment rounding.
 :::
