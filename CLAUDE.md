@@ -103,7 +103,7 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.131** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.132** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool).
 - All headless tests passing (`./run_tests.sh`; 1054 tests, 20.5k+ assertions
   across 66 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`,

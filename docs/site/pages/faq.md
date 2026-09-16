@@ -39,6 +39,15 @@ Auto-UV keeps 1 m repeat on axis-aligned faces. Ramps and merged creases need th
 
 You are running a different build. The overlay title is `PoiBuilder vX.Y.Z`. Enable the plugin from the same `addons/poibuilder/` these docs were built with.
 
+## Is the PSP engine how I run my map?
+
+No. The PSP/raylib demo engine in the repository is a **proof of concept and
+a performance sanity check** — it exists to validate the `.pbm` format and
+measure it on real hardware. The format is the contract: implement a loader
+in your own engine from
+[`SPEC_RETRO_FORMAT.md`](https://github.com/Francesco149/poibuilder/blob/master/SPEC_RETRO_FORMAT.md),
+using the demo engine's loader as a reference. Details on [Export & retro](export.html).
+
 ## Export looks fine in PPSSPP and chugs on the PSP
 
 Desktop emulators like PPSSPP rasterise on your host GPU with gigabytes of VRAM and a massive cache, masking real hardware limits. The real PSP Graphics Engine (GE) has an **~8 KB texture cache**. When a surface's sampled mip level fits within the ~8 KB cache, it draws at ~480 Mfrag/s (~2 ns per fragment); when the sampled footprint exceeds the cache, every fragment pays a main-memory bus penalty, dropping fill rate to ~25 Mfrag/s (a **19x performance cliff**).

@@ -26,10 +26,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      # enablement: true turns Pages on for the repository via the API on the
+      # first run — without it the deploy failed with "Get Pages site failed
+      # ... Not Found" when the repo had never enabled Pages.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Build the static site
-        run: ./docs/site/build.sh
+        # Screenshots/clips under docs/site/assets/ are committed; --strict
+        # fails the deploy on any missing image/clip/broken link instead of
+        # publishing placeholder boxes.
+        run: ./docs/site/build.sh --strict
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

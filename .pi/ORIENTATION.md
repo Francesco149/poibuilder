@@ -80,6 +80,14 @@ broke it. Do not be the next one.
    ~100 KB? Stop — it is almost certainly an artifact. Put build output in a
    gitignored directory (`showcase_video/bake/`, `showcase_video/out/`) or
    `/tmp`, and commit only the SOURCE that makes it.
+   ONE exception (v0.9.132): `docs/site/assets/` — the documentation
+   screenshots and clip loops — IS committed. The CI workflows build the
+   Pages site and the nightly addon bundle from those files, and the
+   showcase-video bake they were extracted from cannot run on a CI runner.
+   They are source material now: regenerate locally with
+   `./docs/site/build.sh --assets` and commit the improved shots when they
+   change. Everything downstream of them (`docs/site/out/`,
+   `addons/poibuilder/docs-site/`) stays gitignored.
 5. **Version bump every round; commit trailer every commit.** Bump `VERSION`
    (poibuilder_plugin.gd), `PLUGIN_VERSION` (pb_editor.gd), and plugin.cfg's
    `version` TOGETHER at the start of every fix/UX round — the overlay title

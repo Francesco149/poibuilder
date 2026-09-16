@@ -863,6 +863,11 @@ def build(strict: bool = False, bundle: bool = False) -> int:
         if ADDON_BUNDLE.exists():
             shutil.rmtree(ADDON_BUNDLE)
         shutil.copytree(OUT, ADDON_BUNDLE)
+        # Godot must never import the bundled docs: without this the editor
+        # generates .import metadata (and .godot copies) for every doc image
+        # inside addons/poibuilder/. The plugin opens the docs via OS paths,
+        # which .gdignore does not affect.
+        (ADDON_BUNDLE / ".gdignore").write_text("", encoding="utf-8")
         print(f"bundled -> {ADDON_BUNDLE}")
     return rc
 

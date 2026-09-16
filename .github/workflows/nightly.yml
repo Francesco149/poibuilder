@@ -16,10 +16,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the latest master
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build bundled docs
-        run: ./docs/site/build.sh --bundle
+        # The screenshots/clips under docs/site/assets/ are COMMITTED, so the
+        # site builds fully on CI without the showcase capture pipeline.
+        # --strict fails the run if a page references a missing file — a
+        # nightly full of "Screenshot not built yet" placeholders must never
+        # ship again.
+        run: ./docs/site/build.sh --bundle --strict
 
       - name: Zip the addon for Godot import
         run: |
@@ -46,7 +51,7 @@ jobs:
           git tag -f nightly
           git push -f origin nightly
           {
-            echo "Automatic nightly build of PoiBuilder at commit"\
+            echo "Automatic alpha build of PoiBuilder at commit"\
               "$(git rev-parse --short HEAD)."
             echo
             echo "### Install"
@@ -54,6 +59,12 @@ jobs:
             echo "2. Extract it into your Godot project folder (it contains"\
               "\`addons/poibuilder\`)."
             echo "3. Enable the plugin via Project → Project Settings → Plugins."
+            echo
+            echo "Offline docs are bundled at \`addons/poibuilder/docs-site/\`"\
+              "— the **Docs** button in the PoiBuilder toolbar opens them."
+            echo
+            echo "This is an **alpha** release: expect rough edges and file"\
+              "breaking changes in saved scenes until 1.0."
             echo
             echo "Built from $(git rev-parse --short HEAD)"\
               "($(git log -1 --date=short --format='%ad')) on the master branch."

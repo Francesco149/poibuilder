@@ -51,14 +51,32 @@ The same courtyard on a Sony PSP — not an emulator.
 Measured on the device for the showcase map: 60 fps, 1618 tris, 20 draws. That row is that map, that camera, that build — not a promise about yours.
 :::
 
+## The retro demo engine is a proof of concept
+
+The PSP engine in this repository (`retro_engine/psp/`) exists to answer two
+questions: does the `.pbm` format hold up, and how fast is a real retro
+target running it? That is all it tries to be — **a proof of concept and a
+performance sanity check**, not a game engine you ship with. It has no
+gameplay, no scripting, no toolchain polish, and it never will.
+
+The contract is the **file format**, not the demo:
+
+- The `.pbm` binary layout is fully specified in
+  [`SPEC_RETRO_FORMAT.md`](https://github.com/Francesco149/poibuilder/blob/master/SPEC_RETRO_FORMAT.md) —
+  write your own loader against it in your engine of choice.
+- The demo engine in the repo is a **reference implementation**: read its
+  loader (`retro_engine/psp/pbm_loader.c`) and renderer to see how the format
+  is meant to be consumed, then take what you need.
+- The raylib viewer (`retro_engine/raylib/`) shows the same format on a
+  desktop target.
+
 ## Authoring for the retro target
 
 Architecture constraints, performance measurements, and the `.pbm` byte layout are documented on GitHub:
 
 - [Retro Authoring Guide](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/RETRO-AUTHORING.md) — Godot authoring recipes and export baking rules.
 - [PSP Optimization Guide](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/psp/OPTIMIZATION.md) — hardware architecture, fill rates, and the 19x texture cache cliff.
-- [Retro Demo Engine](https://github.com/Francesco149/poibuilder/tree/master/retro_engine) — native C renderer and viewer for retro targets.
-- `SPEC_RETRO_FORMAT.md` — binary `.pbm` format specification.
+- [Retro Demo Engine](https://github.com/Francesco149/poibuilder/tree/master/retro_engine) — the reference C renderer and viewer described above.
 
 A scrolling material must not be atlas-packed; export already exempts it.
 

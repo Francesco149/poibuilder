@@ -17,6 +17,11 @@ hero: true
 The showcase courtyard in the editor — editing geometry and lighting is one click away, exporting directly to a fully baked format for retro pipelines.
 :::
 
+> **Alpha.** PoiBuilder is in its first alpha release. Grab the newest build
+> from [Releases](https://github.com/Francesco149/poibuilder/releases) (or the
+> Asset Library) — see [Install](install.html). Saved scenes may still break
+> between alphas until 1.0.
+
 ## What you are looking at
 
 PoiBuilder is a Godot 4 editor plugin. You enable it, and a toolbar appears under the 3D viewport. From there you create `PBMesh` nodes — editable meshes that keep faces, UVs, materials and collision in one place.
