@@ -156,22 +156,21 @@ func _uv() -> void:
 	# Camera swing to admire the textured cube alongside UV editor
 	await d.cam_swing(f["center"] + aim_offset, 28.0, 48.0, 18.0, 22.0, f["dist"] * 1.05, 48, 1, f["aim"] + aim_offset)
 	await d.frames(24)
-
 func _bevel() -> void:
-	obj = await _fresh("BevelCube", PBMeshData.create_cube(2.0), "stone", Vector3.ZERO, 0.40, 32.0, 20.0)
-	# Close-up camera framing: dist = 2.7m puts the front face and top rounded edge in full view
-	d.cam_at_polar(Vector3(0.0, 1.0, 0.0), 32.0, 20.0, 2.7)
+	obj = await _fresh("BevelCube", PBMeshData.create_cube(2.0), "slate", Vector3.ZERO, 0.40, 34.0, 24.0)
+	# Close-up camera framing: dist = 2.8m framed on the top beveled rim
+	d.cam_at_polar(Vector3(0.0, 1.2, 0.0), 34.0, 24.0, 2.8)
 	await d.frames(8)
 	
-	# Switch to Face mode and select Face 1 (front face facing camera at +Z)
+	# Switch to Face mode and select Face 4 (top face at Y = +h, Vector3(0, 2, 0))
 	await d.click_button("face", 14)
-	await d.glide_world_track(Vector3(0.0, 1.0, 1.0), 16)
+	await d.glide_world_track(Vector3(0.0, 2.0, 0.0), 16)
 	await d.click()
 	if d.plugin.editor.selection.selected_faces.is_empty():
-		await d.apply_selection_ids(PackedInt32Array([1]))
+		await d.apply_selection_ids(PackedInt32Array([4]))
 	await d.frames(10)
 	
-	# Switch to Edge mode (converts Face 1 to its 4 perimeter edges facing camera)
+	# Switch to Edge mode (converts Face 4 to its 4 top perimeter edges)
 	await d.click_button("edge", 14)
 	await d.frames(12)
 	
@@ -183,22 +182,22 @@ func _bevel() -> void:
 		await d.frames(12)
 	d.check(d.plugin.tool_overlay.params_open, "bevel modal opened")
 	
-	# Live preview: drag distance
-	await d.overlay_param("distance", 0.28, 24)
-	await d.frames(16)
+	# Live preview: drag distance to 0.35m
+	await d.overlay_param("distance", 0.35, 20)
+	await d.frames(14)
 	
-	# Live preview: higher segment count (6 segments) for a completely smooth circular fillet
-	await d.overlay_param("segments", 6, 22)
-	await d.frames(20)
+	# Live preview: 8 segments (maximum) for a completely smooth circular fillet
+	await d.overlay_param("segments", 8, 20)
+	await d.frames(24)
 	
 	# Commit bevel
 	await d.overlay_button("ApplyParams", 16)
-	await d.frames(20)
+	await d.frames(24)
 	d.check(obj.pb_mesh_data.faces.size() > before, "bevel added faces")
 	
-	# Camera swing to side angle (azimuth 82°, elevation 10°) showing the round edge silhouette
-	await d.cam_swing(Vector3(0.0, 1.0, 0.0), 32.0, 82.0, 20.0, 10.0, 2.7, 56, 1)
-	await d.frames(24)
+	# Camera swing to side angle (azimuth 80°, elevation 14°) showing the round top edge silhouette
+	await d.cam_swing(Vector3(0.0, 1.2, 0.0), 34.0, 80.0, 22.0, 14.0, 2.6, 56, 1)
+	await d.frames(28)
 
 func _trim() -> void:
 	ShowcaseUtil.use_default_material("res://materials/textures/wood_planks.png")
