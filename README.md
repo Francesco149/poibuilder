@@ -6,7 +6,7 @@ inside the editor, auto UVs in the spirit of Unity's ProBuilder. One click expor
 
 **Pure GDScript**: PoiBuilder is written 100% in standard GDScript. It runs in the standard Godot 4 editor (no Godot Mono / .NET build required) and needs **no C/C++ compilation, no GDExtension, and no native binaries** — just drop the `addons/poibuilder/` folder into any standard Godot 4 project and enable it.
 
-https://github.com/user-attachments/assets/4f15d7b5-7d62-4ed3-9b2e-5af29132cf06
+https://github.com/user-attachments/assets/17a064a9-4f35-439b-8e7c-d5ee7284c5e2
 
 > **This is an AI-assisted hobby project.** PoiBuilder was written mainly for
 > my own use, because I wanted a free and open source UniBuilder equivalent
