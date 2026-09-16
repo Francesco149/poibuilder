@@ -30,7 +30,7 @@ Shift + drag extrudes. The original face is replaced by the cap and the sides.
 
 ## 3. Put a door in a wall
 
-1. New Shape → **Door**. Drag the footprint along the wall you want it to face.
+1. New Shape → **Door**. Drag slightly in the direction you want the door to face (an orange arrow shows the opening direction), hold [[kbd:Ctrl]] to lock the facing, then drag sideways to set the width.
 2. The params modal opens. Tick **Arched**, raise **Arch Segments** if you want a smoother curve, **Apply**.
 3. Move the doorway so it sits in the wall, or [boolean it out](objects.html) with CSG Subtract.
 

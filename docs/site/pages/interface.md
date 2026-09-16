@@ -15,9 +15,9 @@ The bar is a sibling *below* Godot's 3D toolbar. It stays visible with nothing s
 
 | Group | Buttons | Notes |
 |---|---|---|
-| Tools | Move, Rotate, Scale | The plugin's own tool. While editing, Godot's Q/V buttons are disabled. Shortcuts [[kbd:W]] [[kbd:E]] [[kbd:R]] still work. |
-| Ops | Extrude, Inset, Bevel, Bridge, Connect, Collapse, Fill Hole, Knife, Loop Cut, Merge, Subdiv, Weld, Detach, Del | Grey = wrong selection. Tooltip says what it needs. |
-| Env | Dawn / Day / Dusk / Night | Relights the edited scene. |
+| Tools | [[icon:move]] Move, [[icon:rotate]] Rotate, [[icon:scale]] Scale | The plugin's own tool. While editing, Godot's Q/V buttons are disabled. Shortcuts [[kbd:W]] [[kbd:E]] [[kbd:R]] still work. |
+| Ops | [[icon:extrude]] Extrude, [[icon:inset]] Inset, [[icon:bevel]] Bevel, [[icon:bridge]] Bridge, [[icon:connect]] Connect, [[icon:collapse]] Collapse, [[icon:fill_hole]] Fill Hole, [[icon:knife]] Knife, [[icon:loop_cut]] Loop Cut, [[icon:merge]] Merge, [[icon:subdivide]] Subdiv, [[icon:weld]] Weld, [[icon:detach]] Detach, [[icon:delete]] Del | Grey = wrong selection. Tooltip says what it needs. |
+| Env | [[icon:env]] Dawn / Day / Dusk / Night | Relights the edited scene. |
 
 Scale tooltip, verbatim: axis handles scale freely; the **center square** scales all axes together (Shift + center on faces insets).
 
@@ -25,29 +25,29 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 
 | Control | What it does |
 |---|---|
-| Object / Vertex / Edge / Face / Texture | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
-| Space | Cycles Element / Object / World ([[kbd:X]]). |
+| [[icon:object]] Object / [[icon:vertex]] Vertex / [[icon:edge]] Edge / [[icon:face]] Face / [[icon:texture]] Texture | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
+| [[icon:space]] Space | Cycles Element / Object / World ([[kbd:X]]). |
 | Grid | Opens grid & snap settings. Readout shows the current snap step. |
-| New Shape | Always enabled. Pick a primitive, then drag. |
-| N-Gon | Draw a polygon, extrude it. |
-| Edit Params | Live only while the selected mesh is a pristine, unedited factory shape. |
-| Material | Focuses the Material & UV dock. |
-| UV | Opens the 2D UV editor bottom panel. |
-| Panel | Pins the overlay so it does not auto-hide. |
-| Reset | Docks the overlay back to the bottom-left. |
-| Settings | Display: grid, wireframe, selection/hover opacity. |
-| Export | Retro baked map or modern GLB. |
-| Docs | Opens this site (bundled `docs-site/index.html`). |
+| [[icon:new_shape]] New Shape | Always enabled. Pick a primitive, then drag. |
+| [[icon:ngon]] N-Gon | Draw a polygon, extrude it. |
+| [[icon:edit_params]] Edit Params | Live only while the selected mesh is a pristine, unedited factory shape. |
+| [[icon:materials]] Material | Focuses the Material & UV dock. |
+| [[icon:uv]] UV | Opens the 2D UV editor bottom panel. |
+| [[icon:panel]] Panel | Pins the overlay so it does not auto-hide. |
+| [[icon:panel_reset]] Reset | Docks the overlay back to the bottom-left. |
+| [[icon:settings]] Settings | Display: grid, wireframe, selection/hover opacity. |
+| [[icon:docs]] Export | Retro baked map or modern GLB. |
+| [[icon:docs]] Docs | Opens this site (bundled `docs-site/index.html`). |
 
-**Rows 3 & 4** — the ☷ **Extended Tools** toggle.
+**Rows 3 & 4** — the [[icon:split_rows]] **Extended Tools** toggle.
 
-- Selection suite: All, Invert, Grow, Shrink, Coplanar, Similar, Boundary, Loop, Ring.
-- Auto Smooth (45°).
-- V-Snap, Soft (proportional) + radius spinner.
-- Merge Objs, Mirror, Center Pivot, Freeze Xform, Poibuilderize.
-- CSG Union / Subtract / Intersect.
-- Trim Walls.
-
+| Group | Controls | What it does |
+|---|---|---|
+| Selection | [[icon:all]] All, [[icon:invert]] Invert, [[icon:grow]] Grow, [[icon:shrink]] Shrink, [[icon:coplanar]] Coplanar, [[icon:similar]] Similar, [[icon:boundary]] Boundary, [[icon:loop]] Loop, [[icon:ring]] Ring | Advanced selection suite. Invert [[kbd:Ctrl]]+[[kbd:I]], Grow [[kbd:Alt]]+[[kbd:G]], Shrink [[kbd:Shift]]+[[kbd:Alt]]+[[kbd:G]], Coplanar [[kbd:Alt]]+[[kbd:C]], Loop [[kbd:Alt]]+[[kbd:L]], Ring [[kbd:Alt]]+[[kbd:R]]. |
+| Objects | [[icon:merge_objects]] Merge Objs, [[icon:mirror]] Mirror, [[icon:center_pivot]] Center Pivot, [[icon:freeze]] Freeze Xform, [[icon:poibuilderize]] Poibuilderize | Combine meshes, mirror across X, recenter pivot to bounds, bake transform into vertices, convert MeshInstance3D/CSG to PBMesh. |
+| CSG | [[icon:csg_union]] CSG Union, [[icon:csg_subtract]] CSG Subtract, [[icon:csg_intersect]] CSG Intersect | Real-time CSG booleans with full undo. Select target first, cutter last. |
+| Smoothing | [[icon:auto_smooth]] Auto Smooth | Recalculate smoothing groups by dihedral angle (45° threshold). |
+| Snapping & Tools | V-Snap, Soft (proportional) + radius spinner, [[icon:trim_walls]] Trim Walls | Snapping to vertices, proportional editing with smooth falloff, and interactive wall-clicking trim. |
 ## Overlay
 
 A compact floating panel in the viewport.
@@ -71,6 +71,6 @@ Params modal rules (do not mix these up):
 
 ## Status
 
-During creation the overlay shows a hint (base drag, then height). Extents print in metres. Environment presets write a scene meta the export reads.
+During creation the overlay shows a hint (base drag, then height). Extents print in metres. Directional shapes (doors, stairs) display an orange facing arrow on the base plane; holding [[kbd:Ctrl]] locks the arrow direction so lateral sizing won't flip the facing. Environment presets write a scene meta the export reads.
 
 > [gotcha] The toolbar never hides. If a button is grey, read its tooltip — it is waiting for faces, or edges, or two objects.

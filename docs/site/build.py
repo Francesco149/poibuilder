@@ -346,6 +346,98 @@ def _format_kbd(raw: str) -> str:
     else:
         parts = [raw]
     return "".join(f"<kbd>{html.escape(p)}</kbd>" for p in parts)
+ICON_ALIASES: dict[str, str] = {
+    "move": "icon_move.svg",
+    "rotate": "icon_rotate.svg",
+    "scale": "icon_scale.svg",
+    "extrude": "icon_extrude.svg",
+    "inset": "icon_inset.svg",
+    "bevel": "icon_bevel.svg",
+    "bridge": "icon_bridge.svg",
+    "connect": "icon_connect.svg",
+    "collapse": "icon_collapse.svg",
+    "fill_hole": "icon_fill_hole.svg",
+    "knife": "icon_knife.svg",
+    "loopcut": "icon_loop_cut.svg",
+    "loop_cut": "icon_loop_cut.svg",
+    "merge": "icon_merge.svg",
+    "subdiv": "icon_subdivide.svg",
+    "subdivide": "icon_subdivide.svg",
+    "weld": "icon_weld.svg",
+    "detach": "icon_detach.svg",
+    "delete": "icon_delete.svg",
+    "del": "icon_delete.svg",
+    "env": "icon_env.svg",
+    "object": "icon_object.svg",
+    "vertex": "icon_vertex.svg",
+    "edge": "icon_edge.svg",
+    "face": "icon_face.svg",
+    "texture": "icon_texture_mode.svg",
+    "texture_mode": "icon_texture_mode.svg",
+    "space": "icon_space.svg",
+    "new_shape": "icon_new_shape.svg",
+    "ngon": "icon_ngon.svg",
+    "edit_params": "icon_edit_params.svg",
+    "materials": "icon_materials.svg",
+    "material": "icon_materials.svg",
+    "uv": "icon_uv_unwrap.svg",
+    "panel": "icon_panel.svg",
+    "reset": "icon_panel_reset.svg",
+    "panel_reset": "icon_panel_reset.svg",
+    "settings": "icon_settings.svg",
+    "export": "icon_docs.svg",
+    "docs": "icon_docs.svg",
+    "split_rows": "icon_split_rows.svg",
+    "extended": "icon_split_rows.svg",
+    "all": "icon_select_all.svg",
+    "select_all": "icon_select_all.svg",
+    "invert": "icon_invert_selection.svg",
+    "invert_selection": "icon_invert_selection.svg",
+    "grow": "icon_grow_selection.svg",
+    "grow_selection": "icon_grow_selection.svg",
+    "shrink": "icon_shrink_selection.svg",
+    "shrink_selection": "icon_shrink_selection.svg",
+    "coplanar": "icon_select_coplanar.svg",
+    "select_coplanar": "icon_select_coplanar.svg",
+    "similar": "icon_select_similar.svg",
+    "select_similar": "icon_select_similar.svg",
+    "boundary": "icon_select_boundary.svg",
+    "select_boundary": "icon_select_boundary.svg",
+    "loop": "icon_face_loop.svg",
+    "face_loop": "icon_face_loop.svg",
+    "ring": "icon_face_ring.svg",
+    "face_ring": "icon_face_ring.svg",
+    "merge_objects": "icon_merge_objects.svg",
+    "merge_objs": "icon_merge_objects.svg",
+    "mirror": "icon_mirror.svg",
+    "center_pivot": "icon_center_pivot.svg",
+    "freeze_transform": "icon_freeze_transform.svg",
+    "freeze": "icon_freeze_transform.svg",
+    "poibuilderize": "icon_poibuilderize.svg",
+    "csg_union": "icon_csg_union.svg",
+    "csg_subtract": "icon_csg_subtract.svg",
+    "csg_intersect": "icon_csg_intersect.svg",
+    "auto_smooth": "icon_auto_smooth.svg",
+    "smooth": "icon_auto_smooth.svg",
+    "trim_walls": "icon_trim_walls.svg",
+}
+
+
+def _format_icon(raw: str) -> str:
+    key = raw.strip().lower()
+    icon_file = ICON_ALIASES.get(key)
+    if not icon_file:
+        if raw.strip().endswith(".svg"):
+            icon_file = raw.strip()
+        elif (ICONS_SRC / f"icon_{key}.svg").is_file():
+            icon_file = f"icon_{key}.svg"
+        elif (ICONS_SRC / f"{key}.svg").is_file():
+            icon_file = f"{key}.svg"
+        else:
+            icon_file = f"icon_{key}.svg"
+    alt = key.replace(".svg", "").replace("icon_", "").replace("_", " ").title()
+    return f'<img class="action-icon" src="assets/icons/{html.escape(icon_file)}" width="16" height="16" alt="{html.escape(alt)}" title="{html.escape(alt)}">'
+
 
 def inline(s: str) -> str:
     s = html.escape(s)
@@ -363,6 +455,7 @@ def inline(s: str) -> str:
         s,
     )
     s = re.sub(r"\[\[kbd:(.+?)\]\]", lambda m: _format_kbd(m.group(1)), s)
+    s = re.sub(r"\[\[icon:(.+?)\]\]", lambda m: _format_icon(m.group(1)), s)
     return s
 
 
