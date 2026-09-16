@@ -3276,3 +3276,13 @@ needed, and the device texture budget they were measured against:
     page. Also aligned `edit-extrude.mp4`, `create-floor.mp4`, and `map-waterfall.mp4`
     extraction offsets with `edl.toml`.
 - Version bump 0.9.127 -> 0.9.128.
+- Precision Vertex Snapping overhaul (v0.9.129):
+  * FIX: Eliminated lateral/sideways jumping when dragging an axis gizmo handle. Single-axis drags (e.g. Y arrow) project candidate vertices strictly onto the active axis line, guaranteeing zero displacement in orthogonal directions across World, Object, and Element orientation spaces.
+  * FIX: Eliminated backwards snapping and mesh collapse to zero height. Replaced unbounded nearest-search (`INF` distance) with localized magnetic catch (`snap_threshold`, 0.2m default / clamped to half grid step) along the motion axis. Moving an element upward will never catch base vertices behind the motion.
+  * FIX: Clean dislodgement when dragging beyond the magnetic threshold. When the drag moves past candidate vertices, snapping smoothly releases and translation continues freely.
+  * Feature: Screen-space cursor targeting (Unity/Godot style). Hovering the mouse cursor near a vertex in the viewport (within 35px screen distance) explicitly selects that vertex as the snap target, projecting its coordinates onto the active drag axes or plane.
+  * Feature: Extrusion vertex snapping. Extruding faces (Shift+Move) now supports vertex snapping along the extrusion normal, allowing extruded cap heights to align with adjacent geometry.
+  * Feature: Hold-V key support. Holding V in the 3D viewport temporarily activates vertex snapping for the duration of the key press; releasing V returns to normal translation. Toolbar button state is synchronized.
+  * FIX: Decoupled vertex snapping from grid snapping: vertex snap now operates independently of `grid.enabled`. When both are active, vertex snap takes precedence when near a vertex and falls back to grid snapping when outside the snap threshold.
+  * Added `tests/test_pb_vertex_snap.gd` (9 tests, 34 asserts) validating axis constraints, zero-height collapse prevention, adjacent mesh catching, dislodging, screen cursor targeting, and element/object space constraints.
+- Version bump 0.9.128 -> 0.9.129.

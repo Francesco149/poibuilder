@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.128"
+const VERSION := "0.9.129"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -519,8 +519,12 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# the editing gate: grid keys work with nothing selected (the grid must be
 	# adjustable before use), while action-internal context gates keep unbound
 	# keys passing through as before.
-	if event is InputEventKey and event.pressed:
-		return _handle_action_key(event as InputEventKey)
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		if k.keycode == KEY_V and not k.ctrl_pressed and not k.alt_pressed and not k.meta_pressed:
+			gizmo_plugin.element_editor.vertex_snap_held = k.pressed
+		if k.pressed:
+			return _handle_action_key(k)
 
 	if not editor.is_editing():
 		return AFTER_GUI_INPUT_PASS
@@ -636,6 +640,11 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			_perform_select_face_loop(true)
 		&"toggle_vertex_snap":
 			gizmo_plugin.element_editor.vertex_snap_enabled = not gizmo_plugin.element_editor.vertex_snap_enabled
+			if toolbar != null:
+				toolbar.sync_snapping(
+					gizmo_plugin.element_editor.vertex_snap_enabled,
+					gizmo_plugin.element_editor.proportional_enabled,
+					gizmo_plugin.element_editor.proportional_radius)
 			if logger:
 				logger.info("tools", "Vertex Snap %s" % ["ON" if gizmo_plugin.element_editor.vertex_snap_enabled else "OFF"])
 		&"toggle_proportional":
@@ -1698,9 +1707,11 @@ func _on_operation_requested(op_name: String) -> void:
 		return
 	if op_name == "toggle_vertex_snap":
 		gizmo_plugin.element_editor.vertex_snap_enabled = not gizmo_plugin.element_editor.vertex_snap_enabled
-		return
-	if op_name == "toggle_proportional":
-		gizmo_plugin.element_editor.proportional_enabled = not gizmo_plugin.element_editor.proportional_enabled
+		if toolbar != null:
+			toolbar.sync_snapping(
+				gizmo_plugin.element_editor.vertex_snap_enabled,
+				gizmo_plugin.element_editor.proportional_enabled,
+				gizmo_plugin.element_editor.proportional_radius)
 		return
 	if op_name == "merge_objects":
 		_perform_merge_objects()

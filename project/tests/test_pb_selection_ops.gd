@@ -173,6 +173,90 @@ func test_vertex_snap_find_nearest() -> void:
 	assert_almost_eq(nearest.y, 0.5, 0.001)
 	assert_almost_eq(nearest.z, 0.5, 0.001)
 
+func test_vertex_snap_axis_constrained_no_lateral_shift() -> void:
+	var ee := PBElementEditor.new()
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = cube
+	ee.vertex_snap_enabled = true
+
+	# Set up drag state: pretend top face (Y=+0.5) is being dragged.
+	# Top vertices on cube (Y = 0.5) are in _drag_union.
+	# Base vertices are at Y = -0.5.
+	ee._drag_latest_id = 0
+	ee._drag_start_xf[0] = Transform3D(Basis(), Vector3(0.0, 0.5, 0.0))
+	var union_idxs := PackedInt32Array()
+	for i in range(cube.positions.size()):
+		if is_equal_approx(cube.positions[i].y, 0.5):
+			union_idxs.append(i)
+	ee._drag_union = union_idxs
+
+	# Motion UP along Y: (0, 0.1, 0).
+	# Because 0.1 is far from base vertices (which are at Y = -0.5, diff = 1.1m > 0.2m threshold),
+	# it should NOT snap to the base, and should NOT move sideways in X or Z!
+	var motion := Vector3(0.0, 0.1, 0.0)
+	var snapped := ee._snap_move_motion(mesh, motion)
+	assert_almost_eq(snapped.x, 0.0, 0.0001, "Should not jump sideways in X")
+	assert_almost_eq(snapped.z, 0.0, 0.0001, "Should not jump sideways in Z")
+	assert_almost_eq(snapped.y, 0.1, 0.001, "Should continue moving up freely when outside snap threshold")
+
+func test_vertex_snap_catches_and_dislodges() -> void:
+	var ee := PBElementEditor.new()
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = cube
+	ee.vertex_snap_enabled = true
+
+	ee._drag_latest_id = 0
+	ee._drag_start_xf[0] = Transform3D(Basis(), Vector3(0.0, 0.5, 0.0))
+	var union_idxs := PackedInt32Array()
+	for i in range(cube.positions.size()):
+		if is_equal_approx(cube.positions[i].y, 0.5):
+			union_idxs.append(i)
+	ee._drag_union = union_idxs
+
+	# Base vertices are at Y = -0.5. The start pivot is at Y = +0.5.
+	# The distance to base vertices along Y is -1.0.
+	# When dragging DOWN toward the base:
+	# At motion y = -0.92 (within threshold 0.2 of -1.0):
+	var motion_near := Vector3(0.0, -0.92, 0.0)
+	var snapped_near := ee._snap_move_motion(mesh, motion_near)
+	assert_almost_eq(snapped_near.y, -1.0, 0.001, "Should snap to -1.0 (base vertex height) when near")
+	assert_almost_eq(snapped_near.x, 0.0, 0.0001, "No X shift on Y axis drag")
+	assert_almost_eq(snapped_near.z, 0.0, 0.0001, "No Z shift on Y axis drag")
+
+	# When dragged further past the base, e.g. y = -1.35 (outside threshold 0.2):
+	var motion_past := Vector3(0.0, -1.35, 0.0)
+	var snapped_past := ee._snap_move_motion(mesh, motion_past)
+	assert_almost_eq(snapped_past.y, -1.35, 0.001, "Should dislodge cleanly once outside threshold")
+
+func test_vertex_snap_falls_back_to_grid_when_enabled() -> void:
+	var ee := PBElementEditor.new()
+	var mesh: PBMesh = autofree(PBMesh.new())
+	mesh.pb_mesh_data = cube
+	ee.vertex_snap_enabled = true
+
+	var grid := PBGrid.new()
+	grid.enabled = true
+	grid.unit = 1.0
+	grid.subdivisions = 2  # step = 0.5
+	ee.grid = grid
+
+	ee._drag_latest_id = 0
+	ee._drag_start_xf[0] = Transform3D(Basis(), Vector3(0.0, 0.5, 0.0))
+	var union_idxs := PackedInt32Array()
+	for i in range(cube.positions.size()):
+		if is_equal_approx(cube.positions[i].y, 0.5):
+			union_idxs.append(i)
+	ee._drag_union = union_idxs
+
+	# Motion UP along Y: 0.43. Outside vertex snap threshold of base vertices.
+	# Pivot starts at 0.5. Target is 0.5 + 0.43 = 0.93. Grid step is 0.5 -> snaps to 1.0!
+	# Displacement = 1.0 - 0.5 = 0.5.
+	var motion := Vector3(0.0, 0.43, 0.0)
+	var snapped := ee._snap_move_motion(mesh, motion)
+	assert_almost_eq(snapped.y, 0.5, 0.001, "Should fall back to grid snap (0.5 displacement) when vertex snap does not catch")
+	assert_almost_eq(snapped.x, 0.0, 0.0001)
+	assert_almost_eq(snapped.z, 0.0, 0.0001)
+
 func test_selection_methods_on_pb_selection() -> void:
 	var sel := PBSelection.new(cube)
 	sel.add_face(0)

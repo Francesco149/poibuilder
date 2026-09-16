@@ -266,7 +266,7 @@ func _build_ui() -> void:
 	_btn_vertex_snap.flat = true
 	_btn_vertex_snap.toggle_mode = true
 	_btn_vertex_snap.focus_mode = Control.FOCUS_NONE
-	_btn_vertex_snap.tooltip_text = "Vertex Snapping: Toggle snapping dragged elements to nearest mesh vertex"
+	_btn_vertex_snap.tooltip_text = "Vertex Snapping: Toggle snapping dragged elements to nearest mesh vertex (or Hold V)"
 	_btn_vertex_snap.toggled.connect(func(on: bool): vertex_snap_toggled.emit(on))
 
 	_btn_proportional = Button.new()
