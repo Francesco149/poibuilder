@@ -53,12 +53,13 @@ Measured on the device for the showcase map: 60 fps, 1618 tris, 20 draws. That r
 
 ## Authoring for the retro target
 
-Deep knobs, pitfalls, and the `.pbm` byte layout live in the repo:
+Architecture constraints, performance measurements, and the `.pbm` byte layout are documented on GitHub:
 
-- `retro_engine/RETRO-AUTHORING.md`
-- `SPEC_RETRO_FORMAT.md`
-- `retro_engine/psp/HARDWARE-TESTING.md` — performance numbers are only real from `./run_psp_hw.sh` over USB.
+- [Retro Authoring Guide](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/RETRO-AUTHORING.md) — Godot authoring recipes and export baking rules.
+- [PSP Optimization Guide](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/psp/OPTIMIZATION.md) — hardware architecture, fill rates, and the 19x texture cache cliff.
+- [Retro Demo Engine](https://github.com/Francesco149/poibuilder/tree/master/retro_engine) — native C renderer and viewer for retro targets.
+- `SPEC_RETRO_FORMAT.md` — binary `.pbm` format specification.
 
 A scrolling material must not be atlas-packed; export already exempts it.
 
-> [gotcha] PPSSPP is for "does it look right". It will report 60 fps for a build that spends 27 ms on the device. Do not tune from the emulator.
+> [gotcha] PPSSPP is for "does it look right". Because host GPUs have massive caches, the emulator hides the PSP's ~8 KB texture cache cliff (a 19x drop from 480 Mfrag/s to 25 Mfrag/s on misses). Do not tune performance from the emulator.

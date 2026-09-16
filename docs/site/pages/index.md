@@ -14,7 +14,7 @@ hero: true
 </div>
 
 :::shot hero-courtyard.png
-The showcase courtyard — built in the editor, baked, and running on hardware.
+The showcase courtyard in the editor — editing geometry and lighting is one click away, exporting directly to a fully baked format for retro pipelines.
 :::
 
 ## What you are looking at
