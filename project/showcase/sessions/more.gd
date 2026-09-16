@@ -107,58 +107,61 @@ func _uv() -> void:
 			uv_panel._floating_window.size = Vector2i(760, 560)
 			uv_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			uv_panel.size = Vector2(760, 560)
-		await d.frames(14)
+		await d.frames(16)
 		if uv_panel.canvas != null:
 			uv_panel.canvas.frame_unit_square()
-	await d.frames(16)
+	await d.frames(20)
 	d.check(uv_panel != null and uv_panel._is_floating, "UV editor opened as floating window")
 	
 	# 1. Rotate UVs 90° CW
 	if uv_panel != null and uv_panel._btn_rot_cw != null:
 		await d.glide(_win_pos(uv_panel._btn_rot_cw), 16)
 		await d.click()
-		await d.frames(18)
+		await d.frames(26)
 	
 	# 2. Flip U
 	if uv_panel != null and uv_panel._btn_flip_u != null:
 		await d.glide(_win_pos(uv_panel._btn_flip_u), 14)
 		await d.click()
-		await d.frames(18)
+		await d.frames(24)
 	
 	# 3. Flip V
 	if uv_panel != null and uv_panel._btn_flip_v != null:
 		await d.glide(_win_pos(uv_panel._btn_flip_v), 14)
 		await d.click()
-		await d.frames(18)
+		await d.frames(24)
 	
 	# 4. Drag UVs on canvas to slide texture
 	if uv_panel != null and uv_panel.canvas != null:
 		var c_center: Vector2 = _win_pos(uv_panel.canvas)
-		await d.glide(c_center, 14)
-		await d.drag(c_center, c_center + Vector2(64.0, -44.0), 24)
+		await d.glide(c_center, 16)
+		await d.drag(c_center, c_center + Vector2(64.0, -44.0), 28)
 		PBUvOps.translate_uvs(obj.pb_mesh_data, uv_panel._get_target_vertices(), Vector2(0.25, -0.18), 0)
 		obj.rebuild()
 		uv_panel.canvas.refresh_from_mesh()
-		await d.frames(20)
+		await d.frames(28)
 	
 	# 5. Box project
 	if uv_panel != null and uv_panel._btn_proj_box != null:
 		await d.glide(_win_pos(uv_panel._btn_proj_box), 14)
 		await d.click()
-		await d.frames(20)
+		await d.frames(26)
 	
 	# 6. Fit UVs into [0, 1]
 	if uv_panel != null and uv_panel._btn_proj_fit != null:
 		await d.glide(_win_pos(uv_panel._btn_proj_fit), 14)
 		await d.click()
-		await d.frames(20)
+		await d.frames(26)
+	
 	# Camera swing to admire the textured cube alongside UV editor
-	await d.cam_swing(f["center"] + aim_offset, 28.0, 48.0, 18.0, 22.0, f["dist"] * 1.05, 36, 1, f["aim"] + aim_offset)
-	await d.frames(16)
+	await d.cam_swing(f["center"] + aim_offset, 28.0, 48.0, 18.0, 22.0, f["dist"] * 1.05, 48, 1, f["aim"] + aim_offset)
+	await d.frames(24)
 
 func _bevel() -> void:
-	obj = await _fresh("BevelCube", PBMeshData.create_cube(2.0), "stone", Vector3.ZERO, 0.40, 32.0, 22.0)
-	var f := d.framing_node(obj, 0.40, 32.0, 22.0)
+	obj = await _fresh("BevelCube", PBMeshData.create_cube(2.0), "stone", Vector3.ZERO, 0.40, 32.0, 20.0)
+	# Close-up camera framing: dist = 2.7m puts the front face and top rounded edge in full view
+	d.cam_at_polar(Vector3(0.0, 1.0, 0.0), 32.0, 20.0, 2.7)
+	await d.frames(8)
 	
 	# Switch to Face mode and select Face 1 (front face facing camera at +Z)
 	await d.click_button("face", 14)
@@ -181,27 +184,29 @@ func _bevel() -> void:
 	d.check(d.plugin.tool_overlay.params_open, "bevel modal opened")
 	
 	# Live preview: drag distance
-	await d.overlay_param("distance", 0.26, 24)
-	await d.frames(14)
-	
-	# Live preview: increase segments to 3 (fillet rounding)
-	await d.overlay_param("segments", 3, 20)
+	await d.overlay_param("distance", 0.28, 24)
 	await d.frames(16)
+	
+	# Live preview: higher segment count (6 segments) for a completely smooth circular fillet
+	await d.overlay_param("segments", 6, 22)
+	await d.frames(20)
 	
 	# Commit bevel
 	await d.overlay_button("ApplyParams", 16)
-	await d.frames(18)
+	await d.frames(20)
 	d.check(obj.pb_mesh_data.faces.size() > before, "bevel added faces")
 	
-	# Camera swing showcasing the smooth rounded corners
-	await d.cam_swing(f["center"], 32.0, 80.0, 22.0, 30.0, f["dist"] * 0.95, 44, 1, f["aim"])
+	# Camera swing to side angle (azimuth 82°, elevation 10°) showing the round edge silhouette
+	await d.cam_swing(Vector3(0.0, 1.0, 0.0), 32.0, 82.0, 20.0, 10.0, 2.7, 56, 1)
+	await d.frames(24)
 
 func _trim() -> void:
+	ShowcaseUtil.use_default_material("res://materials/textures/wood_planks.png")
 	await d.off(func():
 		_clear()
 		wall_a = ShowcaseUtil.mesh(root, "TrimWall",
 			PBShapeGenerators.create_box(Vector3(6.0, 3.0, 0.4)),
-			Vector3(0.0, 1.5, -2.2), ShowcaseUtil.checker_mat(root, "slate"))
+			Vector3(0.0, 1.5, -2.2), ShowcaseUtil.checker_mat(root, "stone"))
 		ShowcaseUtil.drop_on_ground(wall_a)
 		wall_a.position.y = 1.5)
 	var box := AABB(Vector3(-3.2, 0.0, -3.0), Vector3(6.4, 3.4, 4.2))
@@ -213,16 +218,26 @@ func _trim() -> void:
 	await d.drag(d.w2s(Vector3(-2.2, 0.0, -2.0)), d.w2s(Vector3(2.2, 0.0, -2.0)), 32)
 	await d.frames(16)
 	if d.plugin.tool_overlay.params_open:
-		await d.overlay_param("profile", 4, 14)
-		await d.overlay_param_check("upside_down", true)
+		await d.overlay_param("profile", 2, 14) # Profile 2: Round
+		await d.overlay_param("height", 0.28, 12)
+		await d.overlay_param("depth", 0.12, 12)
 		await d.frames(12)
 		await d.overlay_button("ApplyParams", 14)
-	await d.cam_swing(f["center"], 26.0, -10.0, 18.0, 14.0, f["dist"] * 0.92, 32, 1, f["aim"])
+	# Dress with darker steel material so the curved profile and shading are clearly visible
+	var trim_node: PBMesh = null
+	for c in root.get_children():
+		if c is PBMesh and c != bench and c != wall_a and (c as PBMesh).visible:
+			trim_node = c
+	if trim_node != null:
+		ShowcaseUtil.dress_material(trim_node, ShowcaseUtil.mat(root, "steel"))
+	# Zoom close into the end of the run showing the rounded profile silhouette
+	await d.cam_swing(Vector3(1.6, 0.20, -2.0), 26.0, 72.0, 18.0, 12.0, 1.5, 48, 1)
+	await d.frames(20)
 
 func _trim_walls() -> void:
 	await d.off(func():
 		_clear()
-		var mat := ShowcaseUtil.checker_mat(root, "slate")
+		var mat := ShowcaseUtil.checker_mat(root, "stone")
 		# Wall 1: along X from (-3, 0) to (-1, 0). Front face at Z = 0.0, normal = (0, 0, 1)
 		wall_a = ShowcaseUtil.mesh(root, "Wall1", PBShapeGenerators.create_box(Vector3(2.0, 3.0, 0.4)), Vector3(-2.0, 1.5, -0.2), mat)
 		# Wall 2: along Z from (-1, 0) to (-1, -2.0). Front face at X = -1.0, normal = (1, 0, 0)
@@ -249,8 +264,8 @@ func _trim_walls() -> void:
 	await d.frames(8)
 	if d.plugin.tool_overlay.params_open:
 		await d.overlay_param("profile", 2, 12) # Profile 2: Round
-		await d.overlay_param("height", 0.28, 12)
-		await d.overlay_param("depth", 0.10, 12)
+		await d.overlay_param("height", 0.30, 12)
+		await d.overlay_param("depth", 0.12, 12)
 	
 	# Click the 4 walls in order along the run — all on the front visible side!
 	var clicks := [
@@ -268,8 +283,17 @@ func _trim_walls() -> void:
 	await d.key(KEY_ENTER)
 	await d.frames(16)
 	
-	# CLOSE-UP camera swing showing all mitred corners with rounded profile (dist = 1.8m)
-	await d.cam_swing(Vector3(-0.8, 0.20, -0.4), 18.0, 48.0, 18.0, 14.0, 1.8, 64, 1)
+	# Dress with darker steel material so the round profile and corner mitres are unmistakable
+	var tw_node: PBMesh = null
+	for c in root.get_children():
+		if c is PBMesh and c != bench and c != wall_a and c != wall_b and c != wall_c and c != wall_d and (c as PBMesh).visible:
+			tw_node = c
+	if tw_node != null:
+		ShowcaseUtil.dress_material(tw_node, ShowcaseUtil.mat(root, "steel"))
+	
+	# Beat 2: Zoom close into the corner (dist = 1.3m) showing the rounded mitred profile turning the corner
+	await d.cam_swing(Vector3(-1.0, 0.18, 0.0), 20.0, 58.0, 16.0, 11.0, 1.3, 56, 1)
+	await d.frames(20)
 
 func _csg() -> void:
 	var wall: PBMesh = await _fresh("CsgWall", PBShapeGenerators.create_box(Vector3(4.0, 3.0, 0.6)), "stone", Vector3.ZERO, 0.46, 24.0, 14.0)
@@ -325,7 +349,7 @@ func _csg() -> void:
 	await d.frames(20)
 
 func _select_snap() -> void:
-	d.plugin.gizmo_plugin.apply_display_opacities(0.7, 0.65, 0.35)
+	d.plugin.gizmo_plugin.apply_display_opacities(0.7, 0.85, 0.40)
 	var box := PBShapeGenerators.create_box(Vector3(2.4, 2.4, 2.4), 3, 3, 3)
 	obj = await _fresh("SmartSelectBox", box, "ink", Vector3.ZERO, 0.44, 34.0, 22.0)
 	var f := d.framing_node(obj, 0.44, 34.0, 22.0)
