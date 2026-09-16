@@ -335,6 +335,17 @@ def parse_front(text: str) -> tuple[dict, str]:
             return meta, body
     return meta, text
 
+def _format_kbd(raw: str) -> str:
+    raw = raw.strip()
+    if raw == "\\\\":
+        raw = "\\"
+    if raw == "+":
+        parts = ["+"]
+    elif "+" in raw:
+        parts = [p.strip() for p in raw.split("+") if p.strip()]
+    else:
+        parts = [raw]
+    return "".join(f"<kbd>{html.escape(p)}</kbd>" for p in parts)
 
 def inline(s: str) -> str:
     s = html.escape(s)
@@ -351,9 +362,7 @@ def inline(s: str) -> str:
         lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
         s,
     )
-    s = re.sub(r"\[\[kbd:([^\]]+)\]\]", lambda m: "".join(
-        f"<kbd>{html.escape(p.strip())}</kbd>" for p in m.group(1).split("+")
-    ), s)
+    s = re.sub(r"\[\[kbd:(.+?)\]\]", lambda m: _format_kbd(m.group(1)), s)
     return s
 
 

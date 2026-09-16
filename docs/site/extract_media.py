@@ -67,7 +67,7 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "edit-weld": ("edit", "edit_weld", 190, (287, 80, 1266, 712)),
     "edit-detach": ("edit", "edit_detach", 200, (287, 80, 1266, 712)),
     "edit-delete": ("edit", "edit_delete", 200, (287, 80, 1266, 712)),
-    "edit-knife": ("edit", "edit_knife", 260, (287, 80, 1266, 712)),
+    "edit-knife": ("edit", "edit_knife", 310, (287, 80, 1266, 712)),
     "edit-ngon": ("edit", "edit_ngon", 220, (287, 80, 1266, 712)),
     
     # Paint: wide crop showing 3D viewport AND the Material & UV dock on the right
@@ -83,10 +83,11 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
 
 # Short loops cut from the assembled master (seconds)
 CLIPS = {
-    "create-floor.mp4": (12.0, 3.2),
-    "edit-extrude.mp4": (38.0, 2.4),
-    "paint-splat.mp4": (78.0, 1.8),
-    "map-waterfall.mp4": (118.0, 3.2),
+    "create-floor.mp4": (9.10, 7.80),
+    "edit-extrude.mp4": (34.20, 2.60),
+    "paint-splat.mp4": (72.80, 1.85),
+    "paint-scroll.mp4": (77.25, 2.00),
+    "map-waterfall.mp4": (102.05, 3.60),
 }
 
 

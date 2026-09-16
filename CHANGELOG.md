@@ -3261,3 +3261,18 @@ needed, and the device texture budget they were measured against:
   `retro_engine/psp/HARDWARE-TESTING.md` ("Imported props") and
   `retro_engine/RETRO-AUTHORING.md` §7.
 - Version bump 0.9.126 -> 0.9.127.
+- Docs polish & fixes (v0.9.128):
+  * FIX: Markdown `[[kbd:...]]` inline regex now accepts closing brackets such as
+    `[[kbd:]]]` and nested bracket keys without syntax bleed (`<kbd>[</kbd> / <kbd>]</kbd>`),
+    and normalizes `\\\\` to single backslash `<kbd>\</kbd>`.
+  * Knife Tool screenshot (`edit-knife.png`): re-framed from frame 260 (mid-drag dent)
+    to frame 310, clearly showing the post-extrude result where the cut face is lifted
+    cleanly above the slab with full lighting and geometry definition.
+  * Texture splatting video (`paint-splat.mp4`): corrected master video offset from
+    (78.0s, 1.8s) to (72.80s, 1.85s), fixing the bug where paint & stamps showed UV
+    scrolling followed by the shape lineup instead of active texture splatting.
+  * Animated materials video (`paint-scroll.mp4`): added to `CLIPS` extraction table
+    at (77.25s, 2.00s), eliminating the "Clip not built yet" placeholder on the materials
+    page. Also aligned `edit-extrude.mp4`, `create-floor.mp4`, and `map-waterfall.mp4`
+    extraction offsets with `edl.toml`.
+- Version bump 0.9.127 -> 0.9.128.
