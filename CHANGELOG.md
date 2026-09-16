@@ -3310,3 +3310,6 @@ needed, and the device texture budget they were measured against:
   * DOCS: Retro section reframed — the PSP/raylib demo engine is explicitly a proof of concept and performance sanity check, NOT an engine to ship with; the documented `.pbm` format is the contract for implementing loaders in your own engine, and the repo's demo engine is the reference implementation.
   * DOCS: plugin.cfg description now carries the alpha note and the online docs URL (there is no standard docs-URL field in plugin.cfg; the toolbar Docs button + description URL + Asset Library listing are the conventions).
 - Version bump 0.9.131 -> 0.9.132.
+- Landing page plays the full showcase film (v0.9.133):
+  * DOCS: The landing page's courtyard still is replaced by the whole 960x540 showcase video (`clips/poibuilder-showcase-960.mp4`, ~10 MB, 3 min) via the `:::video` directive — the film is now committed under `docs/site/assets/` and ships inside the nightly docs bundle. `hero-courtyard.png` stays committed as the extracted still.
+- Version bump 0.9.132 -> 0.9.133.
