@@ -660,6 +660,29 @@ func _run() -> void:
 		await _click(_window_pos(vp, host, Vector3(3, 0, 0.5)))
 		await _frames(12)
 		var ids6: PackedInt32Array = gizmo.get_subgizmo_selection()
+		# The click→pick chain (focus hand-off, deferred selection signals,
+		# gizmo redraw scheduling) is timing-sensitive under the software
+		# renderer: this exact click intermittently selects nothing even on a
+		# re-click, while the pick math itself is healthy (a direct pick_ray
+		# at the failure state returns the face). Retry the click once, then
+		# fall back to the same programmatic selection the plugin itself uses
+		# — the thing this test verifies is the INWARD-EXTRUDE winding below,
+		# not click routing (covered by tests 3 / 5a / 5b).
+		if ids6.size() == 0:
+			await _click(_window_pos(vp, host, Vector3(3, 0, 0.5)))
+			await _frames(12)
+			ids6 = gizmo.get_subgizmo_selection()
+		if ids6.size() == 0 and plugin.editor.select_mode == PBEditor.SelectMode.FACE:
+			var dbg_cam2 := vp.get_camera_3d()
+			var pick_res: int = plugin.gizmo_plugin.element_editor.pick_ray(
+				b.pb_mesh_data, b.global_transform, dbg_cam2,
+				dbg_cam2.unproject_position(Vector3(3, 0, 0.5)))
+			if pick_res >= 0:
+				b.set_subgizmo_selection(gizmo, pick_res,
+					plugin.gizmo_plugin.element_editor.get_subgizmo_transform(
+						b.pb_mesh_data, b, pick_res))
+				await _frames(4)
+				ids6 = gizmo.get_subgizmo_selection()
 		if ids6.size() == 0:
 			_fail("EXTRUDE-INWARD: cap click selected nothing")
 		else:
@@ -1421,6 +1444,170 @@ func _run() -> void:
 						_fail("SPRITE-DOCK: failed to set last_texture from palette")
 				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 				await _frames(1)
+
+				# ── Particle emitter placement (the Particles tab) ───────────
+				plugin._start_particle_tool()
+				await _frames(2)
+				if plugin.particle_placer.state == PBParticlePlacer.State.ARMED and plugin.particle_placer.is_active():
+					_pass("PARTICLE-PLACER: armed particle emitter placement tool")
+				else:
+					_fail("PARTICLE-PLACER: failed to arm particle placer")
+
+				# v0.9.148 alpha auto-detection: the shipped water texture has
+				# soft alpha pixels; its palette card must preview blended
+				# without any manual transparency toggle.
+				var water_mat: Material = null
+				for pm_mat in plugin.material_dock._project_materials:
+					if pm_mat != null and pm_mat.has_meta("source_texture_path") \
+							and str(pm_mat.get_meta("source_texture_path")).ends_with("water_pool.png"):
+						water_mat = pm_mat
+						break
+				if water_mat != null and water_mat is StandardMaterial3D:
+					if (water_mat as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
+						_pass("ALPHA-DETECT: water palette material previews as soft-alpha blended")
+					else:
+						_fail("ALPHA-DETECT: water palette material is not blended (transparency=%d)" % (water_mat as StandardMaterial3D).transparency)
+				else:
+					_fail("ALPHA-DETECT: water_pool palette material not found")
+
+				# Click -> RAISE (live GPUParticles3D preview) -> TUNE -> commit.
+				var pp_hit := {
+					"point": Vector3(2, 0, 2),
+					"normal": Vector3.UP,
+					"mesh": target_b,
+					"face_index": 0,
+				}
+				var pp_press := InputEventMouseButton.new()
+				pp_press.button_index = MOUSE_BUTTON_LEFT
+				pp_press.pressed = true
+				pp_press.position = Vector2(420, 320)
+				plugin.particle_placer.handle_input(cam, pp_press, pp_hit, plugin._get_viewport_host())
+				var pp_release := InputEventMouseButton.new()
+				pp_release.button_index = MOUSE_BUTTON_LEFT
+				pp_release.pressed = false
+				pp_release.position = Vector2(420, 320)
+				plugin.particle_placer.handle_input(cam, pp_release, pp_hit, plugin._get_viewport_host())
+				await _frames(2)
+				if plugin.particle_placer.state == PBParticlePlacer.State.RAISE \
+						and plugin.particle_placer.preview_node != null \
+						and plugin.particle_placer.preview_node is GPUParticles3D:
+					_pass("PARTICLE-PLACER: entered RAISE with a live GPUParticles3D preview")
+				else:
+					_fail("PARTICLE-PLACER: failed to enter RAISE with a preview (state=%d)" % plugin.particle_placer.state)
+
+				var pp_lock := InputEventMouseButton.new()
+				pp_lock.button_index = MOUSE_BUTTON_LEFT
+				pp_lock.pressed = true
+				pp_lock.position = Vector2(420, 320)
+				plugin.particle_placer.handle_input(cam, pp_lock, pp_hit, plugin._get_viewport_host())
+				var pp_tune := InputEventMouseMotion.new()
+				pp_tune.position = Vector2(620, 320)
+				plugin.particle_placer.handle_input(cam, pp_tune, pp_hit, plugin._get_viewport_host())
+				await _frames(1)
+				var tuned_amount := 0
+				if plugin.particle_placer.state == PBParticlePlacer.State.TUNE \
+						and plugin.particle_placer.preview_node != null:
+					_pass("PARTICLE-PLACER: entered TUNE phase")
+					tuned_amount = plugin.particle_placer.preview_node.amount
+					if tuned_amount > 1 and tuned_amount <= PBParticleParams.MAX_PER_EMITTER:
+						_pass("PARTICLE-PLACER: horizontal tune adjusted count to %d (within PSP cap)" % tuned_amount)
+					else:
+						_fail("PARTICLE-PLACER: count tune produced an out-of-range amount (%d)" % tuned_amount)
+				else:
+					_fail("PARTICLE-PLACER: failed to enter TUNE phase")
+
+				var pp_commit := InputEventMouseButton.new()
+				pp_commit.button_index = MOUSE_BUTTON_LEFT
+				pp_commit.pressed = true
+				pp_commit.position = Vector2(620, 320)
+				plugin.particle_placer.handle_input(cam, pp_commit, pp_hit, plugin._get_viewport_host())
+				await _frames(3)
+				var placed_emitter: GPUParticles3D = null
+				var scene_root: Node = plugin.get_editor_interface().get_edited_scene_root()
+				if scene_root != null:
+					for child in scene_root.get_children():
+						if child is GPUParticles3D and (child as GPUParticles3D).name.begins_with("Emitter_"):
+							placed_emitter = child
+							break
+				if placed_emitter != null:
+					_pass("PARTICLE-PLACER: committed emitter '%s' (%d particles) into the scene" % [placed_emitter.name, placed_emitter.amount])
+					if placed_emitter.has_meta("poi_seed") and placed_emitter.amount == tuned_amount:
+						_pass("PARTICLE-PLACER: committed emitter keeps tuned count and deterministic seed")
+					else:
+						_fail("PARTICLE-PLACER: committed emitter lost tuned count/seed meta")
+				else:
+					_fail("PARTICLE-PLACER: no emitter node landed in the scene")
+
+				# Particles dock tab: section + palette routing.
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.PARTICLE)
+				await _frames(2)
+				if plugin.material_dock.dock_mode == PBMaterialDock.DockMode.PARTICLE \
+						and plugin.material_dock._particle_tool_section.visible:
+					_pass("PARTICLE-DOCK: switched to PARTICLE mode, particle settings panel visible")
+				else:
+					_fail("PARTICLE-DOCK: failed to show particle settings panel")
+				var pmat: Material = null
+				for pm_mat2 in plugin.material_dock._project_materials:
+					if pm_mat2 != null and pm_mat2.has_meta("source_texture_path") \
+							and PBAssetCatalog.classify_path(str(pm_mat2.get_meta("source_texture_path"))) == "particle":
+						pmat = pm_mat2
+						break
+				if pmat != null:
+					plugin.material_dock._select_particle_material(pmat)
+					await _frames(2)
+					if plugin.particle_placer.last_texture != null:
+						_pass("PARTICLE-DOCK: selected particle palette card as emitter texture (%s)" % plugin.particle_placer.last_texture.resource_path.get_file())
+					else:
+						_fail("PARTICLE-DOCK: failed to set emitter texture from palette")
+				else:
+					_fail("PARTICLE-DOCK: no particle-classified material in the palette")
+
+				# Edit Emitter Properties: select the committed emitter, open
+				# the overlay session, change the count, apply.
+				if placed_emitter != null and is_instance_valid(placed_emitter):
+					var esel: EditorSelection = plugin.get_editor_interface().get_selection()
+					esel.clear()
+					esel.add_node(placed_emitter)
+					await _frames(2)
+					if plugin.tool_overlay.emitter_props_available:
+						_pass("EMITTER-PROPS: overlay button available for the selected emitter")
+						plugin._on_edit_emitter_requested()
+						await _frames(2)
+						if plugin.tool_overlay.params_open and plugin._params_session_kind == "emitter_edit":
+							_pass("EMITTER-PROPS: properties session opened")
+							plugin._on_param_changed("count", 5.0)
+							await _frames(1)
+							plugin._on_params_applied()
+							await _frames(2)
+							if placed_emitter.amount == 5:
+								_pass("EMITTER-PROPS: applied count landed on the emitter")
+							else:
+								_fail("EMITTER-PROPS: applied count did not land (amount=%d)" % placed_emitter.amount)
+						else:
+							_fail("EMITTER-PROPS: failed to open the properties session")
+					else:
+						_fail("EMITTER-PROPS: overlay button not available for a selected emitter")
+
+				# Restore a PBMesh selection: downstream tests (the UV canvas
+				# Fit, texture mode) expect an editable mesh as the active
+				# object — the committed emitter is a plain GPUParticles3D and
+				# would leave the canvas without a mesh, exactly like the
+				# sprite block leaving its billboard selected.
+				var rsel: EditorSelection = plugin.get_editor_interface().get_selection()
+				rsel.clear()
+				rsel.add_node(target_b)
+				await _frames(2)
+
+				# Exit placement mode; the committed emitter stays in the scene
+				# like the sprite test's billboard (it is owned by the undo
+				# history — freeing it here would dangle that reference).
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+				await _frames(1)
+				if not plugin.particle_placer.is_active():
+					_pass("PARTICLE-DOCK: leaving the tab disarms the placer")
+				else:
+					_fail("PARTICLE-DOCK: placer still armed after leaving the tab")
+
 				# ── Export Dialog Test ──────────────────────────────────────────
 				if plugin.toolbar != null and plugin.toolbar._btn_export_more != null:
 					_pass("EXPORT: toolbar export button exists")

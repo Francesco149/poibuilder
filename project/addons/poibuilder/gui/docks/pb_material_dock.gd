@@ -19,7 +19,7 @@
 class_name PBMaterialDock
 extends PanelContainer
 
-enum DockMode { MATERIAL, PAINT, STAMP, SPRITE, SHAPE }
+enum DockMode { MATERIAL, PAINT, STAMP, SPRITE, SHAPE, PARTICLE }
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
 
@@ -36,6 +36,7 @@ var editor: PBEditor = null:
 var paint_controller: PBPaintController = null:
 	set = set_paint_controller
 var sprite_placer: PBSpritePlacer = null
+var particle_placer: PBParticlePlacer = null
 
 var dock_mode: DockMode = DockMode.MATERIAL
 
@@ -49,6 +50,7 @@ var _btn_mode_paint: Button
 var _btn_mode_stamp: Button
 var _btn_mode_sprite: Button
 var _btn_mode_shape: Button
+var _btn_mode_particle: Button
 # UI Nodes - Materials Section
 var _scroll: ScrollContainer
 var _material_grid: HFlowContainer
@@ -61,6 +63,7 @@ var _paint_tool_section: VBoxContainer
 var _stamp_tool_section: VBoxContainer
 var _sprite_tool_section: VBoxContainer
 var _shape_tool_section: VBoxContainer
+var _particle_tool_section: VBoxContainer
 
 # Sprite Tool Controls
 var _active_sprite_drop_box: PanelContainer
@@ -75,6 +78,11 @@ var _shape_hint: Label
 var _shape_card_buttons: Dictionary = {}  # StringName shape_id -> Button
 var _selected_shape_id: StringName = &"cube"
 static var _shape_preview_cache: Dictionary = {}  # StringName shape_id -> ImageTexture
+
+# Particle Tool Controls
+var _particle_active_label: Label
+var _particle_budget_label: Label
+var _particle_hint: Label
 # UV Controls
 var _btn_x2: Button
 var _btn_half: Button
@@ -91,6 +99,8 @@ var _chk_flip_v: CheckBox
 # Tint Controls
 var _color_picker: ColorPickerButton
 var _btn_reset_tint: Button
+var _spin_face_opacity: Range
+var _btn_reset_opacity: Button
 
 # Scrolling Texture (animated UV) Controls
 var _spin_scroll_u: Range
@@ -284,6 +294,15 @@ func _build_ui() -> void:
 	_btn_mode_shape.pressed.connect(func(): _set_dock_mode(DockMode.SHAPE))
 	mode_row.add_child(_btn_mode_shape)
 
+	_btn_mode_particle = Button.new()
+	_btn_mode_particle.text = "Particles"
+	_btn_mode_particle.tooltip_text = "Particle Placement: always-armed emitter placement — pick a particle texture, then click any surface to place an emitter (PSP-budget aware)"
+	_btn_mode_particle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_particle.toggle_mode = true
+	_btn_mode_particle.button_pressed = (dock_mode == DockMode.PARTICLE)
+	_btn_mode_particle.pressed.connect(func(): _set_dock_mode(DockMode.PARTICLE))
+	mode_row.add_child(_btn_mode_particle)
+
 	root_vbox.add_child(mode_row)
 	root_vbox.add_child(HSeparator.new())
 
@@ -431,6 +450,32 @@ func _build_ui() -> void:
 	)
 	tint_row.add_child(_btn_reset_tint)
 	_uv_and_tint_section.add_child(tint_row)
+
+	# Face opacity: the tint's alpha channel. In Godot it multiplies the
+	# texture through vertex_color_use_as_albedo; on PSP the same alpha byte
+	# rides the baked vertex colour and modulates the blended pass — but only
+	# when the material actually blends, so an opaque material is flipped to
+	# TRANSPARENCY_ALPHA (on a copy) the first time a face goes below 100%.
+	var opacity_grid := GridContainer.new()
+	opacity_grid.columns = 2
+	opacity_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	opacity_grid.add_child(_make_label("Opacity:"))
+	_spin_face_opacity = _make_spinbox(0.0, 1.0, 0.01, 1.0)
+	_spin_face_opacity.tooltip_text = "Opacity of the selected faces (vertex alpha). Below 1 the face blends over what is behind it — on PSP that is a blended fill, so keep big soft surfaces deliberate."
+	_spin_face_opacity.value_changed.connect(_on_face_opacity_changed)
+	opacity_grid.add_child(_spin_face_opacity)
+	_uv_and_tint_section.add_child(opacity_grid)
+
+	var opacity_reset_row := HBoxContainer.new()
+	_btn_reset_opacity = Button.new()
+	_btn_reset_opacity.text = "Reset Opacity"
+	_btn_reset_opacity.tooltip_text = "Back to fully opaque (alpha 1.0). The material keeps its blend mode."
+	_btn_reset_opacity.pressed.connect(func():
+		_spin_face_opacity.set_value_no_signal(1.0)
+		_on_face_opacity_changed(1.0)
+	)
+	opacity_reset_row.add_child(_btn_reset_opacity)
+	_uv_and_tint_section.add_child(opacity_reset_row)
 
 	# -------------------------------------------------------------------------
 	# Scrolling Texture (animated UV): the animation a retro engine can play
@@ -793,6 +838,41 @@ func _build_ui() -> void:
 	_shape_tool_section.add_child(_shape_hint)
 	root_vbox.add_child(HSeparator.new())
 
+	# =========================================================================
+	# Section F: Particle Placement Controls (Visible in PARTICLE mode)
+	# =========================================================================
+	_particle_tool_section = VBoxContainer.new()
+	_particle_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_particle_tool_section.visible = false
+	root_vbox.add_child(_particle_tool_section)
+
+	var particle_header := Label.new()
+	particle_header.text = "Particle Palette"
+	_particle_tool_section.add_child(particle_header)
+
+	_particle_active_label = Label.new()
+	_particle_active_label.text = "Emitter: (Select a palette card)"
+	_particle_active_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
+	_particle_active_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_particle_tool_section.add_child(_particle_active_label)
+
+	_particle_budget_label = Label.new()
+	_particle_budget_label.text = ""
+	_particle_budget_label.add_theme_color_override("font_color", Color(0.6, 0.75, 0.85))
+	_particle_budget_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_particle_tool_section.add_child(_particle_budget_label)
+
+	_particle_hint = Label.new()
+	_particle_hint.text = "Placement (always armed with the selected emitter):\n" \
+		+ "• Click a surface — a live emitter appears; mouse up/down lifts it off the surface, click locks.\n" \
+		+ "• Mouse left/right adjusts the particle count; wheel adjusts the particle size; click commits.\n" \
+		+ "• Fine tuning (speed, spread, additive, flipbook…): select the emitter and use Edit Emitter Properties in the overlay.\n" \
+		+ "• Esc cancels the current placement. Select the Material & UV tab to exit particle mode."
+	_particle_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	_particle_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_particle_tool_section.add_child(_particle_hint)
+	root_vbox.add_child(HSeparator.new())
+
 	# Status / Selection feedback
 	_status_label = Label.new()
 	_status_label.text = "Select a face to edit UVs / Material"
@@ -821,16 +901,18 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
 	_btn_mode_sprite.button_pressed = (dock_mode == DockMode.SPRITE)
 	_btn_mode_shape.button_pressed = (dock_mode == DockMode.SHAPE)
+	_btn_mode_particle.button_pressed = (dock_mode == DockMode.PARTICLE)
 
 	_uv_and_tint_section.visible = (dock_mode == DockMode.MATERIAL)
 	_paint_tool_section.visible = (dock_mode == DockMode.PAINT)
 	_stamp_tool_section.visible = (dock_mode == DockMode.STAMP)
 	_sprite_tool_section.visible = (dock_mode == DockMode.SPRITE)
 	_shape_tool_section.visible = (dock_mode == DockMode.SHAPE)
+	_particle_tool_section.visible = (dock_mode == DockMode.PARTICLE)
 
 	if paint_controller != null:
 		match dock_mode:
-			DockMode.MATERIAL, DockMode.SHAPE:
+			DockMode.MATERIAL, DockMode.SHAPE, DockMode.PARTICLE:
 				paint_controller.set_mode(PBPaintController.Mode.NONE)
 			DockMode.PAINT:
 				paint_controller.set_mode(PBPaintController.Mode.PAINT)
@@ -844,9 +926,12 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 				paint_controller.set_mode(PBPaintController.Mode.NONE)
 				if sprite_placer != null and sprite_placer.last_texture == null:
 					_select_first_classified("sprite", _select_sprite_material)
+	if dock_mode == DockMode.PARTICLE and particle_placer != null and particle_placer.last_texture == null:
+		_auto_select_particle()
 	_rebuild_material_grid()
 	_sync_shape_palette_selection()
 	_update_tool_labels()
+	_refresh_particle_labels()
 	sync_selection()
 	dock_mode_changed.emit(new_mode)
 
@@ -877,6 +962,14 @@ func _update_tool_labels() -> void:
 				_active_sprite_icon.texture = tex
 		else:
 			_active_sprite_label.text = "Active: (Click card below or drop image here)"
+
+	if _particle_active_label != null:
+		if particle_placer != null and particle_placer.last_texture != null:
+			_particle_active_label.text = "Emitter: %s%s" % [
+				particle_placer.last_texture.resource_path.get_file(),
+				" (additive)" if float(particle_placer.last_values.get("additive", 1.0)) > 0.5 else " (blended)"]
+		else:
+			_particle_active_label.text = "Emitter: (Select a palette card)"
 
 
 func _set_stamp_submode(delete_active: bool) -> void:
@@ -1110,6 +1203,50 @@ func _select_sprite_material(mat: Material) -> void:
 	if tex != null:
 		set_active_sprite_texture(tex)
 
+## Picks a palette card as the emitter texture: the preset (additive fire,
+## blended mist, cheap glow) derives from the texture name via
+## PBParticleParams, so the card click is the whole authoring step.
+func _select_particle_material(mat: Material) -> void:
+	if mat == null:
+		return
+	var tex := _extract_texture(mat)
+	if tex == null:
+		return
+	if particle_placer != null:
+		var path := str(mat.get_meta("source_texture_path")) if mat.has_meta("source_texture_path") else tex.resource_path
+		particle_placer.last_texture = tex
+		particle_placer.last_values = PBParticleParams.preset_for_texture(path)
+	_update_tool_labels()
+	_refresh_particle_labels()
+	_rebuild_material_grid()
+	if plugin != null and plugin.logger != null:
+		plugin.logger.info("particles", "Selected emitter texture: %s" % tex.resource_path.get_file())
+
+## Budget line under the emitter label; refreshes after placement too.
+func _refresh_particle_labels() -> void:
+	if _particle_budget_label == null:
+		return
+	if particle_placer == null:
+		_particle_budget_label.text = ""
+		return
+	var root: Node = null
+	if plugin != null and plugin.has_method("get_editor_interface"):
+		root = plugin.get_editor_interface().get_edited_scene_root()
+	_particle_budget_label.text = PBParticleParams.budget_readout(root)
+	var over := PBParticleParams.total_amount(root) > PBParticleParams.MAP_BUDGET
+	_particle_budget_label.add_theme_color_override("font_color",
+		Color(1.0, 0.6, 0.3) if over else Color(0.6, 0.75, 0.85))
+
+## Auto-select on entering the tab WITHOUT the generic fallback: a
+## non-particle texture (checkerboard) as an "emitter" is noise, and an empty
+## palette just stays unselected.
+func _auto_select_particle() -> void:
+	for mat in _project_materials:
+		if mat != null and mat.has_meta("source_texture_path") \
+				and PBAssetCatalog.classify_path(mat.get_meta("source_texture_path")) == "particle":
+			_select_particle_material(mat)
+			return
+
 ## Auto-select on entering a tab: the FIRST palette material whose asset
 ## classification matches the tab (never the default material — a paint
 ## brush of checkerboard or a "sprite" of checkerboard is noise). Falls
@@ -1213,6 +1350,7 @@ func refresh_materials() -> void:
 
 	_collapse_duplicate_materials()
 	_rebuild_material_grid()
+	_refresh_particle_labels()
 
 ## Collapse cross-order duplicates: a texture wrapper scanned BEFORE the
 ## saved material that references the same image must not survive next to
@@ -1315,6 +1453,11 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 								mat.roughness = 0.8
 								mat.vertex_color_use_as_albedo = true
 								mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+								# The palette preview must match the retro bake:
+								# alpha is taken from the texture's pixels
+								# (water/waterfall sheets blend, foliage cuts),
+								# never left opaque until export fixes it.
+								PBAlphaDetect.ensure_transparency(mat)
 								_append_material_once(mat)
 		name_str = d.get_next()
 	d.list_dir_end()
@@ -1328,12 +1471,13 @@ func _rebuild_material_grid() -> void:
 	for mat in _project_materials:
 		if mat == null:
 			continue
-		# Pickers must not cross-populate: sprites, stamps and paint textures
-		# are categorized (PBAssetCatalog) and each mode sees only its own set.
-		# MATERIAL and SHAPE share ONE palette — real materials plus plain
-		# paint textures; billboards, stamps and particles stay in their own
-		# tabs instead of flooding Material & UV.
-		if dock_mode == DockMode.PAINT or dock_mode == DockMode.STAMP or dock_mode == DockMode.SPRITE:
+		# Pickers must not cross-populate: sprites, stamps, particles and paint
+		# textures are categorized (PBAssetCatalog) and each mode sees only its
+		# own set. MATERIAL and SHAPE share ONE palette — real materials plus
+		# plain paint textures; billboards, stamps and particles stay in their
+		# own tabs instead of flooding Material & UV.
+		if dock_mode == DockMode.PAINT or dock_mode == DockMode.STAMP or dock_mode == DockMode.SPRITE \
+				or dock_mode == DockMode.PARTICLE:
 			if not mat.has_meta("source_texture_path"):
 				continue
 			var cat: String = PBAssetCatalog.classify_path(mat.get_meta("source_texture_path"))
@@ -1346,6 +1490,9 @@ func _rebuild_material_grid() -> void:
 						continue
 				DockMode.SPRITE:
 					if cat != "sprite":
+						continue
+				DockMode.PARTICLE:
+					if cat != "particle":
 						continue
 		elif dock_mode == DockMode.MATERIAL or dock_mode == DockMode.SHAPE:
 			if mat.has_meta("source_texture_path") \
@@ -1377,6 +1524,8 @@ func _create_material_card(mat: Material) -> Control:
 			tooltip += "\nLeft-click: Select as active stamp texture"
 		DockMode.SPRITE:
 			tooltip += "\nLeft-click: Select as active billboard sprite"
+		DockMode.PARTICLE:
+			tooltip += "\nLeft-click: Select as the emitter texture"
 
 	var tex := _extract_texture(mat)
 	if tex != null:
@@ -1399,6 +1548,8 @@ func _create_material_card(mat: Material) -> Control:
 				_select_stamp_material(mat)
 			DockMode.SPRITE:
 				_select_sprite_material(mat)
+			DockMode.PARTICLE:
+				_select_particle_material(mat)
 	)
 	# Right-click -> Context Menu
 	btn.gui_input.connect(func(event: InputEvent):
@@ -1425,10 +1576,11 @@ func _create_material_card(mat: Material) -> Control:
 		badge.add_theme_font_size_override("font_size", 14)
 		badge.position = Vector2(4, 2)
 		btn.add_child(badge)
-	# Active selection badge for Paint / Stamp
+	# Active selection badge for Paint / Stamp / Sprite
 	var is_active_paint := (dock_mode == DockMode.PAINT and paint_controller != null and tex != null and paint_controller.paint_texture == tex)
 	var is_active_stamp := (dock_mode == DockMode.STAMP and paint_controller != null and tex != null and paint_controller.stamp_texture == tex)
 	var is_active_sprite := (dock_mode == DockMode.SPRITE and sprite_placer != null and tex != null and sprite_placer.last_texture == tex)
+	var is_active_particle := (dock_mode == DockMode.PARTICLE and particle_placer != null and tex != null and particle_placer.last_texture == tex)
 	if is_active_paint:
 		var pbadge := Label.new()
 		pbadge.text = "🖌"
@@ -1439,12 +1591,16 @@ func _create_material_card(mat: Material) -> Control:
 		sbadge.text = "⎘"
 		sbadge.position = Vector2(48, 2)
 		btn.add_child(sbadge)
-
 	elif is_active_sprite:
 		var spbadge := Label.new()
 		spbadge.text = "🌲"
 		spbadge.position = Vector2(48, 2)
 		btn.add_child(spbadge)
+	elif is_active_particle:
+		var pebadge := Label.new()
+		pebadge.text = "✨"
+		pebadge.position = Vector2(48, 2)
+		btn.add_child(pebadge)
 	return btn
 
 func _show_context_menu(mat: Material, pos: Vector2) -> void:
@@ -1458,9 +1614,10 @@ func _show_context_menu(mat: Material, pos: Vector2) -> void:
 	_context_menu.add_item("Set as Paint Texture", 4)
 	_context_menu.add_item("Set as Stamp Texture", 5)
 	_context_menu.add_item("Set as Sprite Texture", 6)
+	_context_menu.add_item("Set as Particle Texture", 7)
 	_context_menu.add_separator()
 	_context_menu.add_item("Copy Path", 3)
-	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(190, 110)))
+	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(190, 130)))
 
 func _on_context_menu_id_pressed(id: int) -> void:
 	if _context_material == null:
@@ -1486,6 +1643,9 @@ func _on_context_menu_id_pressed(id: int) -> void:
 		6: # Sprite
 			_select_sprite_material(_context_material)
 			_set_dock_mode(DockMode.SPRITE)
+		7: # Particle
+			_select_particle_material(_context_material)
+			_set_dock_mode(DockMode.PARTICLE)
 
 func _on_add_material_pressed() -> void:
 	if _file_dialog == null:
@@ -1508,6 +1668,7 @@ func _on_file_dialog_selected(path: String) -> void:
 			mat.resource_name = path.get_file().get_basename().capitalize()
 			mat.albedo_texture = res
 			mat.roughness = 0.8
+			PBAlphaDetect.ensure_transparency(mat)
 			_project_materials.append(mat)
 			_rebuild_material_grid()
 
@@ -1557,6 +1718,8 @@ func sync_selection() -> void:
 	_chk_flip_v.disabled = not has_selection
 	_color_picker.disabled = not has_selection
 	_btn_reset_tint.disabled = not has_selection
+	_set_slider_enabled(_spin_face_opacity, has_selection)
+	_btn_reset_opacity.disabled = not has_selection
 	_set_slider_enabled(_spin_scroll_u, has_selection)
 	_set_slider_enabled(_spin_scroll_v, has_selection)
 	_btn_scroll_apply.disabled = not has_selection
@@ -1582,8 +1745,10 @@ func sync_selection() -> void:
 		var idxs := first_face.get_distinct_indexes()
 		if not idxs.is_empty() and idxs[0] < data.colors.size():
 			_color_picker.color = data.colors[idxs[0]]
+			_spin_face_opacity.set_value_no_signal(data.colors[idxs[0]].a)
 		else:
 			_color_picker.color = Color.WHITE
+			_spin_face_opacity.set_value_no_signal(1.0)
 	else:
 		_update_scroll_speed_label(Vector2.ZERO, null)
 	if _chk_animate_in_editor != null and plugin != null:
@@ -1811,6 +1976,58 @@ func _on_tint_changed(color: Color) -> void:
 	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 	_commit_mesh_action(mesh, "Change Face Tint", before, after)
 	mesh.update_gizmos()
+
+## Writes the opacity into the selected faces' vertex colors (alpha channel,
+## RGB untouched) and makes sure the result is visible everywhere: the face's
+## material must use vertex colors, and below 100% it must actually blend —
+## an opaque material is flipped to TRANSPARENCY_ALPHA on a detached copy
+## (the PSP renderer only blends surfaces whose texture alpha mode says so;
+## the exporter bakes the vertex alpha through for blended surfaces).
+func _on_face_opacity_changed(value: float) -> void:
+	if _syncing:
+		return
+	var mesh: PBMesh = editor.active_mesh if editor != null else null
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var sel_faces := _get_target_faces(mesh)
+	if sel_faces.is_empty():
+		return
+
+	var data := mesh.pb_mesh_data
+	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+
+	var vc := data.positions.size()
+	if data.colors.size() != vc:
+		data.colors.resize(vc)
+		data.colors.fill(Color.WHITE)
+
+	for face in sel_faces:
+		for idx in face.get_distinct_indexes():
+			if idx >= 0 and idx < vc:
+				var c := data.colors[idx]
+				c.a = clampf(value, 0.0, 1.0)
+				data.colors[idx] = c
+
+	# A face below 100% needs a blending material; prepare a per-assignment
+	# copy once (shared resources are never mutated in place).
+	if value < 0.999:
+		var mat: Material = data.get_face_material(sel_faces[0])
+		if mat is StandardMaterial3D:
+			var sm := mat as StandardMaterial3D
+			var needs_copy := sm.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
+					or not sm.vertex_color_use_as_albedo
+			if needs_copy:
+				var dup: StandardMaterial3D = sm.duplicate()
+				dup.resource_path = ""
+				dup.vertex_color_use_as_albedo = true
+				if dup.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
+					dup.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				data.set_faces_material(sel_faces, dup)
+				if plugin != null and plugin.get("logger") != null:
+					plugin.logger.info("materials", "Face opacity: material set to vertex-alpha blend (%s)" % mat.resource_name)
+
+	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	_commit_mesh_action(mesh, "Change Face Opacity", before, after)
 
 func _get_target_faces(mesh: PBMesh) -> Array[PBFace]:
 	var result: Array[PBFace] = []

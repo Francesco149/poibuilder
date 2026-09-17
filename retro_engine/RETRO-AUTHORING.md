@@ -51,7 +51,9 @@ the **Export** button opens the retro/modern dialog.
    set ambient colour and AO distance in the export dialog. Lighting is baked
    into vertex colours; the runtime cost is zero either way.
 7. **Add life**: scrolling surfaces (material → Scrolling Texture), billboards
-   (`is_billboard`), emitters (a GPUParticles3D), scripted entities via metadata.
+   (`is_billboard`), emitters (**the Particles dock tab** — click a surface to
+   place a PSP-budget-aware emitter preset; fine-tune via the overlay's Edit
+   Emitter Properties; or hand-build a GPUParticles3D), scripted entities via metadata.
 8. **Colliders** per PBMesh: `Off` / `Accurate` (trimesh) / `Ramp` (stairs only).
 9. **Export** (Retro mode) and put the `.pbm` next to the EBOOT, or run it over
    USB. **Then measure on hardware** if you changed anything structural.
@@ -126,8 +128,11 @@ So:
 - The format caps **256 particles per map**; the whole budget measured 0.72 ms
   gpu / 1.14 ms cpu, i.e. about a fifth of a frame. Particle *count* is cheap;
   particle *screen area* is not.
-- Author them as ordinary `GPUParticles3D` nodes (a quad draw pass + a process
-  material); the exporter maps the process material and the quad field by field.
+- Author them with the **Particles dock tab** (placement presets + a live
+  budget readout at 256, count capped at the 64-particle format cap, size
+  capped where a quad starts owning the screen) or as ordinary
+  `GPUParticles3D` nodes (a quad draw pass + a process material); the exporter
+  maps the process material and the quad field by field.
 
 ### 4.4 Draw calls, materials, geometry
 

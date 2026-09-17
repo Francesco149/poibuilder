@@ -766,6 +766,9 @@ static func load_material_or_texture(path: String) -> Material:
 		mat.roughness = 0.8
 		mat.vertex_color_use_as_albedo = true
 		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		# Same rule as the palette scan: a texture with transparent pixels
+		# draws transparent (the retro exporters always did this from pixels).
+		PBAlphaDetect.ensure_transparency(mat)
 		return mat
 
 	return null

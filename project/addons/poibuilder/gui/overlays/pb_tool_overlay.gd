@@ -68,6 +68,7 @@ var _creation_label: Label
 var _extents_row: HBoxContainer
 var _extents_label: Label
 var _btn_edit_shape_props: Button
+var _btn_edit_emitter_props: Button
 var _current_param_defs: Dictionary = {}
 var _grid_section: VBoxContainer
 var _grid_step_label: Label
@@ -84,6 +85,7 @@ var _display_controls: Dictionary = {}
 signal display_setting_changed(setting_name: StringName, value: float)
 signal display_reset_pressed
 signal edit_params_requested()
+signal edit_emitter_requested()
 signal env_preset_requested(preset_name: String)
 var _env_buttons: Dictionary = {}
 
@@ -102,6 +104,16 @@ var pinned: bool = false:
 
 ## True while a params session (modal) is open.
 var params_open: bool = false
+
+## Set by the plugin for sessions whose target is NOT the active PBMesh
+## (the emitter properties modal): the self-heal in refresh() closes a modal
+## whose mesh was deselected, which would kill an emitter's session the
+## moment the overlay refreshes with no PBMesh selected.
+var params_sticky: bool = false
+
+## Whether a GPUParticles3D is in the engine selection (the plugin mirrors
+## this on every selection change; refresh() shows the button from it).
+var emitter_props_available: bool = false
 
 ## Margin from the viewport edges when dragging or clamping.
 const PADDING: float = 6.0
@@ -318,6 +330,16 @@ func _ensure_ui() -> void:
 	_btn_edit_shape_props.visible = false
 	_btn_edit_shape_props.pressed.connect(func(): edit_params_requested.emit())
 	_body.add_child(_btn_edit_shape_props)
+
+	# Emitter properties button (shown while a GPUParticles3D is selected)
+	_btn_edit_emitter_props = Button.new()
+	_btn_edit_emitter_props.name = "EditEmitterProperties"
+	_btn_edit_emitter_props.text = "⚙ Edit Emitter Properties"
+	_btn_edit_emitter_props.tooltip_text = "Edit the selected particle emitter in the overlay (count, size, speed, spread, additive blending, flipbook…)"
+	_btn_edit_emitter_props.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_edit_emitter_props.visible = false
+	_btn_edit_emitter_props.pressed.connect(func(): edit_emitter_requested.emit())
+	_body.add_child(_btn_edit_emitter_props)
 
 	# PARAMS section: the shape-parameter modal.
 	_params_section = VBoxContainer.new()
@@ -1013,7 +1035,7 @@ func _on_editor_changed(_arg = null, _arg2 = null, _arg3 = null, _arg4 = null) -
 func refresh() -> void:
 	_ensure_ui()
 	# Self-heal stale params_open: if params_open is true but the editor deselects with no creation session active
-	if params_open and editor != null and editor.active_mesh == null and not has_creation_hint() and not has_creation_extents():
+	if params_open and not params_sticky and editor != null and editor.active_mesh == null and not has_creation_hint() and not has_creation_extents():
 		close_params()
 		return
 	var has_selection := false
@@ -1059,8 +1081,14 @@ func refresh() -> void:
 	if _btn_edit_shape_props != null:
 		_btn_edit_shape_props.visible = can_edit_props
 
+	# Emitter properties: mirrored from the plugin's selection handler; hidden
+	# while any modal owns the panel.
+	if _btn_edit_emitter_props != null:
+		_btn_edit_emitter_props.visible = emitter_props_available and not params_open and not can_edit_props
+
 	# Content presence: is there anything meaningful to display in the body?
-	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or has_creation_extents() or dragging or has_selection or can_edit_props
+	var has_content := params_open or grid_panel_open or settings_panel_open or has_creation_hint() or has_creation_extents() or dragging or has_selection or can_edit_props \
+			or (_btn_edit_emitter_props != null and _btn_edit_emitter_props.visible)
 
 	# "empty panel is auto collapsed to just the header, not displayed empty."
 	if editor != null and not has_content:

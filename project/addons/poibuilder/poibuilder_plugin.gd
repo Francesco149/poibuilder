@@ -28,6 +28,9 @@ var grid_view: PBGridView = PBGridView.new(grid)
 var shape_creator: PBShapeCreator = PBShapeCreator.new()
 var ngon_drawer: PBNgonDrawer = PBNgonDrawer.new()
 var sprite_placer: PBSpritePlacer = PBSpritePlacer.new()
+## Particle emitter placement (the Particles dock tab): click-to-place
+## GPUParticles3D emitters shaped like the reference PSP demo's.
+var particle_placer: PBParticlePlacer = PBParticlePlacer.new()
 
 ## Trim Walls session: click wall faces, live preview, one committed object.
 var trim_walls_tool: PBTrimWallsTool = PBTrimWallsTool.new()
@@ -92,7 +95,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.147"
+const VERSION := "0.9.148"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -122,6 +125,9 @@ func _enter_tree():
 	sprite_placer.plugin = self
 	sprite_placer.grid = grid
 	sprite_placer.sprite_placed.connect(_on_sprite_placed)
+	particle_placer.plugin = self
+	particle_placer.grid = grid
+	particle_placer.emitter_placed.connect(_on_emitter_placed)
 	paint_controller.plugin = self
 	tool_bridge.logger = logger
 	tool_bridge.on_tool_selected = _on_engine_tool_selected
@@ -219,6 +225,7 @@ func _enter_tree():
 	tool_overlay.params_canceled.connect(_on_params_canceled)
 	tool_overlay.param_changed.connect(_on_param_changed)
 	tool_overlay.edit_params_requested.connect(_on_edit_params_requested)
+	tool_overlay.edit_emitter_requested.connect(_on_edit_emitter_requested)
 	tool_overlay.grid_setting_changed.connect(_on_grid_ui_setting)
 	tool_overlay.grid_reset_pressed.connect(_on_grid_reset)
 	tool_overlay.sync_grid(grid)
@@ -254,6 +261,7 @@ func _enter_tree():
 	material_dock.visible = true
 	material_dock.set_paint_controller(paint_controller)
 	material_dock.sprite_placer = sprite_placer
+	material_dock.particle_placer = particle_placer
 	material_dock.dock_mode_changed.connect(_on_dock_mode_changed)
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
@@ -314,6 +322,8 @@ func _exit_tree():
 
 	if sprite_placer != null and sprite_placer.is_active():
 		sprite_placer.abort()
+	if particle_placer != null and particle_placer.is_active():
+		particle_placer.abort()
 	# Disconnect selection
 	var selection: EditorSelection = get_editor_interface().get_selection()
 	if selection.selection_changed.is_connected(_on_selection_changed):
@@ -514,12 +524,18 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		if event is InputEventMouse:
 			_update_cursor_extents(event.position)
 		return result
+	# Particle emitter placement owns the mouse while active
+	if particle_placer != null and particle_placer.is_active():
+		var result := _particle_placer_input(camera, event)
+		if event is InputEventMouse:
+			_update_cursor_extents(event.position)
+		return result
 	# Texture splatting / Stamp tool owns the mouse while active
 	if paint_controller != null and paint_controller.is_active():
 		return _paint_controller_input(camera, event)
 
-	# If an Edit Params or Bevel session modal is open, handle its modal lifecycle:
-	if _params_session_kind == "edit" or _params_session_kind == "bevel":
+	# If an Edit Params, Bevel or Emitter session modal is open, handle its modal lifecycle:
+	if _params_session_kind == "edit" or _params_session_kind == "bevel" or _params_session_kind == "emitter_edit":
 		if event is InputEventKey and event.pressed:
 			var k := event as InputEventKey
 			if k.keycode == KEY_ESCAPE:
@@ -593,7 +609,8 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 		return AFTER_GUI_INPUT_PASS
 	var editing := editor.is_editing()
 	var sp_active := sprite_placer != null and sprite_placer.is_active()
-	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active() or sp_active
+	var pp_active := particle_placer != null and particle_placer.is_active()
+	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active() or sp_active or pp_active
 	match action:
 		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
 		# nothing PoiBuilder-related active, scene-tree search fields would
@@ -855,6 +872,22 @@ func _on_selection_changed() -> void:
 	# active_mesh becomes null so PoiBuilder mode deactivates cleanly.
 	editor.active_mesh = pb_mesh
 
+	# A selected GPUParticles3D gets the overlay's Edit Emitter Properties
+	# button (the fine-tuning surface for placed emitters). Exactly one.
+	var emitter: GPUParticles3D = null
+	for node in nodes:
+		if node is GPUParticles3D:
+			emitter = node as GPUParticles3D
+			break
+	# Sync the button ONLY on an actual flip: element clicks change the
+	# selection constantly and must not queue a deferred overlay refresh each
+	# time — the panel only needs to react when an emitter actually appears
+	# in (or leaves) the selection.
+	var emitter_present := emitter != null
+	if tool_overlay != null and tool_overlay.emitter_props_available != emitter_present:
+		tool_overlay.emitter_props_available = emitter_present
+		tool_overlay.call_deferred("refresh")
+
 	# While an element mode is active the scene selection stays narrowed to
 	# ONE mesh (see _collapse_selection_to_active): ctrl/shift-adding another
 	# node while editing therefore SWITCHES the edit target instead of
@@ -874,6 +907,8 @@ func _on_selection_changed() -> void:
 		elif _params_session_kind == "bevel" and pb_mesh == _bevel_session_node:
 			pass
 		elif _params_session_kind == "edit" and pb_mesh == _params_edit_node:
+			pass
+		elif _params_session_kind == "emitter_edit" and emitter == _params_edit_emitter:
 			pass
 		elif _params_session_kind == "trim_walls":
 			# A wall-picking session survives selection changes: stray clicks
@@ -1239,8 +1274,9 @@ func _update_editing_context() -> void:
 		var sc_active := shape_creator != null and shape_creator.is_active()
 		var ng_active := ngon_drawer != null and ngon_drawer.is_active()
 		var sp_active := sprite_placer != null and sprite_placer.is_active()
+		var pp_active := particle_placer != null and particle_placer.is_active()
 		var tw_active := trim_walls_tool != null and trim_walls_tool.is_active()
-		var pb_context := mesh_selected or sc_active or ng_active or sp_active or tw_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
+		var pb_context := mesh_selected or sc_active or ng_active or sp_active or pp_active or tw_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001
 		var cam3d: Camera3D = null
 		var vp := get_editor_interface().get_editor_viewport_3d(0)
 		if vp != null:
@@ -1315,7 +1351,8 @@ func show_grid_should_draw() -> bool:
 	var sc_active := shape_creator != null and shape_creator.is_active()
 	var ng_active := ngon_drawer != null and ngon_drawer.is_active()
 	var sp_active := sprite_placer != null and sprite_placer.is_active()
-	return editor.active_mesh != null or sc_active or ng_active or sp_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
+	var pp_active := particle_placer != null and particle_placer.is_active()
+	return editor.active_mesh != null or sc_active or ng_active or sp_active or pp_active or grid.draw_on_grid or absf(grid.origin.y) > 0.0001 or _grid_panel_open
 func _attach_grid_view_scenario() -> void:
 	if grid_view == null:
 		return
@@ -1713,12 +1750,22 @@ func _setup_ideal_dock_layout() -> void:
 		ur_container.current_tab = 0
 
 ## Applies a material to the given faces of a mesh with full undo/redo.
+## The incoming material is PREPARED first (PBApplyPrep): texture transparency
+## is enabled from the texture's pixels (matching what the retro bake does),
+## and the faces' current scroll speed is carried over so re-skinning a
+## scrolling surface keeps it scrolling instead of silently stopping it.
 func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material) -> void:
 	if mesh == null or mesh.pb_mesh_data == null or target_faces.is_empty() or material == null:
 		return
 
+	var previous: Material = mesh.pb_mesh_data.get_face_material(target_faces[0])
+	var prepared := PBApplyPrep.prepare(material, previous)
+	if prepared != material and logger:
+		logger.info("materials", "Applied material prepared: transparency/scroll carried from %s"
+			% (previous.resource_name if previous != null else "(none)"))
+
 	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
-	mesh.pb_mesh_data.set_faces_material(target_faces, material)
+	mesh.pb_mesh_data.set_faces_material(target_faces, prepared)
 	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 
 	var undo := get_undo_redo()
@@ -1729,10 +1776,13 @@ func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material)
 
 	mesh.rebuild()
 	mesh.update_gizmos()
+	# Re-register immediately: a scrolling material must not wait for the next
+	# periodic scan (up to 1.5 s of visible stillness after every change).
+	scan_scrolling_materials()
 	if material_dock != null:
 		material_dock.sync_selection()
 	if logger:
-		var mat_name := material.resource_name if not material.resource_name.is_empty() else material.resource_path.get_file()
+		var mat_name := prepared.resource_name if not prepared.resource_name.is_empty() else prepared.resource_path.get_file()
 		logger.info("materials", "Applied material '%s' to %d face(s) on %s" % [mat_name, target_faces.size(), mesh.name])
 ## Drag lifecycle signal. Hover is cleared when a drag STARTS; per-update
 ## refreshes are deliberately NOT done here — the delivery path
@@ -2482,6 +2532,12 @@ var _bevel_session_edges: Array[PBEdge] = []
 var _bevel_session_last_new_faces: PackedInt32Array = PackedInt32Array()
 var _params_edit_values: Dictionary = {}
 
+## The GPUParticles3D an "emitter_edit" params session is editing, plus the
+## property snapshot (process_material / draw_pass_1 / amount / seed metas)
+## Cancel restores and Apply wraps into one undo action.
+var _params_edit_emitter: GPUParticles3D = null
+var _params_edit_emitter_snapshot: Dictionary = {}
+
 ## A New Shape menu pick ARMS creation: nothing exists yet — the next LMB
 ## drag on any surface (PBMesh face or grid plane) draws the base. Any open
 ## params session is committed first (a create session in the modal applies;
@@ -2872,6 +2928,9 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 	elif sprite_placer != null and sprite_placer.is_active() and sprite_placer.state == PBSpritePlacer.State.ARMED:
 		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
 			best_point = grid.snap_point_masked(best_point, best_normal)
+	elif particle_placer != null and particle_placer.is_active() and particle_placer.state == PBParticlePlacer.State.ARMED:
+		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
+			best_point = grid.snap_point_masked(best_point, best_normal)
 
 	var target_node: PBMesh = best_node
 	var target_face: int = best_face
@@ -3079,6 +3138,13 @@ func _update_cursor_extents(screen_pos: Vector2) -> void:
 		var sp_text := sprite_placer.get_extents_readout()
 		if not sp_text.is_empty():
 			_show_cursor_extents(sp_text, screen_pos)
+			return
+	# Particle placement lift/tune: same treatment.
+	if particle_placer != null and particle_placer.is_active() \
+			and (particle_placer.state == PBParticlePlacer.State.RAISE or particle_placer.state == PBParticlePlacer.State.TUNE):
+		var pp_text := particle_placer.get_extents_readout()
+		if not pp_text.is_empty():
+			_show_cursor_extents(pp_text, screen_pos)
 			return
 	# N-gon height drag: same treatment.
 	if ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
@@ -3495,9 +3561,13 @@ func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
 	match new_mode:
 		PBMaterialDock.DockMode.SPRITE:
 			_start_sprite_tool()
+		PBMaterialDock.DockMode.PARTICLE:
+			_start_particle_tool()
 		PBMaterialDock.DockMode.SHAPE:
 			if sprite_placer != null and sprite_placer.is_active():
 				sprite_placer.abort()
+			if particle_placer != null and particle_placer.is_active():
+				particle_placer.abort()
 			_arm_shape_mode_shape()
 		_:
 			# Material / Paint / Stamp: placement modes disarm (an armed but
@@ -3505,6 +3575,8 @@ func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
 			# progress is allowed to finish).
 			if sprite_placer != null and sprite_placer.is_active():
 				sprite_placer.abort()
+			if particle_placer != null and particle_placer.is_active():
+				particle_placer.abort()
 			if shape_creator.is_active() and shape_creator.state == PBShapeCreator.State.ARMED:
 				shape_creator.reset()
 				_set_creation_hint("")
@@ -3534,7 +3606,8 @@ func _on_shape_palette_selected(shape_id: StringName) -> void:
 ## re-arm — the aborts they trigger arrive while they continue arming.
 func _rearm_shape_mode_after_session_end(reason: String) -> void:
 	if reason in ["a new shape was picked", "switched to sprite tool",
-			"switched to trim walls", "switched to n-gon tool", "plugin exit"]:
+			"switched to particle tool", "switched to trim walls",
+			"switched to n-gon tool", "plugin exit"]:
 		return
 	_arm_shape_mode_shape()
 
@@ -3549,7 +3622,8 @@ func _update_mode_banner() -> void:
 		return
 	match material_dock.dock_mode:
 		PBMaterialDock.DockMode.PAINT, PBMaterialDock.DockMode.STAMP, \
-		PBMaterialDock.DockMode.SPRITE, PBMaterialDock.DockMode.SHAPE:
+		PBMaterialDock.DockMode.SPRITE, PBMaterialDock.DockMode.SHAPE, \
+		PBMaterialDock.DockMode.PARTICLE:
 			mode_banner.set_hint("Select Material & UV tab to exit placement mode")
 		_:
 			mode_banner.set_hint("")
@@ -3564,6 +3638,8 @@ func _start_sprite_tool() -> void:
 		_ngon_drawer_abort("switched to sprite tool")
 	if trim_walls_tool.is_active():
 		_trim_walls_disarm("switched to sprite tool")
+	if particle_placer != null and particle_placer.is_active():
+		particle_placer.abort()
 	_clear_creation_hover()
 	sprite_placer.arm()
 	_update_editing_context()
@@ -3584,6 +3660,46 @@ func _on_sprite_placed(node: PBMesh) -> void:
 	if logger and node != null:
 		logger.info("plugin", "Placed billboard sprite '%s'" % node.name)
 
+## The dock tab is the particle mode — every entry converges here.
+func _start_particle_tool() -> void:
+	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
+		if not trim_walls_tool.is_active():
+			_on_params_applied()
+	if shape_creator.is_active():
+		_creation_abort("switched to particle tool")
+	if ngon_drawer.is_active():
+		_ngon_drawer_abort("switched to particle tool")
+	if trim_walls_tool.is_active():
+		_trim_walls_disarm("switched to particle tool")
+	if sprite_placer != null and sprite_placer.is_active():
+		sprite_placer.abort()
+	_clear_creation_hover()
+	particle_placer.arm()
+	_update_editing_context()
+	_set_creation_hint(particle_placer.phase_hint())
+	_update_mode_banner()
+	if material_dock != null:
+		material_dock._refresh_particle_labels()
+	if logger:
+		logger.info("plugin", "Particle placement armed — click a surface to place an emitter")
+
+func _dock_is_particle_mode() -> bool:
+	return material_dock != null and is_instance_valid(material_dock) \
+		and material_dock.dock_mode == PBMaterialDock.DockMode.PARTICLE
+
+func _on_emitter_placed(node: GPUParticles3D) -> void:
+	_clear_creation_hover()
+	_update_editing_context()
+	if _dock_is_particle_mode():
+		# Always-armed mode: the next click places the next emitter.
+		particle_placer.arm()
+		_set_creation_hint(particle_placer.phase_hint())
+		material_dock._refresh_particle_labels()
+	else:
+		_set_creation_hint("")
+	if logger and node != null:
+		logger.info("plugin", "Placed particle emitter '%s' (%d particles)" % [node.name, node.amount])
+
 # ==============================================================================
 # Trim Walls — click walls, live preview, one committed object
 # ==============================================================================
@@ -3600,6 +3716,8 @@ func _on_trim_walls_requested() -> void:
 		_ngon_drawer_abort("switched to trim walls")
 	if sprite_placer != null and sprite_placer.is_active():
 		sprite_placer.disarm()
+	if particle_placer != null and particle_placer.is_active():
+		particle_placer.abort()
 	_clear_creation_hover()
 	trim_walls_tool.arm()
 	_trim_walls_ensure_preview()
@@ -3929,6 +4047,44 @@ func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
 			_update_editing_context()
 	return res
 
+## The Particles tab's viewport path: the same surface-pick + normal-flip
+## rules as the sprite placer (an inverted normal would author an emitter
+## whose preview lift drags it INTO the surface), phase hints, and the
+## always-armed re-arm after each placement.
+func _particle_placer_input(camera: Camera3D, event: InputEvent) -> int:
+	if particle_placer == null or not particle_placer.is_active():
+		return AFTER_GUI_INPUT_PASS
+
+	var host := _get_viewport_host()
+	var surface_hit := {}
+	if event is InputEventMouse:
+		surface_hit = _pick_creation_surface(camera, event.position)
+		if not surface_hit.is_empty() and surface_hit.has("normal"):
+			var view_forward: Vector3 = -camera.global_transform.basis.z
+			if view_forward.dot(surface_hit["normal"]) > 0.0:
+				surface_hit["normal"] = -surface_hit["normal"]
+		if particle_placer.state == PBParticlePlacer.State.ARMED:
+			if not surface_hit.is_empty():
+				_set_creation_hint(particle_placer.phase_hint())
+				_update_creation_hover(camera, event.position)
+			else:
+				_clear_creation_hover()
+		else:
+			_clear_creation_hover()
+			_set_creation_hint(particle_placer.phase_hint())
+
+	var res := particle_placer.handle_input(camera, event, surface_hit, host)
+	if not particle_placer.is_active():
+		_clear_creation_hover()
+		if _dock_is_particle_mode():
+			particle_placer.arm()
+			_set_creation_hint(particle_placer.phase_hint())
+			_update_editing_context()
+		else:
+			_set_creation_hint("")
+			_update_editing_context()
+	return res
+
 
 # ==============================================================================
 # Texture Splatting & Stamp Viewport Input
@@ -4057,6 +4213,13 @@ func _on_param_changed(param_name: String, value: float) -> void:
 		elif param_name == "segments":
 			op_bevel_segments = clampi(int(round(value)), 1, 8)
 		_update_bevel_preview()
+	elif _params_session_kind == "emitter_edit" and _params_edit_emitter != null \
+			and is_instance_valid(_params_edit_emitter):
+		_params_edit_values[param_name] = value
+		# Live preview: rebuild the emitter from the merged values on every
+		# spinner tick; Apply wraps the whole session into ONE undo action.
+		PBParticleParams.apply_values(_params_edit_emitter, _params_edit_values,
+			_emitter_texture(_params_edit_emitter))
 	elif _params_session_kind == "edit" and _params_edit_node != null \
 			and is_instance_valid(_params_edit_node):
 		_params_edit_values[param_name] = value
@@ -4111,6 +4274,8 @@ func _on_params_applied() -> void:
 		_trim_walls_commit()
 	elif _params_session_kind == "edit":
 		_commit_edit_params()
+	elif _params_session_kind == "emitter_edit":
+		_commit_edit_emitter_params()
 	elif _params_session_kind == "bevel":
 		_commit_bevel_session()
 	_params_dispatch_underway = false
@@ -4145,6 +4310,13 @@ func _on_params_canceled() -> void:
 		_params_edit_values = {}
 		if logger:
 			logger.info("plugin", "Shape parameters edit cancelled")
+	elif _params_session_kind == "emitter_edit":
+		if _params_edit_emitter != null and is_instance_valid(_params_edit_emitter) \
+				and not _params_edit_emitter_snapshot.is_empty():
+			_restore_emitter_snapshot(_params_edit_emitter, _params_edit_emitter_snapshot)
+		_close_emitter_session()
+		if logger:
+			logger.info("plugin", "Emitter parameters edit cancelled")
 	elif _params_session_kind == "trim_walls":
 		_trim_walls_disarm("cancelled")
 	elif _params_session_kind == "bevel":
@@ -4301,6 +4473,97 @@ func _on_edit_params_requested() -> void:
 
 	tool_overlay.open_params("%s Parameters" % String(data.shape_id).capitalize(),
 		PBShapeParams.get_param_defs(data.shape_id), _params_edit_values)
+## Edit Emitter Properties on a selected GPUParticles3D: live rebuilds via
+## PBParticleParams (the same builders the placement tool uses, so a
+## hand-tuned emitter stays export-identical); Apply commits one undo action,
+## Cancel restores the pre-session properties. PBMesh shapes and emitters can
+## share the modal machinery but never the session state.
+func _on_edit_emitter_requested() -> void:
+	if _params_session_kind != "":
+		return
+	var emitter := _params_edit_emitter if _params_edit_emitter != null and is_instance_valid(_params_edit_emitter) else _selected_emitter()
+	if emitter == null:
+		return
+	_params_session_kind = "emitter_edit"
+	_params_edit_emitter = emitter
+	_params_edit_emitter_snapshot = _emitter_snapshot(emitter)
+	_params_edit_values = PBParticleParams.values_from_node(emitter)
+
+	tool_overlay.params_sticky = true
+	tool_overlay.open_params("Emitter Parameters",
+		PBParticleParams.get_param_defs(), _params_edit_values)
+	if logger:
+		logger.info("plugin", "Emitter properties session opened on %s" % emitter.name)
+
+func _selected_emitter() -> GPUParticles3D:
+	var selection: EditorSelection = get_editor_interface().get_selection()
+	if selection == null:
+		return null
+	for node in selection.get_selected_nodes():
+		if node is GPUParticles3D:
+			return node as GPUParticles3D
+	return null
+
+func _emitter_snapshot(emitter: GPUParticles3D) -> Dictionary:
+	return {
+		"process_material": emitter.process_material,
+		"draw_pass_1": emitter.draw_pass_1,
+		"amount": emitter.amount,
+		"seed": emitter.seed,
+		"use_fixed_seed": emitter.use_fixed_seed,
+		"poi_seed": emitter.get_meta("poi_seed") if emitter.has_meta("poi_seed") else null,
+		"poi_y_locked": emitter.get_meta("poi_y_locked") if emitter.has_meta("poi_y_locked") else null,
+	}
+
+func _restore_emitter_snapshot(emitter: GPUParticles3D, snap: Dictionary) -> void:
+	emitter.process_material = snap.get("process_material")
+	emitter.draw_pass_1 = snap.get("draw_pass_1")
+	emitter.amount = int(snap.get("amount", 1))
+	emitter.seed = int(snap.get("seed", 0))
+	emitter.use_fixed_seed = bool(snap.get("use_fixed_seed", false))
+	if snap.get("poi_seed", null) != null:
+		emitter.set_meta("poi_seed", snap["poi_seed"])
+	else:
+		emitter.remove_meta("poi_seed")
+	if snap.get("poi_y_locked", null) != null:
+		emitter.set_meta("poi_y_locked", snap["poi_y_locked"])
+	else:
+		emitter.remove_meta("poi_y_locked")
+
+## The emitter's current albedo texture (draw-pass material), preserved
+## across property edits.
+static func _emitter_texture(emitter: GPUParticles3D) -> Texture2D:
+	if emitter == null:
+		return null
+	var draw_mat: Material = emitter.material_override
+	if draw_mat == null and emitter.draw_pass_1 != null and emitter.draw_pass_1.get_surface_count() > 0:
+		draw_mat = emitter.draw_pass_1.surface_get_material(0)
+	if draw_mat is StandardMaterial3D:
+		return (draw_mat as StandardMaterial3D).albedo_texture
+	return null
+
+func _commit_edit_emitter_params() -> void:
+	var node := _params_edit_emitter
+	if node == null or not is_instance_valid(node):
+		return
+	var snap := _params_edit_emitter_snapshot
+	var undo := get_undo_redo()
+	undo.create_action("Edit Emitter Params", UndoRedo.MERGE_DISABLE, node)
+	undo.add_do_method(self, "_restore_emitter_snapshot", node, _emitter_snapshot(node))
+	undo.add_undo_method(self, "_restore_emitter_snapshot", node, snap)
+	undo.commit_action()
+	_close_emitter_session()
+	if logger:
+		logger.info("plugin", "Emitter parameters committed")
+
+func _close_emitter_session() -> void:
+	tool_overlay.params_sticky = false
+	tool_overlay.close_params()
+	_params_session_kind = ""
+	_params_edit_emitter = null
+	_params_edit_emitter_snapshot = {}
+	_params_edit_values = {}
+
 func _commit_edit_params() -> void:
 	var node := _params_edit_node
 	if node == null or not is_instance_valid(node) or node.pb_mesh_data == null:

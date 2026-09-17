@@ -497,6 +497,12 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 		var surf_normals := PackedVector3Array()
 		var surf_uvs := PackedVector2Array()
 		var surf_indices := PackedInt32Array()
+		# Per-vertex tint (from the Face Tint / opacity controls), multiplied
+		# into the baked light AFTER the bake — the bake overwrites
+		# ARRAY_COLOR wholesale, and without this both the tint RGB and — the
+		# point of the opacity slider — the tint ALPHA never reach the device
+		# vertex colours.
+		var surf_tints: Array[Color] = []
 
 		for frag: PBFaceSubdivider.TileFragment in group_frags:
 			var base_idx := surf_positions.size()
@@ -505,6 +511,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 				surf_positions.append(frag.positions[i])
 				surf_normals.append(frag.normals[i])
 				surf_uvs.append(frag.uvs[i])
+				surf_tints.append(_face_tint(mesh_data, frag.source_face))
 
 			for idx in frag.indices:
 				surf_indices.append(base_idx + idx)
@@ -514,6 +521,11 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 			node_xf, lights, grid, settings.bake_lighting, settings.bake_shadows,
 			settings.bake_ao, settings.ao_samples, settings.ao_distance,
 			settings.ao_intensity, settings.ambient_color)
+
+		for ci in range(surf_colors.size()):
+			var tint: Color = surf_tints[ci] if ci < surf_tints.size() else Color.WHITE
+			if tint != Color.WHITE:
+				surf_colors[ci] = surf_colors[ci] * tint
 
 		var arrays: Array = []
 		arrays.resize(Mesh.ARRAY_MAX)
@@ -536,6 +548,22 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
 		_export_collider_mesh(pb, parent)
+
+## A face's authored tint: the average of the vertex colors on its corners
+## (white when the mesh carries none). The opacity slider writes the ALPHA
+## channel of exactly these colors.
+static func _face_tint(mesh_data: PBMeshData, face: PBFace) -> Color:
+	if mesh_data == null or face == null or mesh_data.colors.is_empty():
+		return Color.WHITE
+	var acc := Color(0.0, 0.0, 0.0, 0.0)
+	var n := 0
+	for idx in face.get_distinct_indexes():
+		if idx >= 0 and idx < mesh_data.colors.size():
+			acc += mesh_data.colors[idx]
+			n += 1
+	if n == 0:
+		return Color.WHITE
+	return acc / float(n)
 
 ## Exports a PBMesh in Modern mode with metadata/extras and decals.
 static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3D],
@@ -565,6 +593,13 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 			var cols := PBLightBaker.bake_vertex_colors(pos, norm, node_xf, lights, grid,
 				true, settings.bake_shadows, settings.bake_ao, settings.ao_samples,
 				settings.ao_distance, settings.ao_intensity, settings.ambient_color)
+			# The authored tint (incl. opacity alpha) survives the bake: it
+			# was in ARRAY_COLOR before the bake replaced it.
+			var authored: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+			if not authored.is_empty():
+				for ci in range(cols.size()):
+					if ci < authored.size() and authored[ci] != Color.WHITE:
+						cols[ci] = cols[ci] * authored[ci]
 			arrays[Mesh.ARRAY_COLOR] = cols
 			new_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			new_am.surface_set_material(s, am.surface_get_material(s))
@@ -691,18 +726,40 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 		var am := ArrayMesh.new()
 		for s in range(src_mesh.get_surface_count()):
 			var arrays := src_mesh.surface_get_arrays(s)
+			var v_count := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+			# Vertex colours are always emitted: lit billboards carry the
+			# light bake, unlit ones stay white — and BOTH are multiplied by
+			# the material's albedo colour (a sprite's tint lives there, not
+			# in per-face vertex colors). Alpha included, so a billboard
+			# dimmed with the opacity controls fades on the device too.
+			var cols := PackedColorArray()
 			if settings.bake_lighting:
-				var cols := PBLightBaker.bake_billboard_colors(mi, lights, grid, true,
+				cols = PBLightBaker.bake_billboard_colors(mi, lights, grid, true,
 					settings.bake_shadows, settings.ambient_color)
-				var v_count := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
-				if cols.size() != v_count:
-					var new_cols := PackedColorArray()
-					new_cols.resize(v_count)
-					var fallback_col: Color = cols[0] if not cols.is_empty() else Color.WHITE
-					for ci in range(v_count):
-						new_cols[ci] = cols[ci] if ci < cols.size() else fallback_col
-					cols = new_cols
-				arrays[Mesh.ARRAY_COLOR] = cols
+			if cols.size() != v_count:
+				var new_cols := PackedColorArray()
+				new_cols.resize(v_count)
+				var fallback_col: Color = cols[0] if not cols.is_empty() else Color.WHITE
+				for ci in range(v_count):
+					new_cols[ci] = cols[ci] if ci < cols.size() else fallback_col
+				cols = new_cols
+			var bb_mat: Material = mi.material_override
+			if bb_mat == null and src_mesh is ArrayMesh:
+				bb_mat = (src_mesh as ArrayMesh).surface_get_material(s)
+			if bb_mat == null and src_mesh is PrimitiveMesh:
+				# A quad/primitive draw pass carries its material as the mesh's
+				# own `material` property.
+				bb_mat = (src_mesh as PrimitiveMesh).material
+			if bb_mat == null and mi is PBMesh:
+				var bb_pb := mi as PBMesh
+				if bb_pb.pb_mesh_data != null and not bb_pb.pb_mesh_data.faces.is_empty():
+					bb_mat = bb_pb.pb_mesh_data.get_face_material(bb_pb.pb_mesh_data.faces[0])
+			if bb_mat is StandardMaterial3D:
+				var bb_tint: Color = (bb_mat as StandardMaterial3D).albedo_color
+				if bb_tint != Color.WHITE:
+					for ci in range(cols.size()):
+						cols[ci] = cols[ci] * bb_tint
+			arrays[Mesh.ARRAY_COLOR] = cols
 
 			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			var mat := mi.material_override
