@@ -1211,7 +1211,37 @@ func refresh_materials() -> void:
 	# 4. Scan the rest of the project for materials and texture images
 	_scan_dir_for_materials("res://")
 
+	_collapse_duplicate_materials()
 	_rebuild_material_grid()
+
+## Collapse cross-order duplicates: a texture wrapper scanned BEFORE the
+## saved material that references the same image must not survive next to
+## it. Saved materials (.tres) always win over wrappers; among wrappers,
+## the first occurrence wins. (Key registration during the scan is
+## order-dependent — the user-visible duplicate was exactly this.)
+func _collapse_duplicate_materials() -> void:
+	var saved_keys := {}
+	for m in _project_materials:
+		if m != null and not m.resource_path.is_empty():
+			for key in _material_keys(m):
+				saved_keys[key] = true
+	var kept: Array[Material] = []
+	var wrapper_keys := {}
+	for m in _project_materials:
+		if m == null:
+			continue
+		if m.resource_path.is_empty():
+			var is_dup := false
+			for key in _material_keys(m):
+				if saved_keys.has(key) or wrapper_keys.has(key):
+					is_dup = true
+					break
+			if is_dup:
+				continue
+			for key in _material_keys(m):
+				wrapper_keys[key] = true
+		kept.append(m)
+	_project_materials = kept
 
 var _scanned_texture_paths: Dictionary = {}
 var _seen_material_keys: Dictionary = {}

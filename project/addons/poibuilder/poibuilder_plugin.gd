@@ -92,7 +92,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.146"
+const VERSION := "0.9.147"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -2902,8 +2902,17 @@ func _clear_creation_hover() -> void:
 		prev_node.update_gizmos()
 
 func _creation_end_base() -> void:
+	# end_base() rejects by resetting the creator — which NULLS preview_node.
+	# Capture the node FIRST and tear it down ourselves, or an undersized /
+	# click-only release leaves the BASE-phase preview (a meshless PBMesh with
+	# a live gizmo) in the scene forever: the "errored Shape_Cube + persistent
+	# vertex overlay" report.
+	var abandoned := shape_creator.preview_node
 	if not shape_creator.end_base():
-		# A stray click (no real drag) — ProBuilder creates nothing either.
+		if abandoned != null and is_instance_valid(abandoned):
+			if abandoned.get_parent() != null:
+				abandoned.get_parent().remove_child(abandoned)
+			abandoned.queue_free()
 		_creation_abort("base drag too small")
 		return
 	if PBShapeParams.commits_on_base_release(shape_creator.shape_id):

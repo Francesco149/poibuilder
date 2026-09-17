@@ -413,6 +413,43 @@ func test_material_dock_modes_and_sections() -> void:
 	assert_eq(dock.dock_mode, PBMaterialDock.DockMode.MATERIAL)
 	assert_eq(ctrl.mode, PBPaintController.Mode.NONE)
 
+func test_palette_collapse_is_order_independent() -> void:
+	# A texture wrapper scanned BEFORE the saved material referencing the same
+	# image must collapse into it — the user-visible duplicate was the default
+	# material's checkerboard appearing twice (once as the .tres, once as the
+	# bundled-scan wrapper).
+	var dock := PBMaterialDock.new()
+	add_child_autofree(dock)
+
+	var checker: Texture2D = load("res://addons/poibuilder/materials/textures/checkerboard_2x2.png")
+	var wrapper := StandardMaterial3D.new()
+	wrapper.set_meta("source_texture_path", "res://addons/poibuilder/materials/textures/checkerboard_2x2.png")
+	wrapper.albedo_texture = checker
+	var saved: Material = load("res://addons/poibuilder/materials/pb_default_material.tres")
+	assert_not_null(saved)
+	assert_not_null(checker)
+
+	# Wrapper FIRST (the scan-vs-setting order the bug needed):
+	dock._project_materials = [wrapper, saved]
+	dock._collapse_duplicate_materials()
+	assert_eq(dock._project_materials.size(), 1,
+		"Wrapper + saved material of the same texture collapse to one entry")
+	assert_eq(dock._project_materials[0].resource_path,
+		"res://addons/poibuilder/materials/pb_default_material.tres",
+		"The saved .tres wins over the wrapper")
+
+	# And the saved-first order stays a single entry too:
+	dock._project_materials = [saved, wrapper]
+	dock._collapse_duplicate_materials()
+	assert_eq(dock._project_materials.size(), 1,
+		"Collapse works in the saved-first order as well")
+
+	# Two saved materials never collapse against each other:
+	dock._project_materials = [saved, saved]
+	dock._collapse_duplicate_materials()
+	assert_eq(dock._project_materials.size(), 2,
+		"Saved materials are never dropped by the collapse")
+
 func test_placeholder_textures_discovered_in_materials() -> void:
 	var dock := PBMaterialDock.new()
 	add_child_autofree(dock)

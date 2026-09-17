@@ -341,6 +341,40 @@ func _run() -> void:
 				_fail("CREATE: creator still active after confirm")
 				plugin._creation_abort("test cleanup")
 
+		# ── Test 2a: a CLICK WITHOUT A DRAG must leave NOTHING ───────────────────
+		# end_base() rejects the undersized base by resetting the creator —
+		# which nulls preview_node — and the old abort then skipped the node
+		# teardown: every stray click leaked a meshless Shape_Cube (the
+		# editor's warning icon) WITH its base-outline gizmo still drawing.
+		plugin._on_shape_requested(&"cube")
+		await _frames(10)
+		if not plugin.shape_creator.is_active():
+			_fail("CLICK-ONLY: creator not armed")
+		else:
+			var spot := _window_pos(vp, host, Vector3(2.4, 0.5001, 1.8))
+			_mouse_motion(spot)
+			await _frames(3)
+			_mouse_button(spot, true)
+			await _frames(5)
+			_mouse_button(spot, false)
+			await _frames(10)
+
+			if plugin.shape_creator.is_active():
+				_fail("CLICK-ONLY: creator still active after a bare click")
+			if plugin.shape_creator.preview_node != null:
+				_fail("CLICK-ONLY: preview_node reference survived the abort")
+			if plugin.gizmo_plugin.creation_hover_node != null \
+					or plugin.gizmo_plugin.creation_hover_face != -1:
+				_fail("CLICK-ONLY: creation hover overlay leaked")
+			var orphans := 0
+			for child in root.get_children():
+				if child is PBMesh and (child as PBMesh).mesh == null:
+					orphans += 1
+			if orphans > 0:
+				_fail("CLICK-ONLY: %d meshless PBMesh node(s) leaked by the aborted click" % orphans)
+			else:
+				_pass("CLICK-ONLY: a bare click leaves no node and no overlay behind")
+
 	# ── Test 2b: the PLANE — a base drag, then a normal OFFSET ───────────────
 	# The plane's third dimension is a STAND-OFF from the surface, not a size:
 	# it is how a waterfall sheet or a sign hangs clear of the wall it was
