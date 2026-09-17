@@ -56,7 +56,8 @@ void* psp_dlist(void) { return s_dlist; }
 int psp_dlist_skip_mask = 0;
 unsigned int psp_dlist_inline_bytes = 0;
 int psp_dlist_emitter_dbg = 0;   /* 1=sprites, 2=no alpha fade, 3=untextured,
-                                    4=alpha test always, 5=built-in glow tex */
+                                    4=alpha test always, 5=built-in glow tex,
+                                    6=depth test off for emitters */
 #endif
 
 uint64_t psp_now_us(void) {
@@ -1064,7 +1065,15 @@ static void emitter_draw_one(PbmMap* map, const RenderCfg* cfg, const EmitView* 
      * mesh's detail policy would sample it at whatever level that mesh wanted. */
     apply_mesh_lod(cfg, map, NULL);
     sceGuDisable(GU_CULL_FACE);
-    sceGuDepthMask(GU_FALSE);
+    /* Translucent quads must never write depth: a blended emitter drawn
+     * before a farther one (smoke in front of fire) otherwise rejects the
+     * farther emitter's fragments inside its quads - a "box" clipped out of
+     * the fire. NOTE the GE's polarity: GU_TRUE masks writes OFF (the
+     * opposite of GL's glDepthMask); GU_FALSE means depth writes happen. */
+    sceGuDepthMask(GU_TRUE);
+#ifdef HEADLESS_BENCHMARK
+    if (psp_dlist_emitter_dbg == 6) sceGuDisable(GU_DEPTH_TEST);
+#endif
     if (additive) {
         /* dst = src * srcAlpha + dst * 1. The GE has no GU_ONE factor; a fixed
          * blend colour of 1.0 is the idiomatic equivalent. */
