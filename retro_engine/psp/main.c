@@ -385,6 +385,27 @@ int main(int argc, char** argv) {
     RenderStats stats = { 0, 0, 0 };
 
     int is_benchmark = HEADLESS_BENCHMARK;
+    /* Headless capture pose override: poi_cam.txt (cwd, host0:) carries
+     * "cx cy cz yaw pitch" and freezes the benchmark camera there, so a
+     * capture series frames a chosen feature (e.g. an emitter) instead of the
+     * whole-map orbit, whose radius is 0.75x the map diagonal. */
+    float cam_override[5];
+    int has_cam_override = 0;
+    {
+        FILE* cf = fopen("poi_cam.txt", "rb");
+        if (!cf) cf = fopen("host0:/poi_cam.txt", "rb");
+        if (cf) {
+            if (fscanf(cf, "%f %f %f %f %f", &cam_override[0], &cam_override[1],
+                       &cam_override[2], &cam_override[3], &cam_override[4]) == 5)
+                has_cam_override = 1;
+            fclose(cf);
+        }
+        if (has_cam_override)
+            printf("[PSP] poi_cam.txt: frozen camera %.2f %.2f %.2f yaw %.3f pitch %.3f\n",
+                   cam_override[0], cam_override[1], cam_override[2],
+                   cam_override[3], cam_override[4]);
+    }
+
     /* Benchmark: capture the orbit at SCROLL_PROOF_FRAME and again
      * SCROLL_PROOF_FRAMES later with the camera frozen (see the render loop).
      * 20 frames at 60 Hz is a third of a second: at the showcase waterfall's
@@ -392,6 +413,10 @@ int main(int argc, char** argv) {
      * interpolation or camera noise could explain. */
     #define SCROLL_PROOF_FRAME   60
     #define SCROLL_PROOF_FRAMES  20
+    /* With a frozen camera override, also save a capture every 12th frame from
+     * SCROLL_PROOF_FRAME through one and a half seconds later: a time series
+     * long enough to cover a 1.2 s particle loop end to end. */
+    #define CAPTURE_SERIES_END (SCROLL_PROOF_FRAME + 90)
     float orbit_angle = 0.5f;
 
     uint64_t last_tick = psp_now_us();
@@ -508,6 +533,9 @@ int main(int argc, char** argv) {
 
             if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
             if (cam_pitch < -1.45f) cam_pitch = -1.45f;
+        } else if (has_cam_override) {
+            cam_x = cam_override[0]; cam_y = cam_override[1]; cam_z = cam_override[2];
+            cam_yaw = cam_override[3]; cam_pitch = cam_override[4];
         } else if (!(is_benchmark && frame_count >= SCROLL_PROOF_FRAME)) {
             /* The benchmark freezes its orbit from SCROLL_PROOF_FRAME on, so
              * the two captures taken after it are the SAME camera: the only
@@ -523,17 +551,49 @@ int main(int argc, char** argv) {
 
         /* ── Frame: emit, finish, sync (timed), swap ─────────────────── */
         uint64_t t_emit0 = psp_now_us();
+#if HEADLESS_BENCHMARK
+        {
+            extern int g_dbg_frame;
+            extern float g_dbg_time;
+            g_dbg_frame = frame_count;
+            g_dbg_time = patrol_time;
+        }
+#endif
         sceGuStart(GU_DIRECT, psp_dlist());
         psp_render_scene(map, &cfg, cam_x, cam_y, cam_z, cam_yaw, cam_pitch,
                          patrol_time, &stats);
 
         snprintf(hud_extra, sizeof(hud_extra), "cpu %5.2f gpu %5.2f ms | pos %.1f %.1f %.1f",
                  last_cpu_ms, last_gpu_ms, cam_x, cam_y, cam_z);
+#if HEADLESS_BENCHMARK
+        {
+            extern int psp_dlist_skip_mask;
+            if (!(psp_dlist_skip_mask & 16))
+#endif
         psp_draw_hud(map, &stats, fps, display_mode, hud_extra,
                      "Home: exit | L+R: dump trace", hud_input, pad_hold, hud_compact);
+#if HEADLESS_BENCHMARK
+        }
+#endif
 
+#if HEADLESS_BENCHMARK
+        int dlist_words = sceGuFinish();
+        uint64_t t_emit1 = psp_now_us();
+        {
+            extern int g_dbg_frame;
+            extern unsigned int psp_dlist_guard_overrun(void);
+            extern unsigned int psp_dlist_inline_bytes;
+            extern int psp_dlist_skip_mask;
+            if (g_dbg_frame >= 58 && g_dbg_frame <= 70 && (g_dbg_frame % 2) == 0)
+                printf("[DLIST] frame=%d words=%d overrun=%u inline=%u skip=%d (capacity %d)\n",
+                       g_dbg_frame, dlist_words, psp_dlist_guard_overrun(),
+                       psp_dlist_inline_bytes, psp_dlist_skip_mask, 32768);
+            psp_dlist_inline_bytes = 0;
+        }
+#else
         sceGuFinish();
         uint64_t t_emit1 = psp_now_us();
+#endif
         sceGuSync(0, 0);
         uint64_t t_sync1 = psp_now_us();
 
@@ -569,7 +629,15 @@ int main(int argc, char** argv) {
                        cam_x, cam_y, cam_z, cam_yaw, cam_pitch, patrol_time);
                 save_tga("screenshot_psp_scroll.tga", (void*)(0x04000000), SCR_WIDTH, SCR_HEIGHT, BUF_WIDTH);
             }
-            if (frame_count >= 120) {
+            if (has_cam_override && frame_count >= SCROLL_PROOF_FRAME &&
+                frame_count <= CAPTURE_SERIES_END &&
+                ((frame_count - SCROLL_PROOF_FRAME) % 12) == 0) {
+                char cap_name[64];
+                snprintf(cap_name, sizeof(cap_name), "screenshot_psp_f%03d.tga", frame_count);
+                printf("[CAP] frame=%d t=%.4f\n", frame_count, patrol_time);
+                save_tga(cap_name, (void*)(0x04000000), SCR_WIDTH, SCR_HEIGHT, BUF_WIDTH);
+            }
+            if (frame_count >= (has_cam_override ? CAPTURE_SERIES_END + 6 : 120)) {
                 printf("[PSP] benchmark done: %d frames, ~%.1f fps\n", frame_count, fps);
                 trace_dump();
                 running = 0;

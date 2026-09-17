@@ -30,9 +30,34 @@
  * 128 KB is ~40x headroom — and unlike the 1 MB this used to be, it leaves the
  * module small enough for PSPLink to load into the PSP's kernel partition. */
 #define PSP_DLIST_WORDS (32768)
+#ifdef HEADLESS_BENCHMARK
+/* Canary slab behind the list, part of the SAME array so it is guaranteed to
+ * sit immediately after it: psp_render_scene stamps it at frame start and
+ * measures how much of it the frame's inline vertex allocations overran. */
+#define PSP_DLIST_GUARD_WORDS 16384
+#define PSP_DLIST_AREA_WORDS (PSP_DLIST_WORDS + PSP_DLIST_GUARD_WORDS)
+static unsigned int __attribute__((aligned(16))) s_dlist[PSP_DLIST_AREA_WORDS];
+unsigned int psp_dlist_guard_overrun(void) {
+    unsigned int n = 0;
+    while (n < PSP_DLIST_GUARD_WORDS && s_dlist[PSP_DLIST_WORDS + n] == 0xA5A5A5A5u) ++n;
+    return n;   /* words of guard slab overwritten by list overrun */
+}
+#else
 static unsigned int __attribute__((aligned(16))) s_dlist[PSP_DLIST_WORDS];
+#endif
 
 void* psp_dlist(void) { return s_dlist; }
+
+/* Headless-only instrumentation (poi_render.txt "skip=", "edbg="): attributing
+ * display-list usage to a frame stage and forcing emitter-draw variants.
+ * skip: 1 = pass-1 meshes, 2 = entity, 4 = pass-2 meshes, 8 = particle
+ * emitters, 16 = HUD text. */
+#ifdef HEADLESS_BENCHMARK
+int psp_dlist_skip_mask = 0;
+unsigned int psp_dlist_inline_bytes = 0;
+int psp_dlist_emitter_dbg = 0;   /* 1=sprites, 2=no alpha fade, 3=untextured,
+                                    4=alpha test always, 5=built-in glow tex */
+#endif
 
 uint64_t psp_now_us(void) {
     /* sceKernelGetSystemTimeWide is the kernel's microsecond counter: cheaper
@@ -215,6 +240,9 @@ static void draw_text_raw(float start_x, float start_y, uint32_t color, const ch
 
     PspVertex* v = (PspVertex*)sceGuGetMemory(len * 2 * sizeof(PspVertex));
     if (!v) return;
+#ifdef HEADLESS_BENCHMARK
+    psp_dlist_inline_bytes += (unsigned)(len * 2 * sizeof(PspVertex));
+#endif
 
     sceGuEnable(GU_TEXTURE_2D);
     sceGuTexMode(GU_PSM_5551, 0, 0, 0);
@@ -379,6 +407,10 @@ void psp_render_overrides(RenderCfg* cfg) {
         else if (!strcmp(k, "depth_write")) cfg->depth_write = atoi(v);
         else if (!strcmp(k, "skip_mesh")) psp_render_skip_mesh(v);
         else if (!strcmp(k, "detail_mesh")) psp_render_detail_match(v);
+#ifdef HEADLESS_BENCHMARK
+        else if (!strcmp(k, "skip")) psp_dlist_skip_mask = atoi(v);
+        else if (!strcmp(k, "edbg")) psp_dlist_emitter_dbg = atoi(v);
+#endif
         else if (!strcmp(k, "detail_bias")) cfg->detail_bias = (float)atof(v);
         else if (!strcmp(k, "detail_const")) cfg->detail_const = atoi(v);
         else if (!strcmp(k, "level_mode"))
@@ -772,6 +804,13 @@ typedef struct {
     uint32_t color;
 } PbmEmitItem;
 
+/* Headless-debug hook (test build only): main publishes the frame counter and
+ * scene clock here each frame; the DLIST instrumentation in main.c reports it. */
+#ifdef HEADLESS_BENCHMARK
+int g_dbg_frame = -1;
+float g_dbg_time = 0.0f;
+#endif
+
 static PbmEmitItem s_items[PBM_EMIT_MAX_PER_EMITTER];
 static int s_order[PBM_EMIT_MAX_PER_EMITTER];
 
@@ -994,6 +1033,12 @@ static void emitter_bind(PbmMap* map, const RenderCfg* cfg, const PbmEmitter* e,
             sceGuTexFilter(GU_LINEAR, GU_LINEAR);
         }
         sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+        /* An animated-UV mesh (the water plane) leaves its scroll in the GE's
+         * texture-offset registers; a particle quad sampling [0,1] with that
+         * offset still set reads a sliding band of its own texture instead of
+         * all of it -- the whole fire blinks once per scroll wrap. Every
+         * emitter binds its own texture here, so it also zeroes the offset. */
+        sceGuTexOffset(0.0f, 0.0f);
     } else {
         int w, h;
         const void* tex = psp_glow_texture(&w, &h);
@@ -1009,7 +1054,7 @@ static void emitter_bind(PbmMap* map, const RenderCfg* cfg, const PbmEmitter* e,
 static void emitter_draw_one(PbmMap* map, const RenderCfg* cfg, const EmitView* vw,
                              const PbmEmitter* e, const PbmParticle* pool, uint32_t first,
                              float time_s, uint32_t* verts, uint32_t* calls,
-                             uint32_t* particles, int additive) {
+                             uint32_t* particles, int additive, uint32_t ei) {
     uint32_t live = emitter_eval(map, e, pool, first, time_s, vw, cfg->near_plane);
     if (live == 0) return;
 
@@ -1030,6 +1075,10 @@ static void emitter_draw_one(PbmMap* map, const RenderCfg* cfg, const EmitView* 
     /* Alpha test: cut-out particle art keeps its hard silhouette, soft art only
      * has its fully transparent texels discarded (which keeps early-Z rejection
      * working for the blended surfaces too). */
+#ifdef HEADLESS_BENCHMARK
+    if (psp_dlist_emitter_dbg == 4) sceGuAlphaFunc(GU_ALWAYS, 0x00, 0xFF);
+    else
+#endif
     sceGuAlphaFunc(GU_GREATER, (alpha_mode == PBM_ALPHA_CUTOUT) ? 0x10 : 0x00, 0xFF);
 
     for (uint32_t i = 0; i < live; ++i) s_order[i] = (int)i;
@@ -1054,12 +1103,47 @@ static void emitter_draw_one(PbmMap* map, const RenderCfg* cfg, const EmitView* 
         if (!warned) { warned = 1; printf("[PSP] emitter: display list full, particles skipped\n"); }
         return;
     }
+#ifdef HEADLESS_BENCHMARK
+    psp_dlist_inline_bytes += (unsigned)(live * 6 * sizeof(PspVertex));
+#endif
     for (uint32_t i = 0; i < live; ++i)
         emitter_emit_quad(&v[i * 6], &s_items[s_order[i]]);
 
+#ifdef HEADLESS_BENCHMARK
+    if (psp_dlist_emitter_dbg == 1) {
+        /* Sprites: two vertices per particle instead of two triangles
+           (TL with top-left UVs, BR with bottom-right UVs). */
+        for (uint32_t i = 0; i < live; ++i) {
+            PspVertex* s = &v[i * 2];
+            s[0] = v[i * 6 + 0];
+            s[1] = v[i * 6 + 2];
+        }
+    } else if (psp_dlist_emitter_dbg == 2) {
+        for (uint32_t i = 0; i < live * 6; ++i)
+            v[i].color = (v[i].color & 0x00FFFFFFu) | 0xFF000000u;
+    }
+    int dbg_prim = (psp_dlist_emitter_dbg == 1) ? GU_SPRITES : GU_TRIANGLES;
+    int dbg_count = (psp_dlist_emitter_dbg == 1) ? live * 2 : live * 6;
+    if (psp_dlist_emitter_dbg == 3) sceGuDisable(GU_TEXTURE_2D);
+    if (psp_dlist_emitter_dbg == 5) {
+        /* Bind the built-in radial glow (solid alpha, RGB falloff) instead of
+           the map texture: isolates texture CONTENT from the sampler state. */
+        int w, h;
+        const void* tex = psp_glow_texture(&w, &h);
+        sceGuTexMode(GU_PSM_5551, 0, 0, 1);
+        sceGuTexImage(0, w, h, w, tex);
+        sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+        sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+    }
+    sceGuDrawArray(dbg_prim,
+        GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
+        dbg_count, 0, v);
+    if (psp_dlist_emitter_dbg == 3) sceGuEnable(GU_TEXTURE_2D);
+#else
     sceGuDrawArray(GU_TRIANGLES,
         GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
         live * 6, 0, v);
+#endif
     *verts += live * 6;
     *calls += 1;
     *particles += live;
@@ -1092,7 +1176,7 @@ static void emitter_pass(PbmMap* map, const RenderCfg* cfg, const EmitView* vw,
         if (fabsf(vy) - rad > reach * PBM_EMIT_TAN_HALF) continue;
 
         emitter_draw_one(map, cfg, vw, e, map->particles, map->emitter_first_particle[ei],
-                         time_s, verts, calls, particles, additive);
+                         time_s, verts, calls, particles, additive, ei);
     }
 }
 
@@ -1148,7 +1232,7 @@ void psp_render_particle_fill_probe(PbmMap* map, int count, float size, int addi
      * `map` is only consulted for the texture (and may be NULL for the
      * built-in glow). */
     emitter_draw_one(map ? map : &fake, &cfg, &vw, &e, pool, 0, 0.0f, &verts, &calls,
-                     &parts, additive != 0);
+                     &parts, additive != 0, 0);
     if (stats) {
         stats->vertices = verts;
         stats->triangles = verts / 3;
@@ -1244,7 +1328,7 @@ void psp_render_particle_probe(int count, float size, uint32_t color, RenderStat
         PbmEmitter batch = e;
         if (remaining < (int)e.count) batch.count = (uint16_t)remaining;
         emitter_draw_one(&fake, &cfg, &vw, &batch, pool, 0,
-                         1.234f + 0.37f * (float)batch_index, &verts, &calls, &parts, 1);
+                         1.234f + 0.37f * (float)batch_index, &verts, &calls, &parts, 1, 0);
         remaining -= (int)batch.count;
         batch_index++;
     }
@@ -1289,6 +1373,11 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                       float cx, float cy, float cz, float yaw, float pitch,
                       float time_s, RenderStats* stats) {
     if (stats) { stats->draw_calls = 0; stats->vertices = 0; stats->triangles = 0; stats->particles = 0; }
+
+#ifdef HEADLESS_BENCHMARK
+    for (unsigned int i = PSP_DLIST_WORDS; i < PSP_DLIST_AREA_WORDS; ++i)
+        s_dlist[i] = 0xA5A5A5A5u;
+#endif
 
     /* Clear */
     sceGuClearColor(cfg->clear_color ? cfg->clear_color : 0x382218);
@@ -1359,6 +1448,9 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         if (!mesh->vertices || mesh->num_vertices == 0) continue;
         if (is_transparent_mesh(map, mesh)) continue;
         if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
+#ifdef HEADLESS_BENCHMARK
+        if (psp_dlist_skip_mask & 1) continue;
+#endif
 
         bind_texture(map, cfg, mesh, &last_tex_id);
         apply_mesh_lod(cfg, map, mesh);
@@ -1405,6 +1497,10 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
      * the blended surfaces too. A CUTOUT raises the threshold, which is what
      * gives foliage its hard silhouette instead of a haze of soft texels. */
     if (cfg->alpha_pass) {
+#ifdef HEADLESS_BENCHMARK
+        if (!(psp_dlist_skip_mask & 4))
+#endif
+        {
         sceGuEnable(GU_ALPHA_TEST);
         sceGuDepthMask(GU_FALSE);   /* blended/cutout fragments never write depth */
         int cur_alpha_ref = 0x10;
@@ -1462,6 +1558,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
             if (cfg->particles & 2) emitter_pass(map, cfg, &vw, time_s, &verts, &calls, &parts, 1);
         }
         sceGuDisable(GU_ALPHA_TEST);
+        }
     }
 
     if (stats) {

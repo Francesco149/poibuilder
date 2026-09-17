@@ -934,9 +934,10 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 ## Shared by the mesh path and the particle path: a particle atlas is an ordinary
 ## texture entry and obeys exactly the same rules (power-of-two, 5551 unless the
 ## alpha has to be soft, deduplicated by resource and by pixels).
-## `prefer_binary_5551` is the additive-emitter case: it keeps the 16-bit format
-## when the art's alpha is genuinely 1-bit, and falls back to 8888 when it is not
-## (a soft gradient quantised to one alpha bit would become a hard cutout).
+## `prefer_binary_5551` keeps the 16-bit format when a BLEND material's art turns
+## out to be genuinely 1-bit; passing false lets soft-alpha art (or art whose RGB
+## gradient needs more than 5 bits per channel, like additive particles) take the
+## RGBA8888 path.
 static func _register_texture(textures: Array, tex_map: Dictionary, albedo_tex: Texture2D,
 		alpha_mode: int, prefer_binary_5551: bool = false, max_size: int = 512) -> int:
 	if albedo_tex == null:
@@ -1946,8 +1947,16 @@ static func _emitters_metadata_entry(emitter_nodes: Array[GPUParticles3D], textu
 	for rec in records:
 		var tex_id := PBM_EMITTER_GLOW_TEXTURE
 		if rec.get("albedo") != null:
+			# Emitter art wants RGB precision, not the 16-bit format: additive
+			# particles read as a falloff of light, and 5551's 5-bit channels
+			# truncate the dim outer gradient to a hard-edged disc (a visible
+			# "halo" ring that slices through overlapping particles). Alpha
+			# transparencies take the 8888 path; scissor/none stay 5551. The
+			# 8888 path quadruples the bytes, and the device's heap is tight,
+			# so emitter textures are also capped at 256x256 (particles render
+			# small; the size has never been the limit on their look).
 			tex_id = _register_texture(textures, tex_map, rec["albedo"],
-				int(rec.get("alpha_mode", PBM_ALPHA_NONE)), true, max_size)
+				int(rec.get("alpha_mode", PBM_ALPHA_NONE)), false, mini(max_size, 256))
 		var name_bytes: PackedByteArray = (rec["name"] as String).to_ascii_buffer()
 		name_bytes.resize(24)
 		for bi in range(24):

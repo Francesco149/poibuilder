@@ -136,6 +136,12 @@ does **not** work — no compositor behind it, so the window is invisible.
   explicitly asked to edit it. Everything an agent needs lives in CLAUDE.md,
   the `.pi/orientation/` docs, and SPECIFICATION.md.
 - **Version bump + commit trailer**: see rule 5 in `.pi/ORIENTATION.md`.
+- **Commit as you go**: every verified fix lands as its own commit in the
+  same session that made it — do not pile a round's fixes into one
+  uncommitted heap and do not end a session with work uncommitted. Commit
+  the moment a change builds, passes its tests, and is verified; the next
+  change starts from a clean tree. A session must never end with a bare
+  "changes are in the tree" summary.
 - **Tests / evidence**: `./run_tests.sh` is the only accepted way to run or
   claim them; viewport behavior only counts if the GUI harness (or a human)
   saw it; perf claims need a real PSP. Full contracts:
