@@ -132,6 +132,11 @@ func arm() -> void:
 	_press_pending = false
 	state_changed.emit(state)
 
+## The plugin's tool-switch path (Trim Walls arming, dock-mode switches) calls
+## disarm — the same teardown abort does: kill the preview, back to INACTIVE.
+func disarm() -> void:
+	abort()
+
 func abort() -> void:
 	_press_pending = false
 	if preview_node != null and is_instance_valid(preview_node):

@@ -70,6 +70,11 @@ signal env_preset_requested(preset_name: String)
 
 ## Emitted when the user toggles the split-rows layout button.
 signal split_rows_toggled(two_rows: bool)
+
+## Emitted when the user toggles the Lit / Cast Shadows object-state buttons
+## (row 3). They apply to the whole current scene selection.
+signal object_lit_toggled(pressed: bool)
+signal object_shadow_toggled(pressed: bool)
 # Icons
 # ==============================================================================
 
@@ -129,6 +134,9 @@ var _btn_export_more: Button
 var _btn_docs: Button
 var _btn_grid_panel: Button
 var _lbl_grid_state: Label
+var _btn_obj_lit: Button
+var _btn_obj_shadow: Button
+var _sep_row3_state: VSeparator
 
 var _sep_tools: VSeparator
 var _sep_modes: VSeparator
@@ -332,6 +340,32 @@ func _build_ui() -> void:
 	_sep_row3_smooth = _make_sep()
 	_sep_row4_tools = _make_sep()
 	_make_op_button("Auto Smooth", "smooth_auto", "Auto-smooth faces by dihedral angle (45 deg)", "icon_auto_smooth.svg")
+
+	# Object state toggles (row 3): Lit + Cast Shadows for the scene selection.
+	_sep_row3_state = _make_sep()
+	_btn_obj_lit = Button.new()
+	_btn_obj_lit.name = "ObjectLitToggle"
+	_btn_obj_lit.icon = _load_icon("icon_lit.svg")
+	if _btn_obj_lit.icon == null:
+		_btn_obj_lit.text = "Lit"
+	_btn_obj_lit.flat = true
+	_btn_obj_lit.toggle_mode = true
+	_btn_obj_lit.focus_mode = Control.FOCUS_NONE
+	_btn_obj_lit.disabled = true
+	_btn_obj_lit.tooltip_text = "Lit: shading on/off for the selected objects. All lit = checked, all unlit = unchecked, mixed = unchecked (checking synchronizes every selected object)."
+	_btn_obj_lit.toggled.connect(func(on: bool): object_lit_toggled.emit(on))
+
+	_btn_obj_shadow = Button.new()
+	_btn_obj_shadow.name = "ObjectShadowToggle"
+	_btn_obj_shadow.icon = _load_icon("icon_shadow.svg")
+	if _btn_obj_shadow.icon == null:
+		_btn_obj_shadow.text = "Shadow"
+	_btn_obj_shadow.flat = true
+	_btn_obj_shadow.toggle_mode = true
+	_btn_obj_shadow.focus_mode = Control.FOCUS_NONE
+	_btn_obj_shadow.disabled = true
+	_btn_obj_shadow.tooltip_text = "Cast Shadows: shadow casting on/off for the selected objects. All casting = checked, none = unchecked, mixed = unchecked (checking synchronizes every selected object)."
+	_btn_obj_shadow.toggled.connect(func(on: bool): object_shadow_toggled.emit(on))
 	# Shapes group
 	_sep_shapes = _make_sep()
 	_btn_new_shape = MenuButton.new()
@@ -548,7 +582,7 @@ func _update_row_layout() -> void:
 	for c in grp_shapes: _row2.add_child(c)
 	for c in grp_docks: _row2.add_child(c)
 
-	# Row 3 (Extended: Grid & Snapping + Selection Suite + Auto-Smooth):
+	# Row 3 (Extended: Grid & Snapping + Selection Suite + Auto-Smooth + Object State):
 	var grp_row3_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_row3_sel: Array[Control] = [
 		_op_buttons["select_all"], _op_buttons["invert_selection"], _op_buttons["grow_selection"],
@@ -556,8 +590,10 @@ func _update_row_layout() -> void:
 		_op_buttons["select_boundary"], _op_buttons["select_face_loop"], _op_buttons["select_face_ring"],
 		_sep_row3_smooth, _op_buttons["smooth_auto"]
 	]
+	var grp_row3_state: Array[Control] = [_sep_row3_state, _btn_obj_lit, _btn_obj_shadow]
 	for c in grp_row3_grid: _row3.add_child(c)
 	for c in grp_row3_sel: _row3.add_child(c)
+	for c in grp_row3_state: _row3.add_child(c)
 
 	# Row 4 (Extended: Snapping Controls + Object Tools + CSG Booleans):
 	if _row4 != null:
@@ -787,6 +823,18 @@ func sync_snapping(v_snap: bool, prop: bool, radius: float) -> void:
 		_btn_proportional.set_pressed_no_signal(prop)
 	if _spin_prop_radius != null and not is_equal_approx(_spin_prop_radius.value, radius):
 		_spin_prop_radius.set_value_no_signal(radius)
+
+## Mirrors the selection's combined Lit / Cast Shadows state onto the row-3
+## toggles WITHOUT emitting. `lit_state`/`shadow_state` are PBObjectState
+## tri-states: 1 all on, 0 all off, -1 mixed (renders unchecked, like a
+## mixed checkbox; checking it synchronizes every selected object).
+func sync_object_state(lit_state: int, shadow_state: int, enabled: bool) -> void:
+	if _btn_obj_lit != null:
+		_btn_obj_lit.disabled = not enabled
+		_btn_obj_lit.set_pressed_no_signal(lit_state == 1)
+	if _btn_obj_shadow != null:
+		_btn_obj_shadow.disabled = not enabled
+		_btn_obj_shadow.set_pressed_no_signal(shadow_state == 1)
 
 ## A mesh can re-open its params while it is still the pristine factory shape
 ## it was created as (no element drags, no mesh ops).

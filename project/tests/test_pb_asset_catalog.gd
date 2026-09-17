@@ -30,6 +30,9 @@ func test_shipped_default_names():
 	assert_eq(PBAssetCatalog.classify_path("res://addons/poibuilder/materials/textures/flower_patch.png"), "stamp")
 	assert_eq(PBAssetCatalog.classify_path("res://addons/poibuilder/materials/textures/tapestry.png"), "stamp")
 	assert_eq(PBAssetCatalog.classify_path("res://addons/poibuilder/materials/textures/stamp_hello_world.png"), "stamp")
+	# The circular square pattern is a stamp, not a paint texture (it appears
+	# in the Stamp tab's palette on a fresh project).
+	assert_eq(PBAssetCatalog.classify_path("res://addons/poibuilder/materials/textures/circular_square_pattern.png"), "stamp")
 
 func test_unknown_falls_back_to_texture_and_buckets_are_disjoint():
 	assert_eq(PBAssetCatalog.classify_path("res://materials/textures/brick_path_4x4.png"), "texture")

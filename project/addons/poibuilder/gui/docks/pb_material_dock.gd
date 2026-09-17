@@ -19,9 +19,14 @@
 class_name PBMaterialDock
 extends PanelContainer
 
-enum DockMode { MATERIAL, PAINT, STAMP, SPRITE }
+enum DockMode { MATERIAL, PAINT, STAMP, SPRITE, SHAPE }
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
+
+## Emitted when the mode row switches tabs. The plugin owns what each mode
+## ARMS in the viewport (sprite placement, shape placement) and drives the
+## in-scene mode banner; the dock only reflects and reports.
+signal dock_mode_changed(new_mode: DockMode)
 
 ## Reference to the main PoiBuilder plugin.
 var plugin: EditorPlugin = null
@@ -43,6 +48,7 @@ var _btn_mode_mat: Button
 var _btn_mode_paint: Button
 var _btn_mode_stamp: Button
 var _btn_mode_sprite: Button
+var _btn_mode_shape: Button
 # UI Nodes - Materials Section
 var _scroll: ScrollContainer
 var _material_grid: HFlowContainer
@@ -54,14 +60,21 @@ var _uv_and_tint_section: VBoxContainer
 var _paint_tool_section: VBoxContainer
 var _stamp_tool_section: VBoxContainer
 var _sprite_tool_section: VBoxContainer
+var _shape_tool_section: VBoxContainer
 
 # Sprite Tool Controls
 var _active_sprite_drop_box: PanelContainer
 var _active_sprite_icon: TextureRect
 var _active_sprite_label: Label
-var _btn_place_sprite: Button
 
 var _sprite_hint: Label
+
+# Shape Tool Controls
+var _shape_palette_grid: HFlowContainer
+var _shape_hint: Label
+var _shape_card_buttons: Dictionary = {}  # StringName shape_id -> Button
+var _selected_shape_id: StringName = &"cube"
+static var _shape_preview_cache: Dictionary = {}  # StringName shape_id -> ImageTexture
 # UV Controls
 var _btn_x2: Button
 var _btn_half: Button
@@ -126,6 +139,7 @@ func _ready() -> void:
 	_build_ui()
 	refresh_materials()
 	sync_selection()
+	_ensure_shape_previews.call_deferred()
 
 func set_editor(val: PBEditor) -> void:
 	if editor == val:
@@ -254,12 +268,21 @@ func _build_ui() -> void:
 
 	_btn_mode_sprite = Button.new()
 	_btn_mode_sprite.text = "Sprite"
-	_btn_mode_sprite.tooltip_text = "Billboard & Sprite Shapes: Select/drop sprite textures, adjust properties, and place sprites"
+	_btn_mode_sprite.tooltip_text = "Billboard Sprites: always-armed sprite placement — pick a sprite, then click any surface to place it"
 	_btn_mode_sprite.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_btn_mode_sprite.toggle_mode = true
 	_btn_mode_sprite.button_pressed = (dock_mode == DockMode.SPRITE)
 	_btn_mode_sprite.pressed.connect(func(): _set_dock_mode(DockMode.SPRITE))
 	mode_row.add_child(_btn_mode_sprite)
+
+	_btn_mode_shape = Button.new()
+	_btn_mode_shape.text = "Shapes"
+	_btn_mode_shape.tooltip_text = "Shape Placement: always-armed primitive creation — pick a shape, then drag on any surface to draw it"
+	_btn_mode_shape.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mode_shape.toggle_mode = true
+	_btn_mode_shape.button_pressed = (dock_mode == DockMode.SHAPE)
+	_btn_mode_shape.pressed.connect(func(): _set_dock_mode(DockMode.SHAPE))
+	mode_row.add_child(_btn_mode_shape)
 
 	root_vbox.add_child(mode_row)
 	root_vbox.add_child(HSeparator.new())
@@ -722,22 +745,52 @@ func _build_ui() -> void:
 
 	_sprite_tool_section.add_child(_active_sprite_drop_box)
 
-	# Place Sprite Button
-	_btn_place_sprite = Button.new()
-	_btn_place_sprite.text = "🌲 Place Sprite (B)"
-	_btn_place_sprite.tooltip_text = "Arm billboard placement tool (B key): click surface to place, drag to pick, mouse up to raise & orient, mouse left/right to scale"
-	_btn_place_sprite.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_btn_place_sprite.pressed.connect(func():
-		if plugin != null and plugin.has_method("_start_sprite_tool"):
-			plugin._start_sprite_tool()
-	)
-	_sprite_tool_section.add_child(_btn_place_sprite)
-
+	# Always-armed placement: the mode row arms the tool, the palette card is
+	# the sprite. No "Place" button — the viewport click IS the placement.
 	_sprite_hint = Label.new()
-	_sprite_hint.text = "Click card in palette or drop image above to set active sprite.\nClick 'Place Sprite' (or press B in viewport) to place.\nProperties (dimensions, lighting, shadows, camera-facing) are adjusted in the Overlay."
+	_sprite_hint.text = "Placement (always armed with the selected sprite):\n" \
+		+ "• Click a surface — places the selected sprite.\n" \
+		+ "• Drag horizontally (or wheel) — opens the texture carousel; release confirms.\n" \
+		+ "• Move the mouse up/down to raise, then click — then left/right to scale, click to finish.\n" \
+		+ "• Esc cancels the current placement. Select the Material & UV tab to exit sprite mode."
 	_sprite_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_sprite_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sprite_tool_section.add_child(_sprite_hint)
+	root_vbox.add_child(HSeparator.new())
+
+	# =========================================================================
+	# Section E: Shape Placement Controls (Visible in SHAPE mode)
+	# =========================================================================
+	_shape_tool_section = VBoxContainer.new()
+	_shape_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_shape_tool_section.visible = false
+	root_vbox.add_child(_shape_tool_section)
+
+	var shape_header := Label.new()
+	shape_header.text = "Shape Palette"
+	_shape_tool_section.add_child(shape_header)
+
+	var shape_scroll := ScrollContainer.new()
+	shape_scroll.custom_minimum_size = Vector2(0, 148)
+	shape_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shape_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_shape_tool_section.add_child(shape_scroll)
+
+	_shape_palette_grid = HFlowContainer.new()
+	_shape_palette_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_shape_palette_grid.add_theme_constant_override("h_separation", 4)
+	_shape_palette_grid.add_theme_constant_override("v_separation", 4)
+	shape_scroll.add_child(_shape_palette_grid)
+	_populate_shape_palette()
+
+	_shape_hint = Label.new()
+	_shape_hint.text = "Placement (always armed with the selected shape):\n" \
+		+ "• Drag on any surface to draw the shape's base, move to set its height, click to confirm.\n" \
+		+ "• The selected shape stays armed — keep placing, or pick another card to switch.\n" \
+		+ "• Esc cancels the current placement. Select the Material & UV tab to exit shape mode."
+	_shape_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	_shape_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_shape_tool_section.add_child(_shape_hint)
 	root_vbox.add_child(HSeparator.new())
 
 	# Status / Selection feedback
@@ -756,37 +809,46 @@ func _build_ui() -> void:
 # Mode Management
 # ==============================================================================
 
+## Public entry so the plugin (hotkeys, the old toolbar path) can drive the
+## tab; emits dock_mode_changed through the same path as a click.
+func set_dock_mode(new_mode: DockMode) -> void:
+	_set_dock_mode(new_mode)
+
 func _set_dock_mode(new_mode: DockMode) -> void:
 	dock_mode = new_mode
 	_btn_mode_mat.button_pressed = (dock_mode == DockMode.MATERIAL)
 	_btn_mode_paint.button_pressed = (dock_mode == DockMode.PAINT)
 	_btn_mode_stamp.button_pressed = (dock_mode == DockMode.STAMP)
 	_btn_mode_sprite.button_pressed = (dock_mode == DockMode.SPRITE)
+	_btn_mode_shape.button_pressed = (dock_mode == DockMode.SHAPE)
 
 	_uv_and_tint_section.visible = (dock_mode == DockMode.MATERIAL)
 	_paint_tool_section.visible = (dock_mode == DockMode.PAINT)
 	_stamp_tool_section.visible = (dock_mode == DockMode.STAMP)
 	_sprite_tool_section.visible = (dock_mode == DockMode.SPRITE)
+	_shape_tool_section.visible = (dock_mode == DockMode.SHAPE)
 
 	if paint_controller != null:
 		match dock_mode:
-			DockMode.MATERIAL:
+			DockMode.MATERIAL, DockMode.SHAPE:
 				paint_controller.set_mode(PBPaintController.Mode.NONE)
 			DockMode.PAINT:
 				paint_controller.set_mode(PBPaintController.Mode.PAINT)
-				if paint_controller.paint_texture == null and not _project_materials.is_empty():
-					_select_paint_material(_project_materials[0])
+				if paint_controller.paint_texture == null:
+					_select_first_classified("texture", _select_paint_material)
 			DockMode.STAMP:
 				_set_stamp_submode(false)
-				if paint_controller.stamp_texture == null and not _project_materials.is_empty():
-					_select_stamp_material(_project_materials[0])
+				if paint_controller.stamp_texture == null:
+					_select_first_classified("stamp", _select_stamp_material)
 			DockMode.SPRITE:
 				paint_controller.set_mode(PBPaintController.Mode.NONE)
-				if sprite_placer != null and sprite_placer.last_texture == null and not _project_materials.is_empty():
-					_select_sprite_material(_project_materials[0])
+				if sprite_placer != null and sprite_placer.last_texture == null:
+					_select_first_classified("sprite", _select_sprite_material)
 	_rebuild_material_grid()
+	_sync_shape_palette_selection()
 	_update_tool_labels()
 	sync_selection()
+	dock_mode_changed.emit(new_mode)
 
 func _update_tool_labels() -> void:
 	if _active_paint_label != null:
@@ -834,6 +896,167 @@ func _set_stamp_submode(delete_active: bool) -> void:
 		else:
 			_stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
 			_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+
+# ==============================================================================
+# Shape palette (SHAPE tab) — always-armed primitive placement
+# ==============================================================================
+
+## Every drag-creatable primitive EXCEPT sprite (the Sprite tab owns it) and
+## ngon (the toolbar's N-Gon draw tool). Order follows PBShapeFactory.
+static func shape_palette_ids() -> Array[StringName]:
+	var out: Array[StringName] = []
+	for id in PBShapeFactory.get_shape_ids():
+		if id == &"sprite" or id == &"ngon":
+			continue
+		out.append(id)
+	return out
+
+func _populate_shape_palette() -> void:
+	for child in _shape_palette_grid.get_children():
+		child.queue_free()
+	_shape_card_buttons.clear()
+	var ids := shape_palette_ids()
+	var idx := 0
+	for shape_id in ids:
+		var color := _shape_palette_color(idx, ids.size())
+		idx += 1
+		var card := Button.new()
+		card.name = "Shape_%s" % String(shape_id).capitalize()
+		card.custom_minimum_size = Vector2(64, 64)
+		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		card.clip_text = true
+		card.text = String(shape_id).capitalize()
+		card.tooltip_text = "%s — select, then drag on any surface to create" % String(shape_id).capitalize()
+		var preview: Texture2D = _shape_preview_cache.get(shape_id)
+		if preview != null:
+			card.icon = preview
+			card.expand_icon = true
+			card.text = ""
+		card.pressed.connect(func(): _select_shape(shape_id))
+		_shape_palette_grid.add_child(card)
+		_shape_card_buttons[shape_id] = card
+	_sync_shape_palette_selection()
+
+## Each shape gets its OWN bright, high-saturation color (golden-angle hue
+## walk) so cards are distinguishable at a glance — the same color is used
+## for the preview silhouette and the selected-card border.
+static func _shape_palette_color(idx: int, count: int) -> Color:
+	var hue := fmod(float(idx) * 0.618, 1.0)
+	return Color.from_hsv(hue, 0.85, 1.0)
+
+func _select_shape(shape_id: StringName) -> void:
+	_selected_shape_id = shape_id
+	_sync_shape_palette_selection()
+	if plugin != null and plugin.has_method("_on_shape_palette_selected"):
+		plugin._on_shape_palette_selected(shape_id)
+
+func _sync_shape_palette_selection() -> void:
+	var ids := shape_palette_ids()
+	var idx := 0
+	for shape_id in ids:
+		var color := _shape_palette_color(idx, ids.size())
+		idx += 1
+		var card: Button = _shape_card_buttons.get(shape_id)
+		if card == null:
+			continue
+		if shape_id == _selected_shape_id:
+			var sel_style := StyleBoxFlat.new()
+			sel_style.set_corner_radius_all(6)
+			sel_style.set_border_width_all(2)
+			sel_style.border_color = color
+			sel_style.bg_color = Color(color.r, color.g, color.b, 0.25)
+			card.add_theme_stylebox_override("normal", sel_style)
+			var hover_style := sel_style.duplicate()
+			hover_style.bg_color = Color(color.r, color.g, color.b, 0.4)
+			card.add_theme_stylebox_override("hover", hover_style)
+		else:
+			if card.has_theme_stylebox_override("normal"):
+				card.remove_theme_stylebox_override("normal")
+				card.remove_theme_stylebox_override("hover")
+
+## Kick off one-time preview rendering (editor session cache, shared across
+## dock instances). Called deferred from _build_ui; harmless headless.
+func _ensure_shape_previews() -> void:
+	if not is_inside_tree() or not Engine.is_editor_hint():
+		return
+	var missing: Array[StringName] = []
+	for shape_id in shape_palette_ids():
+		if not _shape_preview_cache.has(shape_id):
+			missing.append(shape_id)
+	if missing.is_empty():
+		_apply_shape_previews()
+		return
+	_render_shape_previews(missing)
+
+## Renders each palette shape once into a small SubViewport as a flat
+## silhouette in the card's unique bright color (transparent background, so
+## the card style shows through).
+func _render_shape_previews(shape_ids: Array[StringName]) -> void:
+	var vp := SubViewport.new()
+	vp.size = Vector2i(96, 96)
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	vp.own_world_3d = true
+	add_child(vp)
+
+	var world_root := Node3D.new()
+	vp.add_child(world_root)
+	var cam := Camera3D.new()
+	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	cam.current = true
+	world_root.add_child(cam)
+	var light := DirectionalLight3D.new()
+	light.basis = Basis.looking_at(Vector3(-0.5, -0.8, -0.4).normalized(), Vector3.UP)
+	world_root.add_child(light)
+
+	var ids := shape_palette_ids()
+	for shape_id in shape_ids:
+		# Color index must match the card's index in the FULL palette order,
+		# not the missing-subset order, or previews and card borders drift.
+		var color := _shape_palette_color(ids.find(shape_id), ids.size())
+		var data: PBMeshData = PBShapeFactory.create_shape(shape_id, Vector3.ONE)
+		if data == null:
+			continue
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.mesh = data.to_array_mesh()
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		mat.albedo_color = color
+		mat.roughness = 0.6
+		mesh_instance.material_override = mat
+		world_root.add_child(mesh_instance)
+
+		# Frame the shape: isometric-ish orbit, orthographic tight to the AABB.
+		var aabb := mesh_instance.mesh.get_aabb()
+		var center := aabb.get_center()
+		var extent := maxf(0.001, aabb.get_longest_axis_size() * 0.72)
+		var cam_pos := center + Vector3(1.0, 0.85, 1.0).normalized() * extent * 3.0
+		cam.position = cam_pos
+		cam.look_at(center, Vector3.UP)
+		cam.size = extent * 2.0
+
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+		await RenderingServer.frame_post_draw
+		var img := vp.get_texture().get_image()
+		if img != null and not img.is_empty():
+			var tex := ImageTexture.create_from_image(img)
+			_shape_preview_cache[shape_id] = tex
+		world_root.remove_child(mesh_instance)
+		mesh_instance.queue_free()
+
+	vp.queue_free()
+	_apply_shape_previews()
+
+func _apply_shape_previews() -> void:
+	for shape_id in _shape_card_buttons:
+		var card: Button = _shape_card_buttons[shape_id]
+		var preview: Texture2D = _shape_preview_cache.get(shape_id)
+		if card != null and preview != null:
+			card.icon = preview
+			card.expand_icon = true
+			card.text = ""
+
 func _select_paint_material(mat: Material) -> void:
 	if mat == null or paint_controller == null:
 		return
@@ -886,6 +1109,21 @@ func _select_sprite_material(mat: Material) -> void:
 	var tex := _extract_texture(mat)
 	if tex != null:
 		set_active_sprite_texture(tex)
+
+## Auto-select on entering a tab: the FIRST palette material whose asset
+## classification matches the tab (never the default material — a paint
+## brush of checkerboard or a "sprite" of checkerboard is noise). Falls
+## back to the first material so the picker is never stuck empty.
+func _select_first_classified(category: String, select_fn: Callable) -> void:
+	if _project_materials.is_empty():
+		return
+	for mat in _project_materials:
+		if not mat.has_meta("source_texture_path"):
+			continue
+		if PBAssetCatalog.classify_path(mat.get_meta("source_texture_path")) == category:
+			select_fn.call(mat)
+			return
+	select_fn.call(_project_materials[0])
 func _extract_texture(mat: Material) -> Texture2D:
 	if mat is StandardMaterial3D and mat.albedo_texture != null:
 		return mat.albedo_texture
@@ -948,6 +1186,7 @@ func _on_clear_all_stamps_pressed() -> void:
 
 func refresh_materials() -> void:
 	_project_materials.clear()
+	_scanned_texture_paths.clear()
 
 	# 1. Always include default material first
 	var def_mat := get_default_material()
@@ -960,10 +1199,19 @@ func refresh_materials() -> void:
 			if m != null and not _project_materials.has(m):
 				_project_materials.append(m)
 
-	# 3. Scan project for materials and texture images
+	# 3. The addon's OWN bundled textures register on EVERY project — a fresh
+	# install has no res://materials yet, and the depth-limited scan below
+	# never reaches addons/poibuilder/materials/textures (4 levels down). This
+	# is where the water/particle/waterfall sheets and shipped stamps come
+	# from on a fresh project.
+	_scan_dir_for_materials("res://addons/poibuilder/materials/textures")
+
+	# 4. Scan the rest of the project for materials and texture images
 	_scan_dir_for_materials("res://")
 
 	_rebuild_material_grid()
+
+var _scanned_texture_paths: Dictionary = {}
 
 func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 	if depth > 3 or _project_materials.size() > 60:
@@ -986,17 +1234,22 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 						if res is Material and not _project_materials.has(res):
 							_project_materials.append(res)
 				elif ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp":
-					if ResourceLoader.exists(full_path):
-						var tex = ResourceLoader.load(full_path)
-						if tex is Texture2D:
-							var mat := StandardMaterial3D.new()
-							mat.resource_name = name_str.get_basename().capitalize()
-							mat.set_meta("source_texture_path", full_path)
-							mat.albedo_texture = tex
-							mat.roughness = 0.8
-							mat.vertex_color_use_as_albedo = true
-							mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-							_project_materials.append(mat)
+					# One card per texture NAME: a project copy of a bundled
+					# texture must not show twice in the palette.
+					var file_key := name_str.get_file()
+					if not _scanned_texture_paths.has(file_key):
+						_scanned_texture_paths[file_key] = true
+						if ResourceLoader.exists(full_path):
+							var tex = ResourceLoader.load(full_path)
+							if tex is Texture2D:
+								var mat := StandardMaterial3D.new()
+								mat.resource_name = name_str.get_basename().capitalize()
+								mat.set_meta("source_texture_path", full_path)
+								mat.albedo_texture = tex
+								mat.roughness = 0.8
+								mat.vertex_color_use_as_albedo = true
+								mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+								_project_materials.append(mat)
 		name_str = d.get_next()
 	d.list_dir_end()
 
@@ -1011,8 +1264,11 @@ func _rebuild_material_grid() -> void:
 			continue
 		# Pickers must not cross-populate: sprites, stamps and paint textures
 		# are categorized (PBAssetCatalog) and each mode sees only its own set.
-		# MATERIAL mode keeps the full palette.
+		# MATERIAL mode keeps the full palette; SHAPE mode has its own shape
+		# palette above, so no texture cards there.
 		if dock_mode != DockMode.MATERIAL:
+			if dock_mode == DockMode.SHAPE:
+				continue
 			if not mat.has_meta("source_texture_path"):
 				continue
 			var cat: String = PBAssetCatalog.classify_path(mat.get_meta("source_texture_path"))

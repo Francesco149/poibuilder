@@ -9,14 +9,19 @@
 #
 # Default scratch export dir: /tmp/poibuilder_scratch/exports/ (what the
 # scratch project's Export dialog writes to with its default path).
-# The map replaces the shipping slot map (showcase_retro_baked.pbm); restore
-# it any time with ./showcase_map.sh (regenerates) — the file is not tracked.
+#
+# The map goes to its OWN slot (poi_scratch.pbm, named by poi_map.txt) — the
+# shipping slot (showcase_retro_baked.pbm, the courtyard reference demo) is
+# never touched, so ./run_psp_hw.sh keeps running the demo map and a
+# standalone Memory Stick install ships the demo, not the last scratch map.
+# A bare ./run_psp_hw.sh (no --staged) drops the poi_map.txt pointer again.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRATCH_EXPORTS="/tmp/poibuilder_scratch/exports"
 PSP_DIR="$REPO_DIR/retro_engine/psp"
-SLOT_MAP="$PSP_DIR/showcase_retro_baked.pbm"
+SCRATCH_SLOT="$PSP_DIR/poi_scratch.pbm"
+STAGED_NAME="$PSP_DIR/poi_map.txt"
 
 MAP=""
 PASSTHROUGH=()
@@ -48,8 +53,11 @@ echo " Map: $MAP ($(du -h "$MAP" | cut -f1))"
 echo "============================================================"
 
 mkdir -p "$PSP_DIR"
-cp -f "$MAP" "$SLOT_MAP"
-echo "Staged as $(basename "$SLOT_MAP") — launching on device..."
+cp -f "$MAP" "$SCRATCH_SLOT"
+printf '%s\n' "$(basename "$SCRATCH_SLOT")" > "$STAGED_NAME"
+echo "Staged as $(basename "$SCRATCH_SLOT") (poi_map.txt) — launching on device..."
+echo "The courtyard demo slot (showcase_retro_baked.pbm) is untouched;"
+echo "a bare ./run_psp_hw.sh runs the demo again."
 echo
 
-exec "$REPO_DIR/run_psp_hw.sh" --app "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"
+exec "$REPO_DIR/run_psp_hw.sh" --app --staged "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"

@@ -237,11 +237,14 @@ int main(int argc, char** argv) {
     const char* map_path = "showcase_retro_baked.pbm";
     const char* preset_arg = NULL;
     char preset_map_buf[64] = "";
+    char staged_map_buf[64] = "";
+    int map_from_argv = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!argv[i] || !argv[i][0]) continue;
         if (strstr(argv[i], ".pbm")) {
             map_path = argv[i];
+            map_from_argv = 1;
         } else if (!strncmp(argv[i], "--preset=", 9)) {
             preset_arg = argv[i] + 9;
         } else if (!strcasecmp(argv[i], "dawn") || !strcasecmp(argv[i], "day") ||
@@ -264,6 +267,25 @@ int main(int argc, char** argv) {
         }
     }
 
+    /* A staged map name: deploy_psp.sh writes poi_map.txt naming the scratch
+     * map it staged (poi_scratch.pbm) so the shipping slot
+     * (showcase_retro_baked.pbm) always keeps the courtyard demo map and a
+     * bare run_psp_hw.sh keeps loading it. Sits between an explicit .pbm
+     * argument and the preset files in priority. */
+    if (!map_from_argv) {
+        FILE* mp = fopen("poi_map.txt", "r");
+        if (!mp) mp = fopen("host0:/poi_map.txt", "r");
+        if (!mp) mp = fopen("ms0:/poi_map.txt", "r");
+        if (mp) {
+            if (fgets(staged_map_buf, sizeof(staged_map_buf), mp)) {
+                char* nl = strchr(staged_map_buf, '\n'); if (nl) *nl = 0;
+                char* cr = strchr(staged_map_buf, '\r'); if (cr) *cr = 0;
+                if (staged_map_buf[0]) map_path = staged_map_buf;
+            }
+            fclose(mp);
+        }
+    }
+
     if (preset_arg && !strcmp(map_path, "showcase_retro_baked.pbm")) {
         snprintf(preset_map_buf, sizeof(preset_map_buf), "showcase_retro_baked_%s.pbm", preset_arg);
         if (file_exists(preset_map_buf)) {
@@ -282,8 +304,8 @@ int main(int argc, char** argv) {
     if (!map) map = pbm_load(map_path);
     if (!map) map = pbm_load(disc0_map);
     if (!map) map = pbm_load(ms0_map);
-    if (!map && preset_map_buf[0] != '\0') {
-        /* Fallback to default showcase map if preset-specific file is absent */
+    if (!map && (preset_map_buf[0] != '\0' || staged_map_buf[0] != '\0')) {
+        /* Fallback to default showcase map if the preset/staged file is absent */
         map = pbm_load("host0:/showcase_retro_baked.pbm");
         if (!map) map = pbm_load("showcase_retro_baked.pbm");
     }

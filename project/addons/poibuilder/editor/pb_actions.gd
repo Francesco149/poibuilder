@@ -83,6 +83,8 @@ const ACTIONS: Dictionary = {
 	"obj_freeze_transform": { "label": "Object: Freeze Transform",         "keys": [] },
 	"obj_poibuilderize":    { "label": "Object: Poibuilderize (Convert to PBMesh)", "keys": [] },
 	"obj_probuilderize":    { "label": "Object: Poibuilderize (Legacy alias)", "keys": [] },
+	"obj_toggle_lit":       { "label": "Object: Toggle Lit (Selected)",     "keys": [] },
+	"obj_toggle_shadows":   { "label": "Object: Toggle Cast Shadows (Selected)", "keys": [] },
 	# CSG Booleans
 	"csg_union":            { "label": "CSG: Union Selected Objects",       "keys": [] },
 	"csg_subtract":         { "label": "CSG: Subtract From Active Object",  "keys": [] },

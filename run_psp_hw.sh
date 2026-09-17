@@ -28,9 +28,15 @@
 #
 # DEPLOYING A PRESET TO THE DEVICE is `--app --preset N`: the preset's .pbm is
 # staged on host0: next to a poi_preset.txt naming it, and the app picks it up
-# at startup (main.c reads a .pbm argument, --preset=, or poi_preset.txt from
+# at startup (main.c reads a .pbm argument, --preset=, poi_preset.txt from
 # the working dir, host0: or ms0:). A standalone Memory Stick install wants the
 # same two files next to EBOOT.PBP.
+#
+# This script ALWAYS stages the courtyard reference demo map
+# (showcase_retro_baked.pbm); deploy_psp.sh adds --staged so the scratch map
+# it staged (poi_scratch.pbm + a poi_map.txt naming it) rides along and the
+# app loads it instead. Without --staged a leftover poi_map.txt from an
+# earlier deploy is deleted, so a bare run always shows the courtyard.
 #
 # How it works: usbhostfs_pc serves ./retro_engine/psp/hwrun/ to the PSP as
 # host0:. The test binary (built with -DHWTEST=1, target poiretro_psp_hwtest.prx)
@@ -71,6 +77,7 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
 KEEP=0
 MODE=prof
 NO_RESET=0
+STAGED=0
 PRESET=""
 PRESETS=(dawn day dusk night)
 
@@ -82,6 +89,7 @@ while [ "$_i" -lt "${#_args[@]}" ]; do
         --keep) KEEP=1 ;;
         --app)  MODE=app; KEEP=1 ;;   # interactive build needs host0: to stay alive!
         --no-reset) NO_RESET=1 ;;
+        --staged) STAGED=1 ;;         # deploy_psp.sh: also stage the scratch map slot
         --preset)
             _i=$((_i + 1))
             PRESET="${_args[$_i]:-}"
@@ -237,6 +245,8 @@ echo "=== [2/5] Staging host0: ($HOSTDIR) ==="
 mkdir -p "$HOSTDIR"
 rm -f "$LOG" "$HOSTDIR/poi_app.log"
 cp "$PSP_DIR/$PRX_NAME" "$HOSTDIR/$PRX_NAME"
+# The COURTYARD reference demo map is always the base staging — deploy_psp's
+# scratch slot never replaces it in this directory, it only adds to it.
 cp "$PSP_DIR/showcase_retro_baked.pbm" "$HOSTDIR/showcase_retro_baked.pbm"
 if [ -n "$PRESET" ]; then
     # The app resolves showcase_retro_baked_<preset>.pbm beside the shipping map
@@ -246,6 +256,17 @@ if [ -n "$PRESET" ]; then
     echo "    preset: $PRESET  (poi_preset.txt + $(basename "$PRESET_MAP") staged)"
 else
     rm -f "$HOSTDIR/poi_preset.txt"    # a previous run's preset must not leak
+fi
+if [ "$STAGED" = 1 ]; then
+    # deploy_psp.sh's scratch map: poi_scratch.pbm + poi_map.txt naming it,
+    # which main.c resolves ahead of the default map/preset files.
+    [ -f "$PSP_DIR/poi_scratch.pbm" ] || die "--staged: no scratch map staged ($PSP_DIR/poi_scratch.pbm missing — run ./deploy_psp.sh)"
+    cp "$PSP_DIR/poi_scratch.pbm" "$HOSTDIR/poi_scratch.pbm"
+    cp "$PSP_DIR/poi_map.txt" "$HOSTDIR/poi_map.txt"
+    echo "    staged scratch map: poi_scratch.pbm (poi_map.txt)"
+else
+    rm -f "$HOSTDIR/poi_map.txt"       # a previous deploy's scratch map must not leak
+    rm -f "$HOSTDIR/poi_scratch.pbm"
 fi
 rm -f "$HOSTDIR/poi_render.txt"     # runtime overrides must not leak between runs
 ls -la "$HOSTDIR" | head -12

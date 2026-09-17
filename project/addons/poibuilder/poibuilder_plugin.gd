@@ -51,6 +51,11 @@ var material_drop_overlay: PBMaterialDropOverlay = null
 var paint_controller: PBPaintController = PBPaintController.new()
 var _export_dialog: PBExportDialog = null
 var _cursor_extents_label: Label = null
+## Top-center hint banner over the 3D scene (paint / stamp / sprite / shape
+## modes and their exit route). Pure readout, never consumes input.
+var mode_banner: PBModeBanner = null
+## The shape the Shapes dock tab keeps armed (re-armed after every placement).
+var _shape_mode_shape: StringName = &"cube"
 ## Hover id already reflected in the last gizmo redraw (avoids redundant
 ## update_gizmos calls on every motion event).
 var _hover_drawn_last: int = -1
@@ -87,7 +92,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.144"
+const VERSION := "0.9.145"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -188,6 +193,8 @@ func _enter_tree():
 		if editor.active_mesh != null:
 			editor.active_mesh.update_gizmos()
 	)
+	toolbar.object_lit_toggled.connect(_on_object_lit_toggled)
+	toolbar.object_shadow_toggled.connect(_on_object_shadow_toggled)
 	if Engine.is_editor_hint():
 		var ed_settings := EditorInterface.get_editor_settings()
 		if ed_settings != null:
@@ -232,6 +239,10 @@ func _enter_tree():
 	_cursor_extents_label.visible = false
 	_cursor_extents_label.z_index = 100
 	_add_overlay_to_3d_viewport(_cursor_extents_label)
+	# Top-center mode banner (paint / stamp / sprite / shape mode readout)
+	mode_banner = PBModeBanner.new()
+	mode_banner.z_index = 90
+	_add_overlay_to_3d_viewport(mode_banner)
 	# Material drag-and-drop overlay in the 3D viewport
 	material_drop_overlay = PBMaterialDropOverlay.new()
 	material_drop_overlay.plugin = self
@@ -243,6 +254,7 @@ func _enter_tree():
 	material_dock.visible = true
 	material_dock.set_paint_controller(paint_controller)
 	material_dock.sprite_placer = sprite_placer
+	material_dock.dock_mode_changed.connect(_on_dock_mode_changed)
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
 	# Dedicated 2D UV Editor Panel (Bottom dock)
@@ -330,6 +342,13 @@ func _exit_tree():
 			tool_overlay.get_parent().remove_child(tool_overlay)
 			tool_overlay.queue_free()
 		tool_overlay = null
+	# Remove mode banner
+	if mode_banner != null:
+		if is_instance_valid(mode_banner):
+			if mode_banner.get_parent() != null:
+				mode_banner.get_parent().remove_child(mode_banner)
+			mode_banner.queue_free()
+		mode_banner = null
 
 	# Remove material dock and drop overlay
 	if material_dock != null:
@@ -708,7 +727,15 @@ func _handle_grid_action_key(key_event: InputEventKey) -> int:
 	elif action == &"grid_reset":
 		grid.reset_origin()
 	elif action == &"tool_sprite":
-		_start_sprite_tool()
+		_enter_sprite_mode()
+	elif action == &"obj_toggle_lit":
+		if _selected_state_nodes().is_empty():
+			return AFTER_GUI_INPUT_PASS
+		_toggle_object_lit()
+	elif action == &"obj_toggle_shadows":
+		if _selected_state_nodes().is_empty():
+			return AFTER_GUI_INPUT_PASS
+		_toggle_object_shadow()
 	else:
 		return AFTER_GUI_INPUT_PASS
 	return AFTER_GUI_INPUT_STOP
@@ -857,6 +884,133 @@ func _on_selection_changed() -> void:
 			if logger:
 				logger.info("plugin", "Params session cancelled (selection changed)")
 			_on_params_canceled()
+	# Row-3 Lit / Cast Shadows toggles mirror the selection's combined state.
+	_update_object_state_buttons()
+
+# ==============================================================================
+# Object State Toggles — Lit / Cast Shadows (row 3 + bindable hotkeys)
+# ==============================================================================
+# The toggles apply to EVERY selected object (PBMesh, MeshInstance3D, CSG
+# primitive). Button semantics follow a mixed checkbox: all on = checked,
+# all off = unchecked, mixed = unchecked — checking synchronizes the whole
+# selection. All decisions live in PBObjectState (headless-testable); the
+# plugin only wraps the returned records into undo actions.
+
+func _selected_state_nodes() -> Array[GeometryInstance3D]:
+	var selection: EditorSelection = get_editor_interface().get_selection()
+	if selection == null:
+		return []
+	return PBObjectState.applicable_nodes(selection.get_selected_nodes())
+
+func _update_object_state_buttons() -> void:
+	if toolbar == null:
+		return
+	var nodes := _selected_state_nodes()
+	if nodes.is_empty():
+		toolbar.sync_object_state(0, 0, false)
+		return
+	toolbar.sync_object_state(
+		PBObjectState.lit_state(nodes), PBObjectState.shadow_state(nodes), true)
+
+## Hotkey semantics: flip the whole selection to the opposite of its
+## combined state (mixed counts as "lit"/"casting" → all off).
+func _toggle_object_lit() -> void:
+	var nodes := _selected_state_nodes()
+	if nodes.is_empty():
+		return
+	_apply_object_lit(nodes, PBObjectState.lit_state(nodes) != 1)
+
+func _toggle_object_shadow() -> void:
+	var nodes := _selected_state_nodes()
+	if nodes.is_empty():
+		return
+	_apply_object_shadow(nodes, PBObjectState.shadow_state(nodes) != 1)
+
+func _on_object_lit_toggled(pressed: bool) -> void:
+	_apply_object_lit(_selected_state_nodes(), pressed)
+
+func _on_object_shadow_toggled(pressed: bool) -> void:
+	_apply_object_shadow(_selected_state_nodes(), pressed)
+
+func _apply_object_lit(nodes: Array[GeometryInstance3D], lit: bool) -> void:
+	var records: Array[Dictionary] = []
+	for node in nodes:
+		var rec := PBObjectState.set_node_lit(node, lit)
+		if not rec.is_empty():
+			records.append(rec)
+	if records.is_empty():
+		_update_object_state_buttons()
+		return
+	var undo := get_undo_redo()
+	var context: Node = records[0]["node"] if records[0]["node"].is_inside_tree() else null
+	undo.create_action("Toggle Lit" if lit else "Toggle Unlit", UndoRedo.MERGE_DISABLE, context)
+	for rec in records:
+		undo.add_do_method(self, "_apply_lit_record", rec, true)
+		undo.add_undo_method(self, "_apply_lit_record", rec, false)
+	undo.commit_action()
+	_update_object_state_buttons()
+	if logger:
+		logger.info("tools", "%s %d object(s)" % ["Lit" if lit else "Unlit", records.size()])
+
+func _apply_object_shadow(nodes: Array[GeometryInstance3D], cast: bool) -> void:
+	var records: Array[Dictionary] = []
+	for node in nodes:
+		var rec := PBObjectState.set_node_shadow(node, cast)
+		if not rec.is_empty():
+			records.append(rec)
+	if records.is_empty():
+		_update_object_state_buttons()
+		return
+	var undo := get_undo_redo()
+	var context: Node = records[0]["node"] if records[0]["node"].is_inside_tree() else null
+	undo.create_action("Toggle Cast Shadows" if cast else "Toggle No Cast Shadows",
+		UndoRedo.MERGE_DISABLE, context)
+	for rec in records:
+		undo.add_do_method(self, "_apply_shadow_record", rec, true)
+		undo.add_undo_method(self, "_apply_shadow_record", rec, false)
+	undo.commit_action()
+	_update_object_state_buttons()
+	if logger:
+		logger.info("tools", "%s shadows on %d object(s)" % ["Cast" if cast else "Removed", records.size()])
+
+## Replays one PBObjectState record; `forward` picks the new/old side.
+func _apply_lit_record(rec: Dictionary, forward: bool) -> void:
+	var node: Node = rec.get("node")
+	if node == null or not is_instance_valid(node):
+		return
+	match rec.get("kind", ""):
+		"pbmesh":
+			var pb := node as PBMesh
+			if pb == null or pb.pb_mesh_data == null:
+				return
+			var mats: Array = rec.get("new_materials") if forward else rec.get("old_materials")
+			var typed: Array[Material] = []
+			for m in mats:
+				typed.append(m)
+			pb.pb_mesh_data.materials = typed
+			pb.rebuild()
+		"surfaces", "override":
+			var mi := node as MeshInstance3D
+			if mi == null:
+				return
+			if rec.get("kind") == "override":
+				mi.material_override = rec.get("new_override") if forward else rec.get("old_override")
+			else:
+				var overrides: Dictionary = rec.get("new_overrides") if forward else rec.get("old_overrides")
+				for idx in overrides:
+					mi.set_surface_override_material(int(idx), overrides[idx])
+		"csg":
+			var csg := node as CSGPrimitive3D
+			if csg == null:
+				return
+			csg.material = rec.get("new_material") if forward else rec.get("old_material")
+
+func _apply_shadow_record(rec: Dictionary, forward: bool) -> void:
+	var node: Node = rec.get("node")
+	if node == null or not is_instance_valid(node):
+		return
+	node.cast_shadow = rec.get("new") if forward else rec.get("old")
+
 # ==============================================================================
 # Editor State Callbacks
 # ==============================================================================
@@ -2345,7 +2499,7 @@ func _on_shape_requested(shape_id: StringName) -> void:
 		_trim_walls_disarm("a new shape was picked")
 
 	if shape_id == &"sprite":
-		_start_sprite_tool()
+		_enter_sprite_mode()
 		return
 
 	if shape_id == &"ngon" or shape_id == &"ngon_draw":
@@ -2862,6 +3016,9 @@ func _creation_abort(reason: String) -> void:
 		_cursor_extents_label.visible = false
 	shape_creator.show_height_plane = false
 	_update_editing_context()
+	# The Shapes tab is a mode: its shape re-arms when a placement ends (the
+	# reason is inspected — deliberate tool switches re-arm themselves).
+	_rearm_shape_mode_after_session_end(reason)
 	if logger:
 		logger.info("plugin", "Shape creation aborted (%s)" % reason)
 
@@ -2887,6 +3044,8 @@ func _finish_creation_session(node: PBMesh) -> void:
 	if PBShapeParams.commits_on_base_release(shape_creator.shape_id):
 		_creation_confirm()
 		return
+	# The Shapes tab is a mode: keep its shape armed for the next placement.
+	_arm_shape_mode_shape()
 
 func _update_cursor_extents(screen_pos: Vector2) -> void:
 	if _cursor_extents_label == null:
@@ -3284,8 +3443,101 @@ func _ngon_drawer_abort(reason: String) -> void:
 		logger.info("plugin", "N-gon drawing aborted (%s)" % reason)
 
 # ==============================================================================
-# Billboard Sprite Placement Tool
+# Billboard Sprite Placement Tool + dock placement modes
 # ==============================================================================
+
+## B key / New Shape menu "Sprite": the SPRITE DOCK TAB is the sprite mode —
+## switching the tab arms placement (always armed), so every entry point
+## converges on the same state through dock_mode_changed.
+func _enter_sprite_mode() -> void:
+	if material_dock != null and is_instance_valid(material_dock):
+		if material_dock.dock_mode == PBMaterialDock.DockMode.SPRITE:
+			_start_sprite_tool()   # already the tab's mode: re-arm
+		else:
+			material_dock.set_dock_mode(PBMaterialDock.DockMode.SPRITE)
+	else:
+		_start_sprite_tool()
+
+func _dock_is_sprite_mode() -> bool:
+	return material_dock != null and is_instance_valid(material_dock) \
+		and material_dock.dock_mode == PBMaterialDock.DockMode.SPRITE
+
+func _dock_is_shape_mode() -> bool:
+	return material_dock != null and is_instance_valid(material_dock) \
+		and material_dock.dock_mode == PBMaterialDock.DockMode.SHAPE
+
+## The dock tab switched: each mode arms/disarms what lives in the viewport.
+## (The dock itself only flips UI sections; this is the tool-side mirror.)
+func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
+	match new_mode:
+		PBMaterialDock.DockMode.SPRITE:
+			_start_sprite_tool()
+		PBMaterialDock.DockMode.SHAPE:
+			if sprite_placer != null and sprite_placer.is_active():
+				sprite_placer.abort()
+			_arm_shape_mode_shape()
+		_:
+			# Material / Paint / Stamp: placement modes disarm (an armed but
+			# not-yet-dragged shape session dies with its tab; a drag in
+			# progress is allowed to finish).
+			if sprite_placer != null and sprite_placer.is_active():
+				sprite_placer.abort()
+			if shape_creator.is_active() and shape_creator.state == PBShapeCreator.State.ARMED:
+				shape_creator.reset()
+				_set_creation_hint("")
+				_update_editing_context()
+	_update_mode_banner()
+
+## Arms the Shapes tab's selected shape. No-op unless the Shapes tab is the
+## active dock mode (this is the re-arm hook after every placement too).
+func _arm_shape_mode_shape() -> void:
+	if not _dock_is_shape_mode():
+		return
+	if shape_creator.is_active() and shape_creator.shape_id == _shape_mode_shape \
+			and shape_creator.state == PBShapeCreator.State.ARMED:
+		return
+	_on_shape_requested(_shape_mode_shape)
+
+## A Shapes-tab card picked: remember it and arm it straight away.
+func _on_shape_palette_selected(shape_id: StringName) -> void:
+	_shape_mode_shape = shape_id
+	if _dock_is_shape_mode():
+		_on_shape_requested(shape_id)
+		_update_mode_banner()
+
+## Re-arms the Shapes tab's shape after a creation session ended (Esc, tiny
+## drag, Apply/Cancel of the params modal). Deliberate SWITCHES ("a new shape
+## was picked", another tool taking over) own their arming and must not
+## re-arm — the aborts they trigger arrive while they continue arming.
+func _rearm_shape_mode_after_session_end(reason: String) -> void:
+	if reason in ["a new shape was picked", "switched to sprite tool",
+			"switched to trim walls", "switched to n-gon tool", "plugin exit"]:
+		return
+	_arm_shape_mode_shape()
+
+## The top-center banner text: what mode the scene is in and how to leave.
+func _update_mode_banner() -> void:
+	if mode_banner == null or not is_instance_valid(mode_banner):
+		return
+	if material_dock == null or not is_instance_valid(material_dock):
+		mode_banner.set_hint("")
+		return
+	match material_dock.dock_mode:
+		PBMaterialDock.DockMode.PAINT:
+			mode_banner.set_hint("Texture paint mode — drag on a face to paint · select the Material & UV tab to exit",
+				Color(0.2, 0.85, 1.0))
+		PBMaterialDock.DockMode.STAMP:
+			mode_banner.set_hint("Stamp mode — hover a face for the preview, click to paste · select the Material & UV tab to exit",
+				Color(1.0, 0.85, 0.2))
+		PBMaterialDock.DockMode.SPRITE:
+			mode_banner.set_hint("Sprite placement mode — click a surface to place the selected sprite (drag: texture carousel) · select the Material & UV tab to exit",
+				Color(0.35, 1.0, 0.5))
+		PBMaterialDock.DockMode.SHAPE:
+			mode_banner.set_hint("Shape mode — drag on a surface to create %s · select the Material & UV tab to exit"
+				% String(_shape_mode_shape).capitalize(),
+				Color(0.75, 0.5, 1.0))
+		_:
+			mode_banner.set_hint("")
 
 func _start_sprite_tool() -> void:
 	if _params_session_kind != "" or (tool_overlay != null and tool_overlay.params_open):
@@ -3300,14 +3552,20 @@ func _start_sprite_tool() -> void:
 	_clear_creation_hover()
 	sprite_placer.arm()
 	_update_editing_context()
-	_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")
+	_set_creation_hint("Sprite: click a surface to place the selected sprite (drag to pick a texture, Esc cancels)")
+	_update_mode_banner()
 	if logger:
-		logger.info("plugin", "Billboard sprite tool active — click surface to place")
+		logger.info("plugin", "Sprite placement armed — click a surface to place the selected sprite")
 
 func _on_sprite_placed(node: PBMesh) -> void:
 	_clear_creation_hover()
-	_set_creation_hint("")
 	_update_editing_context()
+	if _dock_is_sprite_mode():
+		# Always-armed mode: the next click places the next sprite.
+		sprite_placer.arm()
+		_set_creation_hint("Sprite: click a surface to place the selected sprite (drag to pick a texture, Esc cancels)")
+	else:
+		_set_creation_hint("")
 	if logger and node != null:
 		logger.info("plugin", "Placed billboard sprite '%s'" % node.name)
 
@@ -3628,25 +3886,32 @@ func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
 				surface_hit["normal"] = -surface_hit["normal"]
 		if sprite_placer.state == PBSpritePlacer.State.ARMED:
 			if not surface_hit.is_empty():
-				_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")
+				_set_creation_hint("Sprite: click a surface to place the selected sprite (drag to pick a texture)")
 				_update_creation_hover(camera, event.position)
 			else:
 				_clear_creation_hover()
 		elif sprite_placer.state == PBSpritePlacer.State.TEXTURE_SELECT:
 			_clear_creation_hover()
-			_set_creation_hint("Billboard Tool: Scroll to select texture • Release / Click to confirm")
+			_set_creation_hint("Sprite: scroll to select texture • release / click to confirm")
 		elif sprite_placer.state == PBSpritePlacer.State.RAISE:
 			_clear_creation_hover()
-			_set_creation_hint("Billboard Tool: Mouse up/down to raise • Click to lock angle")
+			_set_creation_hint("Sprite: mouse up/down to raise • click to lock angle")
 		elif sprite_placer.state == PBSpritePlacer.State.SCALE:
 			_clear_creation_hover()
-			_set_creation_hint("Billboard Tool: Mouse left/right to scale • Click to confirm placement")
+			_set_creation_hint("Sprite: mouse left/right to scale • click to confirm placement")
 
 	var res := sprite_placer.handle_input(camera, event, surface_hit, host)
 	if not sprite_placer.is_active():
+		# Esc / finished session: the SPRITE dock tab stays armed (the tab is
+		# the mode) — re-arm so the next click places the next sprite.
 		_clear_creation_hover()
-		_set_creation_hint("")
-		_update_editing_context()
+		if _dock_is_sprite_mode():
+			sprite_placer.arm()
+			_set_creation_hint("Sprite: click a surface to place the selected sprite (drag to pick a texture, Esc cancels)")
+			_update_editing_context()
+		else:
+			_set_creation_hint("")
+			_update_editing_context()
 	return res
 
 

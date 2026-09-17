@@ -5,3 +5,5 @@ PARAM.SFO
 *.tga
 *.pbm
 package/
+poi_map.txt
+poi_scratch.pbm

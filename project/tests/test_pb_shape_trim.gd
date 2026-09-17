@@ -42,3 +42,17 @@ func test_extrude_profile_closed_room_perimeter() -> void:
 	# Closed room perimeter should be a continuous tube / loop with 0 open boundary edges
 	var boundaries := PBSelectionOps.select_boundary_edges(md)
 	assert_eq(boundaries.size(), 0, "Closed wall trim loop should be watertight/manifold with no boundary edges")
+
+func test_sweep_uvs_tile_by_world_length() -> void:
+	# UVs must tile in world metres (the plugin's 1x1 m convention), NOT
+	# normalize one 0..1 span across the run — a long run stretched the
+	# texture instead of repeating it.
+	for run_len in [1.0, 10.0]:
+		var path := PackedVector3Array([Vector3.ZERO, Vector3(run_len, 0.0, 0.0)])
+		var md := PBShapeTrim.create_wall_trim(path, PBShapeTrim.ProfileType.FLAT, 0.1, 0.2, false)
+		assert_not_null(md, "straight trim should build")
+		var max_u := 0.0
+		for uv in md.textures0:
+			max_u = maxf(max_u, uv.x)
+		assert_almost_eq(max_u, run_len, 0.001,
+			"%.0f m run should span %.0f m of U (tiles by length)" % [run_len, run_len])

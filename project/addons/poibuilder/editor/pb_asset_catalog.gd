@@ -25,7 +25,7 @@ const PARTICLE_PREFIXES := ["particle_"]
 
 ## Shipped textures that predate the prefix convention.
 const DEFAULT_SPRITE_NAMES := ["tree_oak", "tree_pine", "bush_foliage", "grass_tuft"]
-const DEFAULT_STAMP_NAMES := ["flower_patch", "tapestry", "hello_world"]
+const DEFAULT_STAMP_NAMES := ["flower_patch", "tapestry", "hello_world", "circular_square_pattern"]
 
 ## Returns one of "sprite", "stamp", "texture", "particle".
 static func classify_path(path: String) -> String:

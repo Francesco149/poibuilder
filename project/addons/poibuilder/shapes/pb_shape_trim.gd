@@ -224,6 +224,28 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 	var faces: Array[PBFace] = []
 	var vertex_counter := 0
 
+	# UVs tile in WORLD METRES — the plugin's 1x1 m repeat convention (see
+	# PBUv). U is the accumulated distance along the path, V the arc length
+	# around the profile, so a long run repeats the texture instead of
+	# stretching it (normalized 0..1 UVs made a 10 m run stretch the same
+	# texture a 1 m run tiled) and trim rows line up with wall rows at the
+	# same height.
+	var cum_len := PackedFloat32Array()
+	cum_len.resize(n_pts)
+	for i in range(1, n_pts):
+		cum_len[i] = cum_len[i - 1] + path[i - 1].distance_to(path[i])
+	var total_len: float = cum_len[n_pts - 1]
+	if closed:
+		total_len += path[n_pts - 1].distance_to(path[0])
+
+	var prof_cum := PackedFloat32Array()
+	prof_cum.resize(n_prof)
+	for j in range(1, n_prof):
+		prof_cum[j] = prof_cum[j - 1] + profile_pts[j - 1].distance_to(profile_pts[j])
+	var prof_total: float = prof_cum[n_prof - 1]
+	if close_profile:
+		prof_total += profile_pts[n_prof - 1].distance_to(profile_pts[0])
+
 	var num_segments: int = n_pts if closed else n_pts - 1
 	var smooth_set := {}
 	for j in smooth_profile_segments:
@@ -236,14 +258,14 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 		var ring0: PackedVector3Array = rings[i0]
 		var ring1: PackedVector3Array = rings[i1]
 
-		var u0: float = float(seg) / float(num_segments)
-		var u1: float = float(seg + 1) / float(num_segments)
+		var u0: float = cum_len[i0]
+		var u1: float = total_len if i1 == 0 else cum_len[i1]
 
 		var n_segs_prof: int = n_prof if close_profile else n_prof - 1
 		for j in range(n_segs_prof):
 			var j_next: int = (j + 1) % n_prof
-			var v0: float = float(j) / float(n_segs_prof)
-			var v1: float = float(j + 1) / float(n_segs_prof)
+			var v0: float = prof_cum[j]
+			var v1: float = prof_total if j_next == 0 else prof_cum[j_next]
 
 			var p_00: Vector3 = ring0[j]
 			var p_01: Vector3 = ring0[j_next]
