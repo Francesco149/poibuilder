@@ -26,9 +26,12 @@ More non-negotiables (moved from CLAUDE.md, still current):
 5. **Do not build on unmeasured performance assumptions** — not in code
    comments, not in docs, not in a summary. "This should be faster" is not a
    result; either measure it or state plainly that it is unmeasured.
-6. **If no PSP is connected**, say so and ask for `./setup_psplink.sh` (30
-   seconds, once per device) before the session ends; mark perf-related work
-   unverified rather than done.
+6. **Never assume the PSP's presence — probe it**: `./psp_probe.sh` answers
+   in ~5 s (USB device → udev symlink → PSPLink link, with a verdict at each
+   layer). A session once shipped "no PSP connected" caveats without running
+   any probe while the device sat answering on USB. If the probe says ABSENT,
+   say so and ask for `./setup_psplink.sh` (30 seconds, once per device)
+   before the session ends; mark perf-related work unverified rather than done.
 7. Every optimization claim in the docs carries the device row that produced
    it. PPSSPP rasterises on the host GPU with a huge texture cache and no
    shared memory bus — it happily reports 60 fps for a build that spends

@@ -765,6 +765,10 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 			var mat := mi.material_override
 			if mat == null and src_mesh is ArrayMesh:
 				mat = (src_mesh as ArrayMesh).surface_get_material(s)
+			if mat == null and src_mesh is PrimitiveMesh:
+				# A quad/primitive draw pass carries its material as the mesh's
+				# own `material` property (the same lookup the tint uses).
+				mat = (src_mesh as PrimitiveMesh).material
 			if mat == null and mi is PBMesh:
 				var pb := mi as PBMesh
 				if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():

@@ -269,7 +269,7 @@ else
     rm -f "$HOSTDIR/poi_scratch.pbm"
 fi
 rm -f "$HOSTDIR/poi_render.txt"     # runtime overrides must not leak between runs
-ls -la "$HOSTDIR" | head -12
+ls -la "$HOSTDIR" | sed -n "1,12p"   # sed eats all input: head SIGPIPEs ls under pipefail
 
 echo "=== [3/5] Starting usbhostfs_pc (serving host0: = $HOSTDIR) ==="
 nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
