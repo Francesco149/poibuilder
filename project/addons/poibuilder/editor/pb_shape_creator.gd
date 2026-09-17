@@ -323,11 +323,21 @@ func update_base(point_on_plane: Vector3) -> void:
 	_apply_drag_extents()
 
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
-## drag was too small to be intentional.
+## drag was too small to be intentional. The DOMINANT extent must reach
+## the minimum — an accidental click with a sliver of jitter used to pass
+## (the old check only rejected both-tiny drags, so a ~12 cm one-axis
+## jitter committed a degenerate sliver cube: broken node, stray overlay).
+## The floor is the grid step whether or not quantization is on — the step
+## is the unit of an intentional draw even with snapping off. The LATERAL
+## extent may stay small on purpose: a straight 2 m x 5 cm drag is a
+## legitimate thin wall.
 func end_base() -> bool:
 	if state != State.BASE:
 		return false
-	if u_size < MIN_EXTENT and v_size < MIN_EXTENT:
+	var min_extent := MIN_EXTENT
+	if grid != null:
+		min_extent = maxf(MIN_EXTENT, grid.step())
+	if maxf(u_size, v_size) < min_extent:
 		reset()
 		return false
 	# Stand-off shapes (sprite, plane) do not grow a third dimension: the next

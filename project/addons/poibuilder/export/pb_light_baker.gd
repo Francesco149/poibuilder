@@ -476,14 +476,23 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_ca
 	if node is Node3D and not (node as Node3D).visible:
 		return
 
-	# Handle billboards / alpha-scissor foliage meshes (cast silhouette shadows)
-	var is_bb := node.has_meta("is_billboard") or node.name.begins_with("Sprite") or node.name.begins_with("Tree") or node.name.begins_with("Bush") or node.name.begins_with("Wildflower")
+	# Handle billboards / alpha-scissor foliage meshes (cast silhouette shadows).
+	# The predicate mirrors PBMapExporter._is_billboard: placed sprite PBMeshes
+	# (shape_id "sprite") count too — they used to fall into the plain PBMesh
+	# path and baked as an opaque full-quad occluder (rectangle shadow) since
+	# their texture's silhouette was never sampled.
+	var is_bb := node.has_meta("is_billboard") or node.name.begins_with("Sprite") or node.name.begins_with("Tree") or node.name.begins_with("Bush") or node.name.begins_with("Wildflower") \
+		or (node is PBMesh and (node as PBMesh).pb_mesh_data != null and (node as PBMesh).pb_mesh_data.shape_id == &"sprite")
 	if is_bb:
 		if node is MeshInstance3D:
 			var mi := node as MeshInstance3D
 			if mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
 				return
 			var sm := mi.material_override as StandardMaterial3D
+			if sm == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
+				# Placed sprites carry their material in the ArrayMesh surface
+				# (PBMesh rebuilds from mesh data; no override is set).
+				sm = mi.mesh.surface_get_material(0) as StandardMaterial3D
 			if sm != null:
 				# Soft alpha (mist, water spray) does not cast hard shadows
 				if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:
@@ -503,7 +512,12 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_ca
 				if img != null:
 					var scissor: float = sm.alpha_scissor_threshold if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR else 0.5
 					_add_mesh_instance_triangles(mi, grid, img, scissor)
-		return
+				else:
+					# No albedo texture to silhouette against: opaque quad.
+					_add_mesh_instance_triangles(mi, grid, null, 0.5)
+				return
+		# No usable standard material — fall through to the plain occluder
+		# path below rather than dropping the geometry from the shadow grid.
 
 	var is_water := node.name.begins_with("Waterfall") or node.has_meta("is_water")
 	if not is_water and node is MeshInstance3D and (node as MeshInstance3D).material_override is StandardMaterial3D:

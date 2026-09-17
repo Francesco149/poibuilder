@@ -363,3 +363,35 @@ func test_edit_sprite_properties_via_overlay_params() -> void:
 	assert_eq(node.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, "Cast shadow disabled must turn off shadow casting")
 	assert_almost_eq(node.pb_mesh_data.positions[2].x, 1.25, 0.001, "Width scaled to 2.5 (hw = 1.25)")
 	assert_almost_eq(node.pb_mesh_data.positions[2].y, 3.0, 0.001, "Height scaled to 3.0")
+
+func test_placed_sprite_casts_shadows_with_cutout_material() -> void:
+	# Drive the placement phases directly (no viewport needed): the committed
+	# sprite must be shadow-casting and its material ALPHA_SCISSOR — Godot's
+	# shadow pass skips soft-alpha geometry entirely, so a TRANSPARENCY_ALPHA
+	# billboard material meant placed sprites never cast a shadow.
+	var placer := PBSpritePlacer.new()
+	autofree(placer)
+	var img := Image.create(16, 32, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 1))
+	var tex := ImageTexture.create_from_image(img)
+	placer.arm()
+	placer.last_texture = tex
+	placer.selected_texture = tex
+	placer.press_surface_point = Vector3.ZERO
+	placer.press_surface_normal = Vector3.UP
+	placer._start_raise_phase(null)
+	assert_eq(placer.state, PBSpritePlacer.State.RAISE, "Placement enters the raise phase")
+	placer.scale_factor = 1.0
+	var placed: Array = []
+	placer.sprite_placed.connect(func(n: PBMesh): placed.append(n))
+	placer.finalize_placement()
+	assert_eq(placed.size(), 1, "finalize_placement commits exactly one node")
+	var node: PBMesh = placed[0]
+	autofree(node)
+	assert_false(node.pb_mesh_data == null, "Placed node carries mesh data")
+	assert_ne(node.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+		"Placed sprite must cast shadows by default")
+	assert_gt(node.pb_mesh_data.materials.size(), 0, "Sprite carries its billboard material")
+	var mat := node.pb_mesh_data.materials[0] as StandardMaterial3D
+	assert_eq(mat.transparency, BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
+		"Sprite material must be alpha-scissor so the shadow pass renders it")

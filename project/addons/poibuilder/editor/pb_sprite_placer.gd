@@ -726,7 +726,11 @@ func finalize_placement() -> void:
 static func create_billboard_material(tex: Texture2D, is_lit: bool, is_billboard: bool) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = tex
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# CUTOUT, not soft alpha: sprite art is a hard silhouette, and Godot's
+	# shadow pass only renders alpha-scissor geometry — a soft-alpha billboard
+	# casts NO shadow at all (the "sprites never cast shadows" report). The
+	# exporter maps scissor to the PBM cutout mode, same as the demo's trees.
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 

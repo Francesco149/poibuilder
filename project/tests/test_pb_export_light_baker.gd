@@ -100,3 +100,30 @@ func test_billboard_lighting() -> void:
 	var lit_cols := PBLightBaker.bake_billboard_colors(lit_node, [light], null, true)
 	assert_ne(lit_cols[0], Color.WHITE, "Lit billboard must have baked lighting colors")
 	assert_gt(lit_cols[0].r, 0.3, "Lit billboard should receive light")
+
+func test_placed_sprite_bakes_silhouette_shadow_triangles() -> void:
+	# A placed sprite (PBMesh, shape_id "sprite") must enter the shadow grid as
+	# an ALPHA-SILHOUETTE occluder sampled from its texture — not as an opaque
+	# full-quad rectangle (the old plain-PBMesh fallback).
+	var root := Node3D.new()
+	autofree(root)
+	var sprite := PBMesh.new()
+	sprite.name = "Billboard_Sprite"
+	sprite.pb_mesh_data = PBShapeGenerators.create_sprite(2.0, 4.0)
+	var img := Image.create(16, 32, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 1))
+	var tex := ImageTexture.create_from_image(img)
+	sprite.pb_mesh_data.materials = [PBSpritePlacer.create_billboard_material(tex, false, true)]
+	sprite.pb_mesh_data.shape_id = &"sprite"
+	root.add_child(sprite)
+	sprite.rebuild()  # the real placement flow rebuilds — surface material exists
+
+	var grid := PBLightBaker.build_spatial_grid(root)
+	var silhouette := 0
+	var total := 0
+	for tri in grid.all_triangles:
+		total += 1
+		if tri.has_alpha:
+			silhouette += 1
+	assert_gt(total, 0, "Sprite geometry must reach the shadow grid")
+	assert_eq(silhouette, total, "Every sprite triangle must carry its alpha silhouette")

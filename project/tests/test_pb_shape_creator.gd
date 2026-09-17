@@ -26,6 +26,40 @@ func test_arm_does_not_create_anything():
 	assert_eq(creator.shape_id, &"cube")
 	assert_gt(creator.values.size(), 0, "Values seed from the shape defaults")
 
+func test_sub_step_jitter_drag_is_rejected():
+	# An accidental click with a sliver of jitter must NOT create anything:
+	# the dominant extent has to reach the grid step (0.2 m default), whether
+	# the drag quantizes (snap on) or not (snap off).
+	var creator := _armed_creator(&"cube")
+	creator.grid = PBGrid.new()  # defaults: enabled, 1 m unit, 5 subdivisions -> 0.2 m step
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(0.09, 0, 0.03))  # quantizes to 0 -> nothing left
+	assert_false(creator.end_base(), "A jitter drag quantizing below the step is rejected")
+	assert_false(creator.is_active(), "Rejection aborts the session cleanly")
+	assert_true(creator.build_data() == null, "No data survives a rejected drag")
+
+func test_sub_step_drag_with_snap_off_is_rejected_too():
+	# With snapping disabled the raw drag survives quantization — the step
+	# floor must still reject it (the reported tiny-cube case).
+	var creator := _armed_creator(&"cube")
+	creator.grid = PBGrid.new()
+	creator.grid.enabled = false
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(0.12, 0, 0.03))
+	assert_false(creator.end_base(), "A 12 cm drag is below the 0.2 m step floor")
+	assert_false(creator.is_active(), "Rejection aborts the session cleanly")
+
+func test_straight_thin_drag_still_creates():
+	# A long straight drag is legitimate even with a tiny lateral extent
+	# (thin wall) — only the DOMINANT extent is checked against the step.
+	var creator := _armed_creator(&"cube")
+	creator.grid = PBGrid.new()
+	creator.begin(Vector3.ZERO, Vector3.UP, Vector3(0, 0, -1))
+	creator.update_base(Vector3(2.0, 0, 0.05))
+	assert_true(creator.end_base(), "A 2 m x 5 cm thin-wall base is accepted")
+	var data := creator.build_data()
+	assert_not_null(data)
+
 func test_reset_returns_to_inactive():
 	var creator := _armed_creator()
 	creator.reset()

@@ -92,7 +92,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.145"
+const VERSION := "0.9.146"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -2923,6 +2923,20 @@ func _creation_end_base() -> void:
 ## params modal; simple size-only shapes finalize immediately (Edit Params
 ## is always available afterwards).
 func _creation_confirm() -> void:
+	# "Otherwise invalid" guard beside the undersized-drag rejection: degenerate
+	# geometry (no faces, empty/nan positions) must never become a node — that
+	# is what produced broken exclamation-mark nodes whose undo poisoned the
+	# tree. Abort like a too-small drag instead.
+	var preview := shape_creator.preview_node
+	if preview == null or not is_instance_valid(preview) or preview.pb_mesh_data == null \
+			or preview.pb_mesh_data.faces.is_empty() \
+			or preview.pb_mesh_data.positions.size() < 3:
+		_creation_abort("degenerate geometry")
+		return
+	for p in preview.pb_mesh_data.positions:
+		if p.x != p.x or p.y != p.y or p.z != p.z:  # NaN check — finite garbage is bounded below by end_base's extents
+			_creation_abort("degenerate geometry")
+			return
 	shape_creator.confirm_height()
 	# The BASE phase keeps the render mesh hidden (the outline shows); shapes
 	# that commit on base release (trim) go straight to PARAMS — restore the
@@ -3515,7 +3529,9 @@ func _rearm_shape_mode_after_session_end(reason: String) -> void:
 		return
 	_arm_shape_mode_shape()
 
-## The top-center banner text: what mode the scene is in and how to leave.
+## The top-center banner: one exit reminder for every placement mode (which
+## mode is active is obvious from the dock's highlighted tab — repeating it,
+## or the armed shape's name, was noise).
 func _update_mode_banner() -> void:
 	if mode_banner == null or not is_instance_valid(mode_banner):
 		return
@@ -3523,19 +3539,9 @@ func _update_mode_banner() -> void:
 		mode_banner.set_hint("")
 		return
 	match material_dock.dock_mode:
-		PBMaterialDock.DockMode.PAINT:
-			mode_banner.set_hint("Texture paint mode — drag on a face to paint · select the Material & UV tab to exit",
-				Color(0.2, 0.85, 1.0))
-		PBMaterialDock.DockMode.STAMP:
-			mode_banner.set_hint("Stamp mode — hover a face for the preview, click to paste · select the Material & UV tab to exit",
-				Color(1.0, 0.85, 0.2))
-		PBMaterialDock.DockMode.SPRITE:
-			mode_banner.set_hint("Sprite placement mode — click a surface to place the selected sprite (drag: texture carousel) · select the Material & UV tab to exit",
-				Color(0.35, 1.0, 0.5))
-		PBMaterialDock.DockMode.SHAPE:
-			mode_banner.set_hint("Shape mode — drag on a surface to create %s · select the Material & UV tab to exit"
-				% String(_shape_mode_shape).capitalize(),
-				Color(0.75, 0.5, 1.0))
+		PBMaterialDock.DockMode.PAINT, PBMaterialDock.DockMode.STAMP, \
+		PBMaterialDock.DockMode.SPRITE, PBMaterialDock.DockMode.SHAPE:
+			mode_banner.set_hint("Select Material & UV tab to exit placement mode")
 		_:
 			mode_banner.set_hint("")
 

@@ -1187,17 +1187,19 @@ func _on_clear_all_stamps_pressed() -> void:
 func refresh_materials() -> void:
 	_project_materials.clear()
 	_scanned_texture_paths.clear()
+	_seen_material_keys.clear()
 
 	# 1. Always include default material first
 	var def_mat := get_default_material()
 	if def_mat != null:
 		_project_materials.append(def_mat)
+		for key in _material_keys(def_mat):
+			_seen_material_keys[key] = true
 
 	# 2. Add materials from active mesh if any
 	if editor != null and editor.active_mesh != null and editor.active_mesh.pb_mesh_data != null:
 		for m in editor.active_mesh.pb_mesh_data.materials:
-			if m != null and not _project_materials.has(m):
-				_project_materials.append(m)
+			_append_material_once(m)
 
 	# 3. The addon's OWN bundled textures register on EVERY project — a fresh
 	# install has no res://materials yet, and the depth-limited scan below
@@ -1212,6 +1214,40 @@ func refresh_materials() -> void:
 	_rebuild_material_grid()
 
 var _scanned_texture_paths: Dictionary = {}
+var _seen_material_keys: Dictionary = {}
+
+## The keys a material occupies: its resource path when saved, its source
+## texture, and the path of the texture its albedo points at. Collapses the
+## same stock material arriving via the default-material setting, the active
+## mesh, the project scan AND plain texture wrappers of the same image into
+## one card (the default material used to appear up to three times).
+func _material_keys(mat: Material) -> Array[String]:
+	var keys: Array[String] = []
+	if mat == null:
+		return keys
+	if not mat.resource_path.is_empty():
+		keys.append("path:" + mat.resource_path)
+	if mat.has_meta("source_texture_path"):
+		keys.append("src:" + str(mat.get_meta("source_texture_path")))
+	if mat is StandardMaterial3D:
+		var albedo := (mat as StandardMaterial3D).albedo_texture
+		if albedo != null and not albedo.resource_path.is_empty():
+			keys.append("src:" + albedo.resource_path)
+	if keys.is_empty():
+		keys.append("name:%s:%s" % [mat.get_class(), mat.resource_name])
+	return keys
+
+func _append_material_once(mat: Material) -> bool:
+	if mat == null:
+		return false
+	var keys := _material_keys(mat)
+	for key in keys:
+		if _seen_material_keys.has(key):
+			return false
+	for key in keys:
+		_seen_material_keys[key] = true
+	_project_materials.append(mat)
+	return true
 
 func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 	if depth > 3 or _project_materials.size() > 60:
@@ -1231,8 +1267,8 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 				if ext == "tres" or ext == "material":
 					if ResourceLoader.exists(full_path):
 						var res = ResourceLoader.load(full_path)
-						if res is Material and not _project_materials.has(res):
-							_project_materials.append(res)
+						if res is Material:
+							_append_material_once(res)
 				elif ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp":
 					# One card per texture NAME: a project copy of a bundled
 					# texture must not show twice in the palette.
@@ -1249,7 +1285,7 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 								mat.roughness = 0.8
 								mat.vertex_color_use_as_albedo = true
 								mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-								_project_materials.append(mat)
+								_append_material_once(mat)
 		name_str = d.get_next()
 	d.list_dir_end()
 
@@ -1264,11 +1300,10 @@ func _rebuild_material_grid() -> void:
 			continue
 		# Pickers must not cross-populate: sprites, stamps and paint textures
 		# are categorized (PBAssetCatalog) and each mode sees only its own set.
-		# MATERIAL mode keeps the full palette; SHAPE mode has its own shape
-		# palette above, so no texture cards there.
-		if dock_mode != DockMode.MATERIAL:
-			if dock_mode == DockMode.SHAPE:
-				continue
+		# MATERIAL and SHAPE share ONE palette — real materials plus plain
+		# paint textures; billboards, stamps and particles stay in their own
+		# tabs instead of flooding Material & UV.
+		if dock_mode == DockMode.PAINT or dock_mode == DockMode.STAMP or dock_mode == DockMode.SPRITE:
 			if not mat.has_meta("source_texture_path"):
 				continue
 			var cat: String = PBAssetCatalog.classify_path(mat.get_meta("source_texture_path"))
@@ -1282,6 +1317,10 @@ func _rebuild_material_grid() -> void:
 				DockMode.SPRITE:
 					if cat != "sprite":
 						continue
+		elif dock_mode == DockMode.MATERIAL or dock_mode == DockMode.SHAPE:
+			if mat.has_meta("source_texture_path") \
+					and PBAssetCatalog.classify_path(mat.get_meta("source_texture_path")) != "texture":
+				continue
 		var card := _create_material_card(mat)
 		_material_grid.add_child(card)
 
@@ -1300,7 +1339,7 @@ func _create_material_card(mat: Material) -> Control:
 
 	var tooltip := mat_name
 	match dock_mode:
-		DockMode.MATERIAL:
+		DockMode.MATERIAL, DockMode.SHAPE:
 			tooltip += "\nLeft-click: Apply to selected face(s)\nRight-click: Set as default"
 		DockMode.PAINT:
 			tooltip += "\nLeft-click: Select as active paint brush texture"
@@ -1322,7 +1361,7 @@ func _create_material_card(mat: Material) -> Control:
 	# Left-click routing based on active dock mode
 	btn.pressed.connect(func():
 		match dock_mode:
-			DockMode.MATERIAL:
+			DockMode.MATERIAL, DockMode.SHAPE:
 				_apply_material_to_selection(mat)
 			DockMode.PAINT:
 				_select_paint_material(mat)
