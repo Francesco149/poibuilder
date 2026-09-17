@@ -202,6 +202,9 @@ func setup_previews(parent_node: Node) -> void:
 
 	preview_root = Node3D.new()
 	preview_root.name = PREVIEW_NODE_NAME
+	# Marks the subtree for PBMapExporter's tooling skip (it lives in the live
+	# scene, so a name-only guard is one rename away from leaking into maps).
+	preview_root.set_meta("poi_editor_preview", true)
 	parent_node.add_child(preview_root)
 
 	# 1. Brush Ring Preview (Immediate/Torus/Cylinder wireframe)

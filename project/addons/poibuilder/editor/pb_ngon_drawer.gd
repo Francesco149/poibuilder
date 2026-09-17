@@ -149,6 +149,15 @@ func update_cursor_plane(raw_point: Vector3) -> void:
 			best_d = d
 			hovered_vert_idx = i
 
+## Live extents readout for the tool overlay (draw + height phases).
+func get_extents_readout() -> String:
+	match state:
+		State.DRAWING, State.DRAGGING_VERT:
+			return "%d vertices" % points.size() if not points.is_empty() else "0 vertices"
+		State.HEIGHT:
+			return "Height: %.2fm" % height
+	return ""
+
 func update_height_point(ref_point: Vector3) -> void:
 	if state != State.HEIGHT:
 		return

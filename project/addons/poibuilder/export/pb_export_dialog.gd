@@ -1,8 +1,9 @@
-## PBExportDialog — Editor dialog for exporting PoiBuilder maps to GLB.
+## PBExportDialog — Editor dialog for exporting PoiBuilder maps.
 ##
-## Supports both Retro Baked Map export and Modern Engine GLB export,
-## with individual toggles for quad subdivision, lighting bake (shadows + AO),
-## texture baking, billboards, and collision meshes.
+## PBM (the PSP/retro map) is the primary format; GLB comes in two flavors
+## (Retro Baked and Modern live-materials). Individual toggles for quad
+## subdivision, lighting bake (shadows + AO), texture baking, billboards, and
+## collision meshes apply to the retro bakes.
 @tool
 class_name PBExportDialog
 extends ConfirmationDialog
@@ -32,8 +33,6 @@ var _progress_bar: ProgressBar
 var _lbl_progress_phase: Label
 var _lbl_progress_detail: Label
 var _btn_cancel_export: Button
-var _hb_actions: HBoxContainer
-var _btn_launch_viewer: Button
 
 var _is_exporting: bool = false
 var _cancel_token: PBMapExporter.CancellationToken = null
@@ -51,15 +50,17 @@ func _build_ui() -> void:
 	root_vb.add_theme_constant_override("separation", 8)
 	add_child(root_vb)
 
-	# Mode selection
+	# Format selection — PBM is the default (PSP/retro, one-click export).
 	var hb_mode := HBoxContainer.new()
 	var lbl_mode := Label.new()
-	lbl_mode.text = "Target Engine Mode:"
+	lbl_mode.text = "Format:"
 	lbl_mode.custom_minimum_size = Vector2(160, 0)
 	hb_mode.add_child(lbl_mode)
 	_mode_option = OptionButton.new()
-	_mode_option.add_item("Retro Engine (Fully Baked Map)", PBMapExporter.ExportMode.RETRO)
-	_mode_option.add_item("Modern Engine (GLB + Metadata)", PBMapExporter.ExportMode.MODERN)
+	_mode_option.add_item("PBM — PoiBuilder Retro Map (PSP)", FORMAT_PBM)
+	_mode_option.add_item("GLB — Retro Baked Map", FORMAT_RETRO_GLB)
+	_mode_option.add_item("GLB — Modern Engine (live materials)", FORMAT_MODERN_GLB)
+	_mode_option.select(0)
 	_mode_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_mode_option.item_selected.connect(_on_mode_selected)
 	hb_mode.add_child(_mode_option)
@@ -131,8 +132,10 @@ func _build_ui() -> void:
 	_chk_bake_lighting.text = "Bake Lighting into Vertex Colors"
 	_chk_bake_lighting.button_pressed = true
 	_chk_bake_lighting.toggled.connect(func(on: bool):
-		_chk_bake_shadows.editable = on
-		_chk_bake_ao.editable = on
+		# CheckBox greys via `disabled`, SpinBox via `editable` (the old code
+		# wrote `editable` on the CheckBoxes, which threw on every toggle).
+		_chk_bake_shadows.disabled = not on
+		_chk_bake_ao.disabled = not on
 		_spin_ao_samples.editable = on
 	)
 	root_vb.add_child(_chk_bake_lighting)
@@ -180,12 +183,12 @@ func _build_ui() -> void:
 
 	# Output path
 	var lbl_path_title := Label.new()
-	lbl_path_title.text = "Output File Path (.glb):"
+	lbl_path_title.text = "Output File Path:"
 	root_vb.add_child(lbl_path_title)
 
 	var hb_path := HBoxContainer.new()
 	_txt_path = LineEdit.new()
-	_txt_path.text = "res://exports/exported_map.glb"
+	_txt_path.text = "res://exports/exported_map.pbm"
 	_txt_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb_path.add_child(_txt_path)
 
@@ -235,15 +238,6 @@ func _build_ui() -> void:
 	_progress_container.add_child(_lbl_progress_detail)
 	root_vb.add_child(_progress_container)
 
-	# Action bar (viewer launcher button when complete)
-	_hb_actions = HBoxContainer.new()
-	_btn_launch_viewer = Button.new()
-	_btn_launch_viewer.text = "Open in Retro Map Viewer"
-	_btn_launch_viewer.visible = false
-	_btn_launch_viewer.pressed.connect(_on_launch_viewer_pressed)
-	_hb_actions.add_child(_btn_launch_viewer)
-	root_vb.add_child(_hb_actions)
-
 	# File Dialog
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
@@ -258,15 +252,32 @@ func open_dialog(scene_root: Node) -> void:
 	_scene_root = scene_root
 	_lbl_status.text = ""
 	_progress_container.visible = false
-	_btn_launch_viewer.visible = false
 	_is_exporting = false
 	get_ok_button().disabled = false
 	popup_centered()
-func _on_mode_selected(idx: int) -> void:
-	var is_retro := idx == PBMapExporter.ExportMode.RETRO
+## Dialog-local format ids (PBM rides the RETRO export mode with a .pbm path).
+enum {
+	FORMAT_PBM = 100,
+	FORMAT_RETRO_GLB = 101,
+	FORMAT_MODERN_GLB = 102,
+}
+
+func _selected_format() -> int:
+	return _mode_option.get_selected_id() if _mode_option != null else FORMAT_PBM
+
+func _on_mode_selected(_idx: int) -> void:
+	var is_retro := _selected_format() != FORMAT_MODERN_GLB
 	_chk_subdivide.button_pressed = is_retro
 	_chk_bake_lighting.button_pressed = is_retro
 	_chk_bake_textures.button_pressed = is_retro
+	# Keep the path's extension honest for the chosen format.
+	var path := _txt_path.text.strip_edges()
+	var want_ext := ".pbm" if _selected_format() == FORMAT_PBM else ".glb"
+	if not path.is_empty() and not path.to_lower().ends_with(want_ext):
+		var base := path.get_basename()
+		if base.is_empty():
+			base = "exported_map"
+		_txt_path.text = base + want_ext
 
 func _on_browse_pressed() -> void:
 	_file_dialog.current_path = _txt_path.text
@@ -276,12 +287,6 @@ func _on_cancel_export_pressed() -> void:
 	if _cancel_token != null:
 		_cancel_token.cancel()
 		_lbl_progress_phase.text = "Cancelling export..."
-
-func _on_launch_viewer_pressed() -> void:
-	var path := _txt_path.text.strip_edges()
-	var exec_path := OS.get_executable_path()
-	var args := PackedStringArray(["res://test_scenes/retro_map_viewer.tscn", "--map=%s" % path])
-	OS.create_process(exec_path, args)
 
 func _on_confirmed() -> void:
 	if _is_exporting:
@@ -301,14 +306,14 @@ func _on_confirmed() -> void:
 	_is_exporting = true
 	get_ok_button().disabled = true
 	_lbl_status.text = ""
-	_btn_launch_viewer.visible = false
 	_progress_container.visible = true
 	_progress_bar.value = 0.0
 	_lbl_progress_phase.text = "Starting export..."
 	_lbl_progress_detail.text = ""
 
 	var settings := PBMapExporter.ExportSettings.new()
-	settings.export_mode = _mode_option.get_selected_id() as PBMapExporter.ExportMode
+	settings.export_mode = PBMapExporter.ExportMode.MODERN if _selected_format() == FORMAT_MODERN_GLB \
+			else PBMapExporter.ExportMode.RETRO
 	settings.subdivide_quads = _chk_subdivide.button_pressed
 	settings.grid_size = _spin_grid_size.value
 	settings.bake_lighting = _chk_bake_lighting.button_pressed
@@ -334,7 +339,6 @@ func _on_confirmed() -> void:
 	if err == OK:
 		_lbl_status.modulate = Color(0.2, 0.9, 1.0)
 		_lbl_status.text = "Export successful: %s" % path
-		_btn_launch_viewer.visible = true
 		export_completed.emit(path, settings.export_mode)
 	elif _cancel_token != null and _cancel_token.cancelled or err == ERR_SKIP:
 		_lbl_status.modulate = Color(1.0, 0.7, 0.2)

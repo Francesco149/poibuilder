@@ -66,6 +66,84 @@ func test_stamped_face_bakes_only_touched_tile() -> void:
 	assert_eq(baked_count, 1, "Exactly 1 fragment must use the BakedTile material")
 	assert_eq(base_count, 3, "The other 3 fragments must reuse the unpainted base material")
 
+## Baked tile texels must be sampled at TEXEL CENTERS, not endpoints. The old
+## endpoint mapping put the cell's edge coordinates exactly on the first/last
+## texel columns, duplicating the boundary content into BOTH adjacent tiles —
+## visible as a dark 1-texel grid line at every tile boundary around splats
+## and stamps (the stamp's navy border smeared across the whole bake grid).
+## A horizontal ramp base makes the artifact unmissable: with endpoint
+## sampling the last column of every tile lands on the wrap boundary (black),
+## with texel centers it samples 0.5 texel short of the boundary (bright).
+func test_baked_tile_samples_texel_centers_not_endpoints() -> void:
+	var ramp := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	for x in range(256):
+		var v := float(x) / 255.0
+		for y in range(256):
+			ramp.set_pixel(x, y, Color(v, v, v, 1.0))
+	var base_mat := StandardMaterial3D.new()
+	base_mat.albedo_texture = ImageTexture.create_from_image(ramp)
+
+	var mesh_node := PBMesh.create_cube(2.0)
+	autofree(mesh_node)
+	var mesh_data: PBMeshData = mesh_node.pb_mesh_data
+	var face: PBFace = mesh_data.faces[0]
+	mesh_data.set_face_material(face, base_mat)
+
+	var stamps_container := Node3D.new()
+	stamps_container.name = "PBStamps"
+	mesh_node.add_child(stamps_container)
+	var stamp_quad := MeshInstance3D.new()
+	stamp_quad.name = "Stamp_0"
+	stamp_quad.set_meta("face_idx", 0)
+	stamp_quad.set_meta("stamp_texture_path", "res://addons/poibuilder/materials/textures/flower_patch.png")
+	stamp_quad.set_meta("stamp_opacity", 0.0) # touches every tile, paints nothing
+	stamp_quad.set_meta("stamp_scale", 4.0)
+	stamp_quad.set_meta("stamp_rotation", 0.0)
+	stamp_quad.set_meta("anchor_center", Vector2(0.0, 0.0))
+	stamp_quad.set_meta("anchor_du", Vector2(2.0, 0.0))
+	stamp_quad.set_meta("anchor_dv", Vector2(0.0, 2.0))
+	stamps_container.add_child(stamp_quad)
+
+	var frags := PBFaceSubdivider.subdivide_face(mesh_data, face, 0, true, 1.0)
+	assert_eq(frags.size(), 4)
+	var cache := {}
+	var baked := PBTileBaker.bake_face_tiles(mesh_node, mesh_data, face, 0, frags, true, 64, cache)
+	assert_eq(baked.baked_textures.size(), 4, "All 4 tiles must bake")
+
+	var dark_edge_columns := 0
+	for tex in baked.baked_textures:
+		# The retro engine's GU_CLAMP wrap + pinned-mip detail policy key off
+		# the texture name; without it every tile edge blends its own opposite
+		# edge (dark/white fringes at every tile boundary on the device).
+		assert_true(tex.resource_name.begins_with("TileAtlas"),
+				"Baked tile texture must carry the TileAtlas name convention")
+		var img := tex.get_image()
+		assert_eq(img.get_width(), 64)
+		assert_eq(img.get_height(), 64)
+		# Last column center = 63.5/64 of the cell -> ramp ~0.992 (byte ~253).
+		# Endpoint sampling wrapped to 0 (byte ~0): the old grid-line bug.
+		assert_gt(_column_mean_r(img, 63), 200.0,
+				"Tile's last column must sample half a texel short of the cell edge, not the wrapped boundary")
+		assert_lt(_column_mean_r(img, 0), 30.0,
+				"Tile's first column must sample half a texel past the cell edge")
+		# The ramp's own dark START legitimately covers the first few columns
+		# (column x samples byte 4x+2, so bytes 2..30 = columns 0..6); a wrapped
+		# boundary column would show up as a dark column anywhere ELSE.
+		for x in range(8, 64):
+			assert_gt(_column_mean_r(img, x), 32.0,
+					"Dark column at x=%d: content past the ramp's dark start must never wrap (old endpoint mapping)" % x)
+		var dark_in_tile := 0
+		for x in range(64):
+			if _column_mean_r(img, x) < 32.0:
+				dark_in_tile += 1
+		assert_lte(dark_in_tile, 8, "Dark columns must be confined to the ramp's leading edge")
+
+func _column_mean_r(img: Image, x: int) -> float:
+	var sum := 0.0
+	for y in range(img.get_height()):
+		sum += img.get_pixel(x, y).r * 255.0
+	return sum / float(img.get_height())
+
 func test_enforce_pot_image_clamps_to_max_size() -> void:
 	var img := Image.create(1024, 768, false, Image.FORMAT_RGBA8)
 	img.fill(Color.WHITE)

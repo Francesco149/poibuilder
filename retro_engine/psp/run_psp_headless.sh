@@ -69,7 +69,9 @@ echo "Map: $MAP_FILE"
 echo "ELF: $TEST_ELF"
 
 # Run with timeout to prevent hangs
-PPSSPPHeadless "$TEST_ELF" "$MAP_FILE" ${PRESET:+"$PRESET"} "${PASSTHROUGH[@]}" --graphics=software --timeout=15
+# Outer hard timeout: the emulator's own --timeout does not always fire; a
+# hung run must never sit eating RAM unattended.
+timeout -k 10 300 PPSSPPHeadless "$TEST_ELF" "$MAP_FILE" ${PRESET:+"$PRESET"} "${PASSTHROUGH[@]}" --graphics=software --timeout=15
 
 echo "=== Execution finished ==="
 # The benchmark captures the orbit at frame 60, freezes the camera, and

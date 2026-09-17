@@ -61,7 +61,7 @@ signal materials_dock_requested
 ## Emitted when the user clicks the UV Editor button to focus the 2D UV panel.
 signal uv_editor_requested
 
-## Emitted when the user clicks the Export button to open the map export dialog.
+## Emitted when the user clicks "Export..." to open the map export dialog.
 signal export_requested
 ## Emitted when the user clicks Docs to open the bundled HTML site.
 signal docs_requested
@@ -125,7 +125,7 @@ var _btn_uv_editor: Button
 var _op_buttons: Dictionary = {}
 var _btn_settings: Button
 var _btn_env: MenuButton
-var _btn_export: Button
+var _btn_export_more: Button
 var _btn_docs: Button
 var _btn_grid_panel: Button
 var _lbl_grid_state: Label
@@ -441,15 +441,17 @@ func _build_ui() -> void:
 	env_popup.add_item("🌙 Night", 3)
 	env_popup.id_pressed.connect(_on_env_menu_pressed)
 
-	# Export group
+	# Export group — the dialog carries format + bake options (PBM default,
+	# GLB retro-baked or modern live-materials).
 	_sep_export = _make_sep()
-	_btn_export = Button.new()
-	_btn_export.name = "ExportButton"
-	_btn_export.text = "Export"
-	_btn_export.flat = true
-	_btn_export.focus_mode = Control.FOCUS_NONE
-	_btn_export.tooltip_text = "Export Map: Export scene to retro baked map or modern GLB"
-	_btn_export.pressed.connect(func(): export_requested.emit())
+
+	_btn_export_more = Button.new()
+	_btn_export_more.name = "ExportDialogButton"
+	_btn_export_more.text = "Export..."
+	_btn_export_more.flat = true
+	_btn_export_more.focus_mode = Control.FOCUS_NONE
+	_btn_export_more.tooltip_text = "Export...: open the export dialog (PBM default; GLB retro-baked or modern live-materials, bake options)"
+	_btn_export_more.pressed.connect(func(): export_requested.emit())
 
 	_btn_docs = Button.new()
 	_btn_docs.name = "DocsButton"
@@ -496,7 +498,7 @@ func _on_split_rows_button_gui_input(_event: InputEvent) -> void:
 
 func _update_split_button_tooltip() -> void:
 	if _btn_split_rows != null:
-		_btn_split_rows.tooltip_text = "Extended Tools: Toggle Rows 3 & 4 (Selection, Object Tools, CSG, Snapping)"
+		_btn_split_rows.tooltip_text = "Extended Tools: Toggle Rows 3 & 4 (Grid, Selection, Object Tools, CSG, Snapping)"
 func _update_row_layout() -> void:
 	for c in _row1.get_children():
 		_row1.remove_child(c)
@@ -529,13 +531,13 @@ func _update_row_layout() -> void:
 	_row1.add_child(_btn_env)
 
 	# Row 2 (Compact, never exceeding "Mesh"):
-	# Modes | Space | Grid | Shapes | Docks & Export
+	# Modes | Space | Shapes | Docks & Export — the Grid section lives on
+	# Row 3, which has the room for it.
 	var grp_space: Array[Control] = [_sep_space, _btn_space]
-	var grp_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_shapes: Array[Control] = [_sep_shapes, _btn_new_shape, _btn_ngon, _btn_edit_params]
 	var grp_docks: Array[Control] = [
 		_sep_docks, _btn_materials, _btn_uv_editor, _btn_overlay, _btn_recover_overlay,
-		_btn_settings, _sep_export, _btn_export, _btn_docs
+		_btn_settings, _sep_export, _btn_export_more, _btn_docs
 	]
 	_row2.add_child(_btn_object)
 	_row2.add_child(_btn_vertex)
@@ -543,17 +545,18 @@ func _update_row_layout() -> void:
 	_row2.add_child(_btn_face)
 	_row2.add_child(_btn_texture)
 	for c in grp_space: _row2.add_child(c)
-	for c in grp_grid: _row2.add_child(c)
 	for c in grp_shapes: _row2.add_child(c)
 	for c in grp_docks: _row2.add_child(c)
 
-	# Row 3 (Extended: Selection Suite + Auto-Smooth):
+	# Row 3 (Extended: Grid & Snapping + Selection Suite + Auto-Smooth):
+	var grp_row3_grid: Array[Control] = [_sep_grid, _btn_grid_panel, _lbl_grid_state]
 	var grp_row3_sel: Array[Control] = [
 		_op_buttons["select_all"], _op_buttons["invert_selection"], _op_buttons["grow_selection"],
 		_op_buttons["shrink_selection"], _op_buttons["select_coplanar"], _op_buttons["select_similar"],
 		_op_buttons["select_boundary"], _op_buttons["select_face_loop"], _op_buttons["select_face_ring"],
 		_sep_row3_smooth, _op_buttons["smooth_auto"]
 	]
+	for c in grp_row3_grid: _row3.add_child(c)
 	for c in grp_row3_sel: _row3.add_child(c)
 
 	# Row 4 (Extended: Snapping Controls + Object Tools + CSG Booleans):

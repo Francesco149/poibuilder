@@ -31,7 +31,12 @@ func test_texture_discovery_finds_project_textures() -> void:
 	assert_has(found_names, "tree_oak.png")
 	assert_has(found_names, "bush_foliage.png")
 	assert_has(found_names, "grass_tuft.png")
-	assert_has(found_names, "flower_patch.png")
+	# v0.9.139 asset categorization: the sprite carousel must list ONLY
+	# sprites — stamps (flower_patch) and paint textures (tiles/brick) are
+	# filtered out by PBAssetCatalog.
+	assert_false(found_names.has("flower_patch.png"), "stamps must not appear in the sprite carousel")
+	assert_false(found_names.has("tiles_wet_4x4.png"), "paint textures must not appear in the sprite carousel")
+	assert_false(found_names.has("particle_flame.png"), "particles must not appear in the sprite carousel")
 
 func test_placer_lifecycle_and_arming() -> void:
 	var placer := PBSpritePlacer.new()
@@ -213,6 +218,59 @@ func test_sprite_dimensions_computed_from_aspect_ratio() -> void:
 	var dims_square := PBSpritePlacer.compute_texture_dimensions(tex_square, 1.5)
 	assert_almost_eq(dims_square.x, 1.5, 0.001)
 	assert_almost_eq(dims_square.y, 1.5, 0.001)
+
+## Regression: the raise guide's top endpoint must land at the sprite's BASE
+## (surface + normal * elevation). The sprite quad is base-anchored
+## (create_sprite builds it from Y=0 up); the old `-h/2` term assumed a
+## center-anchored quad and buried most of the guide below the surface.
+func test_raise_guide_anchors_at_sprite_base() -> void:
+	var placer := PBSpritePlacer.new()
+	placer.scene_root_override = _root
+	placer.refresh_available_textures()
+	placer.last_texture = placer.available_textures[0]
+	placer.arm()
+
+	var hit := {"point": Vector3(1, 0, 1), "normal": Vector3.UP}
+	var press_ev := InputEventMouseButton.new()
+	press_ev.button_index = MOUSE_BUTTON_LEFT
+	press_ev.pressed = true
+	press_ev.position = Vector2(400, 300)
+	placer.handle_input(_camera, press_ev, hit, _host)
+
+	var rel_ev := InputEventMouseButton.new()
+	rel_ev.button_index = MOUSE_BUTTON_LEFT
+	rel_ev.pressed = false
+	rel_ev.position = Vector2(400, 300)
+	placer.handle_input(_camera, rel_ev, hit, _host)
+	assert_eq(placer.state, PBSpritePlacer.State.RAISE)
+
+	# Mouse up -> elevation 50 * 0.012 = 0.6 m
+	var up_ev := InputEventMouseMotion.new()
+	up_ev.position = Vector2(400, 250)
+	up_ev.relative = Vector2(0, -50)
+	placer.handle_input(_camera, up_ev, hit, _host)
+	assert_almost_eq(placer.elevation, 0.6, 0.001)
+
+	assert_true(placer._guide_line != null and is_instance_valid(placer._guide_line),
+		"RAISE phase must show the guide line")
+	var guide_mat := placer._guide_line.material_override as StandardMaterial3D
+	assert_true(guide_mat.no_depth_test, "Guide must draw over the surface it rises from, not drown under it")
+
+	var mesh := placer._guide_line.mesh as ImmediateMesh
+	assert_true(mesh != null and mesh.get_surface_count() >= 2, "Guide mesh must have the band + core surfaces")
+	# Surface 0 is the band strip: [ground±side, bottom±side]. The sprite base
+	# sits at ground + normal * elevation, so the band's top pair is at the
+	# ground plane and its bottom pair at the raised base.
+	var band := mesh.surface_get_arrays(0)
+	assert_true(band[Mesh.ARRAY_VERTEX] != null, "Guide band must carry vertices")
+	var band_verts: PackedVector3Array = band[Mesh.ARRAY_VERTEX]
+	assert_eq(band_verts.size(), 4, "Band strip has 4 vertices")
+	assert_almost_eq(band_verts[0].y, 0.0, 0.01, "Band top pair sits on the ground plane")
+	assert_almost_eq(band_verts[1].y, 0.0, 0.01, "Band top pair sits on the ground plane")
+	assert_almost_eq(band_verts[2].y, placer.elevation, 0.01, "Band bottom pair lands at the sprite BASE (ground + elevation)")
+	assert_almost_eq(band_verts[3].y, placer.elevation, 0.01, "Band bottom pair lands at the sprite BASE (ground + elevation)")
+
+	placer.abort()
 
 func test_sprite_quad_has_manual_uv_and_correct_orientation() -> void:
 	var md := PBShapeGenerators.create_sprite(1.0, 2.0)

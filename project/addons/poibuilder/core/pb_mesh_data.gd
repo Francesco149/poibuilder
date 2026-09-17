@@ -590,6 +590,16 @@ func get_normals() -> PackedVector3Array:
 		calculate_normals()
 	return _normals
 
+## Installs pre-computed vertex normals so the flat/smoothing recomputation is
+## not forced — used when a transform (bake, import) already carries correct
+## per-vertex normals through a vertex remap. Returns false on size mismatch
+## (caller should fall back to calculate_normals()).
+func set_authored_normals(normals: PackedVector3Array) -> bool:
+	if normals.size() != positions.size():
+		return false
+	_normals = normals.duplicate()
+	return true
+
 ## Compiles this PBMeshData into a Godot ArrayMesh.
 ## If existing is provided, clears its surfaces and reuses it; otherwise instantiates a new ArrayMesh.
 ## Faces are grouped by submesh_index into distinct surfaces.
@@ -622,11 +632,19 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 		if needs_uv_refresh:
 			PBUv.refresh_mesh_uvs(self)
 
-	# Ensure UV2 (splat masks) is up-to-date and non-stretching across geometry edits
-	var has_splat_data := not textures1.is_empty()
+	# Ensure UV2 (splat masks) is up-to-date and non-stretching across geometry
+	# edits — but ONLY for meshes that actually carry splat data. textures1 on
+	# a splat-free mesh belongs to the author (e.g. a LightmapGI unwrap) and
+	# must survive rebuilds untouched; the old `not textures1.is_empty()`
+	# trigger clobbered exactly those unwraps.
+	var has_splat_data := false
+	for face in faces:
+		if face != null and face.splat_bounds.size() == 4:
+			has_splat_data = true
+			break
 	if not has_splat_data:
-		for face in faces:
-			if face != null and face.splat_bounds.size() == 4:
+		for mat in materials:
+			if mat != null and PBSplat.is_splat_material(mat):
 				has_splat_data = true
 				break
 	if has_splat_data:

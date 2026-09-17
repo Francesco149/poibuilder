@@ -119,13 +119,21 @@ static func average(positions: PackedVector3Array, indexes: PackedInt32Array = P
 ## Tests whether a ray intersects a triangle using the Möller–Trumbore algorithm (non-culling).
 ## Returns {"hit": true, "distance": float, "point": Vector3} or {"hit": false}.
 static func ray_intersects_triangle(ray_origin: Vector3, ray_dir: Vector3, v0: Vector3, v1: Vector3, v2: Vector3) -> Dictionary:
+	# True epsilon for the parallel-plane and t gates. The old FLT_EPSILON
+	# (1e-4, a meter-scale tolerance) silently rejected every hit on dense
+	# geometry: det = 2 * triangle area, so a sculpt's 0.5 mm² triangle
+	# (det ≈ 1e-6) read as "ray parallel to plane" — sculpt faces were
+	# unpickable, and the plain-mesh hover sweep paid full cost to always
+	# return nothing.
+	const RAY_TRI_EPSILON := 0.000000001 # 1e-9
+
 	var e1: Vector3 = v1 - v0
 	var e2: Vector3 = v2 - v0
 	var p: Vector3 = ray_dir.cross(e2)
 	var det: float = e1.dot(p)
 
 	# Non-culling branch: if determinant is near zero, ray lies in plane of triangle
-	if det > -FLT_EPSILON and det < FLT_EPSILON:
+	if det > -RAY_TRI_EPSILON and det < RAY_TRI_EPSILON:
 		return {"hit": false}
 
 	var inv_det: float = 1.0 / det
@@ -140,7 +148,7 @@ static func ray_intersects_triangle(ray_origin: Vector3, ray_dir: Vector3, v0: V
 		return {"hit": false}
 
 	var t: float = e2.dot(q) * inv_det
-	if t > FLT_EPSILON:
+	if t > RAY_TRI_EPSILON:
 		var hit_point: Vector3 = Vector3(
 			u * v1.x + v * v2.x + (1.0 - (u + v)) * v0.x,
 			u * v1.y + v * v2.y + (1.0 - (u + v)) * v0.y,

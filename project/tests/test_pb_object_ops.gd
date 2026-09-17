@@ -123,3 +123,33 @@ func test_poibuilderize_csg_box() -> void:
 	assert_not_null(result.pb_mesh_data)
 	assert_gt(result.pb_mesh_data.faces.size(), 0)
 	assert_gt(result.pb_mesh_data.positions.size(), 0)
+
+func test_poibuilderize_preserves_tangents() -> void:
+	# Hand-built triangle with explicit tangents — the modern-asset case:
+	# normal-mapped GLTF imports carry tangents that must survive conversion,
+	# or the material's normal map breaks on the converted PBMesh.
+	var verts := PackedVector3Array([Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0)])
+	var indices := PackedInt32Array([0, 1, 2])
+	var uvs := PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(0, 1)])
+	var normals := PackedVector3Array([Vector3(0, 0, 1), Vector3(0, 0, 1), Vector3(0, 0, 1)])
+	var tangents := PackedFloat32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_INDEX] = indices
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TANGENT] = tangents
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	var result: PBMesh = autofree(PBObjectOps.poibuilderize(mi))
+	mi.free()
+
+	assert_not_null(result, "Poibuilderize should return PBMesh")
+	var md: PBMeshData = result.pb_mesh_data
+	assert_eq(md.tangents.size(), md.positions.size() * 4,
+			"Poibuilderize must preserve per-vertex tangents (4 floats per corner)")
+	assert_almost_eq(float(md.tangents[3]), 1.0, 0.001, "Tangent values (incl. W handedness) must survive")

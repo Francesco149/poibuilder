@@ -297,6 +297,15 @@ static func _set_owner_recursive(node: Node, new_owner: Node) -> void:
 	for child in node.get_children():
 		_set_owner_recursive(child, new_owner)
 
+## Editor tooling that must never reach an export. The paint controller's
+## preview subtree (brush ring, StampQuad, StampDeleteHighlight) lives in the
+## LIVE scene while the tool is active — exporting it shipped a floating stamp
+## decal quad into every GLB/PBM, reading as a stamp leaking onto whatever
+## mesh it happened to overhang. The name matches the tool's own constant;
+## the meta is the explicit marker for any future tooling.
+static func _is_editor_preview(node: Node) -> bool:
+	return node.name == "PBSplatPreviewNode" or node.has_meta("poi_editor_preview")
+
 static func _is_billboard(node: Node) -> bool:
 	if node == null:
 		return false
@@ -332,6 +341,8 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 	var node_name := source_node.name
 	if node_name == "PBStamps" or node_name.begins_with("Collider"):
 		return
+	if _is_editor_preview(source_node):
+		return
 	if source_node is CollisionShape3D:
 		return
 	if _is_non_drawn_mesh(source_node):
@@ -349,7 +360,10 @@ static func _collect_export_nodes_recursive(source_node: Node, out: Array[Node])
 			out.append(source_node)
 	elif source_node is MeshInstance3D:
 		var mi := source_node as MeshInstance3D
-		if mi.mesh != null:
+		# Editor tooling meshes (sprite raise guide etc.) are ImmediateMesh
+		# line art: no index array, so exporting them reads the vertices as a
+		# triangle soup of arbitrary winding — garbage on the target renderer.
+		if mi.mesh != null and not (mi.mesh is ImmediateMesh):
 			out.append(source_node)
 	elif source_node is Light3D:
 		out.append(source_node)
@@ -365,7 +379,10 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 		texture_plan: Dictionary) -> void:
 	if _is_billboard(source_node):
 		if settings.export_billboards and source_node is MeshInstance3D:
-			_export_billboard(source_node as MeshInstance3D, parent_export_node, lights, grid, settings)
+			var bb := source_node as MeshInstance3D
+			if bb.mesh is ImmediateMesh:
+				return # editor tooling line art, never a billboard
+			_export_billboard(bb, parent_export_node, lights, grid, settings)
 	elif source_node is PBMesh:
 		var pb := source_node as PBMesh
 		if pb.pb_mesh_data != null and not pb.pb_mesh_data.faces.is_empty():
@@ -374,7 +391,12 @@ static func _export_single_node(source_node: Node, parent_export_node: Node,
 			else:
 				_export_modern_pb_mesh(pb, parent_export_node, lights, grid, base_material_cache, settings)
 	elif source_node is MeshInstance3D:
-		_export_plain_mesh(source_node as MeshInstance3D, parent_export_node, lights, grid, settings, texture_plan)
+		var mi := source_node as MeshInstance3D
+		# Editor tooling meshes (sprite raise guide etc.) are ImmediateMesh
+		# line art: no index array, so exporting them reads the vertices as a
+		# triangle soup of arbitrary winding — garbage on the target renderer.
+		if mi.mesh != null and not (mi.mesh is ImmediateMesh):
+			_export_plain_mesh(mi, parent_export_node, lights, grid, settings, texture_plan)
 	elif source_node is Light3D:
 		if settings.export_lights:
 			_export_light(source_node as Light3D, parent_export_node)
@@ -414,6 +436,8 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 
 	var node_name := source_node.name
 	if node_name == "PBStamps" or node_name.begins_with("Collider"):
+		return
+	if _is_editor_preview(source_node):
 		return
 	if source_node is CollisionShape3D:
 		return
@@ -522,6 +546,15 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 
 	var am: ArrayMesh = mesh_data.to_array_mesh()
 
+	# GLTF has no representation for custom ShaderMaterials: a splat material
+	# exports as an untextured default and the paint vanishes for other
+	# engines. Substitute the splat base look (texture/color/roughness) as a
+	# StandardMaterial3D so modern exports at least keep the base surface —
+	# painted layer content needs the retro bake or a live PoiBuilder scene.
+	for s in range(am.get_surface_count()):
+		if PBSplat.is_splat_material(am.surface_get_material(s)):
+			am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
+
 	# If bake lighting is toggled on, bake vertex colors directly onto the ArrayMesh surfaces
 	if settings.bake_lighting:
 		var new_am := ArrayMesh.new()
@@ -569,6 +602,23 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
 		_export_collider_mesh(pb, parent)
+
+## Converts a splat ShaderMaterial into its base StandardMaterial3D look for
+## material formats that cannot carry custom shaders (modern .glb export).
+static func _standard_from_splat(mat: Material) -> StandardMaterial3D:
+	var sm := mat as ShaderMaterial
+	var out := StandardMaterial3D.new()
+	out.resource_name = sm.resource_name
+	var base_tex: Texture2D = sm.get_shader_parameter("base_texture")
+	if base_tex != null:
+		out.albedo_texture = base_tex
+	var col = sm.get_shader_parameter("base_color")
+	if col is Color:
+		out.albedo_color = col
+	var rough = sm.get_shader_parameter("roughness")
+	if rough != null:
+		out.roughness = clampf(float(rough), 0.0, 1.0)
+	return out
 
 ## Exports a collider mesh named Collider_<Name>.
 static func _export_collider_mesh(pb: PBMesh, parent: Node) -> void:
@@ -625,7 +675,7 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = mi.name
-	export_mi.transform = _get_world_transform(mi)
+	export_mi.transform = _billboard_bake_transform(mi)
 
 	var src_mesh: Mesh = null
 	if mi is PBMesh:
@@ -678,6 +728,21 @@ static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Li
 		export_mi.mesh = am
 
 	parent.add_child(export_mi)
+
+## The transform a billboard bakes with. Godot's BILLBOARD_FIXED_Y rebuilds the
+## quad's basis from world up + the camera and keeps only the node origin, so
+## the editor shows the sprite upright even when the authored basis hangs
+## upside-down (e.g. a placement pick against a backface/inward-wound face
+## before the viewer-facing normal flip). The bake has no shader to hide it:
+## an authored basis whose up axis points below the horizon would export the
+## sprite hanging into the floor. Un-flip it around the anchor (same X axis,
+## Y and Z negated — a proper 180° rotation) so the bake shows what the
+## editor showed; sane bases (floor/wall sprites) pass through untouched.
+static func _billboard_bake_transform(mi: MeshInstance3D) -> Transform3D:
+	var xf := _get_world_transform(mi)
+	if xf.basis.y.y < 0.0:
+		xf.basis = Basis(xf.basis.x, -xf.basis.y, -xf.basis.z)
+	return xf
 
 ## Exports a non-PBMesh MeshInstance3D (an imported GLB prop, a primitive, a
 ## CSG bake the user did not Poibuilderize). Retro mode hands the device the
@@ -955,6 +1020,8 @@ static func _collect_texture_usage_recursive(node: Node, out: Dictionary) -> voi
 	var node_name := String(node.name)
 	if node_name == "PBStamps" or node_name.begins_with("Collider") or node.has_meta("poi_emitter_holder"):
 		return
+	if _is_editor_preview(node):
+		return
 	if _is_non_drawn_mesh(node):
 		for child in node.get_children():
 			_collect_texture_usage_recursive(child, out)
@@ -1165,6 +1232,8 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	_collect_mesh_instances_recursive(export_tree, mesh_nodes)
 
 	for mi in mesh_nodes:
+		if mi.mesh is ImmediateMesh:
+			continue
 		if mi.has_meta("poi_emitter_holder"):
 			# A particle emitter's texture carrier, not geometry (see
 			# _export_emitter_holder): it exists for the GLB converters.
@@ -1219,6 +1288,16 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 					for idx in indices: idx_list.append(idx)
 				else:
 					for i in range(verts.size()): idx_list.append(i)
+				# The export-tree meshes are wound CW-from-outside (Godot's
+				# front convention, same as the GLB pipeline). The PSP GU runs
+				# GU_CCW over a y-down framebuffer — the OPPOSITE sense — so
+				# every triangle flips here to match the device-verified
+				# oracle converter (pbm_conv.py). Without this the whole map
+				# renders inside-out on the PSP.
+				for t in range(0, idx_list.size() - 2, 3):
+					var swap_tmp = idx_list[t + 1]
+					idx_list[t + 1] = idx_list[t + 2]
+					idx_list[t + 2] = swap_tmp
 
 				for idx in idx_list:
 					var wp: Vector3 = xf * verts[idx]
@@ -1262,7 +1341,14 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	spawn.z = bounds_max.z + 4.0
 
 	# Dynamic Scene Entity & Metadata Discovery (PBM v2.0+)
-	var metadata_entries := _collect_metadata_from_scene(root, export_tree, settings, bounds_min, bounds_max, spawn)
+	# Runs BEFORE the header write: the discovered Spawn feeds the header —
+	# the PSP engine spawns from the binary header's spawn_pos/spawn_rot, the
+	# player_spawn metadata tag below is informational only.
+	var spawn_info := {}
+	var metadata_entries := _collect_metadata_from_scene(root, export_tree, settings, bounds_min, bounds_max, spawn, spawn_info)
+	if spawn_info.has("position"):
+		spawn = spawn_info["position"]
+	var header_spawn_yaw: float = spawn_info.get("yaw", 0.0)
 
 	# Particle emitters (standard lump "emitters"). Collected here rather than in
 	# the metadata pass because each emitter's texture has to be registered in
@@ -1281,7 +1367,7 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	f.store_32(colliders.size())
 	f.store_32(metadata_entries.size())
 	f.store_float(spawn.x); f.store_float(spawn.y); f.store_float(spawn.z)
-	f.store_float(0.0)
+	f.store_float(header_spawn_yaw)
 	f.store_float(bounds_min.x); f.store_float(bounds_min.y); f.store_float(bounds_min.z)
 	f.store_float(bounds_max.x); f.store_float(bounds_max.y); f.store_float(bounds_max.z)
 	# Textures
@@ -1370,8 +1456,12 @@ static func _collect_nodes_recursive(node: Node, out: Array[Node]) -> void:
 		_collect_nodes_recursive(child, out)
 
 ## Dynamically scans the authored Godot scene tree for entities, triggers, spawns, and custom metadata.
+## When a Spawn node is found, `spawn_out` receives "position"/"yaw"/"fov" —
+## the PBM header writer uses them (the PSP engine spawns from the binary
+## header, not from the player_spawn metadata tag).
 static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings: ExportSettings,
-		bounds_min: Vector3, bounds_max: Vector3, default_spawn: Vector3) -> Array[Dictionary]:
+		bounds_min: Vector3, bounds_max: Vector3, default_spawn: Vector3,
+		spawn_out: Dictionary = {}) -> Array[Dictionary]:
 	var entries: Array[Dictionary] = []
 	var all_nodes: Array[Node] = []
 	if root != null:
@@ -1408,7 +1498,10 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 			if node is Node3D:
 				var xf := _get_world_transform(node as Node3D)
 				spawn_pos = xf.origin
-				spawn_rot = (node as Node3D).rotation.y
+				# World yaw: get_euler() is YXZ, matching Node3D.rotation, so
+				# this stays correct even when the Spawn sits under a rotated
+				# parent (rotation.y alone would read the LOCAL yaw).
+				spawn_rot = xf.basis.get_euler().y
 				if node.has_meta("camera_fov"):
 					spawn_fov = float(node.get_meta("camera_fov"))
 				spawn_found = true
@@ -1473,6 +1566,15 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 			custom_metadata_nodes.append(node)
 
 	# 2. Player Spawn JSON
+	if spawn_found:
+		spawn_out["position"] = spawn_pos
+		spawn_out["yaw"] = spawn_rot
+		spawn_out["fov"] = spawn_fov
+	else:
+		# The default spawn is derived from the map bounds (far edge, eye
+		# height over the lowest point) — good enough to look at the build,
+		# but authors usually want to place a "Spawn" Node3D instead.
+		print("[PoiBuilder] No Spawn node in scene — using bounds-derived default spawn. Add a Node3D named \"Spawn\" to choose the start point.")
 	var spawn_json_bytes := JSON.stringify({
 		"position": [spawn_pos.x, spawn_pos.y, spawn_pos.z],
 		"yaw": spawn_rot,

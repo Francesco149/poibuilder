@@ -833,7 +833,7 @@ func toolbar_button(name: String) -> Button:
 		"edit_params": tb._btn_edit_params, "overlay": tb._btn_overlay,
 		"recover": tb._btn_recover_overlay, "materials": tb._btn_materials,
 		"settings": tb._btn_settings, "env": tb._btn_env,
-		"export": tb._btn_export, "grid": tb._btn_grid_panel,
+		"export": tb._btn_export_more, "grid": tb._btn_grid_panel,
 		"uv": tb._btn_uv_editor, "docs": tb._btn_docs,
 		"trim_walls": tb._btn_trim_walls, "split": tb._btn_split_rows,
 	}

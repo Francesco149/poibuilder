@@ -617,7 +617,8 @@ func _apply_drag_extents() -> void:
 	var width := v_size if forward_along_u else u_size
 	var depth := u_size if forward_along_u else v_size
 	PBShapeParams.apply_drag_extents(values, maxf(width, MIN_EXTENT),
-		maxf(depth, MIN_EXTENT), height_value, base_values)
+		maxf(depth, MIN_EXTENT), height_value, base_values,
+		grid.step() if grid != null else 0.0)
 
 ## Snaps an in-plane direction to the nearest world axis (keeping the drag's
 ## sign) when the captured surface is axis aligned; arbitrary surfaces keep

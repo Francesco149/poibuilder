@@ -38,6 +38,8 @@ if [ -d "$REPO_DIR/project/materials" ]; then
 fi
 cp "$REPO_DIR/project/player.gd" "$SCRATCH_DIR/player.gd"
 cp "$REPO_DIR/project/main.tscn" "$SCRATCH_DIR/playground.tscn"
+# Splat bake helper for the lightmap-switch smoke test (SMOKE-TESTS.md §E).
+cp "$REPO_DIR/project/test_scenes/bake_splat_in_place.gd" "$SCRATCH_DIR/bake_splat_in_place.gd"
 
 # Project configuration
 cat << 'EOF' > "$SCRATCH_DIR/project.godot"

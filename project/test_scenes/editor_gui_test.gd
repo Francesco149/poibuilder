@@ -1388,9 +1388,9 @@ func _run() -> void:
 				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 				await _frames(1)
 				# ── Export Dialog Test ──────────────────────────────────────────
-				if plugin.toolbar != null and plugin.toolbar._btn_export != null:
+				if plugin.toolbar != null and plugin.toolbar._btn_export_more != null:
 					_pass("EXPORT: toolbar export button exists")
-					plugin.toolbar._btn_export.pressed.emit()
+					plugin.toolbar._btn_export_more.pressed.emit()
 					await _frames(2)
 					if plugin._export_dialog != null and plugin._export_dialog.visible:
 						_pass("EXPORT: export dialog opened upon toolbar button click")

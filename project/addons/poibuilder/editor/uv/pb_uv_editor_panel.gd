@@ -110,7 +110,10 @@ var _is_floating: bool = false
 var active_mesh: PBMesh = null:
 	set = set_active_mesh
 var editor: PBEditor = null
-var plugin: Object = null
+var plugin: Object = null:
+	set(val):
+		plugin = val
+		_connect_paint_refresh()
 var _syncing_selection: bool = false
 
 # ==============================================================================
@@ -191,10 +194,10 @@ func _build_ui() -> void:
 
 	_opt_channel = OptionButton.new()
 	_opt_channel.name = "ChannelSelector"
-	_opt_channel.add_item("UV1 (Albedo)", 0)
-	_opt_channel.add_item("UV2 (Splat/Mask)", 1)
+	_opt_channel.add_item("UV1 (Texture)", 0)
+	_opt_channel.add_item("UV2 (Splat — read-only)", 1)
 	_opt_channel.selected = 0
-	_opt_channel.tooltip_text = "Select active UV channel"
+	_opt_channel.tooltip_text = "UV1: the texture unwrap you edit. UV2: splat-mask debug view — owned by the texture splatting system, edited by viewport painting, never here."
 	_opt_channel.item_selected.connect(_on_channel_selected)
 	_toolbar.add_child(_opt_channel)
 
@@ -487,6 +490,20 @@ func set_active_mesh(mesh: PBMesh) -> void:
 		canvas.set_active_mesh(mesh)
 	_update_status()
 
+## Splat masks live outside PBMeshData (they are material shader parameters),
+## so painting never triggers mesh_rebuilt — listen to the paint controller
+## directly and refresh the canvas (incl. the UV2 splat composite) per stroke.
+func _connect_paint_refresh() -> void:
+	if plugin == null or canvas == null:
+		return
+	var pc: Object = plugin.get("paint_controller") if "paint_controller" in plugin else null
+	if pc is PBPaintController and not pc.stroke_committed.is_connected(_on_paint_stroke_committed):
+		pc.stroke_committed.connect(_on_paint_stroke_committed)
+
+func _on_paint_stroke_committed() -> void:
+	if canvas:
+		canvas.refresh_from_mesh()
+
 func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> void:
 	if canvas == null or active_mesh == null or active_mesh.pb_mesh_data == null or selection == null:
 		return
@@ -497,6 +514,13 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 	var mesh_data := active_mesh.pb_mesh_data
 
 	match select_mode:
+		PBEditor.SelectMode.OBJECT:
+			# Element modes hold no 3D selection — drop the mirrored 2D
+			# selection too, so the canvas can't keep ghost faces/gizmo.
+			canvas.selected_faces.clear()
+			canvas.selected_edges.clear()
+			canvas.selected_verts.clear()
+
 		PBEditor.SelectMode.VERTEX:
 			canvas.selected_faces.clear()
 			canvas.selected_edges.clear()
@@ -663,6 +687,20 @@ func _update_status() -> void:
 			var c := canvas.selected_faces.size()
 			sel_text = "%d Faces" % c if c > 0 else "0 Faces"
 
+	if canvas.uv_channel == PBUvCanvas.UvChannel.UV2:
+		# The splat view draws the face's mask stretched over the unit square,
+		# so an elongated face shows a square with the paint in the middle —
+		# surface the real-world splat area to make the mapping obvious.
+		var splat_info := ""
+		if not canvas.selected_faces.is_empty() and active_mesh != null and active_mesh.pb_mesh_data != null:
+			var f0: int = canvas.selected_faces.keys()[0]
+			if f0 >= 0 and f0 < active_mesh.pb_mesh_data.faces.size():
+				var bounds := PBSplat.get_face_planar_bounds(active_mesh.pb_mesh_data, active_mesh.pb_mesh_data.faces[f0])
+				if not bounds.is_empty():
+					splat_info = " | Splat area %.2f × %.2f m" % [bounds["range_u"], bounds["range_v"]]
+		_lbl_status.text = "UV2: splat masks (read-only)%s | %s" % [splat_info, sel_text]
+		return
+
 	_lbl_status.text = "Mode: %s | %s selected" % [mode_str, sel_text]
 
 func _get_undo_redo() -> Object:
@@ -709,6 +747,10 @@ func _get_target_vertices() -> Array:
 
 func _execute_uv_op(action_name: String, op_callable: Callable) -> void:
 	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return
+	if canvas and canvas.uv_channel == PBUvCanvas.UvChannel.UV2:
+		if _lbl_status != null:
+			_lbl_status.text = "UV2 is read-only (splat-managed) — switch to UV1 to edit UVs"
 		return
 
 	var cmd := CmdMeshOp.new(active_mesh.pb_mesh_data, action_name, active_mesh)
@@ -804,7 +846,23 @@ func _on_channel_selected(index: int) -> void:
 	if canvas == null:
 		return
 	canvas.uv_channel = PBUvCanvas.UvChannel.UV2 if index == 1 else PBUvCanvas.UvChannel.UV1
+	_update_ops_enabled()
 	_update_status()
+
+## UV2 is the splat system's own coordinate space (per-face planar masks that
+## regenerate on every rebuild) — hand edits would be silently discarded, so
+## the whole operations toolbar goes inert while it is displayed.
+func _update_ops_enabled() -> void:
+	if _ops_toolbar == null or canvas == null:
+		return
+	var editable := canvas.uv_channel == PBUvCanvas.UvChannel.UV1
+	for child in _ops_toolbar.get_children():
+		if child is Button:
+			(child as Button).disabled = not editable
+	if _btn_texel_set != null:
+		_btn_texel_set.disabled = not editable
+	_ops_toolbar.tooltip_text = "" if editable \
+			else "UV2 shows splat masks (read-only). UV edits apply to UV1 — switch the channel back, or paint splats in the viewport."
 
 func _on_canvas_view_changed(zoom: float, pan: Vector2) -> void:
 	pass

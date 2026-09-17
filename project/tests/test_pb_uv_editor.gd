@@ -178,3 +178,129 @@ func test_selection_synchronization_from_3d():
 
 	mesh.free()
 	panel.free()
+
+## Inner plugin stand-in exposing a real paint controller, so the panel's
+## plugin wiring can be tested without booting the editor plugin.
+class _FakePlugin:
+	var paint_controller: PBPaintController = PBPaintController.new()
+
+func test_preview_texture_survives_splat_face_selection():
+	var base_mat := StandardMaterial3D.new()
+	var img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	img.fill(Color.RED)
+	var albedo: ImageTexture = ImageTexture.create_from_image(img)
+	base_mat.albedo_texture = albedo
+
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	cube.materials = [base_mat]
+
+	# Paint-style conversion: the selected face gets a splat ShaderMaterial
+	var splat_mat := PBSplat.create_splat_material(base_mat)
+	cube.set_face_material(cube.faces[4], splat_mat)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	var canvas := PBUvCanvas.new()
+	canvas.size = Vector2(800, 600)
+	canvas.active_mesh = mesh
+
+	assert_eq(canvas.preview_texture, albedo, "Object-level view must show the material albedo underlay")
+
+	# Face-selecting the splat-painted face used to drop the underlay entirely
+	canvas.selected_faces[4] = true
+	canvas._update_preview_texture()
+	assert_not_null(canvas.preview_texture, "Face-selecting a splat-painted face must keep the texture underlay")
+	assert_eq(canvas.preview_texture, albedo, "UV1 underlay of a splat face must be its base texture")
+
+	# UV2 (Splat/Mask) channel shows the painted splat composite for that face
+	canvas.uv_channel = PBUvCanvas.UvChannel.UV2
+	assert_true(canvas.selected_faces.has(4), "Face selection must survive a channel switch")
+	assert_not_null(canvas.preview_texture, "UV2 channel must show the splat composite underlay")
+	assert_ne(canvas.preview_texture, albedo, "UV2 underlay must be the splat composite, not the raw base texture")
+	assert_true(canvas.preview_texture is ImageTexture, "Splat composite underlay must be a generated ImageTexture")
+
+	# Cached composite is reused until a mask mutation bumps the state version
+	assert_eq(canvas._get_splat_preview(splat_mat), canvas.preview_texture, "Composite preview must be cached per material")
+
+	# Back to UV1: the base texture returns
+	canvas.uv_channel = PBUvCanvas.UvChannel.UV1
+	assert_eq(canvas.preview_texture, albedo, "Switching back to UV1 must restore the base texture underlay")
+
+	mesh.free()
+	canvas.free()
+
+func test_object_mode_sync_clears_uv_selection():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	panel.sync_selection_from_3d([4])
+	assert_true(panel.canvas.selected_faces.has(4), "Precondition: face 4 selected in UV canvas")
+
+	var selection := PBSelection.new(cube)
+	panel.sync_selection_from_3d_state(PBEditor.SelectMode.OBJECT, selection)
+
+	assert_eq(panel.canvas.selected_faces.size(), 0, "3D OBJECT mode must clear the mirrored 2D face selection")
+
+	mesh.free()
+	panel.free()
+
+func test_plugin_paint_stroke_refreshes_canvas():
+	var panel := PBUvEditorPanel.new()
+	var fake := _FakePlugin.new()
+
+	panel.plugin = fake
+
+	assert_true(fake.paint_controller.stroke_committed.is_connected(panel._on_paint_stroke_committed),
+			"Assigning the plugin must connect the paint controller's stroke_committed refresh")
+
+	panel.free()
+
+func test_uv2_channel_read_only_guards():
+	var panel := PBUvEditorPanel.new()
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = cube
+	panel.active_mesh = mesh
+
+	assert_false(panel._btn_proj_planar.disabled, "UV1 must keep the operations toolbar enabled")
+
+	panel._on_channel_selected(1)
+	assert_eq(panel.canvas.uv_channel, PBUvCanvas.UvChannel.UV2, "Precondition: UV2 active")
+	assert_true(panel._btn_proj_planar.disabled, "UV2 must disable UV operations")
+	assert_true(panel._btn_sew.disabled, "UV2 must disable seam operations")
+	assert_true(panel._btn_texel_set.disabled, "UV2 must disable texel writes")
+	assert_string_contains(panel._lbl_status.text, "read-only", "Status line must flag UV2 as read-only")
+
+	# An op that slips past the disabled buttons must still be refused
+	var ran := [false]
+	panel._execute_uv_op("Should Not Run", func() -> bool:
+		ran[0] = true
+		return true)
+	assert_false(ran[0], "UV operations must be refused while UV2 is active")
+
+	# Gizmo transforms never write UV2 (splat coordinates are system-owned)
+	var authored := PackedVector2Array()
+	authored.resize(cube.positions.size())
+	authored.fill(Vector2(0.25, 0.5))
+	cube.textures1 = authored
+	for i in range(cube.positions.size()):
+		panel.canvas._gizmo_affected_indices.append(i)
+	panel.canvas._apply_gizmo_transform({"type": "move", "delta": Vector2(0.5, 0.0)})
+	for i in range(cube.textures1.size()):
+		if cube.textures1[i] != authored[i]:
+			assert_true(false, "UV2 must never be modified by canvas gizmo transforms")
+			break
+
+	# Back to UV1: the toolbar re-enables
+	panel._on_channel_selected(0)
+	assert_false(panel._btn_proj_planar.disabled, "Returning to UV1 must re-enable UV operations")
+
+	mesh.free()
+	panel.free()

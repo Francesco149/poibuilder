@@ -182,3 +182,81 @@ func test_cube_has_12_unique_edges() -> void:
 
 func test_cube_has_8_shared_vertices() -> void:
 	assert_eq(data.shared_vertices.size(), 8, "Cube should have 8 shared vertex groups")
+
+# ==============================================================================
+# Dense-geometry picking (v0.9.137 regressions)
+# ==============================================================================
+
+func test_ray_intersects_tiny_triangles():
+	# Sculpt-scale triangle (~1 mm² → Möller–Trumbore det ≈ 2e-6). The old
+	# 1e-4 determinant gate classified it as "ray parallel to plane" and
+	# dense sculpt faces were unpickable everywhere.
+	var a := Vector3(0.0, 0.0, 0.0)
+	var b := Vector3(0.03, 0.001, 0.0)
+	var c := Vector3(0.0, 0.001, 0.03)
+	var n := (b - a).cross(c - a).normalized()
+	var centroid := (a + b + c) / 3.0
+	var origin := centroid + n * 0.01
+	var hit := PBMath.ray_intersects_triangle(origin, -n, a, b, c)
+	assert_true(hit.get("hit", false), "A ~1 mm² triangle must be ray-pickable")
+
+	# Meter-scale triangle still picks (the common case)
+	var big_hit := PBMath.ray_intersects_triangle(
+			Vector3(0, 5, 0), Vector3(0, -1, 0),
+			Vector3(-1, 0, -1), Vector3(1, 0, -1), Vector3(0, 0, 1))
+	assert_true(big_hit.get("hit", false), "Meter-scale triangle must stay pickable")
+
+func test_plain_mesh_surface_pick_budget_and_early_out():
+	# Scene: a small mesh near the ray, an over-budget giant behind it.
+	var root := Node3D.new()
+	add_child_autofree(root)
+
+	var small_img_mesh := PlaneMesh.new()
+	small_img_mesh.size = Vector2(1, 1)
+	var small := MeshInstance3D.new()
+	small.mesh = small_img_mesh
+	root.add_child(small)
+
+	var big_mesh := PlaneMesh.new()
+	big_mesh.size = Vector2(200, 200)
+	big_mesh.subdivide_width = 300
+	big_mesh.subdivide_depth = 300
+	var big := MeshInstance3D.new()
+	big.mesh = big_mesh
+	root.add_child(big)
+
+	# The big plane is 300x300x2 = 180k triangles — over budget, so its very
+	# first cache entry is the empty (excluded) marker.
+	assert_gt(big_mesh.get_faces().size() / 3, PBPicking.PLAIN_MESH_PICK_TRI_BUDGET,
+			"Sanity: the big mesh really is over budget")
+	assert_true(PBPicking.plain_mesh_pick_faces(big_mesh).is_empty(),
+			"A %d+ triangle mesh must be budget-excluded from hover picking" % PBPicking.PLAIN_MESH_PICK_TRI_BUDGET)
+	assert_false(PBPicking.plain_mesh_pick_faces(small_img_mesh).is_empty(),
+			"Small meshes must stay pickable")
+
+	# Ray down the +Y axis: both AABBs are entered, but the small mesh is hit
+	# first (y=0 plane of both is the same height, so use max_t early-out to
+	# prove the gate, and AABB miss to prove culling).
+	var miss := PBPicking.pick_plain_mesh_surface(root, Vector3(5, 5, 5), Vector3(0, -1, 0), INF)
+	assert_true(miss.is_empty(), "Ray outside all AABBs must pick nothing")
+
+	var early := PBPicking.pick_plain_mesh_surface(root, Vector3(0, 5, 0), Vector3(0, -1, 0), 2.0)
+	assert_true(early.is_empty(), "max_t shorter than the surface must return nothing (early-out)")
+
+	var hit := PBPicking.pick_plain_mesh_surface(root, Vector3(0.2, 5, 0.2), Vector3(0, -1, 0), INF)
+	assert_false(hit.is_empty(), "Ray through the small mesh must pick it")
+	if not hit.is_empty():
+		assert_almost_eq(hit["point"].y, 0.0, 0.001, "Pick point must sit on the plane")
+
+func test_ray_aabb_span():
+	# Hit through the box center
+	var box := AABB(Vector3(-1, -1, -1), Vector3(2, 2, 2))
+	var span := PBPicking.ray_aabb_span(Vector3(0, 0, 5), Vector3(0, 0, -1), box)
+	assert_almost_eq(span.x, 4.0, 0.001, "Entry t must be 4 for a 5-unit standoff")
+	assert_almost_eq(span.y, 6.0, 0.001, "Exit t must be 6 for a 2-unit box")
+	# Miss
+	var miss := PBPicking.ray_aabb_span(Vector3(5, 5, 5), Vector3(0, 0, -1), box)
+	assert_true(miss.x < 0.0, "Parallel ray outside the slab must miss")
+	# Box entirely behind
+	var behind := PBPicking.ray_aabb_span(Vector3(0, 0, 5), Vector3(0, 0, 1), box)
+	assert_true(behind.x < 0.0, "Box behind the ray origin must miss")

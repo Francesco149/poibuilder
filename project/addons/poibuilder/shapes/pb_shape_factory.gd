@@ -62,18 +62,25 @@ static func create_shape(id: StringName, size: Vector3 = Vector3.ONE) -> PBMeshD
 			data = PBShapeComplex.create_stairs(size)
 
 		&"curved_stair":
-			# Curved stairs with default 180° sweep.
-			var max_w: float = minf(size.x, size.z)
-			var inner_r: float = max_w * 0.25
-			var stair_w: float = max_w * 0.75
-			data = PBShapeComplex.create_curved_stairs(stair_w, size.y, inner_r, 180.0, 8, true)
+			# The arc's bbox exactly fills the dragged rect (see
+			# apply_drag_extents): curvature derived from the rect aspect,
+			# outer radius pinned to the depth axis, steps quantized to a
+			# 0.25 m module so treads land on grid lines.
+			var sizing := PBShapeComplex.curved_stairs_sizing(size.x, size.z)
+			var sweep_deg: float = sizing["sweep_deg"]
+			var inner_r: float = sizing["inner_radius"]
+			var stair_w: float = sizing["stair_width"]
+			var steps: int = clampi(int(round(size.y / 0.25)), 2, 64)
+			var axis_swap: bool = sizing["rotate_90"]
+			data = PBShapeComplex.create_curved_stairs(stair_w, size.y, inner_r, sweep_deg, steps, true, axis_swap)
 			data.shape_params = {
 				"stair_width": stair_w,
 				"height": size.y,
 				"inner_radius": inner_r,
-				"curvature": 180.0,
-				"steps": 8,
+				"curvature": sweep_deg,
+				"steps": steps,
 				"sides": 1.0,
+				"axis_swap": 1.0 if axis_swap else 0.0,
 			}
 
 		&"prism":

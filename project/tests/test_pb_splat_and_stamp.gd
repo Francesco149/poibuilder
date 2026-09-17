@@ -882,3 +882,116 @@ func test_cross_object_paint_stroke_multi_mesh_undo() -> void:
 	# Verify: neither mesh got the other's geometry (no "floor comes up" or cube becoming floor)
 	assert_almost_eq(absf(floor_mesh.pb_mesh_data.positions[0].x), 10.0, 0.001, "Floor retained its 10m extent")
 	assert_almost_eq(absf(cube_mesh.pb_mesh_data.positions[0].x), 1.0, 0.001, "Cube retained its 1m extent")
+
+# ==============================================================================
+# UV Editor Splat Preview (UV2 channel underlay)
+# ==============================================================================
+
+func test_build_preview_texture_null_for_non_splat_materials() -> void:
+	assert_null(PBSplat.build_preview_texture(null), "Null material must yield no preview")
+	assert_null(PBSplat.build_preview_texture(StandardMaterial3D.new()), "StandardMaterial3D must yield no preview")
+
+func test_build_preview_texture_base_only_when_no_layers() -> void:
+	var base_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	base_img.fill(Color.RED)
+	var base_mat := StandardMaterial3D.new()
+	base_mat.albedo_texture = ImageTexture.create_from_image(base_img)
+	var splat_mat := PBSplat.create_splat_material(base_mat)
+
+	var preview := PBSplat.build_preview_texture(splat_mat)
+	assert_not_null(preview, "Splat material must produce a preview even with no layers")
+	assert_true(preview is ImageTexture, "Preview must be an ImageTexture")
+
+	var px: Color = preview.get_image().get_pixel(128, 128)
+	assert_almost_eq(px.r, 1.0, 0.02, "Base-only preview must show base texture red")
+	assert_almost_eq(px.g, 0.0, 0.02, "Base-only preview must show base texture red")
+	assert_almost_eq(px.b, 0.0, 0.02, "Base-only preview must show base texture red")
+
+func test_build_preview_texture_composites_painted_layer() -> void:
+	var cube_data := PBMeshData.create_cube(1.0)
+	var top_face: PBFace = cube_data.faces[4] # top face (+Y)
+
+	var base_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	base_img.fill(Color.RED)
+	var base_mat := StandardMaterial3D.new()
+	base_mat.albedo_texture = ImageTexture.create_from_image(base_img)
+	var splat_mat := PBSplat.create_splat_material(base_mat)
+
+	var layer_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	layer_img.fill(Color.GREEN)
+	var slot := PBSplat.add_layer(splat_mat, ImageTexture.create_from_image(layer_img))
+
+	# Paint the whole face white through the real brush engine (huge radius covers all)
+	var version_before: int = PBSplat.mask_state_version
+	var modified := PBSplat.paint_face_splat(cube_data, top_face, splat_mat, slot,
+			Vector3(0, 0.5, 0), 10.0, 0.0, 1.0)
+	assert_true(modified, "Paint must modify the layer mask")
+	assert_gt(PBSplat.mask_state_version, version_before, "paint_face_splat must bump mask_state_version")
+
+	var preview := PBSplat.build_preview_texture(splat_mat)
+	assert_not_null(preview, "Painted splat material must produce a preview")
+	var px: Color = preview.get_image().get_pixel(128, 128)
+	assert_almost_eq(px.g, 1.0, 0.02, "Painted area must composite the layer texture green")
+	assert_almost_eq(px.r, 0.0, 0.02, "Painted area must be fully replaced by the layer")
+
+func test_mask_state_version_bumps_on_layer_management() -> void:
+	var mat := PBSplat.create_splat_material()
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(Color.BLUE)
+	var tex := ImageTexture.create_from_image(img)
+
+	var v0: int = PBSplat.mask_state_version
+	var slot := PBSplat.add_layer(mat, tex)
+	assert_gt(PBSplat.mask_state_version, v0, "add_layer must bump mask_state_version")
+
+	var v1: int = PBSplat.mask_state_version
+	PBSplat.clear_layer(mat, slot)
+	assert_gt(PBSplat.mask_state_version, v1, "clear_layer must bump mask_state_version")
+
+	var v2: int = PBSplat.mask_state_version
+	PBSplat.remove_layer(mat, slot)
+	assert_gt(PBSplat.mask_state_version, v2, "remove_layer must bump mask_state_version")
+
+func test_authored_uv2_survives_rebuild_without_splat_data() -> void:
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	# Simulate an authored UV2 unwrap (e.g. prepared for LightmapGI) on a mesh
+	# with no splat data anywhere — the rebuild pipeline must leave it alone.
+	var authored := PackedVector2Array()
+	authored.resize(cube.positions.size())
+	for i in range(authored.size()):
+		authored[i] = Vector2(fposmod(0.13 * i, 1.0), 0.75)
+	cube.textures1 = authored
+
+	cube.to_array_mesh()
+
+	assert_eq(cube.textures1.size(), authored.size(), "Splat-free mesh must keep its UV2 array")
+	for i in range(authored.size()):
+		if cube.textures1[i].distance_squared_to(authored[i]) > 0.000001:
+			assert_true(false, "Authored UV2 (lightmap unwrap) must survive rebuild without splat data")
+			return
+
+func test_splat_mesh_regenerates_uv2_on_rebuild() -> void:
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	cube.faces[0].splat_bounds = PackedFloat32Array([0.0, 1.0, 0.0, 1.0])
+	var garbage := PackedVector2Array()
+	garbage.resize(cube.positions.size())
+	garbage.fill(Vector2(9.0, 9.0))
+	cube.textures1 = garbage
+
+	cube.to_array_mesh()
+
+	assert_eq(cube.textures1.size(), cube.positions.size(), "Splat meshes regenerate UV2 on rebuild")
+	assert_ne(cube.textures1[0], Vector2(9.0, 9.0), "Stale UV2 values must be replaced by face-planar splat coordinates")
+
+func test_splat_material_assignment_triggers_uv2_generation() -> void:
+	var cube := PBMeshData.create_cube(1.0)
+	PBUv.refresh_mesh_uvs(cube, true)
+	assert_true(cube.textures1.is_empty(), "Precondition: no UV2 without splat data")
+	cube.set_face_material(cube.faces[2], PBSplat.create_splat_material())
+	cube.to_array_mesh()
+	assert_eq(cube.textures1.size(), cube.positions.size(), "Assigning a splat material must generate UV2 on rebuild")
+	var uv: Vector2 = cube.textures1[0]
+	assert_true(uv.x >= 0.0 and uv.x <= 1.0 and uv.y >= 0.0 and uv.y <= 1.0,
+			"Generated UV2 must be normalized face-planar coordinates")

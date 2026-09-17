@@ -251,6 +251,48 @@ func test_walkable_meshinstance_is_not_drawn() -> void:
 	assert_not_null(tree.get_node_or_null("PropCrate"), "Ordinary props still export")
 
 
+## The paint controller's preview subtree lives in the LIVE scene (brush ring,
+## StampQuad, StampDeleteHighlight). Exporting it shipped a floating stamp decal
+## quad into GLB and PBM — reading as a stamp's edge leaking onto whatever mesh
+## it overhung. Both the name guard and the explicit meta must stop it.
+func test_paint_preview_subtree_is_never_exported() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	var prop := MeshInstance3D.new()
+	prop.name = "PropCrate"
+	prop.mesh = BoxMesh.new()
+	root.add_child(prop)
+
+	var previews := Node3D.new()
+	previews.name = "PBSplatPreviewNode"
+	root.add_child(previews)
+	var stamp_quad := MeshInstance3D.new()
+	stamp_quad.name = "StampQuad"
+	stamp_quad.mesh = QuadMesh.new()
+	previews.add_child(stamp_quad)
+	var delete_highlight := MeshInstance3D.new()
+	delete_highlight.name = "StampDeleteHighlight"
+	delete_highlight.mesh = QuadMesh.new()
+	previews.add_child(delete_highlight)
+
+	var meta_flagged := MeshInstance3D.new()
+	meta_flagged.name = "SomeFutureToolGhost"
+	meta_flagged.mesh = QuadMesh.new()
+	meta_flagged.set_meta("poi_editor_preview", true)
+	root.add_child(meta_flagged)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.bake_lighting = false
+	settings.bake_textures = false
+	var tree := PBMapExporter.build_export_tree(root, settings)
+	autofree(tree)
+	assert_null(tree.get_node_or_null("PBSplatPreviewNode"), "Preview root must never export")
+	assert_null(tree.get_node_or_null("StampQuad"), "Stamp preview quad must never export (it read as a leaked stamp)")
+	assert_null(tree.get_node_or_null("StampDeleteHighlight"), "Delete highlight must never export")
+	assert_null(tree.get_node_or_null("SomeFutureToolGhost"), "poi_editor_preview meta must never export")
+	assert_not_null(tree.get_node_or_null("PropCrate"), "Ordinary props still export")
+
+
 func test_plain_and_poibuilderized_both_export() -> void:
 	var root := Node3D.new()
 	add_child_autofree(root)
@@ -641,3 +683,449 @@ func test_prop_instances_share_one_texture() -> void:
 	for m in meshes:
 		assert_eq(m["tex"], 0, "Every instance must reference the shared texture")
 	DirAccess.remove_absolute(pbm_path)
+
+func test_modern_export_substitutes_splat_base_material() -> void:
+	# GLTF cannot carry custom ShaderMaterials: a splat-painted face used to
+	# export as an untextured default (paint AND base look lost). The modern
+	# path now substitutes the splat base as a StandardMaterial3D.
+	var root := Node3D.new()
+	autofree(root)
+
+	var floor_mesh := PBMesh.create_cube(4.0)
+	floor_mesh.name = "SplatFloor"
+	root.add_child(floor_mesh)
+
+	var base_img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	base_img.fill(Color(0.2, 0.4, 0.8))
+	var base_tex := ImageTexture.create_from_image(base_img)
+	var base_mat := StandardMaterial3D.new()
+	base_mat.albedo_texture = base_tex
+	base_mat.albedo_color = Color(1, 1, 1)
+
+	var md := floor_mesh.pb_mesh_data
+	var top_face: PBFace = null
+	var top_y := -INF
+	for f in md.faces:
+		if f == null:
+			continue
+		var idxs := f.get_distinct_indexes()
+		var cy := 0.0
+		for i in idxs:
+			cy += md.positions[i].y
+		if cy / idxs.size() > top_y:
+			top_y = cy / idxs.size()
+			top_face = f
+	var splat_mat := PBSplat.create_splat_material(base_mat)
+	md.set_face_material(top_face, splat_mat)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.bake_lighting = false
+	settings.export_colliders = false
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	var mi := export_tree.get_node_or_null("SplatFloor") as MeshInstance3D
+	assert_not_null(mi)
+	var found_base := false
+	for s in range(mi.mesh.get_surface_count()):
+		var mat: Material = mi.mesh.surface_get_material(s)
+		if mat is ShaderMaterial:
+			assert_true(false, "Modern export must not carry splat ShaderMaterials into GLTF surfaces")
+			return
+		if mat is StandardMaterial3D and (mat as StandardMaterial3D).albedo_texture == base_tex:
+			found_base = true
+	assert_true(found_base, "Splat surface must export with its base albedo texture substituted")
+
+func test_bake_pb_mesh_in_place_frees_uv2_for_lightmaps() -> void:
+	var floor_mesh := PBMesh.create_cube(4.0)
+	autofree(floor_mesh)
+	floor_mesh.name = "BakeFloor"
+	var md := floor_mesh.pb_mesh_data
+
+	# Paint the top face: splat material + one green layer with a white center
+	var top_face: PBFace = null
+	var top_y := -INF
+	for f in md.faces:
+		if f == null:
+			continue
+		var idxs := f.get_distinct_indexes()
+		var cy := 0.0
+		for i in idxs:
+			cy += md.positions[i].y
+		if cy / idxs.size() > top_y:
+			top_y = cy / idxs.size()
+			top_face = f
+	var checker := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	checker.fill(Color(0.5, 0.5, 0.5))
+	var base_mat := StandardMaterial3D.new()
+	base_mat.albedo_texture = ImageTexture.create_from_image(checker)
+	var splat_mat := PBSplat.create_splat_material(base_mat)
+	md.set_face_material(top_face, splat_mat)
+	var layer_img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	layer_img.fill(Color.GREEN)
+	PBSplat.add_layer(splat_mat, ImageTexture.create_from_image(layer_img))
+	PBSplat.paint_face_splat(md, top_face, splat_mat, 1, Vector3(0, top_y, 0), 0.4, 0.0, 1.0)
+
+	var report := PBTileBaker.bake_pb_mesh_in_place(floor_mesh)
+	assert_true(report["ok"], "Bake must succeed")
+	assert_true(report["had_splat"], "Bake must report splat data was present")
+	assert_gt(int(report["faces"]), 0, "Bake must produce baked faces")
+
+	for f in md.faces:
+		if f != null and f.splat_bounds.size() == 4:
+			assert_true(false, "Baked faces must not carry splat_bounds")
+			return
+	for mat in md.materials:
+		assert_false(PBSplat.is_splat_material(mat), "Baked materials must be plain StandardMaterial3D")
+	assert_true(md.textures1.is_empty(), "UV2 must be empty after the bake (free for lightmaps)")
+	for f in md.faces:
+		if f != null and not f.manual_uv:
+			assert_true(false, "Baked faces must be manual_uv so rebuilds keep tile coordinates")
+			return
+
+	# The mesh still compiles, and rebuilds never move the baked tile UVs
+	var am := md.to_array_mesh()
+	assert_eq(am.get_surface_count(), md.materials.size(), "Baked mesh must compile one surface per material slot")
+	var uv_snapshot := md.textures0.duplicate()
+	floor_mesh.rebuild()
+	assert_eq(md.textures0, uv_snapshot, "Rebuild must not move baked tile UVs")
+
+	# Painted content survives into some baked tile (green pixels present)
+	var found_paint := false
+	for mat in md.materials:
+		if mat is StandardMaterial3D:
+			var tex: Texture2D = (mat as StandardMaterial3D).albedo_texture
+			if tex == null or tex == base_mat.albedo_texture:
+				continue
+			var img := tex.get_image()
+			if img == null:
+				continue
+			if img.is_compressed():
+				img.decompress()
+			for py in range(0, img.get_height(), 5):
+				for px in range(0, img.get_width(), 5):
+					var c := img.get_pixel(px, py)
+					if c.g > 0.5 and c.r < 0.4:
+						found_paint = true
+	assert_true(found_paint, "A baked tile must contain the painted layer's green")
+
+	# Second bake is a clean no-op
+	var report2 := PBTileBaker.bake_pb_mesh_in_place(floor_mesh)
+	assert_true(report2["ok"], "Second bake must succeed")
+	assert_false(report2["had_splat"], "Second bake must find no splat data")
+
+func test_modern_glb_roundtrip_preserves_stamps() -> void:
+	# Decals must survive the full modern .glb round trip as ordinary meshes:
+	# quad node, a material with texture, and a transform anchored on the face.
+	var root := Node3D.new()
+	autofree(root)
+
+	var floor_mesh := PBMesh.create_cube(2.0)
+	floor_mesh.name = "StampFloor"
+	root.add_child(floor_mesh)
+
+	var stamps := Node3D.new()
+	stamps.name = "PBStamps"
+	floor_mesh.add_child(stamps)
+	var stamp := MeshInstance3D.new()
+	stamp.name = "Poster_0"
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.5, 0.5)
+	stamp.mesh = quad
+	stamp.position = Vector3(0, 1.01, 0)
+	var stamp_mat := StandardMaterial3D.new()
+	stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color.RED)
+	stamp_mat.albedo_texture = ImageTexture.create_from_image(img)
+	stamp.material_override = stamp_mat
+	stamp.set_meta("face_idx", 4)
+	stamp.set_meta("stamp_texture_path", "")
+	stamp.set_meta("stamp_scale", 0.5)
+	stamp.set_meta("stamp_rotation", 0.0)
+	stamp.set_meta("stamp_opacity", 1.0)
+	stamp.set_meta("anchor_center", Vector2(0.5, 0.5))
+	stamp.set_meta("anchor_du", Vector2(0.1, 0.0))
+	stamp.set_meta("anchor_dv", Vector2(0.0, 0.1))
+	stamps.add_child(stamp)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.bake_lighting = false
+	settings.export_colliders = false
+
+	var out_path := "user://test_stamp_roundtrip.glb"
+	var err := PBMapExporter.export_map(root, out_path, settings)
+	assert_eq(err, OK, "Modern .glb export with stamps must succeed")
+
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	var lerr := doc.append_from_file(out_path, state)
+	assert_eq(lerr, OK, "Re-import of the stamped .glb must succeed")
+	if lerr != OK:
+		return
+	var scene := doc.generate_scene(state)
+	autofree(scene)
+
+	var imported_floor := scene.get_node_or_null("StampFloor") as MeshInstance3D
+	assert_not_null(imported_floor, "Floor must survive the round trip")
+	var imported_stamps := scene.get_node_or_null("StampFloor/PBStamps")
+	assert_not_null(imported_stamps, "PBStamps container must survive as scene nodes")
+	var imported_quad := scene.get_node_or_null("StampFloor/PBStamps/Poster_0") as MeshInstance3D
+	assert_not_null(imported_quad, "Decal quad must survive as an ordinary MeshInstance3D")
+	if imported_quad == null:
+		return
+	assert_not_null(imported_quad.mesh, "Decal quad must keep its mesh")
+	var mat: Material = imported_quad.material_override
+	if mat == null and imported_quad.mesh != null:
+		mat = imported_quad.mesh.surface_get_material(0)
+	assert_not_null(mat, "Decal quad must carry a material after the round trip")
+	if mat is StandardMaterial3D:
+		assert_not_null((mat as StandardMaterial3D).albedo_texture, "Decal material must keep its texture")
+	assert_almost_eq(imported_quad.position.y, 1.01, 0.01,
+			"Decal quad must keep its anchored position above the face")
+
+func test_async_export_routes_pbm_extension() -> void:
+	# The dialog's path (async entry) must honor .pbm — it used to only write
+	# GLB, leaving the PSP format unreachable from the UI.
+	var root := Node3D.new()
+	autofree(root)
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "AsyncPbmCube"
+	root.add_child(cube)
+
+	var out_path := "user://test_async_export.pbm"
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.bake_lighting = false
+	var err: Error = await PBMapExporter.export_map_async(root, out_path, settings)
+	assert_eq(err, OK, "Async .pbm export must route to the retro PBM writer")
+	assert_true(FileAccess.file_exists(out_path), "Async .pbm export must write the file")
+	var f := FileAccess.open(out_path, FileAccess.READ)
+	assert_not_null(f)
+	if f != null:
+		var magic := f.get_32()
+		assert_eq(magic, PBPbmConverter.PBM_MAGIC, "Async export must produce a real PBM3 file")
+
+func test_export_dialog_defaults_to_pbm() -> void:
+	var dialog := PBExportDialog.new()
+	autofree(dialog)
+	assert_eq(dialog._mode_option.selected, 0, "PBM must be the default format")
+	assert_true(dialog._txt_path.text.ends_with(".pbm"), "Default path must be .pbm")
+
+	# Switching to the modern GLB flavor swaps the extension and relaxes the
+	# retro bake toggles; switching back restores .pbm.
+	dialog._mode_option.select(2)
+	dialog._on_mode_selected(2)
+	assert_eq(dialog._mode_option.get_selected_id(), dialog.FORMAT_MODERN_GLB,
+			"Modern GLB flavor must be selectable")
+	assert_true(dialog._txt_path.text.ends_with(".glb"), "Modern flavor must swap the path to .glb")
+	dialog._mode_option.select(0)
+	dialog._on_mode_selected(0)
+	assert_true(dialog._txt_path.text.ends_with(".pbm"), "PBM flavor must swap the path back to .pbm")
+
+func test_editor_tool_meshes_are_never_exported() -> void:
+	# The sprite raise guide (ImmediateMesh line art) lives in the live scene;
+	# exporting it reads its vertices as a triangle soup of arbitrary winding —
+	# the "flipped windings on the PSP" regression.
+	var root := Node3D.new()
+	autofree(root)
+
+	var floor_mesh := PBMesh.create_cube(2.0)
+	floor_mesh.name = "Floor"
+	root.add_child(floor_mesh)
+
+	var guide := MeshInstance3D.new()
+	guide.name = "RaiseGuideLine"
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	im.surface_add_vertex(Vector3(1, 0, 1))
+	im.surface_add_vertex(Vector3(1, 0.4, 1))
+	im.surface_end()
+	guide.mesh = im
+	root.add_child(guide)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.export_colliders = false
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	var mis := export_tree.find_children("*", "MeshInstance3D", true, false)
+	assert_eq(mis.size(), 1, "Only the floor's baked mesh may export")
+	for mi in mis:
+		var mi3d := mi as MeshInstance3D
+		assert_false(mi3d.mesh is ImmediateMesh, "No ImmediateMesh may enter the export tree")
+		assert_false(mi3d.name.begins_with("RaiseGuideLine"),
+				"Editor tool meshes must not export")
+
+func test_pbm_triangle_winding_matches_oracle() -> void:
+	# The PSP GU runs GU_CCW over a y-down framebuffer: front faces must be
+	# stored CCW-from-outward ("outward-up" for top faces), matching the
+	# device-verified oracle converter. The direct writer used to emit Godot's
+	# CW order — the whole map rendered inside-out on the PSP.
+	var root := Node3D.new()
+	autofree(root)
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "WindingCube"
+	root.add_child(cube)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.bake_lighting = false
+	settings.export_colliders = false
+	var out_path := "user://test_winding.pbm"
+	var err: Error = await PBMapExporter.export_map_async(root, out_path, settings)
+	assert_eq(err, OK, "PBM export must succeed")
+	if err != OK:
+		return
+
+	var f := FileAccess.open(out_path, FileAccess.READ)
+	assert_not_null(f)
+	var magic := f.get_32()
+	assert_eq(magic, PBPbmConverter.PBM_MAGIC, "Must be a PBM3 file")
+	var ver := f.get_32()
+	var n_tex := f.get_32()
+	var n_mesh := f.get_32()
+	var n_col := f.get_32()
+	var n_meta := f.get_32()
+	var spawn := Vector3(f.get_float(), f.get_float(), f.get_float())
+	var bmin := Vector3(f.get_float(), f.get_float(), f.get_float())
+	var bmax := Vector3(f.get_float(), f.get_float(), f.get_float())
+	var mesh_hdr := 72 if ver >= 3 else 64
+	var off := 64
+	for t in range(n_tex):
+		# Texture header: name[32] + width(2) + height(2) + format(2) +
+		# alpha_mode(2) = 40, then the 4-byte data size at +40. Reading +36
+		# (height+format) made every subsequent offset garbage, and the mesh
+		# parse below appended vertices against a garbage count — a runaway
+		# that ballooned to 15+ GB of RAM.
+		f.seek(off + 40) # data size sits at +40 inside the 44-byte texture header
+		var dsz := f.get_32()
+		off += 44 + dsz
+	var top_up := 0
+	var top_down := 0
+	for mi in range(n_mesh):
+		f.seek(off + 36) # vertex count sits at +36 inside the mesh header
+		var nv := f.get_32() as int
+		f.seek(off)
+		var verts: Array[Vector3] = []
+		for vi in range(nv):
+			# PbmVertex device order (pbm.h): u, v, color, THEN x, y, z.
+			# Reading position-first parsed UVs as coordinates and the winding
+			# checks below ran against garbage.
+			f.get_float(); f.get_float(); f.get_32() # uv (2 floats) + baked color
+			var x := f.get_float(); var y := f.get_float(); var z := f.get_float()
+			verts.append(Vector3(x, y, z))
+		var ymax := -INF
+		for v in verts:
+			ymax = maxf(ymax, v.y)
+		for ti in range(0, nv - 2, 3):
+			var a := verts[ti]; var b := verts[ti + 1]; var c := verts[ti + 2]
+			if absf(a.y - ymax) > 0.01 or absf(b.y - ymax) > 0.01 or absf(c.y - ymax) > 0.01:
+				continue
+			var n := (b - a).cross(c - a)
+			if n.length() < 1e-9:
+				continue
+			if n.normalized().y > 0.9:
+				top_up += 1
+			elif n.normalized().y < -0.9:
+				top_down += 1
+		off += mesh_hdr + nv * 24
+	assert_gt(top_up + top_down, 0, "Must find the cube's top-face triangles")
+	assert_eq(top_down, 0, "PBM top faces must be stored outward-up (CCW), never inward-down")
+	assert_gt(top_up, 0, "PBM top faces must be outward-up (oracle convention)")
+	# Header sanity while we are here: bounds must reflect the actual geometry
+	assert_almost_eq(bmax.y, 1.0, 0.01, "Cube top at +1 m")
+	assert_almost_eq(bmin.y, -1.0, 0.01, "Cube bottom at -1 m")
+	assert_true(spawn.z > bmax.z, "Default spawn sits beyond the far edge")
+
+## Regression ("upside-down tree on the PSP"): a billboard authored with its
+## up axis pointing DOWN looks upright in the editor (BILLBOARD_FIXED_Y
+## rebuilds the basis from world up + camera) but bakes with the authored
+## transform — hanging into the floor. The bake must un-flip it.
+func test_billboard_upside_down_basis_is_unflipped_for_bake() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var flipped := MeshInstance3D.new()
+	flipped.name = "SpriteFlipped"
+	flipped.set_meta("is_billboard", true)
+	flipped.mesh = QuadMesh.new()
+	# What a backface/inward-wound placement pick produced pre-fix: a basis
+	# whose up column points below the horizon.
+	flipped.transform = Transform3D(
+		Basis(Vector3(-0.869, 0, 0.494), Vector3(0, -1, 0), Vector3(0.494, 0, 0.869)),
+		Vector3(1.0, -0.4, 2.0))
+	root.add_child(flipped)
+
+	var upright := MeshInstance3D.new()
+	upright.name = "SpriteUpright"
+	upright.set_meta("is_billboard", true)
+	upright.mesh = QuadMesh.new()
+	root.add_child(upright)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.export_billboards = true
+	settings.bake_lighting = false
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	var bb := export_tree.get_node_or_null("SpriteFlipped") as MeshInstance3D
+	assert_not_null(bb, "Exported tree must contain 'SpriteFlipped'")
+	assert_gt(bb.transform.basis.y.y, 0.0, "Flipped billboard basis must be un-flipped: up axis points up after bake")
+	assert_gt(bb.transform.basis.determinant(), 0.0, "Un-flip must stay a proper rotation (no mirroring)")
+	assert_almost_eq(bb.transform.origin.y, -0.4, 0.001, "The anchor/pivot is preserved")
+
+	var ub := export_tree.get_node_or_null("SpriteUpright") as MeshInstance3D
+	assert_not_null(ub, "Exported tree must contain 'SpriteUpright'")
+	assert_almost_eq(ub.transform.basis.y.y, 1.0, 0.001, "Upright billboard passes through untouched")
+
+## Regression: a Node3D named "Spawn" must reach the PBM binary HEADER — the
+## PSP engine spawns from header spawn_pos/spawn_rot, not from the
+## player_spawn metadata tag.
+func test_pbm_header_spawn_honors_spawn_node() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var cube := PBMesh.create_cube(2.0)
+	cube.name = "Floor"
+	root.add_child(cube)
+
+	var spawn := Node3D.new()
+	spawn.name = "Spawn"
+	spawn.transform = Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(1.5, 0.8, 2.5))
+	root.add_child(spawn)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.bake_lighting = false
+	settings.export_colliders = false
+	var out_path := "user://test_spawn_header.pbm"
+	var err: Error = await PBMapExporter.export_map_async(root, out_path, settings)
+	assert_eq(err, OK, "PBM export must succeed")
+	if err != OK:
+		return
+
+	var f := FileAccess.open(out_path, FileAccess.READ)
+	assert_not_null(f)
+	if f == null:
+		return
+	for i in range(6):
+		f.get_32() # magic, version, texture/mesh/collider/meta counts
+	var hx := f.get_float()
+	var hy := f.get_float()
+	var hz := f.get_float()
+	var hyaw := f.get_float()
+	assert_almost_eq(hx, 1.5, 0.001, "Header spawn X must come from the Spawn node")
+	assert_almost_eq(hy, 0.8, 0.001, "Header spawn Y must come from the Spawn node")
+	assert_almost_eq(hz, 2.5, 0.001, "Header spawn Z must come from the Spawn node")
+	assert_almost_eq(wrapf(hyaw, -PI, PI), PI * 0.5, 0.01, "Header spawn yaw must come from the Spawn node")

@@ -31,6 +31,13 @@ index, current status, and the process rules that are not area-specific.
 # .pi/orientation/testing.md for why)
 ./run_tests.sh
 ./run_gui_tests.sh          # real-editor event harness for viewport behavior
+./scratch.sh [--play]       # disposable editor playground (FPS controller)
+./deploy_psp.sh             # newest scratch .pbm -> real PSP, interactive
+./test_baked_glb.sh         # retro-baked .glb in the interactive viewer
+./test_modern_glb.sh        # modern .glb in the viewer, FPS play mode
+./modern.sh [--play]        # 4k-asset modern-workflow playground
+./bake_splat.sh <scene>     # bake splats down, free UV2 for lightmaps
+# Human smoke-test cheat sheet (hand this to the tester): SMOKE-TESTS.md
 
 # Open in editor for interactive testing
 godot-mono --editor project/project.godot
@@ -103,9 +110,9 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.133** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.142** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool).
-- All headless tests passing (`./run_tests.sh`; 1054 tests, 20.5k+ assertions
+- All headless tests passing (`./run_tests.sh`; 1081 tests, 20.6k+ assertions
   across 66 suites) plus the real-editor GUI harness (`./run_gui_tests.sh`,
   failures=0).
 - Feature surface: primitives + drag-to-create (incl. one-drag Trim and the

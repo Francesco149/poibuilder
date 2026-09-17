@@ -87,7 +87,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.133"
+const VERSION := "0.9.144"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -490,7 +490,11 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 
 	# Billboard Sprite Placer owns the mouse while active
 	if sprite_placer != null and sprite_placer.is_active():
-		return _sprite_placer_input(camera, event)
+		var result := _sprite_placer_input(camera, event)
+		# Joypad/controller events also arrive here and have no `position`.
+		if event is InputEventMouse:
+			_update_cursor_extents(event.position)
+		return result
 	# Texture splatting / Stamp tool owns the mouse while active
 	if paint_controller != null and paint_controller.is_active():
 		return _paint_controller_input(camera, event)
@@ -2465,6 +2469,11 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 		for node in _collect_pbmeshes(scene_root):
 			if node == shape_creator.preview_node or node.pb_mesh_data == null:
 				continue
+			# AABB prefilter: a poibuilderized sculpt has thousands of faces,
+			# so skip whole meshes the ray cannot hit before a nearer surface.
+			var pb_span := PBPicking.ray_aabb_span(ray_o, ray_d, node.global_transform * node.get_aabb())
+			if pb_span.x < 0.0 or pb_span.x >= best_t:
+				continue
 			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
 			if res.face_index >= 0 and res.distance < best_t:
 				var normal := PBMath.normal_from_positions(
@@ -2473,27 +2482,10 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 				best = {"point": res.hit_point,
 					"normal": (node.global_transform.basis * normal).normalized()}
 
-		for node in _collect_mesh_instances(scene_root):
-			if not node.is_visible_in_tree() or node.mesh == null:
-				continue
-			var tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
-			if tmesh != null:
-				var inv_xf := node.global_transform.affine_inverse()
-				var local_o := inv_xf * ray_o
-				var local_d := (inv_xf.basis * ray_d).normalized()
-				var faces: PackedVector3Array = tmesh.get_faces()
-				for i in range(0, faces.size() - 2, 3):
-					var hit := PBMath.ray_intersects_triangle(local_o, local_d, faces[i], faces[i + 1], faces[i + 2])
-					if hit.get("hit", false):
-						var world_hit: Vector3 = node.global_transform * (hit["point"] as Vector3)
-						var dist: float = ray_o.distance_to(world_hit)
-						if dist < best_t:
-							var fn := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).normalized()
-							best_t = dist
-							best = {
-								"point": world_hit,
-								"normal": (node.global_transform.basis * fn).normalized()
-							}
+		var plain := PBPicking.pick_plain_mesh_surface(scene_root, ray_o, ray_d, best_t)
+		if not plain.is_empty():
+			best_t = ray_o.distance_to(plain["point"])
+			best = plain
 
 		var w3d := camera.get_world_3d()
 		if w3d != null and w3d.direct_space_state != null:
@@ -2673,6 +2665,11 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 		for node in _collect_pbmeshes(scene_root):
 			if node == shape_creator.preview_node or node.pb_mesh_data == null:
 				continue
+			# AABB prefilter: a poibuilderized sculpt has thousands of faces,
+			# so skip whole meshes the ray cannot hit before a nearer surface.
+			var pb_span := PBPicking.ray_aabb_span(ray_o, ray_d, node.global_transform * node.get_aabb())
+			if pb_span.x < 0.0 or pb_span.x >= best_t:
+				continue
 			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
 			if res.face_index >= 0 and res.distance < best_t:
 				best_t = res.distance
@@ -2682,27 +2679,13 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 				var normal := PBMath.normal_from_positions(
 					node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
 				best_normal = (node.global_transform.basis * normal).normalized()
-		for node in _collect_mesh_instances(scene_root):
-			if not node.is_visible_in_tree() or node.mesh == null:
-				continue
-			var tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
-			if tmesh != null:
-				var inv_xf := node.global_transform.affine_inverse()
-				var local_o := inv_xf * ray_o
-				var local_d := (inv_xf.basis * ray_d).normalized()
-				var faces: PackedVector3Array = tmesh.get_faces()
-				for i in range(0, faces.size() - 2, 3):
-					var hit := PBMath.ray_intersects_triangle(local_o, local_d, faces[i], faces[i + 1], faces[i + 2])
-					if hit.get("hit", false):
-						var world_hit: Vector3 = node.global_transform * (hit["point"] as Vector3)
-						var dist: float = ray_o.distance_to(world_hit)
-						if dist < best_t:
-							best_t = dist
-							best_node = null
-							best_face = -1
-							best_point = world_hit
-							var fn := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).normalized()
-							best_normal = (node.global_transform.basis * fn).normalized()
+		var plain := PBPicking.pick_plain_mesh_surface(scene_root, ray_o, ray_d, best_t)
+		if not plain.is_empty():
+			best_t = ray_o.distance_to(plain["point"])
+			best_node = null
+			best_face = -1
+			best_point = plain["point"]
+			best_normal = plain["normal"]
 		var w3d := camera.get_world_3d()
 		if w3d != null and w3d.direct_space_state != null:
 			var ray_query := PhysicsRayQueryParameters3D.create(ray_o, ray_o + ray_d * 2000.0)
@@ -2908,6 +2891,19 @@ func _finish_creation_session(node: PBMesh) -> void:
 func _update_cursor_extents(screen_pos: Vector2) -> void:
 	if _cursor_extents_label == null:
 		return
+	# Billboard sprite raise/scale: same floating readout as shape creation.
+	if sprite_placer != null and sprite_placer.is_active() \
+			and (sprite_placer.state == PBSpritePlacer.State.RAISE or sprite_placer.state == PBSpritePlacer.State.SCALE):
+		var sp_text := sprite_placer.get_extents_readout()
+		if not sp_text.is_empty():
+			_show_cursor_extents(sp_text, screen_pos)
+			return
+	# N-gon height drag: same treatment.
+	if ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+		var ng_text := ngon_drawer.get_extents_readout()
+		if not ng_text.is_empty():
+			_show_cursor_extents(ng_text, screen_pos)
+			return
 	if shape_creator == null or not (shape_creator.state == PBShapeCreator.State.BASE or shape_creator.state == PBShapeCreator.State.HEIGHT or shape_creator.state == PBShapeCreator.State.OFFSET):
 		_cursor_extents_label.visible = false
 		return
@@ -2917,6 +2913,9 @@ func _update_cursor_extents(screen_pos: Vector2) -> void:
 		_cursor_extents_label.visible = false
 		return
 
+	_show_cursor_extents(text, screen_pos)
+
+func _show_cursor_extents(text: String, screen_pos: Vector2) -> void:
 	_cursor_extents_label.text = text
 	_cursor_extents_label.visible = true
 
@@ -3016,6 +3015,7 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 					-camera.global_transform.basis.z, ray_o, ray_d, ngon_drawer.plane_point)
 				ngon_drawer.update_height_point(ref)
 				_refresh_ngon_preview()
+				_update_cursor_extents(event.position)
 			PBNgonDrawer.State.ARMED:
 				_update_creation_hover(camera, event.position)
 				var hit := _pick_creation_surface(camera, event.position)
@@ -3615,6 +3615,17 @@ func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
 	var surface_hit := {}
 	if event is InputEventMouse:
 		surface_hit = _pick_creation_surface(camera, event.position)
+		# The same rule the shape-creation path applies: the visible face's
+		# normal opposes the viewing ray. A normal pointing WITH the ray
+		# (backface hit, or inward-wound geometry) would author the sprite's
+		# basis upside-down — invisible in the editor because the fixed-Y
+		# billboard shader rebuilds the basis from world up, but the exported
+		# bake keeps the authored transform, so the sprite lands hanging
+		# below the surface (the "upside-down tree" report).
+		if not surface_hit.is_empty() and surface_hit.has("normal"):
+			var view_forward: Vector3 = -camera.global_transform.basis.z
+			if view_forward.dot(surface_hit["normal"]) > 0.0:
+				surface_hit["normal"] = -surface_hit["normal"]
 		if sprite_placer.state == PBSpritePlacer.State.ARMED:
 			if not surface_hit.is_empty():
 				_set_creation_hint("Billboard Tool: Click surface to place (drag to pick texture)")

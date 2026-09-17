@@ -117,6 +117,20 @@ psp_make() {
 [ -x "$USBHOSTFS" ] || die "usbhostfs_pc not built at $USBHOSTFS"
 [ -x "$PSPSH_BIN" ] || die "pspsh not built at $PSPSH_BIN"
 
+# ── Singleton: exactly ONE usbhostfs_pc owns the USB link ────────────────────
+# pspsh reaches the device THROUGH usbhostfs's local relay, so whoever owns
+# that process owns the conversation. A leftover instance from ANOTHER project
+# (say, ../poichara's, left by --keep) silently answers our commands — the
+# reset visibly fires, but after the reboot the device re-attaches to the
+# instance that serves the WRONG hwrun and the link wait stalls forever. Kill
+# whatever is there first; this run's instance is started fresh below.
+if pgrep -f usbhostfs_pc >/dev/null 2>&1; then
+    echo "=== [0/5] Stopping stale usbhostfs_pc (singleton per USB link) ==="
+    pgrep -af usbhostfs_pc || true
+    pkill -f usbhostfs_pc 2>/dev/null || true
+    sleep 2
+fi
+
 # ── Device helpers ───────────────────────────────────────────────────────────
 
 # pspsh with a timeout; stdout only, because callers all grep it.
@@ -129,16 +143,32 @@ link_ok() { [ -n "$(pspsh 25 'modlist' | grep 'UID:')" ]; }
 
 wait_link() {
     local n="${1:-$LINK_GRACE}"
+    echo -n "  waiting for the PSPLink link"
     for ((i = 0; i < n; i++)); do
-        if link_ok; then echo "  link OK (${i}s)"; return 0; fi
+        if link_ok; then echo " OK (${i}s)"; return 0; fi
+        echo -n "."
         sleep 1
     done
+    echo " timed out after ${n}s"
     return 1
 }
 
 reset_device() {
     echo "  resetting the device (psplink reset -> fresh GE/display state)"
     timeout 30 "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
+    if ! wait_link 12; then
+        # A STALE usbhostfs_pc (left by a Ctrl-C'd run or --keep) still owns
+        # the USB session; after the reboot the device re-attaches to the dead
+        # process and the bootstrap goes nowhere while every pspsh call times
+        # out silently. Kill and restart it serving the current hostdir.
+        if pgrep -f usbhostfs_pc >/dev/null 2>&1; then
+            echo "  link not back: usbhostfs_pc is running but stale — restarting it"
+            pkill -f usbhostfs_pc 2>/dev/null || true
+            sleep 2
+            nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
+            sleep 3
+        fi
+    fi
     wait_link || die "PSPLink did not come back after the reset.
   The PSP is sitting at the XMB: relaunch PSPLink (Game -> Memory Stick ->
   PSPLink), then re-run. Everything else in this run is unaffected."
@@ -220,13 +250,9 @@ fi
 rm -f "$HOSTDIR/poi_render.txt"     # runtime overrides must not leak between runs
 ls -la "$HOSTDIR" | head -12
 
-if pgrep -f "usbhostfs_pc.*$HOSTDIR" >/dev/null 2>&1; then
-    echo "=== [3/5] usbhostfs_pc already running ==="
-else
-    echo "=== [3/5] Starting usbhostfs_pc (serving host0: = $HOSTDIR) ==="
-    nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
-    sleep 3
-fi
+echo "=== [3/5] Starting usbhostfs_pc (serving host0: = $HOSTDIR) ==="
+nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
+sleep 3
 pgrep -f "usbhostfs_pc" >/dev/null || { cat /tmp/usbhostfs_pc.log; die "usbhostfs_pc died"; }
 
 echo "=== [3b/5] Checking the PSPLink USB link ==="

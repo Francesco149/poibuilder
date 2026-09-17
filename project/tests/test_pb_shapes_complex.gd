@@ -566,3 +566,45 @@ func test_door_front_extrudes_normally():
 			rim_after += 1
 	assert_eq(rim_after, rim_before,
 		"The new walls close the cap perimeter; the bottom rim stays the only opening")
+
+# ==============================================================================
+# Curved stairs fill the dragged rect (v0.9.138)
+# ==============================================================================
+
+func test_curved_stairs_fill_dragged_rect():
+	# Whatever rect you drag, the arc's bounding box must equal it exactly:
+	# first riser flush with one edge, last riser flush with the opposite
+	# edge, outer radius flush with the sides, and the Y span flush top and
+	# bottom. Sweep/curvature is derived from the rect aspect to make that
+	# possible (a fixed 180 degree sweep only fills 2:1 rects).
+	for size in [Vector3(3.0, 2.0, 2.0), Vector3(1.5, 1.0, 3.0), Vector3(2.4, 1.6, 1.2), Vector3(4.0, 2.5, 2.0)]:
+		var values := PBShapeParams.get_default_values(&"curved_stair")
+		PBShapeParams.apply_drag_extents(values, size.x, size.z, size.y, {}, 0.25)
+		var data := PBShapeParams.build(&"curved_stair", values)
+		var fmin := Vector3(INF, INF, INF)
+		var fmax := -Vector3(INF, INF, INF)
+		for p in data.positions:
+			fmin = fmin.min(p)
+			fmax = fmax.max(p)
+		var span := fmax - fmin
+		assert_almost_eq(span.x, size.x, 0.01,
+				"Curved stairs must fill the dragged rect width (%s)" % size)
+		assert_almost_eq(span.z, size.z, 0.01,
+				"Curved stairs must fill the dragged rect depth (%s)" % size)
+		assert_almost_eq(span.y, size.y, 0.001,
+				"Curved stairs must fill the dragged height exactly (%s)" % size)
+		assert_almost_eq(fmin.y, -size.y * 0.5, 0.001,
+				"Bottom riser base must sit on the box bottom edge (%s)" % size)
+
+func test_curved_stairs_steps_quantize_to_grid():
+	# Step count derives from height / snap so treads land on grid lines
+	# (height divisible by the snap => tread heights exactly on grid steps).
+	var values := PBShapeParams.get_default_values(&"curved_stair")
+	PBShapeParams.apply_drag_extents(values, 3.0, 2.0, 2.0, {}, 0.25)
+	assert_eq(int(values["steps"]), 8, "2m at 0.25m snap must give 8 steps")
+	assert_almost_eq(2.0 / int(values["steps"]), 0.25, 0.001, "Each step must be exactly one snap unit")
+
+	var values2 := PBShapeParams.get_default_values(&"curved_stair")
+	PBShapeParams.apply_drag_extents(values2, 3.0, 2.0, 1.83, {}, 0.25)
+	assert_eq(int(values2["steps"]), 7, "1.83m at 0.25m snap rounds to 7 steps")
+	assert_gt(float(values2["curvature"]), 0.0, "Curvature must be derived positive")

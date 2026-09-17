@@ -653,13 +653,50 @@ static func create_stairs(
 ## circumference: angular sweep in degrees (default 180°, positive curves right, negative left).
 ## steps: number of steps.
 ## sides: whether to build outer/inner side walls and back.
+## Derives the curved-stair sweep and radii so the arc's bounding box EXACTLY
+## fills a dragged rect (edge-to-edge): the SHORT rect axis becomes the radial
+## depth (r_out pins to it) and the LONG axis is matched by bisecting the
+## sweep. Bbox contract of create_curved_stairs for sweep a in (0, 90]:
+##   span_x = r_out - r_in*cos(a), span_z = r_out*sin(a), r_in = ratio*r_out.
+## (For a > 90 the inner wall's far side grows the box, so the exact solution
+## for a long-or-square rect always lives in (0, 90].)
+## Returns {"sweep_deg", "inner_radius", "stair_width"}.
+static func curved_stairs_sizing(rect_w: float, rect_d: float, inner_ratio: float = 0.25) -> Dictionary:
+	# The chord pins to rect_w and the radial depth to rect_d; a deeper-than-
+	# wide rect solves with swapped roles and sets rotate_90 — the generator's
+	# swap_axes exchanges the axes so the final bbox matches the rect.
+	var swap: bool = rect_d > rect_w
+	var long_side := maxf(0.1, maxf(rect_w, rect_d))
+	var short_side := maxf(0.1, minf(rect_w, rect_d))
+	var ratio: float = long_side / short_side
+	var k := inner_ratio
+	var lo := 0.5
+	var hi := 90.0
+	for i in range(48):
+		var mid := (lo + hi) * 0.5
+		var a := deg_to_rad(mid)
+		var span_x := (short_side / sin(a)) * (1.0 - k * cos(a))
+		if span_x > long_side:
+			lo = mid
+		else:
+			hi = mid
+	var sweep_deg := (lo + hi) * 0.5
+	var r_out: float = short_side / sin(deg_to_rad(sweep_deg))
+	return {
+		"sweep_deg": sweep_deg,
+		"inner_radius": r_out * k,
+		"stair_width": r_out * (1.0 - k),
+		"rotate_90": swap,
+	}
+
 static func create_curved_stairs(
 	stair_width: float = 1.5,
 	height: float = 2.0,
 	inner_radius: float = 0.5,
 	circumference: float = 180.0,
 	steps: int = 8,
-	sides: bool = true
+	sides: bool = true,
+	swap_axes: bool = false
 ) -> PBMeshData:
 	var mesh_data := PBMeshData.new()
 	var num_steps: int = maxi(1, steps)
@@ -753,10 +790,17 @@ static func create_curved_stairs(
 		_add_quad(positions, textures0, faces, b0, b1, b2, b3)
 
 
-	# Negative curvature: mirror along X and reverse winding
+	# Negative curvature: mirror along X. swap_axes (deep rects): exchange the
+	# chord/radial axes so the bbox matches the dragged orientation. Each is a
+	# reflection — the winding reverses when EXACTLY ONE of them applies.
 	if is_flipped:
 		for i in range(positions.size()):
 			positions[i].x = -positions[i].x
+	if swap_axes:
+		for i in range(positions.size()):
+			var sp := positions[i]
+			positions[i] = Vector3(sp.z, sp.y, sp.x)
+	if is_flipped != swap_axes:
 		for face in faces:
 			face.reverse()
 

@@ -231,7 +231,13 @@ Rules of thumb (all measured — see `psp/HARDWARE-TESTING.md`, "Imported props"
   neighbouring tiles can land on different levels. The runtime now pins the
   painted detail meshes to one level (`detail_const`), which is the practical
   mitigation; the residual is a hardware property (see the README's known
-  limitations and `psp/HARDWARE-TESTING.md`).
+  limitations and `psp/HARDWARE-TESTING.md`). That mitigation — and the CLAMP
+  wrap that keeps LINEAR sampling from blending a baked tile's opposite edge
+  into its border — is keyed on the texture NAME: a baked tile must be named
+  `TileAtlas*` in the PBM texture table (`strstr(tex->name, "TileAtlas")` in
+  `psp_render.c`). The exporter's per-tile bake does this since v0.9.144; a
+  texture registered as `tex_N` renders with REPEAT + per-primitive LOD and
+  shows a gray fringe at every tile edge (v0.9.144's device-verified seam bug).
 - **Soft alpha on screen-filling surfaces** (a giant mist quad, a full-screen
   window pane): each one is another blended pass.
 - **Emitters in the player's face**: blended mist at point-blank range was the

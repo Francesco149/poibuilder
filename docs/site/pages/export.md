@@ -1,9 +1,9 @@
 ---
 title: Export & retro
-lead: One dialog, two products: a modern GLB, or a tile-baked .pbm with vertex light. Retro textures are sanitized on the way out.
+lead: PBM is the headline product — a quick export bakes a tile-baked .pbm with vertex light for the PSP. GLB (retro-baked or modern) is one dialog away. Retro textures are sanitized on the way out.
 ---
 
-Toolbar **Export**.
+Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — everything else on the page applies per format.
 
 ## Modern GLB
 
@@ -11,7 +11,7 @@ Keeps authored geometry. Stamps and splat data ride as extras. Collision meshes 
 
 ## Retro baked map
 
-The path the PSP / raylib viewers eat.
+The path the PSP / raylib viewers eat — and what PBM is: the same bake written straight to the binary map instead of a GLB waypoint.
 
 What the export does:
 

@@ -408,8 +408,13 @@ func _redraw(gizmo) -> void:
 		var mesh_id: int = node.mesh.get_instance_id()
 		if int(node.get_meta("_pb_pick_mesh_id", -1)) != mesh_id:
 			node.set_meta("_pb_pick_mesh_id", mesh_id)
-			node.set_meta("_pb_pick_tmesh", node.mesh.generate_triangle_mesh())
-		gizmo.add_collision_triangles(node.get_meta("_pb_pick_tmesh"))
+			var pick_tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
+			node.set_meta("_pb_pick_tmesh", pick_tmesh)
+			# Feeding a 943k-triangle sculpt into the gizmo's click picking on
+			# every redraw stalls the editor; cap it like the hover picker.
+			node.set_meta("_pb_pick_tris", pick_tmesh.get_faces().size() / 3)
+		if int(node.get_meta("_pb_pick_tris", 0)) <= PBPicking.PLAIN_MESH_PICK_TRI_BUDGET:
+			gizmo.add_collision_triangles(node.get_meta("_pb_pick_tmesh"))
 
 	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
 	# and the cyan hover highlight on the surface under the cursor. Checked

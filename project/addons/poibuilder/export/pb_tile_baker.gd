@@ -122,6 +122,15 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 			var composite := _bake_composite_tile(frag.cell_bounds, splat_bounds,
 				base_image, base_color, layer_data, stamp_data, tile_resolution, anchor_offset)
 			var tile_tex := ImageTexture.create_from_image(composite)
+			# The retro engine keys its painted-tile policy off this name: a
+			# texture called "TileAtlas*" is sampled with GU_CLAMP (a tile
+			# samples its own slot, so LINEAR must never blend the opposite
+			# edge into it — with GU_REPEAT every tile edge shows a fringe of
+			# the tile's opposite side) and gets the pinned-mip detail LOD
+			# (per-primitive levels step in sharpness at tile boundaries).
+			# The old atlas exporter used the same convention (the GLB->PBM
+			# converter still does); the per-tile bake must carry it too.
+			tile_tex.resource_name = "TileAtlas_%d_%d_%d" % [face_idx, frag.cell_coord.x, frag.cell_coord.y]
 			result.baked_textures.append(tile_tex)
 
 			var tile_mat := StandardMaterial3D.new()
@@ -162,21 +171,30 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 	var base_w := base_image.get_width() if base_image != null else 0
 	var base_h := base_image.get_height() if base_image != null else 0
 
-	# Step 1: Base layer fill / sample
-	var res_f := maxf(float(resolution - 1), 1.0)
+	# Step 1: Base layer fill / sample.
+	# All sampling below uses TEXEL CENTERS: pixel i covers [i/res, (i+1)/res)
+	# of the cell, so the sample point is (i+0.5)/res — matching how the GPU
+	# interpolates the tile quad's [0,1] UVs. The old endpoint mapping
+	# (i/(res-1), round(u*(w-1))) put the cell's edge coordinates exactly ON
+	# the first/last texels, which duplicated the boundary content into BOTH
+	# adjacent tiles and smeared the stamp's border / checker edges one texel
+	# across every tile line — the visible "grid" around splats and stamps in
+	# exports. Image lookups use floor(u * size) clamped, so a lookup never
+	# lands ON a boundary coordinate.
+	var res_n := maxf(float(resolution), 2.0)
 	for y in range(resolution):
-		var ty := float(y) / res_f
+		var ty := (float(y) + 0.5) / res_n
 		var pv := lerpf(v0, v1, ty)
 		var uv_v := wrapf(pv, 0.0, 1.0)
-		var base_py := clampi(int(round(uv_v * float(base_h - 1))), 0, base_h - 1) if base_h > 0 else 0
+		var base_py := clampi(int(uv_v * float(base_h)), 0, base_h - 1) if base_h > 0 else 0
 
 		for x in range(resolution):
-			var tx := float(x) / res_f
+			var tx := (float(x) + 0.5) / res_n
 			var pu := lerpf(u0, u1, tx)
 			var uv_u := wrapf(pu, 0.0, 1.0)
 			var c := base_color
 			if base_image != null:
-				var base_px := clampi(int(round(uv_u * float(base_w - 1))), 0, base_w - 1)
+				var base_px := clampi(int(uv_u * float(base_w)), 0, base_w - 1)
 				c = base_image.get_pixel(base_px, base_py) * base_color
 
 			# Step 2: Splat layers
@@ -204,8 +222,8 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 				if weight > 0.001:
 					var lw := l_img.get_width()
 					var lh := l_img.get_height()
-					var lpx := clampi(int(round(uv_u * float(lw - 1))), 0, lw - 1)
-					var lpy := clampi(int(round(uv_v * float(lh - 1))), 0, lh - 1)
+					var lpx := clampi(int(uv_u * float(lw)), 0, lw - 1)
+					var lpy := clampi(int(uv_v * float(lh)), 0, lh - 1)
 					var l_pixel := l_img.get_pixel(lpx, lpy) * l_col
 					c = c.lerp(l_pixel, clampf(weight * l_col.a, 0.0, 1.0))
 			# Step 3: Stamps
@@ -249,8 +267,8 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 						stv = sv + 0.5
 					var sw := s_img.get_width()
 					var sh := s_img.get_height()
-					var spx := clampi(int(round(stu * float(sw - 1))), 0, sw - 1)
-					var spy := clampi(int(round(stv * float(sh - 1))), 0, sh - 1)
+					var spx := clampi(int(stu * float(sw)), 0, sw - 1)
+					var spy := clampi(int(stv * float(sh)), 0, sh - 1)
 					var sp := s_img.get_pixel(spx, spy)
 					var alpha: float = sp.a * opacity
 					if alpha > 0.001:
@@ -376,12 +394,16 @@ static func _extract_base_color(src_mat: Material, paint_state: Dictionary) -> C
 static func _prepare_layer_data(paint_state: Dictionary) -> Array:
 	var out: Array = []
 	for layer in paint_state.get("layers", []):
-		var path: String = layer.get("texture_path", "")
 		var mask: Image = layer.get("mask_image")
-		if path.is_empty() or mask == null or not ResourceLoader.exists(path):
-			continue
-		var tex: Texture2D = load(path)
+		# Prefer the texture instance carried by the paint state; the path is
+		# only a fallback. Pathless runtime textures (procedural paint sources)
+		# used to be dropped here, silently baking every tile unpainted.
+		var tex: Texture2D = layer.get("texture")
 		if tex == null:
+			var path: String = layer.get("texture_path", "")
+			if not path.is_empty() and ResourceLoader.exists(path):
+				tex = load(path) as Texture2D
+		if tex == null or mask == null:
 			continue
 		var img := tex.get_image()
 		if img == null:
@@ -490,3 +512,136 @@ static func _mask_touches_rect(mask: Image, splat_bounds: PackedFloat32Array, re
 			if mask.get_pixel(px, py).r > 0.01:
 				return true
 	return false
+
+# ==============================================================================
+# In-Place Bake (lightmap switch)
+# ==============================================================================
+
+## Bakes a PBMesh's splat paint and stamps into ordinary tile textures and
+## rewrites the mesh data in place, exactly like the retro export bake but
+## applied to the live PBMesh instead of a throwaway export copy. After this:
+##   - every face carries a plain StandardMaterial3D (base look or baked tile),
+##   - `splat_bounds` and splat materials are gone, `textures1` is empty —
+##     so UV2 is free for a LightmapGI unwrap (Godot also auto-generates UV2
+##     at bake time),
+##   - all faces are marked `manual_uv` (baked atlas coordinates survive).
+## The mesh stays an editable PBMesh (grid-cell faces, like the retro bake).
+## Geometry rewrites UV1 into tile slots — that is the point; do not call it
+## on meshes whose authored UV1 unwrap must survive unpainted.
+## Returns a report Dictionary: {ok, had_splat, faces, materials, baked_textures}.
+static func bake_pb_mesh_in_place(pb: PBMesh, grid_size: float = 1.0,
+		tile_resolution: int = 128, max_texture_size: int = 512) -> Dictionary:
+	var report := {"ok": false, "had_splat": false, "faces": 0, "materials": 0, "baked_textures": 0}
+	if pb == null or pb.pb_mesh_data == null:
+		return report
+	var mesh_data := pb.pb_mesh_data
+
+	var had_splat := false
+	for f in mesh_data.faces:
+		if f != null and f.splat_bounds.size() == 4:
+			had_splat = true
+			break
+	if not had_splat:
+		for mat in mesh_data.materials:
+			if mat != null and PBSplat.is_splat_material(mat):
+				had_splat = true
+				break
+	report["had_splat"] = had_splat
+	if not had_splat:
+		report["ok"] = true
+		return report
+
+	var base_material_cache: Dictionary = {}
+	var all_textures: Array[Texture2D] = []
+
+	# Flat accumulation buffers. Fragments arrive in Godot CW-front index
+	# order with per-fragment local indices; everything is rebased into one
+	# global vertex pool plus a per-vertex material slot id, then regrouped
+	# per material slot at the end (plain typed locals — packed arrays
+	# mutated through Dictionary fetches are lost to copy-on-write).
+	var mat_order: Array[Material] = []
+	var all_positions := PackedVector3Array()
+	var all_normals := PackedVector3Array()
+	var all_uvs := PackedVector2Array()
+	var all_indices := PackedInt32Array()
+	var all_mat_slot := PackedInt32Array()
+
+	for fi in range(mesh_data.faces.size()):
+		var face := mesh_data.faces[fi]
+		if face == null or face.get_indexes().is_empty():
+			continue
+
+		var frags := PBFaceSubdivider.subdivide_face(mesh_data, face, fi, true, grid_size)
+		var baked := bake_face_tiles(pb, mesh_data, face, fi, frags, true, tile_resolution,
+				base_material_cache, max_texture_size)
+		all_textures.append_array(baked.baked_textures)
+
+		for frag in frags:
+			var mat: Material = baked.tile_materials.get(frag, null)
+			if mat == null:
+				mat = _get_or_create_base_material(mesh_data.get_face_material(face), base_material_cache, max_texture_size)
+			var slot := mat_order.find(mat)
+			if slot < 0:
+				mat_order.append(mat)
+				slot = mat_order.size() - 1
+			var base_idx := all_positions.size()
+			all_positions.append_array(frag.positions)
+			all_normals.append_array(frag.normals)
+			all_uvs.append_array(frag.uvs)
+			for v in range(frag.positions.size()):
+				all_mat_slot.append(slot)
+			for idx in frag.indices:
+				all_indices.append(base_idx + idx)
+
+	if mat_order.is_empty():
+		return report
+
+	# Rebuild the mesh data from the baked fragments: per-slot index buffers,
+	# one PBFace per triangle, all referencing the global vertex pool.
+	var idx_by_slot: Array[PackedInt32Array] = []
+	idx_by_slot.resize(mat_order.size())
+	for slot in range(mat_order.size()):
+		idx_by_slot[slot] = PackedInt32Array()
+	for i in range(all_indices.size()):
+		idx_by_slot[all_mat_slot[all_indices[i]]].append(all_indices[i])
+
+	var new_faces: Array[PBFace] = []
+	for slot in range(mat_order.size()):
+		var idx: PackedInt32Array = idx_by_slot[slot]
+		for i in range(0, idx.size() - 2, 3):
+			# Baked fragments are in Godot CW-front order; flip each triangle
+			# to the internal CCW convention like poibuilderize does.
+			var new_face := PBFace.new()
+			new_face.set_indexes(PackedInt32Array([idx[i + 2], idx[i + 1], idx[i]]))
+			new_face.submesh_index = slot
+			new_face.manual_uv = true
+			new_faces.append(new_face)
+	var new_positions := all_positions
+	var new_normals := all_normals
+	var new_uvs := all_uvs
+
+	# Fragment vertices are fresh (Position-Privacy), so source tangents and
+	# vertex colors no longer line up — drop them; baked tiles are albedo-only.
+	mesh_data.tangents = PackedFloat32Array()
+	mesh_data.colors = PackedColorArray()
+	mesh_data.textures1 = PackedVector2Array()
+	mesh_data.positions = new_positions
+	mesh_data.textures0 = new_uvs
+	mesh_data.faces = new_faces
+	var mats: Array[Material] = []
+	mats.assign(mat_order)
+	mesh_data.materials = mats
+
+	mesh_data.invalidate_caches()
+	mesh_data.rebuild_welds()
+	if not mesh_data.set_authored_normals(new_normals):
+		mesh_data.calculate_normals()
+	mesh_data.shape_edited = true
+
+	pb.rebuild()
+
+	report["ok"] = true
+	report["faces"] = new_faces.size()
+	report["materials"] = mat_order.size()
+	report["baked_textures"] = all_textures.size()
+	return report

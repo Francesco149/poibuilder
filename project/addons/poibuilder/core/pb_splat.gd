@@ -56,6 +56,10 @@ const BRUSH_LUT_SIZE := 1024
 ## which caused .tscn text scenes to explode to 30+ MB.
 static var _cpu_image_cache: Dictionary = {}
 
+## Bumped whenever any splat layer mask, stamp layer, or layer set changes, so
+## downstream caches (the UV editor's UV2 composite preview) know when to rebuild.
+static var mask_state_version: int = 0
+
 static func _get_cached_image(mat: ShaderMaterial, key: String) -> Image:
 	if mat == null:
 		return null
@@ -243,6 +247,7 @@ static func add_layer(mat: ShaderMaterial, texture: Texture2D, color: Color = Co
 	mat.set_shader_parameter("layer_%d_mask" % slot, mask_tex)
 	mat.set_shader_parameter("layer_%d_color" % slot, color)
 	mat.set_shader_parameter("layer_%d_roughness" % slot, roughness)
+	mask_state_version += 1
 
 	# Store mask image in CPU memory cache (never serialize raw uncompressed Images to scene metadata)
 	_set_cached_image(mat, "layer_%d" % slot, mask_img)
@@ -304,6 +309,7 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 			var tex = mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
 			if tex != null:
 				tex.set_image(img)
+			mask_state_version += 1
 		return img
 
 	# Create new blank mask with uniform resolution
@@ -314,6 +320,7 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 	var new_tex := ImageTexture.create_from_image(new_img)
 	mat.set_shader_parameter("layer_%d_mask" % layer_idx, new_tex)
 	_set_cached_image(mat, cache_key, new_img)
+	mask_state_version += 1
 	return new_img
 # ==============================================================================
 # Dedicated Stamp Layer Management
@@ -352,6 +359,7 @@ static func get_stamp_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 			var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
 			if tex != null:
 				tex.set_image(img)
+			mask_state_version += 1
 		return img
 
 	# Create new transparent RGBA8 image with uniform resolution
@@ -363,6 +371,7 @@ static func get_stamp_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 	mat.set_shader_parameter("stamp_layer_enabled", true)
 	mat.set_shader_parameter("stamp_layer_texture", new_tex)
 	_set_cached_image(mat, cache_key, new_img)
+	mask_state_version += 1
 	return new_img
 ## Clears the dedicated stamp layer to transparent on `mat`.
 static func clear_stamp_layer(mat: ShaderMaterial) -> void:
@@ -374,6 +383,7 @@ static func clear_stamp_layer(mat: ShaderMaterial) -> void:
 		var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
 		if tex != null:
 			tex.update(img)
+		mask_state_version += 1
 ## Clears the alpha mask for `layer_idx` to zero (transparent).
 static func clear_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 	if mat == null or layer_idx < 1 or layer_idx > MAX_LAYERS:
@@ -384,6 +394,7 @@ static func clear_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 		var tex = mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
 		if tex != null:
 			tex.update(img)
+		mask_state_version += 1
 
 ## Removes/disables `layer_idx` on `mat`.
 static func remove_layer(mat: ShaderMaterial, layer_idx: int) -> void:
@@ -395,6 +406,7 @@ static func remove_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 	var meta_key := "layer_%d_mask_image" % layer_idx
 	if mat.has_meta(meta_key):
 		mat.remove_meta(meta_key)
+	mask_state_version += 1
 
 # ==============================================================================
 # UV2 / Planar Coordinate Calculation
@@ -714,6 +726,7 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
 		if mask_tex != null:
 			mask_tex.update(mask_img)
+		mask_state_version += 1
 
 	return dirty
 
@@ -836,6 +849,7 @@ static func stamp_face(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMat
 		var tex = splat_mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
 		if tex != null:
 			tex.update(stamp_target_img)
+		mask_state_version += 1
 
 	return dirty
 
@@ -963,6 +977,7 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 			var layer_tex := sm.get_shader_parameter("layer_%d_texture" % i) as Texture2D
 			out["layers"].append({
 				"slot": i,
+				"texture": layer_tex,
 				"texture_path": layer_tex.resource_path if layer_tex != null else "",
 				"color": sm.get_shader_parameter("layer_%d_color" % i),
 				"roughness": sm.get_shader_parameter("layer_%d_roughness" % i),
@@ -1054,3 +1069,121 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 			clone.set_shader_parameter("stamp_layer_texture", cloned_stamp_tex)
 			_set_cached_image(clone, "stamp", cloned_stamp_img)
 	return clone
+
+# ==============================================================================
+# UV Editor Splat Preview (UV2 channel underlay)
+# ==============================================================================
+
+## Builds a CPU composite of `mat`'s splat stack over the UV2 unit square:
+## base texture/color with every enabled layer blended through its painted
+## mask (mirroring pb_splat_shader's smoothstep), then the stamp layer on top.
+## The UV editor uses this as the underlay for the UV2 (Splat/Mask) channel —
+## masks are authored in face-planar [0, 1] coordinates, which is exactly the
+## unit square the canvas draws. Returns null for non-splat materials.
+static func build_preview_texture(mat: Material, size: int = 256) -> ImageTexture:
+	if mat == null or not is_splat_material(mat):
+		return null
+	var smat := mat as ShaderMaterial
+
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+
+	var base_col_v = smat.get_shader_parameter("base_color")
+	var base_col: Color = base_col_v if base_col_v is Color else Color.WHITE
+	var base_img := _preview_source_image(smat.get_shader_parameter("base_texture"))
+
+	var layers: Array = []
+	for i in range(1, MAX_LAYERS + 1):
+		if smat.get_shader_parameter("layer_%d_enabled" % i) != true:
+			continue
+		var l_img := _preview_source_image(smat.get_shader_parameter("layer_%d_texture" % i))
+		if l_img == null or smat.get_shader_parameter("layer_%d_mask" % i) == null:
+			continue
+		# Masks are sampled from the CPU image cache, never via
+		# ImageTexture.get_image() — the GPU round-trip returns stale data
+		# after update() (and is always the slower path for painted masks).
+		var mask_img := get_layer_mask_image(smat, i)
+		if mask_img == null:
+			continue
+		var l_col_v = smat.get_shader_parameter("layer_%d_color" % i)
+		var l_rough_v = smat.get_shader_parameter("layer_%d_roughness" % i)
+		layers.append({
+			"img": l_img,
+			"mask": mask_img,
+			"color": l_col_v if l_col_v is Color else Color.WHITE,
+			"roughness": clampf(float(l_rough_v) if l_rough_v != null else 0.8, 0.0, 1.0),
+		})
+
+	var stamp_img: Image = null
+	if smat.get_shader_parameter("stamp_layer_enabled") == true \
+			and smat.get_shader_parameter("stamp_layer_texture") != null:
+		stamp_img = get_stamp_layer_image(smat)
+
+	for y in range(size):
+		var v := (float(y) + 0.5) / float(size)
+		for x in range(size):
+			var u := (float(x) + 0.5) / float(size)
+			var col := _sample_image_repeat(base_img, u, v) * base_col
+			for L in layers:
+				var m := _sample_image_clamp(L["mask"], u, v).r
+				var fw: float = 1.5 / float(L["mask"].get_width())
+				var edge_w: float = lerpf(maxf(fw * 2.0, 0.02), 0.48, L["roughness"])
+				var blend := smoothstep(0.5 - edge_w, 0.5 + edge_w, m)
+				if blend <= 0.0:
+					continue
+				var l_col: Color = _sample_image_repeat(L["img"], u, v) * L["color"]
+				var a: float = blend * l_col.a
+				col = Color(col.r + (l_col.r - col.r) * a, col.g + (l_col.g - col.g) * a, col.b + (l_col.b - col.b) * a, col.a)
+			if stamp_img != null:
+				var s_col := _sample_image_clamp(stamp_img, u, v)
+				if s_col.a > 0.001:
+					col = Color(col.r + (s_col.r - col.r) * s_col.a, col.g + (s_col.g - col.g) * s_col.a, col.b + (s_col.b - col.b) * s_col.a, col.a)
+			img.set_pixel(x, y, col)
+
+	return ImageTexture.create_from_image(img)
+
+## Decompresses/normalizes a texture into an RGBA8 Image for CPU sampling.
+static func _preview_source_image(tex: Texture2D) -> Image:
+	if tex == null:
+		return null
+	var img := tex.get_image()
+	if img == null:
+		return null
+	if img.is_compressed():
+		img.decompress()
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	return img
+
+static func _sample_image_repeat(img: Image, u: float, v: float) -> Color:
+	if img == null or img.is_empty():
+		return Color.WHITE
+	var x := posmod(int(floor(u * img.get_width())), img.get_width())
+	var y := posmod(int(floor(v * img.get_height())), img.get_height())
+	return img.get_pixel(x, y)
+
+static func _sample_image_clamp(img: Image, u: float, v: float) -> Color:
+	if img == null or img.is_empty():
+		return Color(0, 0, 0, 1)
+	var x := clampi(int(floor(u * img.get_width())), 0, img.get_width() - 1)
+	var y := clampi(int(floor(v * img.get_height())), 0, img.get_height() - 1)
+	return img.get_pixel(x, y)
+
+## Recreates the GPU mask/stamp textures from the CPU image cache.
+## ImageTexture.update() does not survive a HEADLESS ResourceSaver round trip
+## (get_image() returns the stale pre-update image there), so call this before
+## saving a scene with live splat materials from headless code (builders,
+## bake/import scripts). Interactive painting is unaffected — update() stays
+## the zero-lag per-dab path in the editor.
+static func sync_mask_textures(mat: ShaderMaterial) -> void:
+	if mat == null:
+		return
+	for i in range(1, MAX_LAYERS + 1):
+		if mat.get_shader_parameter("layer_%d_enabled" % i) != true:
+			continue
+		var img := _get_cached_image(mat, "layer_%d" % i)
+		if img != null:
+			mat.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(img))
+	if has_stamp_layer(mat):
+		var stamp_img := _get_cached_image(mat, "stamp")
+		if stamp_img != null:
+			mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(stamp_img))

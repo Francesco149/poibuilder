@@ -10,7 +10,7 @@ extends GutTest
 ## (drop rays onto tread-derived probe points), and character behavior
 ## (containment outside the shell, unhindered climb along the ramp).
 
-const DEF_SIZE := Vector3(2.0, 2.0, 2.0) # -> stair_w 1.5, r_in 0.5, r_out 2.0, H 2.0, 180 deg, 8 steps
+const DEF_SIZE := Vector3(2.0, 2.0, 2.0) # reference drag rect (factory sweep is now rect-derived; see test_factory_rect_fill_default_ramp_is_solid)
 const DEF_RIN := 0.5
 const DEF_ROUT := 2.0
 const DEF_H := 2.0
@@ -27,9 +27,25 @@ const DEF_CENTER := Vector3(0.0, 0.0, -1.0)
 # ------------------------------------------------------------------------------
 
 func _mk_default_stairs(id: StringName = &"curved_stair") -> PBMesh:
+	# The audit battery locks the DOCUMENTED half-ring geometry (180 deg,
+	# r_in 0.5, r_out 2.0, 8 steps). The factory now derives the sweep from
+	# the drag rect (v0.9.138 rect fill), so build the reference explicitly
+	# instead of inheriting whatever the rect-derived default is.
 	var pb := PBMesh.new()
 	add_child_autofree(pb)
-	pb.pb_mesh_data = PBShapeFactory.create_shape(id, DEF_SIZE)
+	var data := PBShapeComplex.create_curved_stairs(1.5, DEF_H, DEF_RIN, rad_to_deg(DEF_CIR), DEF_STEPS, true)
+	# Params must ride ON the data BEFORE it reaches the node: the mesh_data
+	# setter builds the collider, and rebuild() alone does not refresh it.
+	data.shape_id = id
+	data.shape_params = {
+		"stair_width": 1.5,
+		"height": DEF_H,
+		"inner_radius": DEF_RIN,
+		"curvature": rad_to_deg(DEF_CIR),
+		"steps": DEF_STEPS,
+		"sides": 1.0,
+	}
+	pb.pb_mesh_data = data
 	pb.rebuild()
 	return pb
 
@@ -386,6 +402,27 @@ func _audit_variant(label: String, inner_radius: float, curvature: float, sides:
 		if not hit.is_empty():
 			assert_almost_eq(hit["position"].y, expected, 0.08,
 				"%s: ramp height under tread %d" % [label, i])
+
+func test_factory_rect_fill_default_ramp_is_solid():
+	# The v0.9.138 factory derives the sweep from the drag rect: a square
+	# rect yields a 90-degree quarter ring. The ramp must stay a closed,
+	# CW-from-outside wedge at the derived sweep, with volume tracking the
+	# analytic annular sector for the ACTUAL params.
+	var pb := PBMesh.new()
+	add_child_autofree(pb)
+	pb.pb_mesh_data = PBShapeFactory.create_shape(&"curved_stair", DEF_SIZE)
+	pb.rebuild()
+	var faces := _collider_faces(pb)
+	assert_true(faces.size() > 0, "rect-derived ramp has faces")
+	var vol := PBColliderAudit.signed_volume(faces)
+	assert_lt(vol, 0.0, "rect-derived ramp must stay CW-from-outside; got %f" % vol)
+	var params: Dictionary = pb.pb_mesh_data.shape_params
+	var sweep_rad: float = deg_to_rad(float(params["curvature"]))
+	var r_in: float = float(params["inner_radius"])
+	var r_out: float = r_in + float(params["stair_width"])
+	var analytic: float = 0.5 * (r_out * r_out - r_in * r_in) * sweep_rad * (DEF_H / 2.0)
+	assert_almost_eq(absf(vol), analytic, analytic * 0.15,
+		"rect-derived volume %.3f must track the analytic wedge %.3f" % [vol, analytic])
 
 func test_ramp_variant_pie():
 	await _audit_variant("pie", 0.0, 180.0, true)

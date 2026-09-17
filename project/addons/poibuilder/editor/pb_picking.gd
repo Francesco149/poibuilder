@@ -535,3 +535,98 @@ static func pick_vertices_in_rect(mesh_data: PBMeshData, mesh_transform: Transfo
 			result.append(sv_idx)
 
 	return result
+
+
+# ==============================================================================
+# Plain MeshInstance3D surface picking (creation tools / press point)
+# ==============================================================================
+
+## Triangle budget for picking plain (non-PBMesh) MeshInstance3D surfaces with
+## the GDScript ray sweep. Giant sculpt imports are excluded — the grid plane
+## and PBMeshes remain pickable. A 943k-triangle prop used to stall every
+## creation-tool mouse move by ~10 seconds: a 34 MB face copy plus a full
+## GDScript ray-triangle sweep per hover update.
+const PLAIN_MESH_PICK_TRI_BUDGET := 65536
+
+## One-time face extraction per Mesh resource; over-budget meshes cache an
+## empty array so the budget check is free afterwards.
+static var _plain_mesh_pick_cache: Dictionary = {} # Mesh -> PackedVector3Array
+
+static func plain_mesh_pick_faces(mesh: Mesh) -> PackedVector3Array:
+	if _plain_mesh_pick_cache.has(mesh):
+		return _plain_mesh_pick_cache[mesh]
+	var faces := mesh.get_faces()
+	if faces.size() / 3 > PLAIN_MESH_PICK_TRI_BUDGET:
+		faces = PackedVector3Array()
+	_plain_mesh_pick_cache[mesh] = faces
+	return faces
+
+## Slab test of a (normalized-direction) ray against a world-space AABB.
+## Returns (t_enter, t_exit) with t_enter >= 0, or (-1, -1) on miss / box
+## entirely behind the ray origin.
+static func ray_aabb_span(o: Vector3, d: Vector3, aabb: AABB) -> Vector2:
+	var t_min := -INF
+	var t_max := INF
+	for axis in range(3):
+		var da: float = d[axis]
+		var lo: float = aabb.position[axis]
+		var hi: float = lo + aabb.size[axis]
+		if absf(da) < 0.0000001:
+			if o[axis] < lo or o[axis] > hi:
+				return Vector2(-1.0, -1.0)
+		else:
+			var t1 := (lo - o[axis]) / da
+			var t2 := (hi - o[axis]) / da
+			if t1 > t2:
+				var tmp := t1
+				t1 = t2
+				t2 = tmp
+			t_min = maxf(t_min, t1)
+			t_max = minf(t_max, t2)
+			if t_min > t_max:
+				return Vector2(-1.0, -1.0)
+	if t_max < 0.0:
+		return Vector2(-1.0, -1.0)
+	return Vector2(maxf(t_min, 0.0), t_max)
+
+## Nearest plain-MeshInstance3D surface under `root` along the ray, strictly
+## closer than max_t. Returns {point, normal} or {}. Meshes are prefiltered by
+## a world AABB slab test (miss, or entry already beyond max_t), and face
+## arrays come from the per-Mesh budget cache.
+static func pick_plain_mesh_surface(root: Node, ray_origin: Vector3, ray_dir: Vector3, max_t: float) -> Dictionary:
+	var best_t := max_t
+	var best := {}
+	if root == null:
+		return best
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+		if not (node is MeshInstance3D) or not node.is_visible_in_tree():
+			continue
+		var mi := node as MeshInstance3D
+		if mi.mesh == null or mi == root:
+			continue
+		var span := ray_aabb_span(ray_origin, ray_dir, mi.global_transform * mi.get_aabb())
+		if span.x < 0.0 or span.x >= best_t:
+			continue
+		var faces := plain_mesh_pick_faces(mi.mesh)
+		if faces.is_empty():
+			continue
+		var inv_xf := mi.global_transform.affine_inverse()
+		var local_o := inv_xf * ray_origin
+		var local_d := (inv_xf.basis * ray_dir).normalized()
+		for i in range(0, faces.size() - 2, 3):
+			var hit := PBMath.ray_intersects_triangle(local_o, local_d, faces[i], faces[i + 1], faces[i + 2])
+			if hit.get("hit", false):
+				var world_hit: Vector3 = mi.global_transform * (hit["point"] as Vector3)
+				var dist: float = ray_origin.distance_to(world_hit)
+				if dist < best_t:
+					best_t = dist
+					var fn := (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).normalized()
+					best = {
+						"point": world_hit,
+						"normal": (mi.global_transform.basis * fn).normalized(),
+					}
+	return best

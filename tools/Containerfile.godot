@@ -1,0 +1,13 @@
+# Containerfile.godot — PoiBuilder headless Godot runner image.
+#
+# Bakes the host's Godot mono distribution (and the .NET runtime it needs)
+# at the IDENTICAL paths, so all of Godot's relative assembly lookups work
+# exactly like a native run. Built once by tools/godot_guard.sh --podman;
+# afterwards every guarded run gets a hard memory cap, CPU limit, and a
+# container that is force-removed on exit.
+FROM docker.io/library/archlinux:latest
+RUN pacman -Sy --noconfirm archlinux-keyring && pacman -Su --noconfirm --noconfirm glibc gcc-libs fontconfig && rm -rf /var/cache/pacman/pkg/*
+COPY godot-mono/ /usr/lib/godot-mono/
+COPY dotnet/ /usr/share/dotnet/
+COPY godot-wrapper /usr/local/bin/godot-mono
+ENV DOTNET_ROOT=/usr/share/dotnet

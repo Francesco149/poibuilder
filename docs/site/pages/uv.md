@@ -46,6 +46,23 @@ Both directions:
 
 Texture mode ([[kbd:6]]) is the 3D-side equivalent for quick rotates without opening the panel.
 
+## UV2 — the splat debug view
+
+The second channel is not a second unwrap. The texture splatting system owns UV2: every face's splat masks are authored in face-planar coordinates, normalized so each face fills the whole 0–1 square. The UV2 view draws that square for the selected face's material — the base texture with every painted layer and stamp composited on top.
+
+That explains the odd look on elongated faces: a splat in the middle of a long wall shows as a centered blot in a square, because the square *is* the face's splat bounding area. The status line shows its real-world size (e.g. `Splat area 4.00 × 0.50 m`) so you can read the true proportions.
+
+> [gotcha] UV2 is **read-only** here, by design. Selection works so you can inspect paint; the transform, projection, seam and texel tools go inert while UV2 is up. Splat paint is edited by painting in the viewport — see [Painting](paint.html) — never by dragging UVs.
+
+### UV2 and lightmaps
+
+Godot's LightmapGI bakes with UV2, so which channel owns it matters:
+
+- **No splat paint on the mesh** — UV2 is yours. Unwrap it (or import a lightmap set from a DCC) and rebuilds leave it untouched.
+- **Splat-painted mesh** — the splat system regenerates UV2 on every rebuild. Splatting and lightmap UV2 are mutually exclusive *per mesh*; a lightmap unwrap on a painted mesh would be silently overwritten.
+
+To lightmap splat-painted geometry, keep the paint on a separate mesh, or bake the paint down first — the **retro export** does it at export time, and `./bake_splat.sh <scene.tscn>` does it in place (paint becomes plain baked tile textures, splat data and UV2 are cleared, then LightmapGI just works).
+
 ## Use case — a stretched ramp
 
 1. Select the ramp face. UV panel → **Planar** (or **Box** if it wraps).

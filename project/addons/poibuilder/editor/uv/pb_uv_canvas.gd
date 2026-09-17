@@ -111,7 +111,17 @@ var uv_channel: UvChannel = UvChannel.UV1:
 	set(val):
 		if uv_channel != val:
 			uv_channel = val
-			clear_selection()
+			# Face indices are channel-independent (they index pb_mesh_data.faces),
+			# so a face selection survives a channel switch — that is what keeps
+			# the UV2 splat underlay following the selected face. Vertex/edge
+			# selections refer to per-channel UV coordinates, so those reset.
+			var had_vert_edge := not selected_verts.is_empty() or not selected_edges.is_empty()
+			selected_verts.clear()
+			selected_edges.clear()
+			if had_vert_edge:
+				selection_changed.emit()
+				_update_gizmo_pivot()
+			_update_preview_texture()
 			queue_redraw()
 
 ## Display settings
@@ -187,6 +197,10 @@ var preview_texture: Texture2D = null:
 			preview_texture = val
 			queue_redraw()
 
+## Splat composite previews for the UV2 channel, keyed by material instance id.
+## Each entry remembers the PBSplat.mask_state_version it was built from.
+var _splat_preview_cache: Dictionary = {}
+
 # Selection sets (keyed by integer indices)
 var selected_faces: Dictionary = {}   # {face_idx: true}
 var selected_verts: Dictionary = {}   # {vertex_idx: true}
@@ -259,23 +273,62 @@ func _update_preview_texture() -> void:
 		preview_texture = null
 		return
 
-	var mat: Material = null
+	# Candidate materials, most specific first: the selected face's material,
+	# then the mesh's first material as fallback.
+	var candidates: Array[Material] = []
 	if not active_mesh.pb_mesh_data.materials.is_empty():
-		# Prefer material of first selected face
 		if not selected_faces.is_empty():
 			var first_face_idx: int = selected_faces.keys()[0]
 			if first_face_idx >= 0 and first_face_idx < active_mesh.pb_mesh_data.faces.size():
 				var f: PBFace = active_mesh.pb_mesh_data.faces[first_face_idx]
-				mat = active_mesh.pb_mesh_data.get_face_material(f)
-		if mat == null:
-			mat = active_mesh.pb_mesh_data.materials[0]
+				var face_mat := active_mesh.pb_mesh_data.get_face_material(f)
+				if face_mat != null:
+					candidates.append(face_mat)
+		candidates.append(active_mesh.pb_mesh_data.materials[0])
 
+	var albedo_tex: Texture2D = null
+	var splat_mat: ShaderMaterial = null
+	for mat in candidates:
+		if mat == null:
+			continue
+		if splat_mat == null and PBSplat.is_splat_material(mat):
+			splat_mat = mat
+		if albedo_tex == null:
+			albedo_tex = _material_albedo_texture(mat)
+
+	# UV2 shows the painted splat composite when the material is a splat stack;
+	# otherwise (and for UV1) fall back to the plain albedo texture.
+	preview_texture = null
+	if uv_channel == UvChannel.UV2 and splat_mat != null:
+		preview_texture = _get_splat_preview(splat_mat)
+	if preview_texture == null:
+		preview_texture = albedo_tex
+
+## Extracts the albedo/base texture a material presents, including splat
+## ShaderMaterials (whose base texture is a shader parameter, not `albedo_texture`).
+static func _material_albedo_texture(mat: Material) -> Texture2D:
 	if mat is StandardMaterial3D:
-		preview_texture = (mat as StandardMaterial3D).albedo_texture
-	elif mat is ORMMaterial3D:
-		preview_texture = (mat as ORMMaterial3D).albedo_texture
-	else:
-		preview_texture = null
+		return (mat as StandardMaterial3D).albedo_texture
+	if mat is ORMMaterial3D:
+		return (mat as ORMMaterial3D).albedo_texture
+	if mat is ShaderMaterial and PBSplat.is_splat_material(mat):
+		return (mat as ShaderMaterial).get_shader_parameter("base_texture") as Texture2D
+	return null
+
+## Returns the cached UV2 splat composite for `splat_mat`, rebuilding it when
+## the material's masks have changed (PBSplat.mask_state_version moved).
+func _get_splat_preview(splat_mat: ShaderMaterial) -> Texture2D:
+	var id := splat_mat.get_instance_id()
+	var entry: Dictionary = _splat_preview_cache.get(id, {})
+	if not entry.is_empty() and entry.get("version", -1) == PBSplat.mask_state_version:
+		return entry.get("texture")
+	var tex := PBSplat.build_preview_texture(splat_mat)
+	if tex == null:
+		return null
+	if _splat_preview_cache.size() > 12:
+		_splat_preview_cache.clear()
+	_splat_preview_cache[id] = {"version": PBSplat.mask_state_version, "texture": tex}
+	return tex
 
 # ==============================================================================
 # Coordinate Space Conversions
@@ -706,6 +759,8 @@ func _convert_selection_to_mode(new_mode: SelectMode) -> void:
 			selected_verts.clear()
 			selected_edges.clear()
 func _apply_gizmo_transform(t: Dictionary) -> void:
+	if uv_channel == UvChannel.UV2:
+		return # Splat masks are splat-system-owned; the UV editor never writes UV2.
 	if active_mesh == null or active_mesh.pb_mesh_data == null or _gizmo_affected_indices.is_empty():
 		return
 
@@ -816,7 +871,7 @@ func _update_hover(mouse_pos: Vector2) -> void:
 	if old_h_v != hover_vert or old_h_e != hover_edge or old_h_f != hover_face:
 		queue_redraw()
 
-	if has_selection() and not _is_panning and not _is_marquee:
+	if uv_channel == UvChannel.UV1 and has_selection() and not _is_panning and not _is_marquee:
 		if gizmo and gizmo.update_hover(mouse_pos, self):
 			queue_redraw()
 # ==============================================================================
@@ -855,7 +910,9 @@ func select_all() -> void:
 func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 	_update_hover(mouse_pos)
 
-	if has_selection() and not is_shift:
+	# UV2 (splat masks) is a read-only debug view: select to inspect, but the
+	# gizmo never appears and transforms are refused (see _apply_gizmo_transform).
+	if has_selection() and not is_shift and uv_channel == UvChannel.UV1:
 		var gizmo_hit := gizmo.hit_test(mouse_pos, self)
 		if gizmo_hit != PBUvGizmo.HandleType.NONE:
 			_is_gizmo_dragging = true
@@ -1161,9 +1218,17 @@ func _draw() -> void:
 		draw_rect(rect, COLOR_MARQUEE_FILL)
 		draw_rect(rect, COLOR_MARQUEE_BORDER, false, 1.0)
 
-	# 7. 2D Transform Gizmo
-	if has_selection() and not _is_marquee:
+	# 7. 2D Transform Gizmo (UV1 only — UV2 is the read-only splat view)
+	if uv_channel == UvChannel.UV1 and has_selection() and not _is_marquee:
 		gizmo.draw(self)
+
+	# 8. Read-only banner on the UV2 splat view
+	if uv_channel == UvChannel.UV2:
+		var font := ThemeDB.fallback_font
+		if font != null:
+			draw_string(font, Vector2(8, size.y - 8),
+					"UV2 — splat masks (read-only debug view; paint in the viewport to edit)",
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.65, 0.78, 0.95, 0.85))
 
 func _draw_grid() -> void:
 	var tl_uv := screen_to_uv(Vector2.ZERO)

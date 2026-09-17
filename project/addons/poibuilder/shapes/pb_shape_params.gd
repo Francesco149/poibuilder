@@ -34,6 +34,7 @@ static func get_param_defs(shape_id: StringName) -> Array:
 				_value_def("curvature", "Curvature", -360.0, 360.0, 180.0, "°"),
 				_count_def("steps", "Steps", 1, 64, 8),
 				_bool_def("sides", "Sides", true),
+				_bool_def("axis_swap", "Swap Arc Axes", false),
 			]
 		&"prism":
 			return _size_defs()
@@ -161,7 +162,7 @@ static func build(shape_id: StringName, values: Dictionary = {}) -> PBMeshData:
 			data = PBShapeComplex.create_stairs(Vector3(v["width"], v["height"], v["depth"]), int(v["steps"]), build_sides)
 		&"curved_stair":
 			var build_sides: bool = v["sides"] > 0.5 if v.has("sides") else true
-			data = PBShapeComplex.create_curved_stairs(v["stair_width"], v["height"], v["inner_radius"], v["curvature"], int(v["steps"]), build_sides)
+			data = PBShapeComplex.create_curved_stairs(v["stair_width"], v["height"], v["inner_radius"], v["curvature"], int(v["steps"]), build_sides, v["axis_swap"] > 0.5)
 		&"prism":
 			data = PBShapeGenerators.create_prism(Vector3(v["width"], v["height"], v["depth"]))
 		&"cylinder":
@@ -390,7 +391,7 @@ static func commits_on_base_release(shape_id: StringName) -> bool:
 ## current values. (A NEGATIVE height is a real signed drag: cubes grow
 ## below the surface, round shapes shrink.)
 static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
-		height: float, base_values: Dictionary = {}) -> void:
+		height: float, base_values: Dictionary = {}, snap_step: float = 0.0) -> void:
 	var height_known := not is_nan(height)
 	if values.has("height") and height_known:
 		# The drag's SIGN is carried by the PLACEMENT, not by the parameter:
@@ -426,9 +427,24 @@ static func apply_drag_extents(values: Dictionary, u_size: float, v_size: float,
 		else:
 			values["width"] = maxf(0.1, u_size)
 	if values.has("stair_width"):
-		var max_dim: float = maxf(u_size, v_size)
-		var in_r: float = float(values.get("inner_radius", 0.5))
-		values["stair_width"] = maxf(0.1, max_dim * 0.5 - in_r)
+		# Curved stairs: the arc's bounding box must FILL the dragged rect —
+		# first riser flush with one edge, last riser flush with the opposite
+		# edge, outer radius flush with the sides (bbox contract in
+		# create_curved_stairs: span_x = r(1-cos a), span_z = r*min(sin a, 1)
+		# for sweep a in (0, 180]). A fixed 180 deg sweep cannot fill an
+		# arbitrary rect, so the curvature is DERIVED from the rect aspect and
+		# the outer radius pins to the depth axis.
+		var sizing := PBShapeComplex.curved_stairs_sizing(u_size, v_size)
+		values["curvature"] = sizing["sweep_deg"]
+		values["inner_radius"] = sizing["inner_radius"]
+		values["stair_width"] = sizing["stair_width"]
+		values["axis_swap"] = 1.0 if sizing["rotate_90"] else 0.0
+		# Steps quantize to the grid so treads land on grid lines; the count
+		# still divides the dragged height exactly, so the bottom riser base
+		# and the top tread stay flush with the box edges.
+		var snap := snap_step if snap_step > 0.0 else 0.25
+		var cur_height: float = absf(float(values.get("height", 2.0)))
+		values["steps"] = clampi(int(round(cur_height / snap)), 2, 64)
 	# Round-in-plan shapes: the footprint grows from the base rect only —
 	# a rect footprint (the arch, which has a real depth) uses the width;
 	# a circular one (cylinder, pipe, cone, sphere, torus) inscribes the

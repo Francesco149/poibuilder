@@ -286,6 +286,7 @@ static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 	var split_positions := PackedVector3Array()
 	var split_uvs := PackedVector2Array()
 	var split_normals := PackedVector3Array()
+	var split_tangents := PackedFloat32Array()
 	var faces: Array[PBFace] = []
 
 	var vertex_counter := 0
@@ -299,6 +300,9 @@ static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 		var surf_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
 		var surf_uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
 		var surf_normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL] if arrays[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+		# Tangents must ride along or normal-mapped source assets (the common
+		# modern-asset case) lose their normal maps after conversion.
+		var surf_tangents: PackedFloat32Array = arrays[Mesh.ARRAY_TANGENT] if arrays[Mesh.ARRAY_TANGENT] != null else PackedFloat32Array()
 
 		# If unindexed, generate linear indices
 		if surf_indices.is_empty():
@@ -319,8 +323,12 @@ static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 			var p1: Vector3 = surf_verts[i1]
 			var p2: Vector3 = surf_verts[i2]
 
-			# Degenerate triangle check
-			if (p1 - p0).cross(p2 - p0).length_squared() < 0.0000001:
+			# Degenerate triangle check — LINEAR scale, not area-squared. The
+			# old length_squared() < 1e-7 threshold (≈3 cm² area) silently
+			# dropped most triangles of dense real-scale sculpt imports (a 4k
+			# statue lost 99.8% of its mesh); a 0.5 mm² floor keeps genuinely
+			# collapsed tris out without eating real content.
+			if (p1 - p0).cross(p2 - p0).length() < 0.000001:
 				continue
 
 			split_positions.append(p0)
@@ -340,6 +348,14 @@ static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 				split_normals.append(surf_normals[i0])
 				split_normals.append(surf_normals[i1])
 				split_normals.append(surf_normals[i2])
+
+			if surf_tangents.size() == surf_verts.size() * 4:
+				for ti in [i0, i1, i2]:
+					var base: int = ti * 4
+					split_tangents.append(surf_tangents[base])
+					split_tangents.append(surf_tangents[base + 1])
+					split_tangents.append(surf_tangents[base + 2])
+					split_tangents.append(surf_tangents[base + 3])
 
 			var face := PBFace.new()
 			face.set_indexes(PackedInt32Array([vertex_counter, vertex_counter + 1, vertex_counter + 2]))
@@ -365,6 +381,8 @@ static func poibuilderize(mesh_instance: MeshInstance3D) -> PBMesh:
 	pb_mesh_data.positions = split_positions
 	pb_mesh_data.textures0 = split_uvs
 	pb_mesh_data.faces = faces
+	if split_tangents.size() == split_positions.size() * 4:
+		pb_mesh_data.tangents = split_tangents
 	pb_mesh_data.rebuild_welds()
 	pb_mesh_data.calculate_normals()
 	pb_mesh_data.shape_edited = true

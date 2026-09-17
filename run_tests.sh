@@ -22,13 +22,64 @@
 #                                   # pass through). A filtered run skips the
 #                                   # silent-skip count guard by definition —
 #                                   # it does NOT count as "tests pass".
+#
+# CONTAINMENT: every Godot invocation runs through tools/godot_guard.sh —
+# a hard memory cap (podman container, or a systemd scope fallback) with a
+# hard timeout and forced process-group cleanup, so a hung headless run can
+# never again pile up into an OOM. PB_GUARD=off bypasses (debugging only).
 set -uo pipefail
-cd "$(dirname "$0")/project"
+# Anchor on the script location BEFORE any cd: computing paths from "$0"
+# after `cd project` silently resolved the guard to project/tools/… (which
+# does not exist) and the old silent fallback then ran Godot UNCAPPED on
+# every invocation. This resolution bug is why the podman path was dead code.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT/project"
 
 FAIL=0
 
+# The suite runs inside ONE persistent, memory-capped container (2 GB default,
+# 8 GB hard max) — see tools/godot_guard.sh. GUARD_MEM env raises it if the
+# suite ever needs more; the kernel OOM-kills inside the cap, never the host.
+# The guard VERIFIES its cap: where rootless podman has no cgroup management
+# it enforces via a systemd user scope, and refuses to run at all when the
+# cap cannot be enforced (PB_GUARD_UNCAPPED=1 overrides, ulimit backstop).
+# PB_GUARD=off is the only direct-exec path and still applies a best-effort
+# 8 GB ulimit — the suite can never again run with NO ceiling at all.
+GUARD="${PB_GUARD:-podman}"
+GUARD_SCRIPT="$REPO_ROOT/tools/godot_guard.sh"
+# Inside the container the repo is bind-mounted at /work (godot_guard.sh);
+# on the host the checkout's own path applies. Callers cd into PROJECT_DIR
+# before running Godot so relative paths (res://, tests/) keep working in
+# both environments.
+PB_TEST_TIMEOUT="${PB_TEST_TIMEOUT:-900}"
+if [ "$GUARD" = "off" ]; then
+  PROJECT_DIR="$REPO_ROOT/project"
+else
+  PROJECT_DIR="/work/project"
+fi
+run_guarded() {
+  local dir="$1"
+  shift
+  if [ "$GUARD" = "off" ]; then
+    echo "WARNING: PB_GUARD=off — best-effort 8GB ulimit only, no container cap" >&2
+    bash -c 'ulimit -v 8388608; cd "$1" || exit 70; shift; exec "$@"' _ "$dir" "$@"
+  elif [ ! -x "$GUARD_SCRIPT" ]; then
+    # Fail closed: an uncontained Godot run is how the machine OOM'd.
+    echo "FAIL: $GUARD_SCRIPT missing or not executable — refusing to run Godot uncapped." >&2
+    return 1
+  else
+    "$GUARD_SCRIPT" exec bash -c 'cd "$1" || exit 70; shift; exec "$@"' _ "$dir" "$@"
+  fi
+}
+cleanup_container() {
+  if [ "$GUARD" != "off" ] && [ -x "$GUARD_SCRIPT" ]; then
+    "$GUARD_SCRIPT" cleanup
+  fi
+}
+trap cleanup_container EXIT
+
 echo "== [1/4] Refreshing imports/class cache (editor boot smoke test) =="
-if ! timeout 120 godot-mono --headless --editor --quit-after 100 > /tmp/pb_import.log 2>&1; then
+if ! run_guarded "$PROJECT_DIR" timeout 180 godot-mono --headless --editor --quit-after 100 > /tmp/pb_import.log 2>&1; then
   echo "WARN: editor run exited nonzero (may be benign headless teardown)"
 fi
 if grep -q "SCRIPT ERROR" /tmp/pb_import.log; then
@@ -37,11 +88,11 @@ if grep -q "SCRIPT ERROR" /tmp/pb_import.log; then
   FAIL=1
 fi
 
-echo "== [2/4] Running GUT suite =="
+echo "== [2/4] Running GUT suite (hard timeout ${PB_TEST_TIMEOUT}s) =="
 LOG=/tmp/pb_gut.log
-if ! GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless -s addons/gut/gut_cmdln.gd \
+if ! GODOT_DISABLE_LEAK_CHECKS=1 run_guarded "$PROJECT_DIR" timeout "$PB_TEST_TIMEOUT" godot-mono --headless -s addons/gut/gut_cmdln.gd \
     -gdir=res://tests -ginclude_subdirs -gexit "$@" > "$LOG" 2>&1; then
-  echo "FAIL: GUT exited nonzero" >&2
+  echo "FAIL: GUT exited nonzero (timeout ${PB_TEST_TIMEOUT}s — a hang dies on its own now)" >&2
   grep -E "\[Failed\]|Failing" "$LOG" | head -30 >&2
   FAIL=1
 fi

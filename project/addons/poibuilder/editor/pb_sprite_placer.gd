@@ -26,6 +26,7 @@ const DRAG_THRESHOLD := 6.0
 const TEXTURE_DIRS := [
 	"res://addons/poibuilder/materials/textures",
 	"res://materials/textures",
+	"res://materials/sprites",
 ]
 
 var state: State = State.INACTIVE
@@ -58,6 +59,10 @@ var base_height: float = 1.0
 # Node references
 var scene_root_override: Node = null
 var preview_node: PBMesh = null
+## Camera of the active placement session (for the guide ribbon orientation).
+var camera: Camera3D = null
+## Green ground->sprite guide line shown while the sprite is raised.
+var _guide_line: MeshInstance3D = null
 var plugin: EditorPlugin = null
 var grid: PBGrid = null
 
@@ -106,7 +111,10 @@ func _scan_dir_for_textures(dir_path: String, seen_paths: Dictionary) -> void:
 			var ext := file_name.get_extension().to_lower()
 			if ext in ["png", "jpg", "jpeg", "webp"]:
 				var full_path := dir_path.path_join(file_name)
-				if not seen_paths.has(full_path) and ResourceLoader.exists(full_path):
+				# Sprites only: the carousel must not mix in stamps, paint
+				# textures or particles (PBAssetCatalog is the shared rule).
+				if not seen_paths.has(full_path) and PBAssetCatalog.is_sprite(full_path) \
+						and ResourceLoader.exists(full_path):
 					var tex = ResourceLoader.load(full_path)
 					if tex is Texture2D:
 						seen_paths[full_path] = true
@@ -131,6 +139,7 @@ func abort() -> void:
 			preview_node.get_parent().remove_child(preview_node)
 		preview_node.queue_free()
 		preview_node = null
+	_clear_guide_line()
 
 	hide_carousel()
 	var prev_state := state
@@ -302,6 +311,7 @@ func update_carousel_ui() -> void:
 # ==============================================================================
 
 func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, host_control: Control) -> int:
+	self.camera = camera
 	const PASS := 0
 	const STOP := 1
 
@@ -457,6 +467,7 @@ func _spawn_preview_node() -> void:
 			preview_node.get_parent().remove_child(preview_node)
 		preview_node.queue_free()
 		preview_node = null
+	_clear_guide_line()
 
 	var scene_root: Node = scene_root_override
 	if scene_root == null and plugin != null and plugin.has_method("get_editor_interface"):
@@ -486,9 +497,106 @@ func _spawn_preview_node() -> void:
 	if scene_root != null:
 		scene_root.add_child(preview_node)
 		preview_node.owner = scene_root
+		_ensure_guide_line(scene_root)
 
 	preview_node.rebuild()
 	preview_node.update_gizmos()
+
+## Immediate-mode green line from the ground anchor to the sprite's bottom
+## edge (plus a small ground cross), so "raised off the surface" reads at a
+## glance while the elevation drag is live.
+func _ensure_guide_line(scene_root: Node) -> void:
+	if _guide_line != null and is_instance_valid(_guide_line):
+		return
+	_guide_line = MeshInstance3D.new()
+	# Named to avoid the billboard name-prefix rules ("sprite*", "tree*"...):
+	# the guide is editor tooling and must never export as a billboard.
+	_guide_line.name = "RaiseGuideLine"
+	var mesh := ImmediateMesh.new()
+	_guide_line.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.2, 1.0, 0.35, 1.0)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Depth test off + high render priority: the guide is a placement aid and
+	# must never drown under the floor or geometry it is raised from (it used
+	# to be depth-tested and effectively invisible against the surface).
+	mat.no_depth_test = true
+	mat.render_priority = 10
+	mat.disable_receive_shadows = true
+	_guide_line.material_override = mat
+	_guide_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if scene_root != null:
+		scene_root.add_child(_guide_line)
+
+func _update_guide_line() -> void:
+	if _guide_line == null or not is_instance_valid(_guide_line):
+		return
+	var mesh := _guide_line.mesh as ImmediateMesh
+	if mesh == null:
+		return
+	mesh.clear_surfaces()
+	if state != State.RAISE and state != State.SCALE:
+		_guide_line.visible = false
+		return
+	_guide_line.visible = true
+	var ground := press_surface_point
+	# The sprite quad is BASE-anchored (create_sprite builds it from Y=0 up),
+	# and the preview node sits at surface + normal * elevation — so the
+	# sprite's bottom edge is exactly the raised point. (The old `-h/2` term
+	# assumed a center-anchored quad and buried most of the guide under the
+	# surface it rose from.)
+	var bottom := press_surface_point + press_surface_normal * elevation
+
+	# Ribbon axis: horizontal, perpendicular to the camera->anchor direction,
+	# so the band always shows its width to the user.
+	var to_cam: Vector3 = ((camera.global_position if camera != null else ground + Vector3(0, 1, 2)) - ground)
+	var flat := to_cam - press_surface_normal * to_cam.dot(press_surface_normal)
+	var side: Vector3 = press_surface_normal.cross(flat).normalized() if flat.length_squared() > 0.0001 \
+			else press_surface_normal.cross(Vector3.RIGHT).normalized()
+	if side.length_squared() < 0.0001:
+		side = Vector3.RIGHT
+	var half_w := 0.09
+
+	# 1. Soft green band (two triangles, camera-facing width)
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	mesh.surface_add_vertex(ground - side * half_w)
+	mesh.surface_add_vertex(ground + side * half_w)
+	mesh.surface_add_vertex(bottom - side * half_w)
+	mesh.surface_add_vertex(bottom + side * half_w)
+	mesh.surface_end()
+
+	# 2. Bright core line down the middle of the band
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	mesh.surface_add_vertex(ground)
+	mesh.surface_add_vertex(bottom)
+	mesh.surface_end()
+
+	# 3. Ground diamond at the anchor (four small triangles)
+	var d1 := side.normalized() * 0.14
+	var d2 := press_surface_normal.cross(d1).normalized() * 0.14
+	var g0 := ground + press_surface_normal * 0.005
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	mesh.surface_add_vertex(g0 + d1)
+	mesh.surface_add_vertex(g0 + d2)
+	mesh.surface_add_vertex(g0 - d1)
+	mesh.surface_add_vertex(g0 - d2)
+	mesh.surface_end()
+
+func _clear_guide_line() -> void:
+	if _guide_line != null and is_instance_valid(_guide_line):
+		_guide_line.queue_free()
+	_guide_line = null
+
+## Live extents readout for the tool overlay (raise + scale phases).
+func get_extents_readout() -> String:
+	match state:
+		State.RAISE:
+			return "Offset: %.2fm" % elevation
+		State.SCALE:
+			return "W %.2fm x H %.2fm (x%.2f)" % [
+				base_width * scale_factor, base_height * scale_factor, scale_factor]
+	return ""
 
 func _update_raise_transform(camera: Camera3D) -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
@@ -511,6 +619,12 @@ func _update_raise_transform(camera: Camera3D) -> void:
 		preview_node.global_transform = Transform3D(basis, sprite_pos)
 	else:
 		preview_node.transform = Transform3D(basis, sprite_pos)
+	_update_guide_line()
+	_update_overlay_readout()
+
+func _update_overlay_readout() -> void:
+	if plugin != null and "tool_overlay" in plugin and plugin.tool_overlay != null:
+		plugin.tool_overlay.set_creation_extents(get_extents_readout())
 
 func _update_scale_transform() -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
@@ -530,6 +644,8 @@ func _update_scale_transform() -> void:
 	else:
 		preview_node.transform = Transform3D(locked_basis, cur_pos)
 	preview_node.update_gizmos()
+	_update_guide_line()
+	_update_overlay_readout()
 
 func finalize_placement() -> void:
 	if preview_node == null or not is_instance_valid(preview_node):
@@ -539,6 +655,7 @@ func finalize_placement() -> void:
 	var node := preview_node
 	preview_node = null
 	state = State.INACTIVE
+	_clear_guide_line()
 
 	var final_w := base_width * scale_factor
 	var final_h := base_height * scale_factor

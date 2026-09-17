@@ -217,7 +217,7 @@ func test_toolbar_initial_state():
 	assert_true(tb._row1.visible, "Row 1 should be visible")
 	assert_true(tb._row2.visible, "Row 2 should be visible by default")
 	assert_false(tb._row3.visible, "Row 3 (extended tools) should be hidden by default")
-	assert_not_null(tb._btn_export, "Export button should exist")
+	assert_not_null(tb._btn_export_more, "Export dialog button should exist")
 	assert_not_null(tb._op_buttons.get("bevel_edges"), "Bevel op button should exist")
 	assert_not_null(tb._op_buttons.get("bridge_edges"), "Bridge op button should exist")
 	assert_not_null(tb._op_buttons.get("connect_edges"), "Connect op button should exist")

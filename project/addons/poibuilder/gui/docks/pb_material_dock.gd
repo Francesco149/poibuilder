@@ -1009,6 +1009,23 @@ func _rebuild_material_grid() -> void:
 	for mat in _project_materials:
 		if mat == null:
 			continue
+		# Pickers must not cross-populate: sprites, stamps and paint textures
+		# are categorized (PBAssetCatalog) and each mode sees only its own set.
+		# MATERIAL mode keeps the full palette.
+		if dock_mode != DockMode.MATERIAL:
+			if not mat.has_meta("source_texture_path"):
+				continue
+			var cat: String = PBAssetCatalog.classify_path(mat.get_meta("source_texture_path"))
+			match dock_mode:
+				DockMode.PAINT:
+					if cat != "texture":
+						continue
+				DockMode.STAMP:
+					if cat != "stamp":
+						continue
+				DockMode.SPRITE:
+					if cat != "sprite":
+						continue
 		var card := _create_material_card(mat)
 		_material_grid.add_child(card)
 

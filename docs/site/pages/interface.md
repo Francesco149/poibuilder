@@ -21,7 +21,9 @@ The bar is a sibling *below* Godot's 3D toolbar. It stays visible with nothing s
 
 Scale tooltip, verbatim: axis handles scale freely; the **center square** scales all axes together (Shift + center on faces insets).
 
-**Row 2** — modes, space, grid, shapes, docks, export.
+**Row 2** — modes, space, shapes, docks, export.
+
+**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth.
 
 | Control | What it does |
 |---|---|
@@ -36,7 +38,7 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 | [[icon:panel]] Panel | Pins the overlay so it does not auto-hide. |
 | [[icon:panel_reset]] Reset | Docks the overlay back to the bottom-left. |
 | [[icon:settings]] Settings | Display: grid, wireframe, selection/hover opacity. |
-| [[icon:docs]] Export | Retro baked map or modern GLB. |
+| Export... | Dialog: PBM (default) or GLB — retro baked / modern live materials. |
 | [[icon:docs]] Docs | Opens this site (bundled `docs-site/index.html`). |
 
 **Rows 3 & 4** — the [[icon:split_rows]] **Extended Tools** toggle.
