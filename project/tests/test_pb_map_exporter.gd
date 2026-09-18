@@ -886,6 +886,79 @@ func test_modern_glb_bake_embeds_painted_pixels() -> void:
 ## (CUSTOM0 -> TEXCOORD_2 -> CUSTOM0), each painted face's material carries a
 ## `poi_splat` record, and the masks/decal ride as sidecar PNGs. The round trip
 ## must reproduce the painted pixels.
+## glTF lights cannot carry shadows, so a shadow-casting light tags its export
+## node with `extras.poi_shadow` — and the tag survives a GLB round trip, so a
+## consumer (the frame bench, a Godot re-import) can restore the authored look.
+func test_shadowed_lights_export_poi_shadow_extras() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var shadowed := OmniLight3D.new()
+	shadowed.name = "ShadowedLight"
+	shadowed.shadow_enabled = true
+	root.add_child(shadowed)
+	var plain := OmniLight3D.new()
+	plain.name = "PlainLight"
+	plain.shadow_enabled = false
+	root.add_child(plain)
+	# A mesh so the GLB carries real buffer data — a lights-only scene parses
+	# with an empty-buffer engine error, which GUT counts as a failure.
+	var box := MeshInstance3D.new()
+	box.name = "Box"
+	box.mesh = BoxMesh.new()
+	root.add_child(box)
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.bake_lighting = false
+	settings.export_colliders = false
+	settings.export_billboards = false
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+	var exported_shadowed := export_tree.get_node_or_null("ShadowedLight") as OmniLight3D
+	var exported_plain := export_tree.get_node_or_null("PlainLight") as OmniLight3D
+	assert_not_null(exported_shadowed)
+	assert_not_null(exported_plain)
+	if exported_shadowed != null:
+		assert_true(exported_shadowed.has_meta("extras") \
+				and (exported_shadowed.get_meta("extras") as Dictionary).get("poi_shadow", false),
+				"A shadow-casting light must tag its export node with poi_shadow")
+	if exported_plain != null:
+		assert_false(exported_plain.has_meta("extras") \
+				and (exported_plain.get_meta("extras") as Dictionary).has("poi_shadow"),
+				"A non-shadow light must not claim poi_shadow")
+
+	# Round trip: the extras ride the glTF node JSON and come back as node meta.
+	var out_path := "user://test_light_shadow_extras.glb"
+	var err := PBMapExporter.export_map(root, out_path, settings)
+	assert_eq(err, OK, "GLB export with lights must succeed")
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	var lerr := doc.append_from_file(out_path, state)
+	assert_eq(lerr, OK, "Re-import must succeed")
+	if lerr != OK:
+		return
+	var scene := doc.generate_scene(state)
+	autofree(scene)
+	var came_back := _find_light_recursive(scene, "ShadowedLight")
+	assert_not_null(came_back, "The shadowed light must survive the round trip")
+	if came_back != null:
+		assert_true(came_back.has_meta("extras") \
+				and (came_back.get_meta("extras") as Dictionary).get("poi_shadow", false),
+				"The poi_shadow tag must ride the round trip as node extras")
+
+func _find_light_recursive(node: Node, light_name: String) -> Light3D:
+	if node is Light3D and node.name.begins_with(light_name):
+		return node as Light3D
+	for c in node.get_children():
+		var hit := _find_light_recursive(c, light_name)
+		if hit != null:
+			return hit
+	return null
+
+
 func test_modern_glb_include_roundtrip_reproduces_paint() -> void:
 	var root := Node3D.new()
 	autofree(root)

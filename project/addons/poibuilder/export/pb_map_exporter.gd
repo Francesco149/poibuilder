@@ -1303,6 +1303,16 @@ static func _apply_texture_plan_to_uvs(arrays: Array, plan_entry: Dictionary) ->
 static func _export_light(light: Light3D, parent: Node) -> void:
 	var dup := light.duplicate() as Light3D
 	parent.add_child(dup)
+	# glTF's light record has no shadow field (KHR_lights_punctual), so a
+	# shadow-casting light tags its NODE with an extras record — Godot's
+	# exporter writes node meta "extras" verbatim into the glTF JSON, and the
+	# importer reads extras back onto the node the same way. A consumer that
+	# wants the authored look (the frame bench, a Godot round trip) restores
+	# shadow_enabled from it.
+	if light.shadow_enabled:
+		var extras: Dictionary = light.get_meta("extras", {}) if light.has_meta("extras") else {}
+		extras["poi_shadow"] = true
+		dup.set_meta("extras", extras)
 
 ## The world transform of a node that may not be inside the tree (a detached
 ## source scene, an export-time copy): walk the parents by hand.
