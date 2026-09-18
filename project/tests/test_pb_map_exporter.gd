@@ -620,7 +620,7 @@ func test_nested_prop_keeps_its_placement() -> void:
 		"…not at the map origin")
 	DirAccess.remove_absolute(pbm_path)
 
-func test_prop_texture_survives_glb_to_pbm_without_atlasing() -> void:
+func test_prop_texture_survives_the_pbm_writer_without_atlasing() -> void:
 	var root := Node3D.new()
 	add_child_autofree(root)
 	var mi := MeshInstance3D.new()
@@ -639,11 +639,10 @@ func test_prop_texture_survives_glb_to_pbm_without_atlasing() -> void:
 	var settings := PBMapExporter.ExportSettings.new()
 	settings.bake_lighting = false
 	settings.bake_textures = false
-	var glb_path := "user://test_pack_prop.glb"
 	var pbm_path := "user://test_pack_prop.pbm"
-	var err := PBMapExporter.export_map(root, glb_path, settings)
+	# Straight through the PBM writer (the GLB->PBM converters are retired).
+	var err := PBMapExporter.export_map(root, pbm_path, settings)
 	assert_eq(err, OK)
-	assert_eq(PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, true), OK)
 
 	var textures := _read_pbm_textures(pbm_path)
 	var prop_tex := -1
@@ -657,7 +656,6 @@ func test_prop_texture_survives_glb_to_pbm_without_atlasing() -> void:
 	assert_eq(meshes.size(), 1)
 	assert_eq(meshes[0]["tex"], prop_tex, "The prop's mesh must reference its own texture")
 
-	DirAccess.remove_absolute(glb_path)
 	DirAccess.remove_absolute(pbm_path)
 
 func test_prop_instances_share_one_texture() -> void:
@@ -996,7 +994,7 @@ func test_async_export_routes_pbm_extension() -> void:
 	assert_not_null(f)
 	if f != null:
 		var magic := f.get_32()
-		assert_eq(magic, PBPbmConverter.PBM_MAGIC, "Async export must produce a real PBM3 file")
+		assert_eq(magic, PBMapExporter.PBM_MAGIC, "Async export must produce a real PBM3 file")
 
 func test_export_dialog_defaults_to_pbm() -> void:
 	var dialog := PBExportDialog.new()
@@ -1076,7 +1074,7 @@ func test_pbm_triangle_winding_matches_oracle() -> void:
 	var f := FileAccess.open(out_path, FileAccess.READ)
 	assert_not_null(f)
 	var magic := f.get_32()
-	assert_eq(magic, PBPbmConverter.PBM_MAGIC, "Must be a PBM3 file")
+	assert_eq(magic, PBMapExporter.PBM_MAGIC, "Must be a PBM3 file")
 	var ver := f.get_32()
 	var n_tex := f.get_32()
 	var n_mesh := f.get_32()

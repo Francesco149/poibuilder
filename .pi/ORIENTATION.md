@@ -38,7 +38,7 @@ broke it. Do not be the next one.
 |   |   +-- mesh_ops/           # PBMeshOps: extrude/inset/merge/weld/cut/...
 |   |   +-- materials/          # Default material, textures, splat/decal shaders
 |   |   +-- export/             # THE RETRO PIPELINE: map exporter, tile/light
-|   |   |                       #   bakers, colliders, PBPbmConverter (.pbm)
+|   |   |                       #   bakers, colliders, the .pbm writer
 |   |   +-- gui/                # Docks (material/UV, paint, stamp) + overlay
 |   |   +-- debug/              # PBLogger, PBTelemetry
 |   +-- tests/                  # GUT test scripts (your tests go here)
@@ -50,8 +50,7 @@ broke it. Do not be the next one.
 +-- CLAUDE.md                   # Current status, conventions
 +-- CHANGELOG.md                # Version-by-version history (canonical record)
 +-- .pi/orientation/            # THE implementation docs (topic files, above)
-+-- retro_engine/               # Retro pipeline: exporters, viewers, PSP homebrew
-|   +-- pbm_conv.py            # Python GLB->PBM oracle (parity reference)
++-- retro_engine/               # Retro pipeline: viewers, PSP homebrew, tools
 |   +-- RETRO-AUTHORING.md     # Authoring recipes for the retro target
 |   +-- psp/HARDWARE-TESTING.md, OPTIMIZATION.md  # Device measurement + engine
 +-- reports/                    # Spec extraction reports (historical)

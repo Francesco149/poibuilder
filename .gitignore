@@ -57,12 +57,6 @@ docs/site/out/
 project/addons/poibuilder/docs-site/
 
 
-# Raylib demo: the SOURCE is committed, only build output and the generated
-# screenshot are ignored. (The raylib library itself is a system dependency and
-# is not vendored; retro_engine/raylib/flake.nix provides a dev shell for it.)
-retro_engine/raylib/raylib_runner
-retro_engine/raylib/raylib_proof_of_concept.png
-
 # PSP real-hardware profiling harness
 retro_engine/psp/hwrun/
 retro_engine/psp/poi_profile.txt

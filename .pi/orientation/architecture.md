@@ -194,9 +194,10 @@ origin/elevation is session-only on purpose.
   pre-flight). Headless-static.
 - `materials/` — default material, shipped textures, splat/decal shaders, the
   paint/splat data model (`core/pb_splat.gd`).
-- `export/` — the retro pipeline (see retro.md): `pb_map_exporter.gd`
-  (glTF writer, tile/light bakers, colliders) and `pb_pbm_converter.gd`
-  (byte-compatible with the Python oracle).
+- `export/` — the retro pipeline (see retro.md): `pb_map_exporter.gd` — the
+  glTF writer, the tile/light bakers, colliders AND the `.pbm` writer (the
+  GLB->PBM converters are retired; a `.pbm` path routes straight to
+  `export_retro_pbm`).
 - `gui/` — docks (Material & UV / paint / stamp) + the in-viewport overlay.
 
 Hover highlights are CYAN, selection YELLOW (v0.9.0+): yellow reads as

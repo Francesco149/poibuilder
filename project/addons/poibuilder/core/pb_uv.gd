@@ -324,10 +324,9 @@ static func set_scroll_speed(mat: Material, speed: Vector2) -> void:
 
 ## Mirrors the scroll speed into the material's `extras` metadata dictionary.
 ## Godot's glTF exporter serializes that dictionary verbatim into the material
-## JSON (`_attach_meta_to_extras` in gltf_document.cpp), which is how
-## pbm_conv.py and PBPbmConverter see the animation on the GLB path. Values are
-## [u, v] float pairs: Vector2 is not a JSON type, and a Stringified Vector2
-## would have to be parsed back out.
+## JSON (`_attach_meta_to_extras` in gltf_document.cpp), which is how a modern
+## .glb consumer reads the animation. Values are [u, v] float pairs: Vector2 is
+## not a JSON type, and a Stringified Vector2 would have to be parsed back out.
 static func _sync_gltf_extras(mat: Material, speed: Vector2) -> void:
 	var extras: Dictionary = mat.get_meta(GLTF_EXTRAS_META, {}) if mat.has_meta(GLTF_EXTRAS_META) else {}
 	if speed == Vector2.ZERO:

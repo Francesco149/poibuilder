@@ -69,11 +69,9 @@ newbuilder/
 +-- CLAUDE.md                current status, conventions, round history
 +-- IMPLEMENTATION.md        this file (historical plan)
 +-- retro_engine/            the retro pipeline: exporters, viewers, PSP homebrew
-    +-- pbm_conv.py          Python GLB -> PBM oracle (parity reference)
     +-- pbm_analyze.py       host-side view analysis (coverage, minification)
     +-- pbm_profile_report.py  turns a device battery log into a verdict
     +-- RETRO-AUTHORING.md   authoring recipes for the retro target
-    +-- raylib/              Raylib custom-engine runner
     +-- psp/                 PSP homebrew renderer + HARDWARE-TESTING.md,
                              OPTIMIZATION.md, run/build scripts
 ```

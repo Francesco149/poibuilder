@@ -53,8 +53,12 @@ func test_build_and_export_showcase_map() -> void:
 	var retro_size := fa_retro.get_length()
 	fa_retro.close()
 	assert_gt(retro_size, 1000, "Retro GLB must contain valid baked geometry and textures")
-	var pbm_err := PBPbmConverter.convert_glb_to_pbm(RETRO_GLB_PATH, "res://../retro_engine/psp/showcase_retro_baked.pbm", true)
-	assert_eq(pbm_err, OK, "Converting showcase retro GLB to PBM must succeed")
+	# The .pbm comes straight from the exporter (Retro Baked + a .pbm path):
+	# the GLB->PBM converters are retired, the exporter is the only writer.
+	var pbm_path := "res://../retro_engine/psp/showcase_retro_baked.pbm"
+	var pbm_err := PBMapExporter.export_map(showcase_root, pbm_path, retro_settings)
+	assert_eq(pbm_err, OK, "Exporting the showcase map to PBM must succeed")
+	assert_true(FileAccess.file_exists(pbm_path), "showcase_retro_baked.pbm must exist")
 
 	# 2. Export Modern GLB
 	var modern_settings := PBMapExporter.ExportSettings.new()

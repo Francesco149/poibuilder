@@ -3,7 +3,7 @@
 #
 # This workstation runs niri (pure Wayland) and nothing starts an Xwayland for
 # the session, so DISPLAY is empty inside tmux/ssh and an X11-only program
-# (raylib/GLFW here) has nowhere to draw. Starting a private `Xwayland :99` does
+# (an X11-only viewer, say) has nowhere to draw. Starting a private `Xwayland :99` does
 # NOT work: a bare Xwayland has no Wayland compositor behind it, so its windows
 # never appear on screen even though the program runs happily and renders.
 #

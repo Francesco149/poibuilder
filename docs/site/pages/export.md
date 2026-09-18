@@ -14,7 +14,7 @@ Keeps authored geometry; collision meshes are named `Collider_*`. Paint has its 
 
 ## Retro baked map
 
-The path the PSP / raylib viewers eat — and what PBM is: the same bake written straight to the binary map instead of a GLB waypoint.
+The path the PSP eats — and what PBM is: the same bake written straight to the binary map instead of a GLB waypoint.
 
 What the export does:
 
@@ -70,8 +70,8 @@ The contract is the **file format**, not the demo:
 - The demo engine in the repo is a **reference implementation**: read its
   loader (`retro_engine/psp/pbm_loader.c`) and renderer to see how the format
   is meant to be consumed, then take what you need.
-- The raylib viewer (`retro_engine/raylib/`) shows the same format on a
-  desktop target.
+- `./run_viewer.sh` shows the same bake in Godot (baked / vertex colour /
+  textures / wireframe / colliders + play mode).
 
 ## Authoring for the retro target
 

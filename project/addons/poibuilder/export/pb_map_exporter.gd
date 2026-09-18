@@ -200,6 +200,9 @@ static func export_map_async(root: Node, file_path: String, settings: ExportSett
 
 	if settings == null:
 		settings = ExportSettings.new()
+	# The writer's metadata reads the destination (map_name fallback), and the
+	# sidecar writers next to it.
+	settings.export_path = file_path
 
 	ensure_export_dir(file_path)
 	if progress_cb.is_valid():
@@ -1329,6 +1332,9 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 		return ERR_INVALID_PARAMETER
 	if settings == null:
 		settings = ExportSettings.new()
+	# The writer's metadata reads the destination (map_name fallback), and the
+	# sidecar writers next to it.
+	settings.export_path = file_path
 
 	ensure_export_dir(file_path)
 
@@ -1339,10 +1345,6 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 	var err := _write_pbm_from_tree(root, export_tree, file_path, settings)
 	export_tree.free()
 	return err
-
-## Convenience method: converts an exported GLB file to PBMv2 format directly via GDScript.
-static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit: bool = true) -> Error:
-	return PBPbmConverter.convert_glb_to_pbm(glb_path, pbm_path, format_16bit)
 
 ## Registers one authored texture in the PBM texture table and returns its index.
 ## Shared by the mesh path and the particle path: a particle atlas is an ordinary
@@ -1372,6 +1374,13 @@ static func _register_texture(textures: Array, tex_map: Dictionary, albedo_tex: 
 	var h := img.get_height()
 
 	img.convert(Image.FORMAT_RGBA8)
+	# The payload carries the BASE LEVEL only: the format's `data_size` is
+	# exactly width * height * bytes-per-pixel, and the device builds its own
+	# mip chain (pbm_loader.c). An imported PNG's image can still carry mip
+	# levels, and get_data() would then write the whole chain — 33% more bytes
+	# that the device reads as base-level pixels.
+	if img.has_mipmaps():
+		img.clear_mipmaps()
 	var raw_bytes := img.get_data()
 	var tex_data := PackedByteArray()
 	var tex_format := PBM_TEX_FMT_RGBA5551
@@ -1767,9 +1776,8 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 				# The export-tree meshes are wound CW-from-outside (Godot's
 				# front convention, same as the GLB pipeline). The PSP GU runs
 				# GU_CCW over a y-down framebuffer — the OPPOSITE sense — so
-				# every triangle flips here to match the device-verified
-				# oracle converter (pbm_conv.py). Without this the whole map
-				# renders inside-out on the PSP.
+				# every triangle flips here. Without this the whole map
+				# renders inside-out on the PSP (verified on hardware).
 				for t in range(0, idx_list.size() - 2, 3):
 					var swap_tmp = idx_list[t + 1]
 					idx_list[t + 1] = idx_list[t + 2]
@@ -1943,16 +1951,31 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	if root != null:
 		_collect_nodes_recursive(root, all_nodes)
 
-	# 1. Map Name
-	var map_name := "PoiRetro Courtyard Showcase"
+	# 1. Map Name — the scene's own name (or an explicit `map_name` meta). The
+	# old fallback was a hard-coded demo title, which every unnamed scene used to
+	# ship as its map name.
+	var map_name := ""
 	if root != null:
 		if root.has_meta("map_name") and not str(root.get_meta("map_name")).is_empty():
 			map_name = str(root.get_meta("map_name"))
 		elif not root.name.is_empty() and root.name != "Node3D":
 			map_name = root.name
+	if map_name.is_empty():
+		map_name = settings.export_path.get_file().get_basename() if not settings.export_path.is_empty() else "Map"
 	var map_name_bytes := map_name.to_utf8_buffer()
 	map_name_bytes.append(0)
 	entries.append({ "tag": "map_name", "type": PBM_META_STRING, "data": map_name_bytes })
+
+	# 1b. Environment preset — stamped on the scene root by the toolbar's
+	# Dawn/Day/Dusk/Night buttons (PBEnvironment). The device reads the sky/fog
+	# preset from this lump; the retired GLB->PBM converters guessed it from the
+	# file name instead, which only ever worked for the demo's naming scheme.
+	var env_preset := "day"
+	if root != null and root.has_meta("poi_env_preset"):
+		env_preset = str(root.get_meta("poi_env_preset"))
+	var env_preset_bytes := env_preset.to_utf8_buffer()
+	env_preset_bytes.append(0)
+	entries.append({ "tag": "env_preset", "type": PBM_META_STRING, "data": env_preset_bytes })
 
 	# 2. Player Spawn Point
 	var spawn_pos := default_spawn
@@ -2059,49 +2082,32 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 	spawn_json_bytes.append(0)
 	entries.append({ "tag": "player_spawn", "type": PBM_META_JSON, "data": spawn_json_bytes })
 
-	# 3. Walkable Mesh
-	if walkable_triangles.is_empty():
-		# Default ground floor quad
-		walkable_triangles.append_array([
-			Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),
-			Vector3(-4.0, 0.0, -5.5), Vector3(4.0, 0.0, 5.0),  Vector3(-4.0, 0.0, 5.0)
-		])
-	var walkable_buf := PackedByteArray()
-	walkable_buf.resize(walkable_triangles.size() * 12)
-	for wi in range(walkable_triangles.size()):
-		var p: Vector3 = walkable_triangles[wi]
-		walkable_buf.encode_float(wi * 12, p.x)
-		walkable_buf.encode_float(wi * 12 + 4, p.y)
-		walkable_buf.encode_float(wi * 12 + 8, p.z)
-	entries.append({ "tag": "walkable_mesh", "type": PBM_META_ENTITY, "data": walkable_buf })
+	# 3. Walkable Mesh — ONLY from the scene's own Walkable_* / navmesh nodes.
+	# A map without them carries no lump: an export must not invent gameplay the
+	# author never placed (a default ground quad used to ship in every map).
+	if not walkable_triangles.is_empty():
+		var walkable_buf := PackedByteArray()
+		walkable_buf.resize(walkable_triangles.size() * 12)
+		for wi in range(walkable_triangles.size()):
+			var p: Vector3 = walkable_triangles[wi]
+			walkable_buf.encode_float(wi * 12, p.x)
+			walkable_buf.encode_float(wi * 12 + 4, p.y)
+			walkable_buf.encode_float(wi * 12 + 8, p.z)
+		entries.append({ "tag": "walkable_mesh", "type": PBM_META_ENTITY, "data": walkable_buf })
 
-	# 4. Triggers
-	if triggers_list.is_empty():
-		triggers_list.append({
-			"id": "cutscene_archway",
-			"event": "on_enter_archway",
-			"bounds_min": [-2.0, 0.0, -5.8],
-			"bounds_max": [2.0, 3.5, -4.8],
-			"oneshot": true
-		})
-	var triggers_json_bytes := JSON.stringify(triggers_list).to_utf8_buffer()
-	triggers_json_bytes.append(0)
-	entries.append({ "tag": "triggers", "type": PBM_META_JSON, "data": triggers_json_bytes })
+	# 4. Triggers — ONLY the ones the scene declares (Trigger_* nodes or
+	# poi_trigger metadata). No fabricated "on_enter_archway" demo event.
+	if not triggers_list.is_empty():
+		var triggers_json_bytes := JSON.stringify(triggers_list).to_utf8_buffer()
+		triggers_json_bytes.append(0)
+		entries.append({ "tag": "triggers", "type": PBM_META_JSON, "data": triggers_json_bytes })
 
-	# 5. Rigid Bodies
-	if ball_pit_dict.is_empty():
-		ball_pit_dict = {
-			"type": "ball_pit",
-			"count": 16,
-			"radius": 0.22,
-			"mass": 1.0,
-			"restitution": 0.75,
-			"spawn_min": [-0.8, 2.0, -0.8],
-			"spawn_max": [0.8, 4.0, 0.8]
-		}
-	var rigid_json_bytes := JSON.stringify(ball_pit_dict).to_utf8_buffer()
-	rigid_json_bytes.append(0)
-	entries.append({ "tag": "rigid_bodies", "type": PBM_META_JSON, "data": rigid_json_bytes })
+	# 5. Rigid Bodies — ONLY from the scene's own BallPit_* / poi_rigid_body
+	# nodes. The demo ball pit used to be fabricated into every map.
+	if not ball_pit_dict.is_empty():
+		var rigid_json_bytes := JSON.stringify(ball_pit_dict).to_utf8_buffer()
+		rigid_json_bytes.append(0)
+		entries.append({ "tag": "rigid_bodies", "type": PBM_META_JSON, "data": rigid_json_bytes })
 
 	# 6. Arbitrary Custom Node Metadata Lumps
 	for node in custom_metadata_nodes:

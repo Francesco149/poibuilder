@@ -770,7 +770,7 @@ In your frame loop:
 
 ### Step 5: Interactive Scratch Project & Re-Export Loop
 
-To safely edit the map, poke around in Godot, and re-export to test in Raylib:
+To safely edit the map, poke around in Godot, and re-export to test on the target:
 
 ```bash
 # 1. Open the isolated scratch project with the showcase map:
@@ -778,9 +778,6 @@ To safely edit the map, poke around in Godot, and re-export to test in Raylib:
 # 2. Edit geometry, move entities, adjust triggers or ball pit parameters in Godot.
 # 3. Export from the editor:  Export -> PoiRetro (.pbm)  (or Modern glTF for other targets)
 # 4. Run the map:
-./run_raylib.sh                  # interactive Raylib playground
-./run_raylib.sh path/to/map.pbm  # a specific export
-./run_raylib.sh --headless       # 60-frame automated check under Xvfb
 ./run_viewer.sh                  # Godot retro viewer (visuals: baked / vertex colour / textures / wireframe / colliders + play mode)
 ./run_psp_hw.sh --app            # the real thing: PSP over USB (performance lives here)
 ```
@@ -858,11 +855,9 @@ atlases (a scrolling atlas tile would drag across its slot), and stores a
 blended texture as RGBA8888. Nothing else changes: lighting still bakes into
 vertex colours, tiles still atlas, colliders still export.
 
-The same data also rides a GLB round trip, for the Python oracle
-(`retro_engine/pbm_conv.py`) and the GDScript converter
-(`PBPbmConverter.convert_glb_to_pbm`), because the speed is mirrored into the
-material's glTF `extras` as `{"poi_uv_scroll": [u, v]}`. The two converters are
-expected to agree bit for bit apart from float rounding.
+The same data also rides a GLB export (Modern mode), because the speed is
+mirrored into the material's glTF `extras` as `{"poi_uv_scroll": [u, v]}` for
+any glTF consumer.
 
 ### Step 5 — Consume it in the engine
 
@@ -1094,5 +1089,7 @@ A compliant PBM exporter and loader MUST pass the following tests:
    frames together); never let an emitter reference a tile-atlas texture.
 9. Draw additive emitters without sorting them and blended emitters
    back-to-front; leave the emitters unlit.
-10. 100% binary validation against the reference Python oracle (`pbm_conv.py`)
-    and the GDScript converter (`project/addons/poibuilder/export/pb_pbm_converter.gd`).
+10. The `.pbm` writer's byte layout is locked by
+    `project/tests/test_pb_pbm_export.gd` (it builds its own fixture scene and
+    walks the file: header, texture table, chunked meshes, colliders, metadata,
+    the emitter lump).

@@ -12,9 +12,13 @@ podman run --rm -v "${SCRIPT_DIR}:/src:Z" -w /src docker.io/pspdev/pspdev:latest
 
 echo "=== [3/4] Ensuring PBM Map Asset exists ==="
 if [ ! -f "showcase_retro_baked.pbm" ]; then
-    if [ -f "../../project/exports/showcase_retro_baked.glb" ]; then
-        python3 ../pbm_conv.py ../../project/exports/showcase_retro_baked.glb showcase_retro_baked.pbm
-    fi
+    # The .pbm is written by the Godot exporter (PBMapExporter -> Retro Baked,
+    # a .pbm path). The GLB->PBM converters that used to make this one are
+    # retired: the exporter is the only writer. Bake it with:
+    #   ./run_tests.sh -gselect=test_pb_map_showcase.gd
+    # (or the Export dialog with a .pbm path), which writes
+    # project/exports/showcase_retro_baked.pbm.
+    echo "Warning: showcase_retro_baked.pbm is missing — export it from Godot (see the comment above)." >&2
 fi
 
 echo "=== [4/4] Creating Ready-to-Copy PSP Package & ZIP ==="

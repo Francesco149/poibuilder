@@ -35,8 +35,10 @@ if [ ! -f "$MAP_FILE" ]; then
         GLB_CANDIDATE="../../project/exports/showcase_retro_baked.glb"
     fi
     if [ -f "$GLB_CANDIDATE" ]; then
-        echo "Converting $GLB_CANDIDATE -> $MAP_FILE..."
-        python3 ../pbm_conv.py "$GLB_CANDIDATE" "$MAP_FILE"
+        # The GLB->PBM converters are retired (the Godot exporter writes .pbm
+        # directly). Bake the map with ./run_tests.sh (-gselect=test_pb_map_showcase.gd)
+        # or the Export dialog, then re-run this script.
+        echo "Notice: no $MAP_FILE — bake it from Godot (exporter -> Retro Baked, .pbm path)." >&2
     fi
 fi
 ORIGINAL_BACKUP=""

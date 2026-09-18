@@ -502,10 +502,11 @@ static func export_showcase_preset(preset_name: String, retro_glb_path: String =
 		showcase_root.free()
 		return err
 
-	# Also convert GLB to PBM
-	var pbm_err := PBPbmConverter.convert_glb_to_pbm(retro_glb_path, pbm_path, true)
+	# The .pbm is written by the exporter itself (a .pbm path routes to the
+	# native PBM writer): the GLB->PBM converters are retired.
+	var pbm_err := PBMapExporter.export_map(showcase_root, pbm_path, retro_settings)
 	if pbm_err != OK:
-		print("Warning: PBM conversion returned error code %d" % pbm_err)
+		print("Warning: PBM export returned error code %d" % pbm_err)
 
 	# If this is "day", also copy to default showcase_retro_baked.glb and .pbm
 	if norm_name == "day":

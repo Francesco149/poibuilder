@@ -52,7 +52,7 @@ godot-mono --editor project/project.godot
 #   showcase_video/out/*         -> ./showcase_video/build.sh
 ```
 
-Interactive launchers (`./test.sh raylib|psp`, `./run_raylib.sh`) need an X
+Interactive launchers (`./test.sh psp`, `./run_viewer.sh`) need an X
 display: `./xdisplay.sh` resolves one (reuse `DISPLAY`, else
 `xwayland-satellite`, else `xvfb-run` and say so). A private `Xwayland :99`
 does **not** work — no compositor behind it, so the window is invisible.

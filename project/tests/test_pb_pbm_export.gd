@@ -1,102 +1,181 @@
-## Unit tests for PBPbmConverter & PBMv2 format validation
+## The PBM writer's format contract: PBMapExporter's Retro Baked export with a
+## .pbm path.
+##
+## The GLB->PBM converters (`retro_engine/pbm_conv.py` and
+## `export/pb_pbm_converter.gd`) are retired — this writer is the format's only
+## producer, so the layout promises live here. The fixture is BUILT in the test
+## rather than read from a stale artifact: a format test that skipped whenever a
+## pre-exported file was missing could never catch a writer regression.
 extends GutTest
 
-const TEST_GLB_PATH := "res://exports/showcase_retro_baked.glb"
-const TEST_PBM_PATH := "res://exports/test_gdscript_export.pbm"
+const TEST_PBM := "user://test_pbm_writer.pbm"
+const FLAME_TEX := "res://addons/poibuilder/materials/textures/particle_flame.png"
+const SMOKE_TEX := "res://addons/poibuilder/materials/textures/particle_smoke.png"
 
 func before_all() -> void:
-	if FileAccess.file_exists(TEST_PBM_PATH):
-		DirAccess.remove_absolute(TEST_PBM_PATH)
+	_remove_test_pbm()
 
 func after_all() -> void:
-	if FileAccess.file_exists(TEST_PBM_PATH):
-		DirAccess.remove_absolute(TEST_PBM_PATH)
+	_remove_test_pbm()
 
-func test_gdscript_pbm_export_against_oracle() -> void:
-	if not FileAccess.file_exists(TEST_GLB_PATH):
-		pass_test("Skipping test: showcase_retro_baked.glb not found.")
+func _remove_test_pbm() -> void:
+	var global := ProjectSettings.globalize_path(TEST_PBM)
+	if FileAccess.file_exists(global):
+		DirAccess.remove_absolute(global)
+
+## Floor (painted: a splat layer + a decal dab) + a scrolling wall, both with
+## colliders, a Spawn node, two emitters (additive cutout art and a blended
+## puff) and one authored metadata node.
+func _build_fixture() -> Node3D:
+	var root := Node3D.new()
+	root.name = "PbmWriterFixture"
+	root.set_meta("poi_env_preset", "dusk")
+
+	var spawn := Node3D.new()
+	spawn.name = "Spawn"
+	spawn.position = Vector3(1.5, 0.0, -2.5)
+	root.add_child(spawn)
+
+	var floor := PBMesh.new()
+	floor.name = "Floor"
+	floor.pb_mesh_data = PBShapeGenerators.create_plane(8.0, 8.0, 1, 1)
+	floor.collider_type = PBMesh.ColliderType.ACCURATE
+	root.add_child(floor)
+	var fdata := floor.pb_mesh_data
+	PBUv.refresh_mesh_uvs(fdata, true)
+	var face := fdata.faces[0]
+	var splat := PBSplat.create_splat_material(StandardMaterial3D.new())
+	fdata.set_face_material(face, splat)
+	var tile_tex := ImageTexture.create_from_image(
+			Image.create(64, 64, false, Image.FORMAT_RGBA8))
+	PBSplat.add_layer(splat, tile_tex, Color.WHITE, 0.8, PBSplat.DEFAULT_MASK_RES)
+	PBSplat.paint_face_splat(fdata, face, splat, 1, Vector3.ZERO, 1.5, 0.5, 1.0, false, {})
+	PBSplat.paint_decal_dab(fdata, Vector3(1.0, 0, 0), Vector3.UP, 0.0, 0.8, 0.4, 1.0,
+			false, null, Color(0.8, 0.2, 0.2, 1.0))
+
+	var wall := PBMesh.new()
+	wall.name = "Wall"
+	wall.pb_mesh_data = PBShapeGenerators.create_plane(8.0, 4.0, 1, 1)
+	wall.collider_type = PBMesh.ColliderType.ACCURATE
+	wall.rotation.x = deg_to_rad(-90.0)
+	wall.position = Vector3(0, 0, -4.0)
+	root.add_child(wall)
+	var wdata := wall.pb_mesh_data
+	PBUv.refresh_mesh_uvs(wdata, true)
+	var wface := wdata.faces[0]
+	var wmat := StandardMaterial3D.new()
+	wmat.albedo_texture = ImageTexture.create_from_image(
+			Image.create(32, 32, false, Image.FORMAT_RGBA8))
+	wdata.set_face_material(wface, wmat)
+	PBUv.set_scroll_speed(wmat, Vector2(0.25, -0.5))
+
+	var flame_tex: Texture2D = load(FLAME_TEX) if ResourceLoader.exists(FLAME_TEX) else null
+	var smoke_tex: Texture2D = load(SMOKE_TEX) if ResourceLoader.exists(SMOKE_TEX) else null
+	assert_not_null(flame_tex, "Fixture: %s must exist" % FLAME_TEX)
+	assert_not_null(smoke_tex, "Fixture: %s must exist" % SMOKE_TEX)
+	if flame_tex == null or smoke_tex == null:
+		root.free()
+		return null
+	var flame := PBParticleParams.build_node(flame_tex,
+			PBParticleParams.preset_for_texture(FLAME_TEX), "Emitter_Flame")
+	flame.position = Vector3(-2.0, 0.0, 1.0)
+	root.add_child(flame)
+	var mist := PBParticleParams.build_node(smoke_tex,
+			PBParticleParams.preset_for_texture(SMOKE_TEX), "Emitter_Mist")
+	mist.position = Vector3(2.0, 0.0, 1.0)
+	root.add_child(mist)
+
+	var npc := Node3D.new()
+	npc.name = "DialogueNPC"
+	npc.position = Vector3(3.0, 0.0, 0.0)
+	npc.set_meta("poi_metadata_tag", "dialogue_npc")
+	npc.set_meta("poi_metadata_payload", { "line": "hello there" })
+	root.add_child(npc)
+	return root
+
+func _settings() -> PBMapExporter.ExportSettings:
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.subdivide_quads = true
+	settings.grid_size = 1.0
+	settings.bake_lighting = true
+	settings.bake_shadows = true
+	settings.bake_ao = true
+	settings.bake_textures = true
+	settings.tile_resolution = 128
+	settings.export_colliders = true
+	settings.export_billboards = true
+	return settings
+
+## Every triangle vertex the export tree's DRAWN meshes carry, one PBM vertex
+## per index (the writer splits shared corners). Colliders and emitter texture
+## carriers are not drawn geometry.
+func _tree_vertex_budget(tree: Node) -> Dictionary:
+	var verts := 0
+	var colliders := 0
+	var pending: Array[Node] = [tree]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		if node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			if String(mi.name).begins_with("Collider_"):
+				colliders += 1
+			elif not mi.has_meta("poi_emitter_holder") and mi.mesh != null and not (mi.mesh is ImmediateMesh):
+				for s in range(mi.mesh.get_surface_count()):
+					var arrays := mi.mesh.surface_get_arrays(s)
+					var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+					verts += indices.size() if not indices.is_empty() else positions.size()
+		for child in node.get_children():
+			pending.append(child)
+	return { "verts": verts, "colliders": colliders }
+
+func test_pbm_writer_layout_and_contracts() -> void:
+	var root := _build_fixture()
+	if root == null:
+		fail_test("Fixture could not be built")
 		return
+	add_child_autofree(root)
 
-	# Run GDScript converter
-	var global_glb := ProjectSettings.globalize_path(TEST_GLB_PATH)
-	var global_pbm := ProjectSettings.globalize_path(TEST_PBM_PATH)
-	var err := PBPbmConverter.convert_glb_to_pbm(global_glb, global_pbm, true)
-	assert_eq(err, OK, "PBPbmConverter must return OK")
-	assert_true(FileAccess.file_exists(TEST_PBM_PATH), "PBM file must exist on disk")
+	var settings := _settings()
+	var global_pbm := ProjectSettings.globalize_path(TEST_PBM)
+	var err := PBMapExporter.export_retro_pbm(root, global_pbm, settings)
+	assert_eq(err, OK, "The exporter's PBM writer must return OK")
+	assert_true(FileAccess.file_exists(global_pbm), "The .pbm must exist on disk")
 
-	# Read binary and validate structure against Python oracle
-	var f := FileAccess.open(TEST_PBM_PATH, FileAccess.READ)
-	assert_not_null(f, "PBM file must be readable")
+	var tree := PBMapExporter.build_export_tree(root, _settings())
+	assert_not_null(tree, "Fixture: the export tree must build")
+	autofree(tree)
+	var budget := _tree_vertex_budget(tree)
 
-	var magic := f.get_32()
-	assert_eq(magic, PBPbmConverter.PBM_MAGIC, "Magic must be PBM3 (0x334D4250)")
+	var f := FileAccess.open(global_pbm, FileAccess.READ)
+	assert_not_null(f, "The .pbm must be readable")
 
-	var version := f.get_32()
-	assert_eq(version, PBPbmConverter.PBM_VERSION, "Version must be 3")
-
+	assert_eq(f.get_32(), PBMapExporter.PBM_MAGIC, "Magic must be PBM3")
+	assert_eq(f.get_32(), PBMapExporter.PBM_VERSION, "Version must be 3")
 	var num_textures := f.get_32()
-	# Texture COUNT is not asserted exactly: how many images the glTF writer
-	# embeds depends on Godot's resource cache (a texture loaded as a file-backed
-	# resource is named after the file, an in-memory one after its material), so
-	# the total drifts by one or two between sessions. What the format contract
-	# actually pins is asserted below: formats, alpha modes, and that scrolling
-	# meshes never reference an atlas.
-	assert_gte(num_textures, 12, "Texture table must be present")
-
-	# The mesh/vertex totals are DERIVED from the GLB under test rather than
-	# frozen: a count copied from one export goes stale the moment the showcase
-	# gains geometry (it did, twice), while what the format actually promises is
-	# conservation — every triangle vertex of the scene reaches the PBM, split
-	# into spatial chunks of at most 384. `_glb_geometry_budget` reads the same
-	# file the converter read.
-	var budget := _glb_geometry_budget(TEST_GLB_PATH)
 	var num_meshes := f.get_32()
-	assert_gt(budget["verts"], 0, "The GLB must carry drawable geometry")
-	assert_gte(num_meshes, budget["min_chunks"],
-		"Chunking can only ADD chunks: %d meshes for %d vertices" % [num_meshes, budget["verts"]])
-	assert_lte(num_meshes, budget["max_chunks"],
-		"A mesh per (surface, 384-vertex chunk) is the worst case; %d meshes is more than the map has geometry for"
-			% num_meshes)
 	var num_colliders := f.get_32()
-	# One entry per collider NODE. The map has 8 of them; the exporter merges a
-	# node's material surfaces into one collider mesh, so a face that gains its
-	# own material (painting one does) cannot split a collider in two — that is
-	# where the historical 9 came from (the floor's 2 surfaces counted twice).
-	# The Python oracle counts per primitive too, so both agree at 8.
-	assert_eq(num_colliders, 8, "Collider count must match Oracle (8 collider nodes)")
-
 	var num_metadata := f.get_32()
-	# map_name, env_preset, player_spawn, walkable_mesh, triggers, rigid_bodies,
-	# emitters. No `entities`: the exporter used to hard-code a demo PatrolSphere
-	# into every map, which is exactly what a map must not carry.
-	assert_eq(num_metadata, 7, "Metadata count must be 7 (map_name, env_preset, spawn, walkable, triggers, rigid_bodies, emitters)")
+	assert_gte(num_textures, 2, "The painted floor + scrolling wall must register textures")
+
+	# Header spawn: the authored Spawn node, not a bounds-derived guess.
 	var spawn_x := f.get_float()
 	var spawn_y := f.get_float()
 	var spawn_z := f.get_float()
-	assert_almost_eq(spawn_x, 0.0, 0.01)
-	assert_almost_eq(spawn_y, 1.6, 0.01)
-	assert_almost_eq(spawn_z, 4.2, 0.01)
-	var spawn_rot := f.get_float()
+	assert_almost_eq(spawn_x, 1.5, 0.01, "The header spawn comes from the Spawn node")
+	assert_almost_eq(spawn_z, -2.5, 0.01)
+	assert_almost_eq(f.get_float(), 0.0, 0.01, "…and its yaw")
+	f.get_float(); f.get_float(); f.get_float()   # bounds_min
+	f.get_float(); f.get_float(); f.get_float()   # bounds_max
 
-	var bmin_x := f.get_float(); var bmin_y := f.get_float(); var bmin_z := f.get_float()
-	var bmax_x := f.get_float(); var bmax_y := f.get_float(); var bmax_z := f.get_float()
-	assert_lt(bmin_x, bmax_x)
-
-	# 1. Walk the texture table. Two things the format contract pins here:
-	#    - a scrolling mesh must not reference a tile atlas (an offset would
-	#      drag its tile across the atlas slot),
-	#    - a blended (soft alpha) texture must travel as RGBA8888, because the
-	#      5551 format has one alpha bit and can only cut a texel out.
+	# 1. Texture table: pixel-size/format consistency, and the alpha contract
+	#    (a soft-alpha texture cannot ride the 16-bit 5551 format).
 	var atlas_ids: Dictionary = {}
-	var tex_names: Dictionary = {}
-	var tex_alpha_modes: Dictionary = {}
-	var tex_formats: Dictionary = {}
 	var tex_alpha_by_id: Dictionary = {}
 	var tex_fmt_by_id: Dictionary = {}
 	for ti in range(num_textures):
-		var tex_name_bytes := f.get_buffer(32)
-		var tex_name := tex_name_bytes.get_string_from_ascii().split("\u0000")[0]
-		tex_names[ti] = tex_name
+		var tex_name := f.get_buffer(32).get_string_from_ascii().split("\u0000")[0]
 		if tex_name.begins_with("TileAtlas"):
 			atlas_ids[ti] = true
 		var w := f.get_16()
@@ -104,97 +183,57 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 		var fmt := f.get_16()
 		var alpha_mode := f.get_16()
 		var data_size := f.get_32()
-		tex_alpha_modes[tex_name] = alpha_mode
-		tex_formats[tex_name] = fmt
 		tex_alpha_by_id[ti] = alpha_mode
 		tex_fmt_by_id[ti] = fmt
 		assert_gt(w, 0)
 		assert_gt(h, 0)
-		var bytes_per_pixel := 4 if fmt == PBPbmConverter.PBM_TEX_FMT_RGBA8888 else 2
+		var bytes_per_pixel := 4 if fmt == PBMapExporter.PBM_TEX_FMT_RGBA8888 else 2
 		assert_eq(data_size, w * h * bytes_per_pixel,
-			"Texture data size must match its pixel format (texture '%s')" % tex_name)
-		if alpha_mode == PBPbmConverter.PBM_ALPHA_BLEND:
-			assert_eq(fmt, PBPbmConverter.PBM_TEX_FMT_RGBA8888,
-				"A blended texture needs the 8-bit alpha of RGBA8888 (texture '%s')" % tex_name)
+			"Texture '%s' data size must match its pixel format" % tex_name)
+		if alpha_mode == PBMapExporter.PBM_ALPHA_BLEND:
+			assert_eq(fmt, PBMapExporter.PBM_TEX_FMT_RGBA8888,
+				"Blended texture '%s' needs the 8-bit alpha of RGBA8888" % tex_name)
 		f.seek(f.get_position() + data_size)
 
-	# 2. Skip meshes & count vertices.
-	# v3 mesh header: 32 name + 4 tex_id + 4 num_vertices + 6 bounds floats + 2 UV-scroll floats.
+	# 2. Meshes: spatial chunks of at most 384 vertices, no vertex lost, and a
+	#    scrolling mesh never references a tile atlas (an offset would drag its
+	#    tile across the atlas slot).
 	var total_verts := 0
-	var scrolling_meshes := 0
-	var scroll_speeds: Array[Vector2] = []
+	var scrolling := 0
 	for mi in range(num_meshes):
-		var mesh_name_bytes := f.get_buffer(32)
+		f.get_buffer(32)
 		var tex_id := f.get_32()
 		var n_verts := f.get_32()
 		total_verts += n_verts
-		var mbmin_x := f.get_float(); var mbmin_y := f.get_float(); var mbmin_z := f.get_float()
-		var mbmax_x := f.get_float(); var mbmax_y := f.get_float(); var mbmax_z := f.get_float()
-		var scroll_u := f.get_float()
-		var scroll_v := f.get_float()
-		if scroll_u != 0.0 or scroll_v != 0.0:
-			scrolling_meshes += 1
-			scroll_speeds.append(Vector2(snappedf(scroll_u, 0.001), snappedf(scroll_v, 0.001)))
+		f.get_float(); f.get_float(); f.get_float()
+		f.get_float(); f.get_float(); f.get_float()
+		var scroll := Vector2(f.get_float(), f.get_float())
+		if scroll != Vector2.ZERO:
+			scrolling += 1
 			assert_false(atlas_ids.has(tex_id),
-				"Scrolling mesh %s must reference a standalone texture, not an atlas"
-					% mesh_name_bytes.get_string_from_ascii().split("\u0000")[0])
-		assert_lte(n_verts, 384, "Each spatial mesh chunk must be <= 384 vertices")
+				"A scrolling mesh must reference a standalone texture")
+		assert_lte(n_verts, 384, "Each spatial chunk must be <= 384 vertices")
 		f.seek(f.get_position() + n_verts * 24)
 
-	assert_eq(total_verts, budget["verts"],
-		"Every triangle vertex in the GLB must reach the PBM (chunking is spatial, never lossy)")
+	assert_eq(scrolling, 1, "The scrolling wall exports one scrolling mesh")
+	assert_eq(total_verts, int(budget["verts"]),
+		"Every drawn vertex of the export tree must reach the PBM (chunking is spatial, never lossy)")
 
-	# The waterfall demo's five surfaces must come through as scrolling meshes,
-	# at the speeds authored in the Godot scene. The sign is a direction, and
-	# with the reference implementation (§5.1 of the format spec) NEGATIVE V
-	# travels down a wall and away from a wall on the floor — which is why the
-	# falling sheet, the pool and the churn are all negative, and only the
-	# billboard spray (whose own V runs down its face) is positive.
-	# Compared as a set: the texture an exporter names an embedded image after
-	# is not stable across sessions, the physics is.
-	assert_eq(scrolling_meshes, 5, "The showcase waterfall must export 5 scrolling meshes")
-	var expected_speeds: Array[Vector2] = [
-		Vector2(0.04, -0.75),   # sheet: falls down the wall
-		Vector2(0.0, -1.15),    # core: falls faster (parallax)
-		Vector2(0.02, -0.03),   # pool: drifts away from the wall
-		Vector2(0.0, -0.3),     # foam: spreads away from the impact point
-		Vector2(0.0, 0.35),     # spray: climbs off the impact point
-	]
-	assert_eq(scroll_speeds.size(), expected_speeds.size())
-	for want in expected_speeds:
-		var found: bool = false
-		for got in scroll_speeds:
-			if got.is_equal_approx(want):
-				found = true
-				break
-		assert_true(found, "Expected a scrolling mesh at %s, exported set is %s"
-			% [str(want), str(scroll_speeds)])
-
-	# Alpha modes are a per-texture contract: every BLEND texture must carry the
-	# 8-bit alpha RGBA8888 provides (asserted in the texture loop above), and the
-	# scene contains the five blended water surfaces (sheet, core, spray, pool, foam)
-	# and the hard-edged cutouts — counted, not named, for the reason given with num_textures.
-	var blend_count := 0
-	var cutout_count := 0
-	for name in tex_alpha_modes:
-		if tex_alpha_modes[name] == PBPbmConverter.PBM_ALPHA_BLEND:
-			blend_count += 1
-		elif tex_alpha_modes[name] == PBPbmConverter.PBM_ALPHA_CUTOUT:
-			cutout_count += 1
-	# The five water surfaces plus the mist emitter's soft puff.
-	assert_eq(blend_count, 6, "Water surfaces (sheet, core, spray, pool, foam) and the mist emitter must export as soft-alpha blends")
-	assert_gte(cutout_count, 5, "The foliage billboards and the 1-bit-alpha particle art must export as cutouts")
-
-	# 3. Skip colliders
+	# 3. Colliders: one entry per collider node.
+	assert_eq(num_colliders, int(budget["colliders"]),
+		"One collider entry per Collider_ node in the export tree")
 	for ci in range(num_colliders):
-		var col_name_bytes := f.get_buffer(32)
-		var ctype := f.get_32()
-		var cbmin_x := f.get_float(); var cbmin_y := f.get_float(); var cbmin_z := f.get_float()
-		var cbmax_x := f.get_float(); var cbmax_y := f.get_float(); var cbmax_z := f.get_float()
+		f.get_buffer(32)
+		f.get_32()
+		f.get_float(); f.get_float(); f.get_float()
+		f.get_float(); f.get_float(); f.get_float()
 		var num_tris := f.get_32()
+		assert_gt(num_tris, 0, "A collider carries triangles")
 		f.seek(f.get_position() + num_tris * 36)
 
-	# 4. Read metadata table (7 entries)
+	# 4. Metadata: the scene's own lumps only. The exporter used to fabricate a
+	#    demo walkable quad, an archway trigger, a ball pit and a PatrolSphere
+	#    entity into EVERY map — smoke-test data that must never ship.
 	var meta_tags: Dictionary = {}
 	for mi in range(num_metadata):
 		var tag := f.get_buffer(32).get_string_from_ascii().strip_edges()
@@ -202,119 +241,66 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 		var msize := f.get_32()
 		var mdata := f.get_buffer(msize)
 		var pad := (4 - (msize % 4)) % 4
-		if pad > 0: f.seek(f.get_position() + pad)
+		if pad > 0:
+			f.seek(f.get_position() + pad)
 		meta_tags[tag] = { "type": mtype, "size": msize, "data": mdata }
 
-	# Verify map_name
-	assert_true(meta_tags.has("map_name"))
-	assert_eq(meta_tags["map_name"]["type"], PBPbmConverter.PBM_META_STRING)
-	assert_true(meta_tags["map_name"]["data"].get_string_from_utf8().contains("PoiRetro Courtyard Showcase"))
-	# Verify env_preset
-	assert_true(meta_tags.has("env_preset"))
-	assert_eq(meta_tags["env_preset"]["type"], PBPbmConverter.PBM_META_STRING)
-
-	# Verify player_spawn
-	assert_true(meta_tags.has("player_spawn"))
-	assert_eq(meta_tags["player_spawn"]["type"], PBPbmConverter.PBM_META_JSON)
+	assert_eq(meta_tags["map_name"]["data"].get_string_from_utf8(), "PbmWriterFixture",
+		"The map name comes from the scene root, not a demo title")
+	assert_eq(meta_tags["env_preset"]["data"].get_string_from_utf8(), "dusk",
+		"The environment preset travels from the scene (poi_env_preset)")
+	assert_true(meta_tags.has("player_spawn"), "The spawn lump is always present")
 	var spawn_json = JSON.parse_string(meta_tags["player_spawn"]["data"].get_string_from_utf8())
 	assert_true(spawn_json is Dictionary and spawn_json.has("position"))
 
-	# Verify walkable_mesh
-	assert_true(meta_tags.has("walkable_mesh"))
-	assert_eq(meta_tags["walkable_mesh"]["size"], 72, "Walkable mesh must be 72 bytes (2 triangles * 36 bytes)")
+	for demo_tag in ["walkable_mesh", "triggers", "rigid_bodies", "entities"]:
+		assert_false(meta_tags.has(demo_tag),
+			"A map never carries the exporter's leftover demo '%s' lump" % demo_tag)
 
-	# Verify triggers
-	assert_true(meta_tags.has("triggers"))
-	var triggers_json = JSON.parse_string(meta_tags["triggers"]["data"].get_string_from_utf8())
-	assert_true(triggers_json is Array and triggers_json.size() >= 1)
+	assert_true(meta_tags.has("dialogue_npc"),
+		"An authored poi_metadata_tag node still exports its lump")
+	var npc_json = JSON.parse_string(meta_tags["dialogue_npc"]["data"].get_string_from_utf8())
+	assert_true(npc_json is Dictionary and npc_json.get("line") == "hello there",
+		"The authored payload round-trips")
 
-	# Verify emitters (standard lump: a 16-byte header + N 176-byte records).
-	# The offsets below are the format's normative layout, so this doubles as a
-	# guard against a struct edit drifting away from the specification.
-	assert_true(meta_tags.has("emitters"))
-	assert_eq(meta_tags["emitters"]["type"], PBPbmConverter.PBM_META_EMITTER)
-	var em_data: PackedByteArray = meta_tags["emitters"]["data"]
-	assert_eq(em_data.decode_u32(0), 0x54494D45, "Emitter lump magic must be EMIT")
-	assert_eq(em_data.decode_u32(4), 1, "Emitter lump version must be 1")
-	var em_count := em_data.decode_u32(8)
-	assert_eq(em_count, 3, "The showcase authors three emitters (brazier, embers, mist)")
-	assert_eq(em_data.size(), 16 + em_count * 176, "Lump size must be its header plus 176 bytes per emitter")
+	# 5. Emitters: the standard lump's normative layout (16-byte header + 176
+	#    bytes per record), the flags the authored nodes imply, and each
+	#    emitter's texture traveling with the alpha its art needs.
+	assert_true(meta_tags.has("emitters"), "Both authored emitters export a lump")
+	assert_eq(meta_tags["emitters"]["type"], PBMapExporter.PBM_META_EMITTER)
+	var em: PackedByteArray = meta_tags["emitters"]["data"]
+	assert_eq(em.decode_u32(0), 0x54494D45, "Emitter lump magic must be EMIT")
+	assert_eq(em.decode_u32(4), 1, "Emitter lump version must be 1")
+	var em_count := em.decode_u32(8)
+	assert_eq(em_count, 2, "The fixture authors two emitters")
+	assert_eq(em.size(), 16 + em_count * PBMapExporter.PBM_EMITTER_SIZE_BYTES,
+		"Lump size must be its header plus 176 bytes per emitter")
 
-	var brazier_off := 16
-	assert_eq(em_data.slice(brazier_off, brazier_off + 15).get_string_from_ascii(), "Emitter_Brazier")
-	var brazier_flags := em_data.decode_u16(brazier_off + 0x9A)
-	assert_ne(brazier_flags & 1, 0, "The brazier burns additively")
-	assert_ne(brazier_flags & 2, 0, "The brazier is Y-locked (a flame stays upright)")
-	assert_eq(em_data[brazier_off + 0x9C], 2, "Flame flipbook: 2 columns")
-	assert_eq(em_data[brazier_off + 0x9D], 2, "Flame flipbook: 2 rows")
-	assert_gt(em_data.decode_u16(brazier_off + 0x98), 0, "The particle count must be set")
-	assert_almost_eq(em_data.decode_float(brazier_off + 0x18), -3.2, 0.01,
+	var flame_off := 16
+	assert_eq(em.slice(flame_off, flame_off + 13).get_string_from_ascii(), "Emitter_Flame")
+	var flame_flags := em.decode_u16(flame_off + 0x9A)
+	assert_ne(flame_flags & PBMapExporter.PBM_EMIT_ADDITIVE, 0, "The flame preset is additive")
+	assert_gt(em.decode_u16(flame_off + 0x98), 0, "The particle count must be set")
+	assert_almost_eq(em.decode_float(flame_off + 0x18), -2.0, 0.01,
 		"The emitter position comes from the authored node")
-	assert_eq(em_data.decode_float(brazier_off + 0x80), 0.0, "A point emitter (no spawn radius)")
-	var brazier_tex := int(em_data.decode_u32(brazier_off + 0x94))
-	assert_gte(brazier_tex, 0, "The flame flipbook must be a real texture entry")
-	assert_eq(tex_alpha_by_id[brazier_tex], PBPbmConverter.PBM_ALPHA_CUTOUT,
-		"Additive art whose alpha is 1-bit stays a cutout")
-	assert_eq(tex_fmt_by_id[brazier_tex], PBPbmConverter.PBM_TEX_FMT_RGBA5551,
-		"...and therefore keeps the 16-bit format")
+	var flame_tex_id := int(em.decode_u32(flame_off + 0x94))
+	assert_gte(flame_tex_id, 0, "The flame art must be a real texture entry")
+	# Emitter art rides RGBA8888 whatever its alpha is: additive particles are a
+	# falloff of light, and 5551's 5-bit channels truncate the dim outer gradient
+	# into a hard-edged disc (a halo ring that slices through overlapping
+	# particles — measured on the device).
+	assert_eq(tex_fmt_by_id[flame_tex_id], PBMapExporter.PBM_TEX_FMT_RGBA8888,
+		"Emitter art keeps its RGB precision in the 8-bit format")
+	assert_eq(tex_alpha_by_id[flame_tex_id], PBMapExporter.PBM_ALPHA_BLEND,
+		"…with the alpha mode the draw material declares")
 
-	var mist_off := 16 + 2 * 176
-	assert_eq(em_data.slice(mist_off, mist_off + 12).get_string_from_ascii(), "Emitter_Mist")
-	assert_eq(em_data.decode_u16(mist_off + 0x9A) & 1, 0, "The mist blends rather than adding")
-	var mist_tex := int(em_data.decode_u32(mist_off + 0x94))
-	assert_eq(tex_alpha_by_id[mist_tex], PBPbmConverter.PBM_ALPHA_BLEND,
+	var mist_off := 16 + PBMapExporter.PBM_EMITTER_SIZE_BYTES
+	assert_eq(em.slice(mist_off, mist_off + 12).get_string_from_ascii(), "Emitter_Mist")
+	assert_eq(em.decode_u16(mist_off + 0x9A) & PBMapExporter.PBM_EMIT_ADDITIVE, 0,
+		"The mist preset blends rather than adding")
+	var mist_tex_id := int(em.decode_u32(mist_off + 0x94))
+	assert_eq(tex_alpha_by_id[mist_tex_id], PBMapExporter.PBM_ALPHA_BLEND,
 		"A soft puff needs the 8-bit alpha of a blend texture")
-	assert_eq(tex_fmt_by_id[mist_tex], PBPbmConverter.PBM_TEX_FMT_RGBA8888)
+	assert_eq(tex_fmt_by_id[mist_tex_id], PBMapExporter.PBM_TEX_FMT_RGBA8888)
 
-	# Verify rigid_bodies (ball pit)
-	assert_true(meta_tags.has("rigid_bodies"))
-	var rigid_json = JSON.parse_string(meta_tags["rigid_bodies"]["data"].get_string_from_utf8())
-	assert_true(rigid_json is Dictionary and rigid_json.get("type") == "ball_pit")
-
-	# No demo payload: the PatrolSphere entity was a test of carrying arbitrary
-	# binary in the file, hard-coded into every export. A map only carries the
-	# lumps its own nodes ask for (poi_metadata_tag), never the exporter's
-	# leftover demo data.
-	assert_false(meta_tags.has("entities"),
-		"Exports must not carry the demo PatrolSphere entity")
 	f.close()
-
-## What the converter has to work with, read back out of the GLB it converts:
-## the total vertex stream (one PBM vertex per index) and the chunk bounds a
-## 384-vertex spatial chunking can land in. Emitter texture carriers and
-## collider meshes are excluded — they are not drawn geometry.
-func _glb_geometry_budget(glb_path: String) -> Dictionary:
-	var doc := GLTFDocument.new()
-	var state := GLTFState.new()
-	if doc.append_from_file(glb_path, state) != OK:
-		return { "verts": -1, "min_chunks": -1, "max_chunks": -1 }
-	var scene := doc.generate_scene(state)
-	if scene == null:
-		return { "verts": -1, "min_chunks": -1, "max_chunks": -1 }
-	var verts := 0
-	var max_chunks := 0
-	var pending: Array[Node] = [scene]
-	while not pending.is_empty():
-		var node: Node = pending.pop_back()
-		var name_str := String(node.name)
-		var drawn: bool = node is MeshInstance3D \
-			and not node.has_meta("poi_emitter_holder") \
-			and not name_str.begins_with("Collider_") \
-			and not name_str.begins_with("collider_") \
-			and not name_str.begins_with("EmitterTex_")
-		if drawn:
-			var mi := node as MeshInstance3D
-			if mi.mesh != null:
-				for s in range(mi.mesh.get_surface_count()):
-					var arrays := mi.mesh.surface_get_arrays(s)
-					var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
-					var positions: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays[Mesh.ARRAY_VERTEX] != null else PackedVector3Array()
-					var n: int = indices.size() if not indices.is_empty() else positions.size()
-					if n == 0:
-						continue
-					verts += n
-					max_chunks += int(ceilf(float(n) / 384.0))
-		for child in node.get_children():
-			pending.append(child)
-	scene.free()
-	return { "verts": verts, "min_chunks": int(ceilf(float(verts) / 384.0)), "max_chunks": max_chunks }
