@@ -19,7 +19,11 @@
 #                                load it, wait for the results, print the report
 #   ./run_psp_hw.sh --app        build + load the INTERACTIVE app instead (leaves
 #                                it running so it can be played and screenshotted)
-#   ./run_psp_hw.sh --keep       leave usbhostfs_pc running afterwards
+#   ./run_psp_hw.sh --keep       legacy: the usbhostfs_pc daemon is now kept
+#                                alive by the psp-usbhostfs user service and
+#                                reused across runs (see psp_link.sh); --keep
+#                                only stops the EXIT trap from tidying a
+#                                nohup-managed daemon
 #   ./run_psp_hw.sh --no-reset   skip the pre-load reset (debugging only: a device
 #                                that is already clean loads fine, but see below)
 #   ./run_psp_hw.sh --preset N   run the time-of-day preset N (dawn|day|dusk|night)
@@ -59,9 +63,10 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PSP_DIR="$REPO_DIR/retro_engine/psp"
 HOSTDIR="$PSP_DIR/hwrun"
-PSPLINK_SRC="${PSPLINK_SRC:-/tmp/psplinkusb}"
-USBHOSTFS="$PSPLINK_SRC/usbhostfs_pc/usbhostfs_pc"
-PSPSH_BIN="$PSPLINK_SRC/pspsh/pspsh"
+# Shared PSPLink link management: daemon singleton (user service when
+# installed), fast link checks, wedge diagnosis. See psp_link.sh for why the
+# daemon must be running BEFORE the PSP (re)attaches.
+source "$REPO_DIR/psp_link.sh"
 PSPSH=("$PSPSH_BIN" -h 127.0.0.1)
 PRX_NAME="poiretro_psp_hwtest.prx"
 LOG="$HOSTDIR/poi_profile.txt"
@@ -127,17 +132,21 @@ psp_make() {
 
 # ── Singleton: exactly ONE usbhostfs_pc owns the USB link ────────────────────
 # pspsh reaches the device THROUGH usbhostfs's local relay, so whoever owns
-# that process owns the conversation. A leftover instance from ANOTHER project
-# (say, ../poichara's, left by --keep) silently answers our commands — the
-# reset visibly fires, but after the reboot the device re-attaches to the
-# instance that serves the WRONG hwrun and the link wait stalls forever. Kill
-# whatever is there first; this run's instance is started fresh below.
-if pgrep -f usbhostfs_pc >/dev/null 2>&1; then
-    echo "=== [0/5] Stopping stale usbhostfs_pc (singleton per USB link) ==="
-    pgrep -af usbhostfs_pc || true
-    pkill -f usbhostfs_pc 2>/dev/null || true
-    sleep 2
-fi
+# that process owns the conversation. psp_ensure_daemon keeps exactly one
+# daemon serving THIS hostdir (stopping any other project's stray), and —
+# crucially — it is ensured BEFORE the build below: the PSP re-presents its
+# USB device for only a few seconds per activation, so a daemon that appears
+# minutes late (the old flow started it after the container build) misses the
+# windows, the PSP's retries shrink to ~1s, and it gives up entirely. That
+# give-up state is the "replug does nothing" wedge.
+echo "=== [0/5] Ensuring the usbhostfs_pc singleton (serving host0: = $HOSTDIR) ==="
+psp_ensure_daemon "$HOSTDIR" || die "could not start usbhostfs_pc (see $USBHOSTFS_LOG)"
+
+# Never leave a stray daemon behind on Ctrl-C or failure — psp_maybe_stop_daemon
+# refuses to stop one that is connected to the PSP (dropping a live link is
+# what starts the activation churn), so this is safe at any exit point.
+cleanup() { [ "$KEEP" = 0 ] && psp_maybe_stop_daemon || true; }
+trap cleanup INT TERM EXIT
 
 # ── Device helpers ───────────────────────────────────────────────────────────
 
@@ -147,34 +156,24 @@ pspsh() {
     timeout "$t" "${PSPSH[@]}" -n -e "$1" 2>/dev/null || true
 }
 
-link_ok() { [ -n "$(pspsh 25 'modlist' | grep 'UID:')" ]; }
+# 8s spans one full PSP activation window; a connected link answers in well
+# under a second. The old 25s timeout here could sleep through an entire
+# re-activation cycle of a bouncing PSP and report a link that had come and
+# gone.
+link_ok() { psp_link_ok 8; }
 
-wait_link() {
-    local n="${1:-$LINK_GRACE}"
-    echo -n "  waiting for the PSPLink link"
-    for ((i = 0; i < n; i++)); do
-        if link_ok; then echo " OK (${i}s)"; return 0; fi
-        echo -n "."
-        sleep 1
-    done
-    echo " timed out after ${n}s"
-    return 1
-}
+wait_link() { psp_wait_link "${1:-$LINK_GRACE}" "waiting for the PSPLink link"; }
 
 reset_device() {
     echo "  resetting the device (psplink reset -> fresh GE/display state)"
     timeout 30 "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
     if ! wait_link 12; then
-        # A STALE usbhostfs_pc (left by a Ctrl-C'd run or --keep) still owns
-        # the USB session; after the reboot the device re-attaches to the dead
-        # process and the bootstrap goes nowhere while every pspsh call times
-        # out silently. Kill and restart it serving the current hostdir.
-        if pgrep -f usbhostfs_pc >/dev/null 2>&1; then
+        # The daemon can wedge (alive, but never completing the handshake on
+        # a re-attached PSP). A fresh daemon claims the PSP's next activation
+        # within ~0.1s, so restart it instead of failing the run.
+        if [ -n "$(psp_daemons)" ]; then
             echo "  link not back: usbhostfs_pc is running but stale — restarting it"
-            pkill -f usbhostfs_pc 2>/dev/null || true
-            sleep 2
-            nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
-            sleep 3
+            psp_restart_daemon "$HOSTDIR"
         fi
     fi
     wait_link || die "PSPLink did not come back after the reset.
@@ -271,21 +270,22 @@ fi
 rm -f "$HOSTDIR/poi_render.txt"     # runtime overrides must not leak between runs
 ls -la "$HOSTDIR" | sed -n "1,12p"   # sed eats all input: head SIGPIPEs ls under pipefail
 
-echo "=== [3/5] Starting usbhostfs_pc (serving host0: = $HOSTDIR) ==="
-nohup "$USBHOSTFS" "$HOSTDIR" >/tmp/usbhostfs_pc.log 2>&1 &
-sleep 3
-pgrep -f "usbhostfs_pc" >/dev/null || { cat /tmp/usbhostfs_pc.log; die "usbhostfs_pc died"; }
+echo "=== [3/5] usbhostfs_pc (serving host0: = $HOSTDIR) ==="
+psp_ensure_daemon "$HOSTDIR" || { tail -5 "$USBHOSTFS_LOG"; die "usbhostfs_pc died"; }
+[ -n "$(psp_daemons)" ] || die "usbhostfs_pc is not running (see $USBHOSTFS_LOG)"
 
 echo "=== [3b/5] Checking the PSPLink USB link ==="
-if ! link_ok; then
+# The wait spans several PSP activation cycles: if the PSP is bouncing (each
+# activation a few seconds) the fast-polling daemon claims one of them and
+# the wait ends early. Only a PSP that has given up (or is unplugged/suspended)
+# times out, and psp_link_state says which and what to do.
+if ! psp_wait_link 60 "checking for a PSP"; then
+    psp_link_state
     cat <<'MSG'
-No PSP answering over USB. Check, in order:
-  1. Is a PSP plugged in and PSPLink running on it?
-     (Game -> Memory Stick -> PSPLink -> "Waiting for usbhostfs connection...")
-  2. Did the unit suspend? A suspended PSP drops the link; relaunch PSPLink and
-     keep the Hold switch ON so it cannot sleep again.
-  3. Is another of our builds running? Exit it with Home, then re-run.
-  4. Never set up at all? Run ./setup_psplink.sh once (30 s, needs the device).
+No PSP answering over USB. If the state above says the PSP is silent:
+  relaunch PSPLink on the device (Game -> Memory Stick -> PSPLink) or replug
+  ONCE — the daemon is already waiting and claims within ~0.1s. Keep the Hold
+  switch ON so the unit cannot suspend mid-run.
 NOTE: PPSSPP is NOT a substitute for this. It is for "does it crash" and
 "does it look right" only -- it cannot measure GE cost (see HARDWARE-TESTING.md).
 MSG
@@ -365,9 +365,9 @@ if [ ! -s "$LOG" ]; then
     die "no results arrived"
 fi
 
-if [ "$KEEP" = 0 ]; then
-    pkill -f "usbhostfs_pc.*$HOSTDIR" 2>/dev/null || true
-fi
+# The daemon from step [0] stays if it is connected (or is under the always-on
+# user service); a leftover nohup daemon that is NOT connected is stopped by
+# the EXIT trap via psp_maybe_stop_daemon.
 
 # `make hwtest` starts with `make clean` (the HWTEST objects must not be
 # reused by the shipping build), which removes the tracked EBOOT.PBP. Put the

@@ -9,32 +9,83 @@
 #      tools with the local toolchain)
 #   2. installs a udev rule so usbhostfs_pc can claim the device unprivileged
 #   3. deploys the PSP-side files to ms0:/PSP/GAME/PSPLINK/
+#   4. installs the host tools to ~/.local/bin and enables the
+#      psp-usbhostfs.service user unit (linger on) so exactly one daemon is
+#      ALWAYS waiting for the PSP — the PSP presents USB for only a few
+#      seconds per activation and wedges for good if no daemon claims it in
+#      time; see psp_link.sh for the full failure model
 #
 # The only manual step left afterwards is launching PSPLink once from the PSP's
 # XMB (Game -> Memory Stick -> PSPLink); it then waits on USB for the host.
 set -euo pipefail
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PSPLINK_SRC="${PSPLINK_SRC:-/tmp/psplinkusb}"
+# Persistent source clone — /tmp would be wiped/reaped eventually, taking the
+# locally-committed usbhostfs_pc patches with it. See psp_patches/README.md.
+PSPLINK_SRC="${PSPLINK_SRC:-$HOME/.local/share/psplinkusb}"
 PSP_MOUNT="${PSP_MOUNT:-/mnt/psp}"
 PSP_DEV="${PSP_DEV:-/dev/sdf1}"
 
-echo "=== [1/4] Fetching psplinkusb ==="
+echo "=== [1/5] Fetching psplinkusb ==="
 if [ -d "$PSPLINK_SRC/.git" ]; then
     git -C "$PSPLINK_SRC" pull --ff-only || true
 else
     git clone --depth 1 https://github.com/pspdev/psplinkusb.git "$PSPLINK_SRC"
 fi
 
-echo "=== [2/4] Building PSP-side modules (pspdev container) ==="
+# The host tools need the local robustness patches (100 ms activation-window
+# polling, hello-gated async, drop logging — see psp_patches/README.md). A
+# FRESH clone from upstream does not have them; without this check a re-run
+# would silently build and install an unpatched daemon over the good one.
+if ! grep -q USBHOSTFS_POLL_MS "$PSPLINK_SRC/usbhostfs_pc/main.c"; then
+    echo "applying usbhostfs_pc robustness patches from $REPO_DIR/psp_patches/"
+    for p in "$REPO_DIR"/psp_patches/0*.patch; do
+        [ -e "$p" ] || die "no patches found in $REPO_DIR/psp_patches/"
+        git -C "$PSPLINK_SRC" apply --check "$p" 2>/dev/null \
+            || die "patch $(basename "$p") does not apply cleanly to $PSPLINK_SRC"
+        git -C "$PSPLINK_SRC" apply "$p"
+    done
+    git -C "$PSPLINK_SRC" -c user.name="$USER" -c user.email="$USER@localhost" \
+        commit -qam "carry local usbhostfs_pc robustness patches (see psp_patches/)" || true
+fi
+
+echo "=== [2/5] Building PSP-side modules (pspdev container) ==="
 podman run --rm -v "$PSPLINK_SRC:/src:Z" -w /src docker.io/pspdev/pspdev:latest \
     bash -c 'export PATH=$PATH:/usr/local/pspdev/bin; make -f Makefile.psp all'
 
-echo "=== [3/4] Building host tools (usbhostfs_pc, pspsh) ==="
+echo "=== [3/5] Building host tools (usbhostfs_pc, pspsh) ==="
 ( cd "$PSPLINK_SRC/usbhostfs_pc" && make )
 ( cd "$PSPLINK_SRC/pspsh" && make )
 
-echo "=== [4/4] Installing udev rule and deploying to the memory stick ==="
+echo "=== [4/5] Installing host tools + always-on daemon service ==="
+mkdir -p "$HOME/.local/bin"
+install -m755 "$PSPLINK_SRC/usbhostfs_pc/usbhostfs_pc" "$HOME/.local/bin/usbhostfs_pc"
+install -m755 "$PSPLINK_SRC/pspsh/pspsh" "$HOME/.local/bin/pspsh"
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$HOME/.config/systemd/user/psp-usbhostfs.service" <<UNIT
+[Unit]
+Description=PSPLink usbhostfs_pc daemon (serves host0: to the PSP over USB)
+Documentation=file://$REPO_DIR/psp_link.sh
+
+[Service]
+Type=simple
+ExecStart=$HOME/.local/bin/usbhostfs_pc $REPO_DIR/retro_engine/psp/hwrun
+Environment=USBHOSTFS_POLL_MS=100
+Restart=on-failure
+RestartSec=1
+StandardOutput=append:/tmp/usbhostfs_pc.log
+StandardError=append:/tmp/usbhostfs_pc.log
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now psp-usbhostfs.service
+loginctl enable-linger 2>/dev/null || sudo -n loginctl enable-linger "$USER" 2>/dev/null || true
+echo "installed ~/.local/bin/{usbhostfs_pc,pspsh} + psp-usbhostfs.service (enabled)"
+
+echo "=== [5/5] Deploying to the memory stick ==="
 RULE=/etc/udev/rules.d/50-psplink.rules
 if [ ! -f "$RULE" ]; then
     printf '# PSPLink USB access (Sony 054c, PSPLink 01c9)\nSUBSYSTEM=="usb", ATTR{idVendor}=="054c", ATTR{idProduct}=="01c9", SYMLINK+="psp", MODE="0666", TAG+="uaccess"\n' \

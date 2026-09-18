@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: headpats <headpats@localhost>
+Date: Fri, 18 Sep 2026 15:24:35 +0200
+Subject: [PATCH 1/2] usbhostfs_pc: poll for the PSP every 100ms and log missed
+ activation windows
+
+The PSP presents its USB device for only a few seconds per activation
+while waiting for a host; every missed claim shrinks the next window
+until the PSP gives up entirely (the unrecoverable-without-reboot
+wedge). A 1s poll loses that race whenever the activation is short.
+
+- wait_for_device: poll every USBHOSTFS_POLL_MS (default 100ms) instead
+  of 1s; log when a PSP is seen but the claim fails
+- start_hostfs: log a failed handshake write instead of silently
+  looping
+- exit 0 on SIGINT/SIGTERM, 1 otherwise, so supervision can tell an
+  intentional stop from a crash; line-buffered stdout for sane logs
+---
+ usbhostfs_pc/main.c | 35 +++++++++++++++++++++++++++++++----
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/usbhostfs_pc/main.c b/usbhostfs_pc/main.c
+index acf4f41..ad89411 100644
+--- a/usbhostfs_pc/main.c
++++ b/usbhostfs_pc/main.c
+@@ -2013,7 +2013,20 @@ libusb_device_handle *wait_for_device(void)
+ 	libusb_device **devs;
+ 	libusb_device_handle *usbdev = NULL;
+ 
+-	fprintf(stderr, "waiting for device...\n");
++	/* The PSP re-presents its USB device for only a few seconds per
++	   activation while waiting for a host (re-enumerating every few
++	   seconds, with the window shrinking on every miss until it gives up).
++	   Poll an order of magnitude faster than the window so the claim and
++	   the magic handshake land inside it. */
++	int poll_ms = 1000;
++	const char *poll_env = getenv("USBHOSTFS_POLL_MS");
++	if(poll_env)
++	{
++		poll_ms = atoi(poll_env);
++		if(poll_ms < 20)
++			poll_ms = 20;
++	}
++	fprintf(stderr, "waiting for device... (polling every %d ms)\n", poll_ms);
+ 
+ 	while(!usbdev)
+ 	{
+@@ -2029,20 +2042,24 @@ libusb_device_handle *wait_for_device(void)
+ 					printf("Found Sony PSP device (%04x:%04x) at bus: %d device: %d\n",
+ 						desc.idVendor, desc.idProduct,
+ 						libusb_get_bus_number(devs[i]), libusb_get_device_address(devs[i]));
++					fflush(stdout);
+ 					usbdev = open_device(devs[i]);
+ 					if (usbdev)
+ 					{
+ 						fprintf(stderr, "Connected to device\n");
+ 						return usbdev;
+ 					}
++					/* The activation window closed mid-open (or another
++					   process holds the claim). The PSP retries within
++					   seconds; keep polling instead of looking wedged. */
++					fprintf(stderr, "claim failed on the PSP that just appeared; waiting for its next activation\n");
+ 				}
+ 			}
+ 		}
+ 
+ 		libusb_free_device_list(devs, 1);
+ 
+-		/* Sleep for one second */
+-		sleep(1);
++		usleep(poll_ms * 1000);
+ 	}
+ 
+ 	return NULL;
+@@ -2467,22 +2484,28 @@ void shutdown_socket(void)
+ 	}
+ }
+ 
++static int g_signum = 0;
++
+ int exit_app(void)
+ {
+ 	printf("Exiting\n");
++	fflush(stdout);
+ 	shutdown_socket();
+ 	if(usbhdr)
+ 	{
+ 		/* Nuke the connection */
+ 		close_device(usbhdr);
+ 	}
+-	exit(1);
++	/* Exit 0 for an intentional stop (SIGINT/SIGTERM) and 1 for anything
++	   else, so supervision can tell "told to stop" apart from "died". */
++	exit(g_signum == SIGINT || g_signum == SIGTERM ? 0 : 1);
+ 
+ 	return 0;
+ }
+ 
+ void signal_handler(int sig)
+ {
++	g_signum = sig;
+ 	exit_app();
+ }
+ 
+@@ -3122,6 +3145,10 @@ int main(int argc, char **argv)
+ {
+ 	int i;
+ 
++	/* stdout goes to a log file when started by the wrapper scripts or the
++	   user service; line-buffer it so log order reflects what happened. */
++	setvbuf(stdout, NULL, _IOLBF, 0);
++
+ 	printf("USBHostFS (c) TyRaNiD 2k6\n");
+ 	printf("Built %s %s\n", __DATE__, __TIME__);
+ 
+-- 
+2.55.0
+

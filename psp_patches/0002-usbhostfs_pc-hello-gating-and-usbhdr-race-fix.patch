@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: headpats <headpats@localhost>
+Date: Fri, 18 Sep 2026 15:41:07 +0200
+Subject: [PATCH 2/2] usbhostfs_pc: no async traffic before the PSP's hello;
+ fix usbhdr race; log drops
+
+The 15:29:16 log showed a claimed+magic'd PSP still dropping ~1s later
+while pspsh probes were injecting async data onto endpoint 0x3
+mid-handshake (the PSP only posts its async receive after its own
+send_hello_cmd succeeds), and the read loop's exit path printed
+nothing, hiding the drop reason.
+
+- hold async (pspsh) writes until the PSP completed the hostfs HELLO
+- mutex usbhdr against close_device racing the async thread's writes
+- timestamp link-critical log lines (dmesg correlation)
+- log the read-loop exit reason instead of a silent break
+- log 'PSP hello exchanged' as the definitive link-up marker
+---
+ usbhostfs_pc/main.c | 62 +++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/usbhostfs_pc/main.c b/usbhostfs_pc/main.c
+index ad89411..db375e7 100644
+--- a/usbhostfs_pc/main.c
++++ b/usbhostfs_pc/main.c
+@@ -107,6 +107,26 @@ pthread_mutex_t g_drivemtx = PTHREAD_MUTEX_INITIALIZER;
+ struct HostDrive g_drives[MAX_HOSTDRIVES];
+ char g_rootdir[PATH_MAX];
+ 
++/* Set once the PSP has completed the hostfs HELLO exchange — before this,
++ * async (pspsh) data must NOT be written to the device: the PSP only posts
++ * its async receive after its own send_hello_cmd() succeeds, and traffic
++ * before that lands on an endpoint nobody is listening on. */
++static volatile int g_psp_hello = 0;
++/* Guards usbhdr against close_device() racing the async thread's writes. */
++static pthread_mutex_t g_usb_mutex = PTHREAD_MUTEX_INITIALIZER;
++
++/* Timestamp prefix for link-critical log lines, so the log can be read
++ * against the kernel log (dmesg has second resolution only). */
++static void log_ts(void)
++{
++	struct timespec ts;
++	struct tm tm;
++	clock_gettime(CLOCK_REALTIME, &ts);
++	localtime_r(&ts.tv_sec, &tm);
++	fprintf(stderr, "[%02d:%02d:%02d.%03ld] ",
++		tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
++}
++
+ int  g_verbose = 0;
+ int  g_gdbdebug = 0;
+ int  g_nocase = 0;
+@@ -2026,6 +2046,7 @@ libusb_device_handle *wait_for_device(void)
+ 		if(poll_ms < 20)
+ 			poll_ms = 20;
+ 	}
++	log_ts();
+ 	fprintf(stderr, "waiting for device... (polling every %d ms)\n", poll_ms);
+ 
+ 	while(!usbdev)
+@@ -2039,6 +2060,7 @@ libusb_device_handle *wait_for_device(void)
+ 			if (!r) {
+ 				if (desc.idVendor == SONY_VID && desc.idProduct == g_pid)
+ 				{
++					log_ts();
+ 					printf("Found Sony PSP device (%04x:%04x) at bus: %d device: %d\n",
+ 						desc.idVendor, desc.idProduct,
+ 						libusb_get_bus_number(devs[i]), libusb_get_device_address(devs[i]));
+@@ -2046,12 +2068,14 @@ libusb_device_handle *wait_for_device(void)
+ 					usbdev = open_device(devs[i]);
+ 					if (usbdev)
+ 					{
+-						fprintf(stderr, "Connected to device\n");
++						log_ts();
++						fprintf(stderr, "Connected to device (claimed)\n");
+ 						return usbdev;
+ 					}
+ 					/* The activation window closed mid-open (or another
+ 					   process holds the claim). The PSP retries within
+ 					   seconds; keep polling instead of looking wedged. */
++					log_ts();
+ 					fprintf(stderr, "claim failed on the PSP that just appeared; waiting for its next activation\n");
+ 				}
+ 			}
+@@ -2118,6 +2142,14 @@ void do_hostfs(struct HostFsCmd *cmd, int readlen)
+ 							   {
+ 								   fprintf(stderr, "Error sending hello response\n");
+ 							   }
++							   else
++							   {
++								   /* The one true "link is up" marker: the PSP's
++								      own announce, answered. */
++								   g_psp_hello = 1;
++								   log_ts();
++								   fprintf(stderr, "PSP hello exchanged — hostfs link established\n");
++							   }
+ 							   break;
+ 		case HOSTFS_CMD_OPEN:  if(handle_open(usbhdr, (struct HostFsOpenCmd *) cmd, readlen) < 0)
+ 							   {
+@@ -2293,6 +2325,7 @@ int start_hostfs(void)
+ 					readlen = euid_usb_bulk_read(usbhdr, 0x81, (char*) data, 512, g_timeout);
+ 					if(readlen == 0)
+ 					{
++						log_ts();
+ 						fprintf(stderr, "Read cancelled (remote disconnected)\n");
+ 						break;
+ 					}
+@@ -2302,6 +2335,8 @@ int start_hostfs(void)
+ 					}
+ 					else if(readlen < 0)
+ 					{
++						log_ts();
++						fprintf(stderr, "USB read failed (%d) — the PSP dropped the link\n", readlen);
+ 						break;
+ 					}
+ 
+@@ -2348,8 +2383,19 @@ int start_hostfs(void)
+ 				}
+ 			}
+ 
++			else
++			{
++				log_ts();
++				fprintf(stderr, "handshake write failed (device dropped mid-open); waiting for its next activation\n");
++			}
++
++			/* The async thread may be writing to the handle; take it away
++			   under the mutex so it never touches a closed device. */
++			pthread_mutex_lock(&g_usb_mutex);
+ 			close_device(usbhdr);
+ 			usbhdr = NULL;
++			pthread_mutex_unlock(&g_usb_mutex);
++			g_psp_hello = 0;
+ 		}
+ 
+ 		close_hostfs();
+@@ -3115,11 +3161,23 @@ void *async_thread(void *arg)
+ 								}
+ 							}
+ 
+-							if(usbhdr)
++							pthread_mutex_lock(&g_usb_mutex);
++							if(usbhdr && g_psp_hello)
+ 							{
+ 								cmd->channel = LE32(i);
+ 								euid_usb_bulk_write(usbhdr, 0x3, buf, readbytes+sizeof(struct AsyncCommand), 10000);
+ 							}
++							else if(usbhdr)
++							{
++								/* Claimed but the PSP has not completed its
++								   hello yet; injecting async traffic now lands
++								   on an endpoint nobody on the PSP is listening
++								   on. The client bytes are dropped — with no
++								   link there is nothing to answer them anyway. */
++								log_ts();
++								fprintf(stderr, "dropped async data: PSP claimed but hello not exchanged yet\n");
++							}
++							pthread_mutex_unlock(&g_usb_mutex);
+ 						}
+ 						else
+ 						{
+-- 
+2.55.0
+

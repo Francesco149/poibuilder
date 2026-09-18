@@ -6,23 +6,25 @@
 # the check one command with an unambiguous verdict at every layer:
 #
 #   layer 1  PSP on the USB bus       (sysfs walk; no lsusb dependency)
-#   layer 2  udev symlink             (/dev/psp from 50-psplink.rules)
-#   layer 3  PSPLink link answering   (usbhostfs_pc + pspsh modlist)
+#   layer 2  usbhostfs_pc daemon      (singleton via psp_link.sh — started if
+#                                      absent: a PSP re-attaching while NO
+#                                      daemon runs is what wedges it for good)
+#   layer 3  udev symlink             (/dev/psp from 50-psplink.rules)
+#   layer 4  PSPLink link answering   (pspsh modlist through the daemon)
 #
-# Layer 1 polls for PSP_PROBE_WAIT seconds (default 35) because PSPLink retries
-# its USB activation every few seconds while waiting for a host, so a replug
-# race cannot produce a false ABSENT. It also reads the kernel log: a PSP that
-# enumerates and disconnects within a couple of seconds, over and over, means
-# a stale usbhostfs_pc is eating the fresh link — the probe says so, kills the
-# stale daemon, and re-polls, instead of leaving the user to replug forever.
+# The failure model (full story in psp_link.sh): the PSP presents its USB
+# device for only a few seconds per activation while waiting for a host, the
+# window SHRINKS with every missed one, and after enough misses the PSP gives
+# up entirely — the "replug does nothing" state that only a device reboot
+# used to fix. Layer 1 polls for PSP_PROBE_WAIT seconds (default 35) because
+# the PSP re-activates every few seconds, so a poll gap cannot produce a
+# false ABSENT.
 #
 # Assume PSPLink IS running on the device whenever the user says they rebooted
 # or reconnected: the failure this script hunts is on the host side.
 set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PSPLINK_SRC="${PSPLINK_SRC:-/tmp/psplinkusb}"
-PSPSH_BIN="$PSPLINK_SRC/pspsh/pspsh"
-USBHOSTFS_BIN="$PSPLINK_SRC/usbhostfs_pc/usbhostfs_pc"
+source "$REPO_DIR/psp_link.sh"
 WAIT="${PSP_PROBE_WAIT:-35}"
 rc=0
 
@@ -36,31 +38,16 @@ kern_log() {
     printf '%s' "$KERN_LOG"
 }
 
-# Every Sony device currently on the bus as "vendor:product product-name".
-bus_sony() {
-    local d v p
-    for d in /sys/bus/usb/devices/*/idVendor; do
-        v=$(cat "$d" 2>/dev/null) || continue
-        [ "$v" = "054c" ] || continue
-        d="${d%/idVendor}"
-        p=$(cat "$d/idProduct" 2>/dev/null)
-        printf '%s:%s %s\n' "054c" "$p" "$(cat "$d/product" 2>/dev/null)"
-    done
-}
-
 # ── Layer 1: PSP on the bus (polled) ─────────────────────────────────────────
 found=""
 deadline=$(( SECONDS + WAIT ))
 while [ $SECONDS -lt $deadline ]; do
-    SONY=$(bus_sony)
-    if [ -n "$SONY" ]; then found="$SONY"; break; fi
+    if psp_usb_present; then found=1; break; fi
     sleep 1
 done
 
-if [ -n "$found" ]; then
-    echo "1. USB device:    PRESENT: $found"
-else
-    echo "1. USB device:    no Sony (054c) device on any bus for ${WAIT}s"
+if [ -z "$found" ]; then
+    echo "1. USB device:    no PSP (054c:01c9) on any bus for ${WAIT}s"
     LAST=$(kern_log | grep "idVendor=054c" | tail -1)
     if [ -n "$LAST" ]; then
         NOW=$(awk '{print int($1)}' /proc/uptime)
@@ -73,9 +60,12 @@ else
         echo "   kernel log: a PSP (054c) last enumerated ${AGE}s ago on ${PORT%:}"
         if [ -n "$DISC" ] && [ "$DISC" -ge "$CONN" ] \
            && [ $((DISC - CONN)) -lt 3 ]; then
-            echo "   and it dropped $((DISC - CONN)) s later - the stale-usbhostfs_pc"
-            echo "   signature: the wedged daemon poisons every fresh link. It has"
-            echo "   been killed now; replug or wait for the PSP's USB retry."
+            echo "   and it dropped $((DISC - CONN)) s later — a missed activation"
+            echo "   window: the PSP re-presents itself every few seconds while"
+            echo "   waiting, each miss shortens the window, and eventually it"
+            echo "   gives up. With the daemon below running, the next activation"
+            echo "   connects; if the log has been silent for minutes the PSP has"
+            echo "   given up and needs ONE replug (or a PSPLink relaunch)."
         fi
     else
         echo "   kernel log has never seen a 054c device: cable, port, or the"
@@ -83,72 +73,69 @@ else
     fi
     echo
     echo "VERDICT: no PSP on USB right now. If PSPLink is running on the device,"
-    echo "it retries its USB activation every few seconds - the probe polled for"
-    echo "${WAIT}s. Check cable/port; a power cycle exits PSPLink (Game -> Memory"
-    echo "Stick -> PSPLink relaunches it)."
+    echo "make sure the usbhostfs daemon stays up (it is what catches the PSP's"
+    echo "short activation windows) and replug once; a power cycle exits PSPLink"
+    echo "(Game -> Memory Stick -> PSPLink relaunches it)."
     exit 1
 fi
+echo "1. USB device:    PRESENT (054c:01c9 on the bus)"
 
-# ── Layer 1b: drop signature → stale usbhostfs_pc recovery ───────────────────
-if pgrep -f usbhostfs_pc >/dev/null 2>&1; then
-    for p in $(pgrep -f usbhostfs_pc); do
-        [ "$p" = "$$" ] && continue
-        echo "   usbhostfs_pc running: pid $p, started $(ps -o lstart= -p "$p" 2>/dev/null)"
-    done
-    DROP=$(kern_log | grep -E "USB disconnect, device number" | tail -1)
-    [ -n "$DROP" ] && echo "   last disconnect: ${DROP#*[}"
+# ── Layer 2: usbhostfs_pc daemon (the thing that must never be missing) ──────
+if psp_ensure_daemon; then
+    if psp_daemon_connected; then
+        echo "2. daemon:        RUNNING and CONNECTED to the PSP"
+    else
+        echo "2. daemon:        running (pid $(psp_daemons | tr '\n' ' ')),"
+        echo "                  polling for the PSP's next activation"
+    fi
+else
+    echo "2. daemon:        FAILED TO START (see $USBHOSTFS_LOG)"
+    exit 2
 fi
 
-# ── Layer 2: udev symlink ────────────────────────────────────────────────────
+# ── Layer 3: udev symlink ────────────────────────────────────────────────────
 if [ -e /dev/psp ]; then
-    echo "2. udev symlink:  PRESENT (/dev/psp -> $(readlink /dev/psp))"
+    echo "3. udev symlink:  PRESENT (/dev/psp -> $(readlink /dev/psp))"
 else
-    echo "2. udev symlink:  ABSENT (/dev/psp)"
+    echo "3. udev symlink:  ABSENT (/dev/psp)"
     echo "   (the 50-psplink.rules udev rule is missing or not triggered;"
     echo "   ./setup_psplink.sh installs it. Not fatal for PSPLink itself,"
     echo "   usbhostfs_pc talks to the raw USB device.)"
     rc=2
 fi
 
-# ── Layer 3: PSPLink link answering ──────────────────────────────────────────
-if ! pgrep -f usbhostfs_pc >/dev/null 2>&1; then
-    echo "3. PSPLink link:  usbhostfs_pc not running — trying a temporary one"
-    if [ ! -x "$USBHOSTFS_BIN" ] || [ ! -x "$PSPSH_BIN" ]; then
-        echo "   (host tools not built at $PSPLINK_SRC — run ./setup_psplink.sh)"
-        exit 2
+# ── Layer 4: PSPLink link answering ──────────────────────────────────────────
+modlist_count() {
+    timeout 8 "$PSPSH_BIN" -h 127.0.0.1 -n -e "modlist" 2>/dev/null | grep -c "UID:" || true
+}
+ANSWER=$(modlist_count)
+if [ "${ANSWER:-0}" -eq 0 ]; then
+    # A daemon that does not answer is the wedged case: it grabs every fresh
+    # activation but the handshake never completes. Restart it once and ask
+    # again before declaring failure — a fresh daemon claims the PSP's next
+    # activation (seconds away) within ~0.1s.
+    echo "4. PSPLink link:  not answering through the running daemon — restarting it once"
+    psp_restart_daemon
+    if psp_wait_link 45 "asking again"; then
+        ANSWER=$(modlist_count)
     fi
-    nohup "$USBHOSTFS_BIN" "$REPO_DIR/retro_engine/psp/hwrun" \
-        >/tmp/usbhostfs_pc.log 2>&1 &
-    started_here=1
-    sleep 3
 fi
-ANSWER=$(timeout 25 "$PSPSH_BIN" -h 127.0.0.1 -n -e "modlist" 2>/dev/null | grep -c "UID:" || true)
-if [ "${ANSWER:-0}" -eq 0 ] && pgrep -f usbhostfs_pc >/dev/null 2>&1; then
-    # An existing daemon that does not answer is the wedged case: it grabs
-    # every fresh link and the handshake never completes. Kill it, start a
-    # fresh one, ask once more before declaring failure.
-    echo "   link not answering through the running usbhostfs_pc - restarting it"
-    pkill -f usbhostfs_pc 2>/dev/null || true
-    sleep 1
-    nohup "$USBHOSTFS_BIN" "$REPO_DIR/retro_engine/psp/hwrun" \
-        >/tmp/usbhostfs_pc.log 2>&1 &
-    sleep 3
-    ANSWER=$(timeout 25 "$PSPSH_BIN" -h 127.0.0.1 -n -e "modlist" 2>/dev/null | grep -c "UID:" || true)
-fi
+
 if [ "${ANSWER:-0}" -gt 0 ]; then
-    echo "3. PSPLink link:  ANSWERING (modlist returned ${ANSWER} modules)"
-    if [ -n "$(timeout 20 "$PSPSH_BIN" -h 127.0.0.1 -n -e "modlist" 2>/dev/null | grep -i 'PoiRetro')" ]; then
+    echo "4. PSPLink link:  ANSWERING (modlist returned ${ANSWER} modules)"
+    if [ -n "$(timeout 8 "$PSPSH_BIN" -h 127.0.0.1 -n -e "modlist" 2>/dev/null | grep -i 'PoiRetro')" ]; then
         echo "   NOTE: a PoiRetro module is resident (a build is running; run_psp_hw.sh will reset first)."
     fi
     echo
     echo "VERDICT: PSP ready — ./run_psp_hw.sh will measure it."
     exit "$rc"
-else
-    echo "3. PSPLink link:  NOT ANSWERING"
-    echo
-    echo "VERDICT: device enumerated but PSPLink is not talking. On the device:"
-    echo "  relaunch PSPLink (Game -> Memory Stick -> PSPLink, 'Waiting for"
-    echo "  usbhostfs connection'), Hold switch ON so it cannot suspend. If"
-    echo "  another usbhostfs_pc owns the link, close it there first."
-    exit 1
 fi
+
+echo "4. PSPLink link:  NOT ANSWERING"
+psp_link_state
+echo
+echo "VERDICT: device enumerated but PSPLink is not talking. If the state above"
+echo "says the PSP went silent: relaunch PSPLink on the device (Game -> Memory"
+echo "Stick -> PSPLink) or replug ONCE — the daemon is waiting and will claim"
+echo "the first activation. Keep the Hold switch ON so it cannot suspend."
+exit 1
