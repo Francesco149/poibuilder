@@ -365,3 +365,38 @@ func test_sheet_readout_teaches_the_knobs() -> void:
 
 	assert_eq(PBParticleParams.sheet_readout(null, {}), "",
 		"Without a texture there is nothing to say")
+
+## The shipped SHEETS: the flipbook knobs need art that is actually a sheet, so
+## the addon carries a 4-cell flame and smoke sheet and picking one arms the
+## knobs for it (a single-frame texture under a >1 column is just the image
+## sampled in slices — the "why is my glow cut into squares" report).
+func test_shipped_particle_sheets_arm_the_flipbook() -> void:
+	for file: String in ["particle_flame_sheet.png", "particle_smoke_sheet.png"]:
+		var path := "res://addons/poibuilder/materials/textures/" + file
+		assert_true(ResourceLoader.exists(path), "The shipped sheet %s must exist" % file)
+		assert_eq(PBAssetCatalog.classify_path(path), "particle",
+			"%s must land in the Particles palette" % file)
+		var tex: Texture2D = load(path)
+		assert_not_null(tex)
+		assert_eq(tex.get_width(), tex.get_height() * 4,
+			"%s must be four square cells in a row" % file)
+
+		var values := PBParticleParams.preset_for_texture(file)
+		assert_eq(float(values.get("atlas_cols", 0.0)), 4.0,
+			"Picking %s arms Sheet Columns = 4" % file)
+		assert_eq(float(values.get("atlas_rows", 0.0)), 1.0)
+		var node := PBParticleParams.build_node(tex, values, "Sheet_Emitter")
+		autofree(node)
+		var qm := node.draw_pass_1 as QuadMesh
+		var sm := qm.material as StandardMaterial3D
+		assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES,
+			"A sheet builds a real flipbook")
+		assert_eq(sm.particles_anim_h_frames, 4)
+		# Square cells -> a square quad (the cell aspect, not the image's 4:1).
+		assert_almost_eq(qm.size.x, qm.size.y, 0.001,
+			"Four square cells keep the quad square, not 4:1")
+
+	# A single-frame texture is untouched by the sheet rule.
+	var single := PBParticleParams.preset_for_texture("particle_glow.png")
+	assert_eq(float(single.get("atlas_cols", 1.0)), 1.0,
+		"A single-frame texture stays one frame")

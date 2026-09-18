@@ -68,9 +68,17 @@ const PRESETS := {
 ## properties modal) tweak values on the returned dictionary.
 static func preset_for_texture(path: String) -> Dictionary:
 	var lower := String(path).to_lower()
+	# A shipped SHEET (`particle_flame_sheet.png`, `particle_smoke_sheet.png`) is
+	# laid out as 4 columns of square cells: picking it arms the flipbook knobs
+	# so the sheet is shown the way it is drawn, not sliced by hand.
+	var is_sheet := lower.contains("_sheet")
 	for key in PRESETS:
 		if lower.contains(key):
-			return PRESETS[key].duplicate()
+			var preset: Dictionary = PRESETS[key].duplicate()
+			if is_sheet:
+				preset["atlas_cols"] = 4.0
+				preset["atlas_rows"] = 1.0
+			return preset
 	return PRESETS["glow"].duplicate()
 
 ## ── Overlay param defs (the "fine adjustments" modal) ───────────────────────
