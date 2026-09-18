@@ -36,7 +36,7 @@ func test_texture_discovery_finds_project_textures() -> void:
 	# filtered out by PBAssetCatalog.
 	assert_false(found_names.has("flower_patch.png"), "stamps must not appear in the sprite carousel")
 	assert_false(found_names.has("tiles_wet_4x4.png"), "paint textures must not appear in the sprite carousel")
-	assert_false(found_names.has("particle_flame.png"), "particles must not appear in the sprite carousel")
+	assert_false(found_names.has("particle_flame_2x2_sheet.png"), "particles must not appear in the sprite carousel")
 
 func test_placer_lifecycle_and_arming() -> void:
 	var placer := PBSpritePlacer.new()

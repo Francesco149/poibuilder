@@ -51,7 +51,7 @@ func test_unknown_falls_back_to_texture_and_buckets_are_disjoint():
 				claimed += 1
 		assert_eq(claimed, 1, "Each asset must land in exactly one picker bucket: %s" % path)
 	# Particles belong to no picker at all
-	assert_true(PBAssetCatalog.is_particle("res://addons/poibuilder/materials/textures/particle_flame.png"),
+	assert_true(PBAssetCatalog.is_particle("res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png"),
 			"Particles must classify as particle")
-	assert_false(PBAssetCatalog.is_texture("res://addons/poibuilder/materials/textures/particle_flame.png"),
+	assert_false(PBAssetCatalog.is_texture("res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png"),
 			"Particles must not appear in the paint texture bucket")

@@ -126,11 +126,13 @@ So:
   back-to-front sorting: keep those emitters small, off-centre, and out of the
   player's face.
 - **Flipbook textures are declared by name**: a texture whose file name
-  carries `_sheet` (the two shipped: `particle_flame_sheet.png`,
-  `particle_smoke_sheet.png`) grids into cells and cycles one cell per
-  particle per lifetime. Any other texture always shows whole — the Sheet
-  Columns/Rows knobs are greyed out for it, because a grid over a single
-  image can only slice it into fragments.
+  carries `_sheet` grids into cells and cycles one cell per particle per
+  lifetime — `particle_flame_2x2_sheet.png` (four 32x32 frames),
+  `particle_flame_sheet.png` / `particle_smoke_sheet.png` (4 x 64x64); the
+  `_<cols>x<rows>_sheet` form also sets the default grid when the texture is
+  picked. A grid over a single-frame image (e.g. `particle_glow.png`) samples
+  it in slices — one fragment per particle — which is a deliberate knob, and
+  the properties readout says when a texture is being sampled that way.
 - The format caps **256 particles per map**; the whole budget measured 0.72 ms
   gpu / 1.14 ms cpu, i.e. about a fifth of a frame. Particle *count* is cheap;
   particle *screen area* is not.

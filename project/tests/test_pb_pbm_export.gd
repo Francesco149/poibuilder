@@ -9,7 +9,7 @@
 extends GutTest
 
 const TEST_PBM := "user://test_pbm_writer.pbm"
-const FLAME_TEX := "res://addons/poibuilder/materials/textures/particle_flame.png"
+const FLAME_TEX := "res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png"
 const SMOKE_TEX := "res://addons/poibuilder/materials/textures/particle_smoke.png"
 
 func before_all() -> void:

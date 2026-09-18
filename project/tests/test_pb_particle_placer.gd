@@ -9,7 +9,7 @@ var _host: Control = null
 var _camera: Camera3D = null
 
 func _flame_tex() -> Texture2D:
-	var path := "res://addons/poibuilder/materials/textures/particle_flame.png"
+	var path := "res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png"
 	if ResourceLoader.exists(path):
 		return load(path)
 	return ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
@@ -29,7 +29,7 @@ func before_each() -> void:
 	_root.add_child(_camera)
 
 func test_presets_key_on_texture_family() -> void:
-	var flame := PBParticleParams.preset_for_texture("res://x/particle_flame.png")
+	var flame := PBParticleParams.preset_for_texture("res://x/particle_flame_2x2_sheet.png")
 	assert_true(flame["additive"], "Flame is additive")
 	assert_eq(float(flame["count"]), 24.0)
 
@@ -66,14 +66,17 @@ func test_build_node_matches_export_record() -> void:
 	assert_eq(flags & PBMapExporter.PBM_EMIT_ADDITIVE, PBMapExporter.PBM_EMIT_ADDITIVE,
 		"Flame exports additive")
 	assert_almost_eq(float(rec["spread"]), deg_to_rad(14.0), 0.001)
-	assert_eq(int(rec["atlas_cols"]), 1)
+	# The 2x2 flame art ships as a sheet: its preset arms the flipbook and the
+	# record carries the grid.
+	assert_eq(int(rec["atlas_cols"]), 2)
+	assert_eq(int(rec["atlas_rows"]), 2)
 	# Alpha ramp peak at 0.35 -> knee.
 	assert_almost_eq(float(rec["knee"]), 0.35, 0.02)
 
 	# Unlit + billboard material on the draw pass.
 	var sm := (node.draw_pass_1 as QuadMesh).material as StandardMaterial3D
 	assert_eq(sm.shading_mode, BaseMaterial3D.SHADING_MODE_UNSHADED)
-	assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_ENABLED)
+	assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES)
 	assert_eq(sm.blend_mode, BaseMaterial3D.BLEND_MODE_ADD)
 
 func test_build_node_y_locked_preset_sets_meta_and_export_flag() -> void:
@@ -294,11 +297,8 @@ func test_material_dock_particle_mode_filters_palette() -> void:
 ## stretch" was. The exporter reads the aspect off the QuadMesh, so the viewer
 ## and the device draw the same proportions.
 func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
-	# A 192x64 sheet with 3 columns is three square 64x64 cells. The textures
-	# carry a *_sheet path: that marker is what declares an image griddable
-	# (apply_values clamps the grid away on anything else).
+	# A 192x64 sheet with 3 columns is three square 64x64 cells.
 	var sheet := ImageTexture.create_from_image(Image.create(192, 64, false, Image.FORMAT_RGBA8))
-	sheet.resource_path = "res://tests/fixtures/cells3_sheet.png"
 	var values := PBParticleParams.preset_for_texture("glow")
 	values["size"] = 0.5
 	values["atlas_cols"] = 3.0
@@ -317,7 +317,6 @@ func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
 
 	# A 2:1 row of cells (128x32 with 2 columns -> 64x32 cells) is a wide quad.
 	var wide := ImageTexture.create_from_image(Image.create(128, 32, false, Image.FORMAT_RGBA8))
-	wide.resource_path = "res://tests/fixtures/cells2x1_sheet.png"
 	values["atlas_cols"] = 2.0
 	var node_wide := PBParticleParams.build_node(wide, values, "Emitter_Wide")
 	autofree(node_wide)
@@ -328,7 +327,6 @@ func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
 
 	# Rows: a 64x192 sheet with 3 rows is three square cells again.
 	var tall := ImageTexture.create_from_image(Image.create(64, 192, false, Image.FORMAT_RGBA8))
-	tall.resource_path = "res://tests/fixtures/cells1x3_sheet.png"
 	values["atlas_cols"] = 1.0
 	values["atlas_rows"] = 3.0
 	var node_tall := PBParticleParams.build_node(tall, values, "Emitter_Tall")
@@ -359,7 +357,6 @@ func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
 ## in slices.
 func test_sheet_readout_teaches_the_knobs() -> void:
 	var sheet := ImageTexture.create_from_image(Image.create(192, 64, false, Image.FORMAT_RGBA8))
-	sheet.resource_path = "res://tests/fixtures/cells3_sheet.png"
 	var line := PBParticleParams.sheet_readout(sheet, {"atlas_cols": 3.0, "atlas_rows": 1.0})
 	assert_true(line.contains("64 x 64"), "Three cells of a 192x64 sheet are 64x64 px: %s" % line)
 	assert_true(line.contains("3 frames"), "The frame count is stated: %s" % line)
@@ -372,63 +369,47 @@ func test_sheet_readout_teaches_the_knobs() -> void:
 	assert_eq(PBParticleParams.sheet_readout(null, {}), "",
 		"Without a texture there is nothing to say")
 
-	# A NON-sheet texture states the rule instead of a slicing recipe.
+	# A grid over a single-frame image is allowed on purpose; the readout adds
+	# ONE brief pointer so the slicing never comes as a surprise.
 	var glow: Texture2D = load("res://addons/poibuilder/materials/textures/particle_glow.png")
 	var sliced := PBParticleParams.sheet_readout(glow, {"atlas_cols": 2.0, "atlas_rows": 1.0})
-	assert_true(sliced.contains("one frame"), "A non-sheet texture says it is one frame: %s" % sliced)
-	assert_true(sliced.contains("64 x 64"), "…and names the image: %s" % sliced)
-	assert_true(sliced.contains("_sheet"), "…and points at the sheet marker: %s" % sliced)
+	assert_true(sliced.contains("2 frames of 32 x 64"), "The slicing recipe is stated: %s" % sliced)
+	assert_true(sliced.contains("single frame"), "…with the brief single-frame pointer: %s" % sliced)
 
-## The "rows/cols cut my particles" report: the flipbook grid is a promise
-## about the texture's layout, and on a texture that is not a sheet any grid
-## >1x1 can only sample the single image in slices. The knobs are therefore
-## inert there — the emitter always shows the whole frame, whatever the modal
-## says, and the modal greys the knobs out (PBParticleParams.is_sheet_texture
-## is the `_sheet` marker rule the presets already arm from).
-func test_sheet_knobs_cannot_slice_a_single_frame() -> void:
-	assert_false(PBParticleParams.is_sheet_texture(null), "No texture, no flipbook")
-	var glow: Texture2D = load("res://addons/poibuilder/materials/textures/particle_glow.png")
-	assert_false(PBParticleParams.is_sheet_texture(glow),
-		"The shipped single-frame glow is not a sheet")
-	var flame_sheet: Texture2D = load("res://addons/poibuilder/materials/textures/particle_flame_sheet.png")
-	assert_true(PBParticleParams.is_sheet_texture(flame_sheet),
-		"The shipped flame sheet is a sheet")
+## The 2x2 FLAME: the original particle art is itself a flipbook (four 32x32
+## frames the brazier walks through), so it ships under the `_sheet` marker
+## with its own grid in the name — picking it arms 2 x 2, like the 4x1 sheets
+## arm 4 x 1 (`_<cols>x<rows>_sheet` is the self-documenting form).
+func test_flame_2x2_sheet_arms_its_own_grid() -> void:
+	var path := "res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png"
+	assert_true(ResourceLoader.exists(path), "The renamed 2x2 flame sheet must exist")
+	assert_eq(PBAssetCatalog.classify_path(path), "particle",
+		"It stays in the Particles palette")
+	var tex: Texture2D = load(path)
+	assert_eq(tex.get_width(), 64)
+	assert_eq(tex.get_height(), 64, "Four 32x32 cells in a 2x2 grid")
 
-	# Cranking the knobs on the glow must not build a flipbook.
-	var values := PBParticleParams.preset_for_texture("particle_glow.png")
-	values["size"] = 0.25
-	values["atlas_cols"] = 4.0
-	values["atlas_rows"] = 2.0
-	var node := PBParticleParams.build_node(glow, values, "Emitter_Glow_Sliced")
+	var values := PBParticleParams.preset_for_texture(path)
+	assert_eq(float(values.get("atlas_cols", 0.0)), 2.0, "The name's 2x2 grid is armed")
+	assert_eq(float(values.get("atlas_rows", 0.0)), 2.0)
+	var node := PBParticleParams.build_node(tex, values, "Emitter_Flame2x2")
 	autofree(node)
 	var qm := node.draw_pass_1 as QuadMesh
 	var sm := qm.material as StandardMaterial3D
-	assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_ENABLED,
-		"A non-sheet texture is a plain billboard, not a flipbook")
+	assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES,
+		"The 2x2 art builds a real flipbook")
+	assert_eq(sm.particles_anim_h_frames, 2)
+	assert_eq(sm.particles_anim_v_frames, 2)
 	assert_almost_eq(qm.size.x, qm.size.y, 0.001,
-		"The whole 64x64 frame keeps a square quad (not 4:2 slices)")
+		"Square cells keep the quad square (the flame preset's 0.55 height)")
 	var rec := PBMapExporter._emitter_from_node(node)
-	assert_eq(int(rec["atlas_cols"]), 1, "The exported record carries one frame")
-	assert_eq(int(rec["atlas_rows"]), 1)
+	assert_eq(int(rec["atlas_cols"]), 2)
+	assert_eq(int(rec["atlas_rows"]), 2)
 
-	# The modal reads back the rendered truth, so a legacy sliced node (a
-	# scene hand-built before the rule) opens as one whole frame.
-	sm.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
-	sm.particles_anim_h_frames = 2
-	sm.particles_anim_v_frames = 1
-	var back := PBParticleParams.values_from_node(node)
-	assert_eq(float(back["atlas_cols"]), 1.0, "A sliced non-sheet node reads back as one frame")
-	assert_eq(float(back["atlas_rows"]), 1.0)
-
-	# Sheets keep the flipbook under the same rule.
-	var sheet_values := PBParticleParams.preset_for_texture("particle_flame_sheet.png")
-	sheet_values["atlas_cols"] = 2.0
-	var sheet_node := PBParticleParams.build_node(flame_sheet, sheet_values, "Emitter_Sheet_2col")
-	autofree(sheet_node)
-	var sheet_sm := (sheet_node.draw_pass_1 as QuadMesh).material as StandardMaterial3D
-	assert_eq(sheet_sm.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES,
-		"A sheet texture still flipbooks")
-	assert_eq(sheet_sm.particles_anim_h_frames, 2)
+	# The row sheets still arm 4x1: their names carry no grid of their own.
+	var row_values := PBParticleParams.preset_for_texture("particle_flame_sheet.png")
+	assert_eq(float(row_values.get("atlas_cols", 0.0)), 4.0)
+	assert_eq(float(row_values.get("atlas_rows", 0.0)), 1.0)
 
 ## The shipped SHEETS: the flipbook knobs need art that is actually a sheet, so
 ## the addon carries a 4-cell flame and smoke sheet and picking one arms the

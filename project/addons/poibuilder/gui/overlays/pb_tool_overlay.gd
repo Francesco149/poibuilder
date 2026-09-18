@@ -615,10 +615,6 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		spin.step = p_step
 		spin.suffix = str(def.get("suffix", ""))
 		spin.value = float(values.get(param_name, p_min))
-		# SpinBox has no `disabled` (it is a Range): editable=false is the
-		# engine's full read-only — blocks typing AND the up/down arrows, and
-		# draws the disabled style (SpinBox::gui_input gates on it).
-		spin.editable = not bool(def.get("disabled", false))
 		if def.has("tooltip"):
 			spin.tooltip_text = str(def["tooltip"])
 			caption.tooltip_text = str(def["tooltip"])
@@ -1136,8 +1132,14 @@ func update_visibility() -> void:
 		visible = false
 		return
 	var mesh_selected := editor.active_mesh != null and is_instance_valid(editor.active_mesh)
+	# A selected emitter is content too: the fine-tuning surface must not
+	# require entering particle placement (the panel used to hide whenever the
+	# selection was not a PBMesh, burying the Edit Emitter Properties button).
+	var emitter_selected := emitter_props_available and not params_open \
+			and _btn_edit_emitter_props != null and _btn_edit_emitter_props.visible
 	var dragging := element_editor != null and element_editor.drag_active
-	visible = mesh_selected and (pinned or _has_selection() or dragging)
+	visible = (mesh_selected or emitter_selected) \
+			and (pinned or _has_selection() or dragging or emitter_selected)
 
 func _has_selection() -> bool:
 	if editor == null or editor.selection == null:

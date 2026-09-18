@@ -1837,17 +1837,6 @@ func _run() -> void:
 						await _frames(2)
 						if plugin.tool_overlay.params_open and plugin._params_session_kind == "emitter_edit":
 							_pass("EMITTER-PROPS: properties session opened")
-							# The sheet rule in the UI: the knobs are greyed out
-							# exactly when the emitter's texture is not *_sheet.
-							var sheetable: bool = PBParticleParams.is_sheet_texture(plugin.particle_placer.last_texture)
-							var cols_spin: SpinBox = plugin.tool_overlay._param_spinboxes.get("atlas_cols", null)
-							if cols_spin != null and cols_spin.editable == sheetable:
-								_pass("EMITTER-PROPS: sheet knobs %s to match the texture (%s)" % [
-									"disabled" if not sheetable else "enabled",
-									plugin.particle_placer.last_texture.resource_path.get_file()])
-							else:
-								_fail("EMITTER-PROPS: sheet knob disabled state wrong (sheetable=%s, spin=%s)" % [
-									str(sheetable), str(cols_spin)])
 							plugin._on_param_changed("count", 5.0)
 							await _frames(1)
 							plugin._on_params_applied()
@@ -1880,6 +1869,34 @@ func _run() -> void:
 					_pass("PARTICLE-DOCK: leaving the tab disarms the placer")
 				else:
 					_fail("PARTICLE-DOCK: placer still armed after leaving the tab")
+
+				# Fine tuning must not require particle mode: selecting the
+				# emitter in plain object mode brings the overlay panel up with
+				# the Edit Emitter Properties button (the panel used to hide
+				# whenever the selection was not a PBMesh).
+				var osel: EditorSelection = plugin.get_editor_interface().get_selection()
+				osel.clear()
+				osel.add_node(placed_emitter)
+				await _frames(3)
+				if placed_emitter != null and is_instance_valid(placed_emitter):
+					if plugin.tool_overlay.visible \
+							and plugin.tool_overlay._btn_edit_emitter_props.visible:
+						_pass("EMITTER-PROPS: button reachable in object mode (no particle placement)")
+					else:
+						_fail("EMITTER-PROPS: overlay/button not shown for a selected emitter in object mode (panel visible=%s)" % str(plugin.tool_overlay.visible))
+					# The properties session must open from here too.
+					plugin._on_edit_emitter_requested()
+					await _frames(2)
+					if plugin.tool_overlay.params_open and plugin._params_session_kind == "emitter_edit":
+						_pass("EMITTER-PROPS: session opens from object mode")
+					else:
+						_fail("EMITTER-PROPS: session did not open from object mode")
+					plugin._close_emitter_session()
+					await _frames(1)
+				# Hand the selection back to a mesh for the downstream tests.
+				osel.clear()
+				osel.add_node(target_b)
+				await _frames(2)
 
 				# ── Export Dialog Test ──────────────────────────────────────────
 				if plugin.toolbar != null and plugin.toolbar._btn_export_more != null:

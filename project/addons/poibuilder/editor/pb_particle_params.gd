@@ -62,11 +62,10 @@ const PRESETS := {
 	},
 }
 
-## Whether the flipbook knobs may grid this texture: the `_sheet` name marker
-## — the same one `preset_for_texture` arms 4x1 from — is the declaration that
-## an image is laid out as cells. On anything else a grid >1x1 can only SLICE
-## the single image (each particle shows a fraction of the art — the "rows/cols
-## cut my particles" reports), so those textures are one frame, always whole.
+## Whether the texture's NAME declares it a sprite sheet (`_sheet` marker) —
+## the same marker `preset_for_texture` arms a default grid from. Documentation
+## only: the knobs stay adjustable on any texture, and a grid over a
+## single-frame image samples it in slices (the readout says so briefly).
 static func is_sheet_texture(texture: Texture2D) -> bool:
 	return texture != null and String(texture.resource_path).to_lower().contains("_sheet")
 
@@ -76,9 +75,11 @@ static func is_sheet_texture(texture: Texture2D) -> bool:
 ## properties modal) tweak values on the returned dictionary.
 static func preset_for_texture(path: String) -> Dictionary:
 	var lower := String(path).to_lower()
-	# A shipped SHEET (`particle_flame_sheet.png`, `particle_smoke_sheet.png`) is
-	# laid out as 4 columns of square cells: picking it arms the flipbook knobs
-	# so the sheet is shown the way it is drawn, not sliced by hand.
+	# A shipped SHEET (`particle_flame_sheet.png`, `particle_smoke_sheet.png`)
+	# is laid out as square cells: picking it arms the flipbook knobs so the
+	# sheet is shown the way it is drawn. A sheet may name its own grid
+	# (`particle_flame_2x2_sheet.png` -> 2 x 2); anything else keeps the 4x1
+	# row default.
 	var is_sheet := lower.contains("_sheet")
 	for key in PRESETS:
 		if lower.contains(key):
@@ -86,6 +87,14 @@ static func preset_for_texture(path: String) -> Dictionary:
 			if is_sheet:
 				preset["atlas_cols"] = 4.0
 				preset["atlas_rows"] = 1.0
+				var grid := RegEx.create_from_string("(\\d+)x(\\d+)")
+				var m := grid.search(lower) if grid != null else null
+				if m != null and m.get_group_count() == 2:
+					var cols := int(m.get_string(1))
+					var rows := int(m.get_string(2))
+					if cols >= 1 and rows >= 1:
+						preset["atlas_cols"] = float(cols)
+						preset["atlas_rows"] = float(rows)
 			return preset
 	return PRESETS["glow"].duplicate()
 
@@ -112,16 +121,16 @@ static func get_param_defs() -> Array:
 		{"name": "y_locked", "label": "Lock Upright", "kind": "bool",
 			"tooltip": "Cylinder billboard: quads stay world-upright instead of facing the camera (the mist emitter's look)."},
 		{"name": "atlas_cols", "label": "Sheet Columns", "min": 1.0, "max": 8.0, "step": 1.0,
-			"tooltip": "Flipbook columns for a *_sheet texture: each particle shows one cell (tex_width / columns wide, e.g. 192x64 with 3 columns = three 64x64 frames), and the quad takes the cell's aspect. Other textures always show whole — the grid would only slice a single image. 1 = the whole image is one frame."},
+			"tooltip": "Flipbook columns, for sprite sheets with more than 1 frame: each particle shows one cell (tex_width / columns wide, e.g. 192x64 with 3 columns = three 64x64 frames), and the quad takes the cell's aspect. 1 = the whole image is one frame (a grid over a single-frame image samples it in slices)."},
 		{"name": "atlas_rows", "label": "Sheet Rows", "min": 1.0, "max": 8.0, "step": 1.0,
-			"tooltip": "Flipbook rows for a *_sheet texture (tex_height / rows per cell). 1 = a single row of frames. Non-sheet textures always show whole."},
+			"tooltip": "Flipbook rows for a sprite sheet with more than 1 frame (tex_height / rows per cell). 1 = a single row of frames."},
 	]
 
 ## One line describing what the sheet knobs currently select — the flipbook is
 ## the one emitter feature a user cannot infer from the preview, so the
 ## properties modal shows the cell size and the cycle instead of leaving it to
-## be guessed at. For a non-sheet texture it states the rule instead (the knobs
-## cannot grid it, so the image always shows whole). "" when unknown.
+## be guessed at. Slicing a single-frame image earns a brief pointer. ""
+## when the texture is unknown.
 static func sheet_readout(texture: Texture2D, values: Dictionary) -> String:
 	if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0:
 		return ""
@@ -130,17 +139,16 @@ static func sheet_readout(texture: Texture2D, values: Dictionary) -> String:
 	var frames := cols * rows
 	var fw := float(texture.get_width()) / float(cols)
 	var fh := float(texture.get_height()) / float(rows)
-	if not is_sheet_texture(texture):
-		var line := "%s is one frame: every particle shows the whole %d x %d image." % [
-			texture.resource_path.get_file(), texture.get_width(), texture.get_height()]
-		if frames > 1:
-			line += " The %d x %d grid would only slice it — Sheet knobs need a *_sheet texture." % [cols, rows]
-		return line
 	if frames <= 1:
 		return "One frame: a particle shows the whole %d x %d px image." % [
 			texture.get_width(), texture.get_height()]
-	return "Sheet %d x %d = %d frames of %.0f x %.0f px: one cell per particle, one cycle per lifetime." % [
+	var line := "Sheet %d x %d = %d frames of %.0f x %.0f px: one cell per particle, one cycle per lifetime." % [
 		cols, rows, frames, fw, fh]
+	# Brief pointer when the grid is slicing a single-frame image: the knobs are
+	# free on purpose, and this is the one case where the result surprises.
+	if not is_sheet_texture(texture):
+		line += " (this image is a single frame — the grid samples it in slices)"
+	return line
 
 ## ── Node construction (shared by placement + properties) ────────────────────
 
@@ -190,13 +198,6 @@ static func values_from_node(node: GPUParticles3D) -> Dictionary:
 		if sm.billboard_mode == BaseMaterial3D.BILLBOARD_PARTICLES:
 			cols = maxi(1, sm.particles_anim_h_frames)
 			rows = maxi(1, sm.particles_anim_v_frames)
-	# Report the grid the plugin will RENDER: on a non-sheet texture the knobs
-	# are inert (apply_values clamps them), so a legacy sliced node shows — and
-	# re-saves as — one whole frame on its first edit.
-	var tex := _draw_texture(node)
-	if not is_sheet_texture(tex):
-		cols = 1
-		rows = 1
 	out["size"] = quad_h
 	out["additive"] = 1.0 if additive else 0.0
 	out["atlas_cols"] = float(cols)
@@ -277,14 +278,6 @@ static func apply_values(node: GPUParticles3D, values: Dictionary, texture: Text
 	var quad_h := clampf(float(values.get("size", 0.5)), 0.05, MAX_QUAD_HEIGHT)
 	var cols := int(clampf(float(values.get("atlas_cols", 1.0)), 1.0, 8.0))
 	var rows := int(clampf(float(values.get("atlas_rows", 1.0)), 1.0, 8.0))
-	# The flipbook grid is only meaningful on a declared sheet: on any other
-	# texture a grid >1x1 samples the single image in slices (every particle a
-	# fragment of the art — "changing rows/cols cuts them"), so it is clamped
-	# away and the emitter shows the whole frame. The exporter reads the same
-	# grid off the material, so editor, viewer and device agree.
-	if not is_sheet_texture(texture):
-		cols = 1
-		rows = 1
 	# The quad shows ONE frame of the sheet, so its width follows the FRAME's
 	# aspect (tex_w/cols : tex_h/rows), not the image's: a 3-column sheet of
 	# square frames is a 3:1 image, and a square quad stretched each frame 3x

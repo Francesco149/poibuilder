@@ -106,8 +106,8 @@ func _build() -> void:
 	#    additive flame + blended upright smoke.
 	var flame_values := PBParticleParams.preset_for_texture("particle_flame")
 	var flame := PBParticleParams.build_node(
-		load("res://addons/poibuilder/materials/textures/particle_flame.png")
-		if ResourceLoader.exists("res://addons/poibuilder/materials/textures/particle_flame.png") else null,
+		load("res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png")
+		if ResourceLoader.exists("res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png") else null,
 		flame_values, "Emitter_Flame")
 	flame.position = Vector3(2, 1.1, 2)
 	root.add_child(flame)

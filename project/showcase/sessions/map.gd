@@ -36,7 +36,7 @@ const TREE_PINE := TEX_DIR + "tree_pine.png"
 const TREE_OAK := TEX_DIR + "tree_oak.png"
 const BUSH := TEX_DIR + "bush_foliage.png"
 const FLOWERS := TEX_DIR + "flower_patch.png"
-const FLAME := TEX_DIR + "particle_flame.png"
+const FLAME := TEX_DIR + "particle_flame_2x2_sheet.png"
 const GLOW := TEX_DIR + "particle_glow.png"
 const SMOKE := TEX_DIR + "particle_smoke.png"
 

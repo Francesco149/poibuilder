@@ -391,7 +391,7 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	# material and draw-pass quad onto the format, so the editor preview and the
 	# PSP playback are the same effect.
 	var brazier := create_emitter("Emitter_Brazier", Vector3(-3.2, 3.05, -4.0),
-		"res://addons/poibuilder/materials/textures/particle_flame.png",
+		"res://addons/poibuilder/materials/textures/particle_flame_2x2_sheet.png",
 		20, 0.8, 0.9, true, true, 2, 2)
 	root.add_child(brazier)
 

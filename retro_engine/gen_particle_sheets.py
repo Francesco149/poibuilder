@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generates the shipped particle SPRITE SHEETS (flipbooks) for PoiBuilder.
 
-The single-frame particle textures (`particle_flame/glow/smoke.png`) are one
-cell; these are the same families laid out as a 4-column sheet, so the emitter
-panel's Sheet Columns/Rows knobs have art that actually is a sheet:
+The single-frame particle textures (`particle_glow.png`, `particle_smoke.png`)
+are one cell; `particle_flame_2x2_sheet.png` is its own 2x2 sheet. These are
+the same families laid out as a 4-column sheet, so the emitter panel's Sheet
+Columns/Rows knobs have art that actually is a sheet:
 
   particle_flame_sheet.png   4 x 64x64 cells: a flame that licks and flickers
   particle_smoke_sheet.png   4 x 64x64 cells: a puff that swells and fades

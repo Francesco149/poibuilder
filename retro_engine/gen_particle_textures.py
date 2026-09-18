@@ -7,7 +7,7 @@ Three textures, one per emitter render mode the format standardises:
                              alpha is 1-bit (so it stays RGBA5551 on the PSP,
                              which halves its memory and keeps it inside the
                              GE's texture cache)
-  particle_flame.png  64x64  2x2 flipbook of 32x32 flame frames, same 1-bit
+  particle_flame_2x2_sheet.png  64x64  2x2 flipbook of 32x32 flame frames, same 1-bit
                              alpha: the cells are the frames a particle walks
                              through over its lifetime
   particle_smoke.png  64x64  soft-edged puff: its alpha is a real gradient, so
@@ -164,7 +164,7 @@ def main():
 
     outputs = {
         "particle_glow.png": gen_glow(),
-        "particle_flame.png": gen_flame_atlas(),
+        "particle_flame_2x2_sheet.png": gen_flame_atlas(),
         "particle_smoke.png": gen_smoke(),
     }
     for name, img in outputs.items():
