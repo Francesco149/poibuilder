@@ -135,7 +135,9 @@ func _build_floor(root: Node) -> void:
 	var err := PBUvOps.unwrap_lightmap_uv2(md, Transform3D.IDENTITY, 0.05)
 	print("floor UV2 unwrap: ", error_string(err), " hint ", md.lightmap_size_hint)
 	floor_mesh.gi_mode = GeometryInstance3D.GI_MODE_STATIC
-	PBSplat.sync_mask_textures(splat_mat)
+	# Headless save: rebuild every material's GPU masks/decals from the CPU
+	# cache or the painted pixels serialize stale.
+	PBSplat.sync_mesh_mask_textures(md)
 
 func _build_wall(root: Node) -> void:
 	var wall := PBMesh.create_cube(1.0)
@@ -174,7 +176,7 @@ func _build_wall(root: Node) -> void:
 	var err := PBUvOps.unwrap_lightmap_uv2(md, Transform3D.IDENTITY, 0.05)
 	print("wall UV2 unwrap: ", error_string(err), " hint ", md.lightmap_size_hint)
 	wall.gi_mode = GeometryInstance3D.GI_MODE_STATIC
-	PBSplat.sync_mask_textures(splat_mat)
+	PBSplat.sync_mesh_mask_textures(md)
 
 func _build_lighting(root: Node) -> void:
 	var sun := DirectionalLight3D.new()

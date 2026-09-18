@@ -1256,6 +1256,18 @@ static func migrate_legacy_stamps(mesh: Node) -> int:
 				sync_mask_textures(mat as ShaderMaterial)
 	return migrated
 
+## Rebuilds every GPU mask/decal texture of a mesh from the CPU cache. Needed
+## before saving a scene from HEADLESS code (builders, bake scripts): an
+## ImageTexture that only saw update() serializes its stale pre-update pixels
+## there, so paint written by a headless builder would be lost. Interactive
+## painting keeps update() — it is the zero-lag per-dab path.
+static func sync_mesh_mask_textures(mesh_data: PBMeshData) -> void:
+	if mesh_data == null:
+		return
+	for mat in mesh_data.materials:
+		if is_splat_material(mat):
+			sync_mask_textures(mat as ShaderMaterial)
+
 ## Export-facing accessor: the full paint state of one face as plain data:
 ## base material params, every enabled splat layer (texture + mask Image) and
 ## the decal layer's composited pixels — exactly the seam a bake/exporter
