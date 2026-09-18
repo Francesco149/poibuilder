@@ -207,6 +207,41 @@ static func is_splat_material(mat: Material) -> bool:
 			return true
 	return false
 
+## Why a face must NOT be painted, or "" when it is paintable.
+##
+## Converting a face to a splat material keeps its albedo texture, colour and
+## roughness — and drops everything else. The one that bites is TRANSPARENCY: a
+## billboard sprite's quad is alpha-scissor art, and the splat shader has no
+## scissor, so painting a sprite turned its silhouette into an opaque rectangle
+## (the sprite "lost its alpha", with only undo to get it back). Transparent
+## surfaces are refused rather than converted: the paint tools are for opaque
+## geometry. Billboard detection comes first so the message names the real
+## cause (a sprite material is transparent AND billboard).
+static func paint_block_reason(mat: Material) -> String:
+	if mat == null or is_splat_material(mat):
+		return ""
+	if mat is StandardMaterial3D:
+		var sm := mat as StandardMaterial3D
+		if sm.billboard_mode != BaseMaterial3D.BILLBOARD_DISABLED:
+			return "billboard sprite"
+		if sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			return "transparent material"
+	return ""
+
+## `paint_block_reason` for one face of a mesh: the material half plus the
+## mesh-level half — a sprite PBMesh is a billboard whatever material it
+## currently wears (the sprite shape's alpha would be lost either way).
+static func face_paint_block_reason(mesh: PBMesh, face_idx: int) -> String:
+	if mesh == null or mesh.pb_mesh_data == null:
+		return ""
+	var data := mesh.pb_mesh_data
+	if data.shape_id == &"sprite" \
+			or (data.shape_params.has("billboard") and float(data.shape_params["billboard"]) > 0.5):
+		return "billboard sprite"
+	if face_idx < 0 or face_idx >= data.faces.size():
+		return ""
+	return paint_block_reason(data.get_face_material(data.faces[face_idx]))
+
 ## Creates a new ShaderMaterial configured for texture splatting.
 ## If `base_mat` is provided, inherits its albedo texture, color, and roughness.
 static func create_splat_material(base_mat: Material = null) -> ShaderMaterial:
@@ -1053,6 +1088,10 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		if first or not face_box.grow(0.0005).intersects(stamp_box):
 			continue
 
+		# A stamp may span faces: the ones that must not take paint (a
+		# billboard's alpha-scissor quad) are skipped here, not converted.
+		if not paint_block_reason(mesh_data.get_face_material(face)).is_empty():
+			continue
 		var mat := ensure_face_owned_material(mesh_data, face)
 		if mat == null:
 			continue

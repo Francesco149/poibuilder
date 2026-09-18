@@ -95,7 +95,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.153"
+const VERSION := "0.9.154"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -3558,6 +3558,13 @@ func _dock_is_shape_mode() -> bool:
 ## The dock tab switched: each mode arms/disarms what lives in the viewport.
 ## (The dock itself only flips UI sections; this is the tool-side mirror.)
 func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
+	# The paint/stamp previews and their "not paintable" readout are cursor
+	# state: leaving those tabs must not leave the line (or a stale preview)
+	# behind for the next session that uses the extents row.
+	if new_mode != PBMaterialDock.DockMode.PAINT and new_mode != PBMaterialDock.DockMode.STAMP:
+		if paint_controller != null:
+			paint_controller.clear_cursor()
+		_sync_paint_block_hint()
 	match new_mode:
 		PBMaterialDock.DockMode.SPRITE:
 			_start_sprite_tool()
@@ -4104,10 +4111,12 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		var hit := _pick_paint_surface(camera, event.position)
 		if not hit.is_empty():
 			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
+			_sync_paint_block_hint()
 			if paint_controller.is_stroke_active:
 				paint_controller.apply_paint_stroke()
 		else:
 			paint_controller.clear_cursor()
+			_sync_paint_block_hint()
 
 		if paint_controller.is_stroke_active:
 			return AFTER_GUI_INPUT_STOP
@@ -4123,6 +4132,7 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 				var hit := _pick_paint_surface(camera, event.position)
 				if not hit.is_empty():
 					paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
+				_sync_paint_block_hint()
 				if paint_controller.mode == PBPaintController.Mode.PAINT:
 					paint_controller.begin_stroke()
 					return AFTER_GUI_INPUT_STOP
@@ -4137,10 +4147,24 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE:
 			paint_controller.reset()
+			_sync_paint_block_hint()
 			if material_dock != null:
 				material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
+
+## The overlay's extents row carries the "why nothing is happening" line while
+## the brush hovers a surface the paint tools refuse (a billboard sprite's
+## transparent quad): a click that silently does nothing is the bug report this
+## whole guard exists to prevent.
+func _sync_paint_block_hint() -> void:
+	if tool_overlay == null or paint_controller == null:
+		return
+	if paint_controller.blocked_reason.is_empty():
+		tool_overlay.set_creation_extents("")
+		return
+	tool_overlay.set_creation_extents("Not paintable: %s — painting would drop its alpha"
+		% paint_controller.blocked_reason)
 
 func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)

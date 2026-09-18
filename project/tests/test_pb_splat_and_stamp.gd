@@ -1396,3 +1396,167 @@ func test_splat_material_assignment_triggers_splat_uv_generation() -> void:
 	var uv: Vector2 = cube.splat_uvs[0]
 	assert_true(uv.x >= 0.0 and uv.x <= 1.0 and uv.y >= 0.0 and uv.y <= 1.0,
 			"Generated mask coordinates must be normalized face-planar ones")
+
+# ==============================================================================
+# Transparency guard: transparent geometry (billboards) is not paintable
+# ==============================================================================
+
+## The mesh the sprite placer places: a standing quad in a PBMesh whose
+## material is the placer's alpha-scissor billboard material.
+func _billboard_mesh() -> PBMesh:
+	var mesh := PBMesh.new()
+	var md := PBShapeGenerators.create_sprite(2.0, 1.0)
+	var mat := PBSpritePlacer.create_billboard_material(
+			ImageTexture.create_from_image(_solid_image(Color(1, 1, 1, 1))), false, true)
+	md.materials = [mat]
+	mesh.pb_mesh_data = md
+	mesh.pb_mesh_data.shape_id = &"sprite"
+	add_child_autofree(mesh)
+	return mesh
+
+func test_transparent_surfaces_report_why_they_are_unpaintable() -> void:
+	var bb := _billboard_mesh()
+	assert_eq(PBSplat.face_paint_block_reason(bb, 0), "billboard sprite",
+			"A sprite face is refused as a billboard")
+
+	# A transparent (non-billboard) material is refused too: the splat shader
+	# has no alpha mode, so painting it would turn it opaque.
+	var glass := PBMesh.create_cube(2.0)
+	add_child_autofree(glass)
+	var glass_mat := StandardMaterial3D.new()
+	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glass.pb_mesh_data.set_face_material(glass.pb_mesh_data.faces[4], glass_mat)
+	assert_eq(PBSplat.face_paint_block_reason(glass, 4), "transparent material")
+
+	# Opaque geometry stays paintable — the guard must not over-block.
+	var solid := PBMesh.create_cube(2.0)
+	add_child_autofree(solid)
+	assert_eq(PBSplat.face_paint_block_reason(solid, 4), "",
+			"An opaque face is paintable")
+	# …and an already-splat-painted face is too (painting over your own paint).
+	solid.pb_mesh_data.set_face_material(solid.pb_mesh_data.faces[4], PBSplat.create_splat_material())
+	assert_eq(PBSplat.face_paint_block_reason(solid, 4), "")
+
+## The end the user saw: painting a sprite replaced its material with a splat
+## shader — the alpha-scissor flag lived on the material that was thrown away,
+## so the sprite turned into an opaque rectangle. The tools refuse instead.
+func test_paint_and_stamp_leave_a_billboard_untouched() -> void:
+	var bb := _billboard_mesh()
+	var face := bb.pb_mesh_data.faces[0]
+	var before_mat := bb.pb_mesh_data.get_face_material(face)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.brush_radius = 0.5
+	ctrl.update_cursor(Vector3(0, 0.5, 0), Vector3.FORWARD, bb, 0)
+	assert_false(ctrl.paintable, "Hovering a billboard reports the refused state")
+	assert_eq(ctrl.blocked_reason, "billboard sprite")
+	ctrl.begin_stroke()
+	assert_false(ctrl.is_stroke_active, "A refused face starts no stroke")
+	ctrl.end_stroke()
+	assert_eq(bb.pb_mesh_data.get_face_material(face), before_mat,
+			"A decal stroke must leave the billboard's material alone")
+
+	# The stamp path is the same contract.
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_texture = ImageTexture.create_from_image(_solid_image(Color(1, 0, 0, 1)))
+	ctrl.stamp_scale = 1.0
+	ctrl.update_cursor(Vector3(0, 0.5, 0), Vector3.FORWARD, bb, 0)
+	ctrl.apply_stamp()
+	assert_eq(bb.pb_mesh_data.get_face_material(face), before_mat,
+			"A stamp must not overwrite a billboard's material")
+
+	# …and so is a splat stroke.
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.SPLAT
+	ctrl.paint_texture = ImageTexture.create_from_image(_solid_image(Color(0, 0, 1, 1)))
+	ctrl.update_cursor(Vector3(0, 0.5, 0), Vector3.FORWARD, bb, 0)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+	assert_eq(bb.pb_mesh_data.get_face_material(face), before_mat,
+			"A splat stroke must not overwrite a billboard's material")
+	for m in bb.pb_mesh_data.materials:
+		assert_false(PBSplat.is_splat_material(m), "No splat material may appear on a billboard")
+
+	# Positive control: the very same gesture DOES paint an opaque face.
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.brush_color = Color(0.1, 0.9, 0.2, 1.0)
+	ctrl.brush_source = PBPaintController.BrushSource.COLOR
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
+	assert_true(ctrl.paintable, "An opaque face is paintable")
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+	assert_true(PBSplat.is_splat_material(cube.pb_mesh_data.get_face_material(cube.pb_mesh_data.faces[4])),
+			"An opaque face still converts to a splat material when painted")
+
+# ==============================================================================
+# Stamp preview: the quad follows the SELECTED image, not the previous one
+# ==============================================================================
+
+func test_stamp_preview_quad_follows_a_texture_switch() -> void:
+	var host := Node3D.new()
+	add_child_autofree(host)
+	var ctrl := PBPaintController.new()
+	ctrl.setup_previews(host)
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_scale = 2.0
+
+	# A 2:1 banner previews 2:1…
+	var banner := ImageTexture.create_from_image(Image.create(256, 128, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_texture = banner
+	var quad := ctrl.stamp_mesh_instance.mesh as QuadMesh
+	assert_almost_eq(quad.size.x, 2.0, 0.001, "Banner preview is stamp_scale wide")
+	assert_almost_eq(quad.size.y, 1.0, 0.001, "Banner preview height follows the image aspect")
+
+	# …and switching to a square sticker RESIZES the quad. It used to keep the
+	# banner's ratio until a spinbox nudge (the "square sticker comes out
+	# stretched to hello world's aspect" report).
+	var square := ImageTexture.create_from_image(Image.create(64, 64, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_texture = square
+	quad = ctrl.stamp_mesh_instance.mesh as QuadMesh
+	assert_almost_eq(quad.size.x, 2.0, 0.001, "Square preview keeps stamp_scale as its width")
+	assert_almost_eq(quad.size.y, 2.0, 0.001, "Square preview must be square, not the old banner ratio")
+
+	# Switching back restores the banner ratio (no sticky state either way).
+	ctrl.stamp_texture = banner
+	quad = ctrl.stamp_mesh_instance.mesh as QuadMesh
+	assert_almost_eq(quad.size.y, 1.0, 0.001, "Banner ratio comes back on re-selection")
+
+# ==============================================================================
+# Paint panel contract: source default + only where it applies
+# ==============================================================================
+
+func test_paint_defaults_to_the_palette_image_source() -> void:
+	var ctrl := PBPaintController.new()
+	assert_eq(ctrl.paint_target, PBPaintController.PaintTarget.SPLAT,
+			"Splat layers stays the default paint target")
+	assert_eq(ctrl.brush_source, PBPaintController.BrushSource.IMAGE,
+			"The decal brush defaults to the palette image, not a flat colour")
+
+func test_dock_disables_the_brush_source_where_it_does_not_apply() -> void:
+	var dock := PBMaterialDock.new()
+	add_child_autofree(dock)
+	var ctrl := PBPaintController.new()
+	dock.set_paint_controller(ctrl)
+	dock._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+
+	# Painting defaults to Splat layers, where the brush paints the palette
+	# texture by definition: the source/colour pickers are disabled rather than
+	# silently ignored (that is what made the panel look like it did nothing).
+	assert_eq(ctrl.paint_target, PBPaintController.PaintTarget.SPLAT)
+	assert_true(dock._opt_brush_source.disabled, "Brush source is disabled for Splat layers")
+	assert_true(dock._btn_brush_color.disabled, "Colour picker is disabled for Splat layers")
+	assert_eq(dock._opt_brush_source.selected, int(PBPaintController.BrushSource.IMAGE),
+			"The disabled row still shows the palette-image default")
+
+	# Decal layer is where the source applies.
+	dock._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.DECAL)
+	assert_eq(ctrl.paint_target, PBPaintController.PaintTarget.DECAL)
+	assert_false(dock._opt_brush_source.disabled, "Brush source is live for the decal layer")
+	assert_false(dock._btn_brush_color.disabled, "Colour picker is live for the decal layer")
+
+	# …and switching the target takes it away again.
+	dock._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.SPLAT)
+	assert_true(dock._opt_brush_source.disabled, "Brush source disables again on Splat layers")

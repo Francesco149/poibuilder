@@ -28,6 +28,8 @@ The decal layer is paintable on its own, and it is the same layer stamps land in
 - **Erase** rubs either back out, including parts of a stamp.
 - Radius, softness and opacity behave as they do for splatting; the Stamp tab's *Open Decal Brush* button jumps straight to these controls.
 
+> [note] The **Brush** row belongs to the decal layer: **Paint into → Splat layers** always paints the selected palette texture into a layer's mask, so the row is disabled (and says so) while that target is chosen. **Palette image** is the default source.
+
 **Clear Layer** (paint panel) clears the decal layer whenever the brush is pointed at Decal; **Clear Decal Layer** (stamp panel) wipes all of it at once. Every one of those actions is undoable.
 
 Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern_glb_splat.html).

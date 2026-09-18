@@ -195,6 +195,8 @@ func _on_paint_controller_changed() -> void:
 ## true forever — and every control in the panel checks that guard, so the whole
 ## paint panel went silently dead while looking connected.
 func _refresh_paint_widgets() -> void:
+	if paint_controller == null:
+		return
 	if _spin_brush_radius != null:
 		_spin_brush_radius.value = paint_controller.brush_radius
 	if _spin_brush_softness != null:
@@ -212,10 +214,19 @@ func _refresh_paint_widgets() -> void:
 			layer_spin.read_only = paint_controller.paint_target != PBPaintController.PaintTarget.SPLAT
 	if _opt_paint_target != null:
 		_opt_paint_target.selected = int(paint_controller.paint_target)
+	# The splat brush writes the palette texture into a layer's mask by
+	# definition; the source/colour pickers only drive the DECAL brush. They are
+	# disabled (with a tooltip saying why) while "Paint into" is Splat layers —
+	# a control that silently does nothing is what made the panel look dead.
+	var decal_brush := paint_controller.paint_target == PBPaintController.PaintTarget.DECAL
 	if _opt_brush_source != null:
 		_opt_brush_source.selected = int(paint_controller.brush_source)
+		_opt_brush_source.disabled = not decal_brush
+		_opt_brush_source.tooltip_text = "What the decal brush paints: a flat colour (with the picker below) or the palette image's pixels." \
+				if decal_brush else "Splat layers always paint the palette texture. Switch \"Paint into\" to Decal layer to paint a flat colour or dab the palette image as pixels."
 	if _btn_brush_color != null:
 		_btn_brush_color.color = paint_controller.brush_color
+		_btn_brush_color.disabled = not decal_brush
 	if _spin_stamp_scale != null:
 		_spin_stamp_scale.value = paint_controller.stamp_scale
 	if _spin_stamp_rotation != null:
@@ -663,7 +674,7 @@ func _build_ui() -> void:
 	_paint_tool_section.add_child(paint_action_row)
 
 	var paint_hint := Label.new()
-	paint_hint.text = "LMB drag in the viewport to paint. Target 'Decal layer' paints into the same pixels stamps paste into: the brush colour (or the palette image), Erase fades them back out."
+	paint_hint.text = "LMB drag in the viewport to paint. 'Splat layers' blends the selected palette texture into a layer's mask (the source picker above does not apply there). 'Decal layer' paints pixels 1:1 with the surface — the palette image, or a flat colour with the picker; Erase rubs either back out."
 	_lbl_brush_source_hint = paint_hint
 	paint_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	paint_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -930,6 +941,11 @@ func _build_ui() -> void:
 	_context_menu = PopupMenu.new()
 	_context_menu.id_pressed.connect(_on_context_menu_id_pressed)
 	add_child(_context_menu)
+
+	# The paint panel's widgets open in the controller's state (the brush
+	# source row starts disabled: Splat layers is the default target and it
+	# always paints the palette texture).
+	_refresh_paint_widgets()
 
 # ==============================================================================
 # Mode Management

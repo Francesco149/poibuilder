@@ -109,6 +109,13 @@ var stamp_texture: Texture2D = null:
 		stamp_texture = v
 		_cached_stamp_image = null
 		_update_stamp_preview_texture()
+		# The quad's SIZE follows the image's aspect ratio, so a texture switch
+		# must rebuild it: only the material was updated before, and the preview
+		# kept the previous image's proportions (a square sticker previewed
+		# stretched into the hello-world banner's 2:1 until a spinbox nudge).
+		# Built directly, not through _update_preview_mesh, which is gated on
+		# the current mode.
+		_build_stamp_mesh()
 		stamp_changed.emit()
 ## Width of the pasted decal in metres; the height follows the image's aspect.
 var stamp_scale: float = 1.0:
@@ -130,8 +137,12 @@ var stamp_opacity: float = 1.0:
 ## What the decal brush writes: a solid brush colour, or the palette image.
 enum BrushSource { COLOR, IMAGE }
 
-## Source the decal brush paints with (see BrushSource).
-var brush_source: BrushSource = BrushSource.COLOR:
+## Source the decal brush paints with (see BrushSource). Palette image is the
+## default: the panel's paint work is painting textures, and a "Color" default
+## read as a promise the splat target never made (splat layers always paint the
+## palette texture — the dock disables this picker there rather than ignoring
+## it silently).
+var brush_source: BrushSource = BrushSource.IMAGE:
 	set(v):
 		brush_source = v
 		brush_changed.emit()
@@ -152,6 +163,11 @@ var cursor_point: Vector3 = Vector3.ZERO
 var cursor_normal: Vector3 = Vector3.UP
 var target_mesh: PBMesh = null
 var target_face_idx: int = -1
+## False while the cursor is over a surface the paint tools refuse (a billboard
+## sprite's transparent quad — converting it to a splat material would drop its
+## alpha). `blocked_reason` is the human-readable cause for the overlay.
+var paintable: bool = true
+var blocked_reason: String = ""
 
 # Stroke tracking for Paint mode
 var is_stroke_active: bool = false
@@ -208,6 +224,8 @@ func reset() -> void:
 	target_mesh = null
 	target_face_idx = -1
 	has_hit = false
+	paintable = true
+	blocked_reason = ""
 	_update_preview_visibility()
 	mode_changed.emit(mode)
 
@@ -288,7 +306,11 @@ func _update_preview_mesh() -> void:
 func _update_preview_material() -> void:
 	if brush_mesh_instance != null and brush_mesh_instance.material_override != null:
 		var mat := brush_mesh_instance.material_override as StandardMaterial3D
-		if erase_mode:
+		if not paintable:
+			# Refused surface: the ring goes grey so "nothing here takes paint"
+			# reads at a glance instead of the click silently doing nothing.
+			mat.albedo_color = Color(0.55, 0.55, 0.62, 0.9)
+		elif erase_mode:
 			mat.albedo_color = Color(1.0, 0.35, 0.3, 0.9) # Reddish for erase
 		elif paint_target == PaintTarget.DECAL and brush_source == BrushSource.COLOR:
 			# The ring wears the colour it paints.
@@ -370,6 +392,14 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 	target_mesh = mesh_node
 	target_face_idx = face_idx
 
+	# Refused surfaces (a billboard's alpha-scissor quad) keep the hit so the
+	# tools can say WHY nothing happens; they never convert the material.
+	var reason := PBSplat.face_paint_block_reason(mesh_node, face_idx)
+	paintable = reason.is_empty()
+	if reason != blocked_reason:
+		blocked_reason = reason
+		_update_preview_material()
+
 	if preview_root == null or not is_instance_valid(preview_root):
 		return
 
@@ -397,7 +427,8 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 		var rot_up := -sin(rot_rad) * u_right + cos(rot_rad) * v_up
 		var xf := Transform3D(Basis(rot_right, rot_up, n_axis), offset_point)
 		stamp_mesh_instance.global_transform = xf
-		stamp_mesh_instance.visible = true
+		# A paste that cannot happen gets no preview quad.
+		stamp_mesh_instance.visible = paintable
 		if brush_mesh_instance != null:
 			brush_mesh_instance.visible = false
 
@@ -405,6 +436,8 @@ func clear_cursor() -> void:
 	has_hit = false
 	target_mesh = null
 	target_face_idx = -1
+	paintable = true
+	blocked_reason = ""
 	_update_preview_visibility()
 
 ## The mesh's own scale as "world metres per local metre" (1.0 for the usual
@@ -447,6 +480,10 @@ func _register_stroke_mesh(mesh: PBMesh) -> void:
 func begin_stroke() -> void:
 	if mode != Mode.PAINT or target_mesh == null or target_mesh.pb_mesh_data == null:
 		return
+	if not paintable:
+		# The splat conversion would drop this face's transparency; the ring is
+		# already grey and the overlay names the reason.
+		return
 	is_stroke_active = true
 	stroke_dirty = false
 	_stroke_meshes.clear()
@@ -458,7 +495,7 @@ func begin_stroke() -> void:
 	apply_paint_stroke()
 
 func apply_paint_stroke() -> void:
-	if not is_stroke_active or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
+	if not is_stroke_active or not paintable or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
 		return
 
 	_register_stroke_mesh(target_mesh)
@@ -545,6 +582,8 @@ func end_stroke() -> void:
 
 func apply_stamp() -> void:
 	if mode != Mode.STAMP or target_mesh == null or not is_instance_valid(target_mesh) or not has_hit:
+		return
+	if not paintable:
 		return
 	if stamp_texture == null:
 		return

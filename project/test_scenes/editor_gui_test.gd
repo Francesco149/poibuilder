@@ -2153,6 +2153,152 @@ func _run() -> void:
 			else:
 				_fail("BEVEL-EDGE-APPLY: could not select an edge (bevel disabled or no edge selected)")
 
+	# ── PAINT-SOURCE: the brush source default + where it applies ────────────
+	# Reported: the Paint tab's "Brush:" row read "Color" while the brush
+	# always painted the palette texture (Splat layers ignores the source by
+	# definition), and switching the row did nothing. The default is now
+	# Palette image and the row is disabled — with a tooltip saying why —
+	# wherever it does not apply.
+	var dock_ps: PBMaterialDock = plugin.material_dock
+	var pc_ps: PBPaintController = plugin.paint_controller
+	if dock_ps != null and pc_ps != null:
+		dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+		await _frames(6)
+		# Splat layers (the default target): the source picker does not apply
+		# and is disabled rather than silently ignored.
+		dock_ps._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.SPLAT)
+		await _frames(4)
+		if dock_ps._opt_brush_source.disabled and dock_ps._btn_brush_color.disabled:
+			_pass("PAINT-SOURCE: source/colour pickers are disabled for Splat layers")
+		else:
+			_fail("PAINT-SOURCE: pickers live on Splat layers (source_disabled=%s colour_disabled=%s)" % [
+				str(dock_ps._opt_brush_source.disabled), str(dock_ps._btn_brush_color.disabled)])
+		if dock_ps._opt_brush_source.selected == int(pc_ps.brush_source):
+			_pass("PAINT-SOURCE: the row mirrors the controller's source (%d)" % pc_ps.brush_source)
+		else:
+			_fail("PAINT-SOURCE: row shows %d, controller is %d"
+				% [dock_ps._opt_brush_source.selected, pc_ps.brush_source])
+		dock_ps._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.DECAL)
+		await _frames(4)
+		if not dock_ps._opt_brush_source.disabled and not dock_ps._btn_brush_color.disabled:
+			_pass("PAINT-SOURCE: Decal layer enables the source and colour pickers")
+		else:
+			_fail("PAINT-SOURCE: the pickers stayed disabled on the decal layer")
+		dock_ps._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.SPLAT)
+		await _frames(4)
+
+	# ── STAMP-PREVIEW: a palette click resizes the preview to the new image ──
+	# Reported: the hello-world sticker previewed squashed until a spinbox
+	# nudge, and a square sticker then previewed stretched to hello world's
+	# 2:1. The quad is built from the SELECTED image and must follow a switch.
+	if dock_ps != null and pc_ps != null:
+		dock_ps._set_dock_mode(PBMaterialDock.DockMode.STAMP)
+		await _frames(6)
+		var hello_mat := _palette_material(dock_ps, "stamp_hello_world.png")
+		var square_mat := _palette_material(dock_ps, "circular_square_pattern.png")
+		if hello_mat == null or square_mat == null:
+			_fail("STAMP-PREVIEW: palette fixtures missing (hello/squares)")
+		else:
+			pc_ps.stamp_scale = 2.0
+			dock_ps._select_stamp_material(hello_mat)
+			await _frames(4)
+			var q1 := (pc_ps.stamp_mesh_instance.mesh as QuadMesh) \
+					if pc_ps.stamp_mesh_instance != null else null
+			if q1 != null and absf(q1.size.x - 2.0) < 0.01 and absf(q1.size.y - 1.0) < 0.02:
+				_pass("STAMP-PREVIEW: the hello-world sticker previews 2:1 on selection (%s)" % q1.size)
+			else:
+				_fail("STAMP-PREVIEW: hello world previewed %s, expected 2.0 x 1.0"
+					% (q1.size if q1 != null else Vector2.ZERO))
+			dock_ps._select_stamp_material(square_mat)
+			await _frames(4)
+			var q2 := (pc_ps.stamp_mesh_instance.mesh as QuadMesh) \
+					if pc_ps.stamp_mesh_instance != null else null
+			if q2 != null and absf(q2.size.x - 2.0) < 0.01 and absf(q2.size.y - 2.0) < 0.02:
+				_pass("STAMP-PREVIEW: the square sticker previews square after the switch (%s)" % q2.size)
+			else:
+				_fail("STAMP-PREVIEW: the square sticker kept the previous ratio: %s"
+					% (q2.size if q2 != null else Vector2.ZERO))
+
+	# ── BILLBOARD-PAINT: a sprite refuses paint (its alpha survives) ─────────
+	# A sprite's quad is alpha-scissor art and the splat conversion drops the
+	# scissor, so painting one turned it into an opaque rectangle. The tools
+	# refuse the face, the overlay names the reason, and the material is left
+	# exactly as it was.
+	var sprite := PBMesh.new()
+	var sprite_md := PBShapeGenerators.create_sprite(2.0, 1.0)
+	sprite_md.materials = [PBSpritePlacer.create_billboard_material(
+			load("res://addons/poibuilder/materials/textures/tree_oak.png"), false, true)]
+	sprite.pb_mesh_data = sprite_md
+	sprite.pb_mesh_data.shape_id = &"sprite"
+	sprite.name = "GuiTestSprite"
+	root.add_child(sprite)
+	sprite.owner = root
+	# Square in front of the CURRENT camera, on its axis: the quad's centre
+	# projects to the middle of the viewport whatever the view has become
+	# (earlier sections zoom/scroll — fixed world coordinates landed the
+	# cursor 2000 px below the window and the hover never happened).
+	var cam3: Camera3D = vp.get_camera_3d()
+	var cam_xf := cam3.global_transform
+	# Aim at a point that is inside the editor WINDOW: under Xvfb the 3D
+	# viewport Control can be taller than the window, and "the middle of the
+	# viewport" then maps below the visible area (the synthesized mouse event
+	# never reaches the viewport). The aim point is inverted through the camera
+	# so the sprite sits exactly under it.
+	var aim_local := Vector2(float(vp.size.x) * 0.5, minf(140.0, float(vp.size.y) * 0.2))
+	var sprite_center: Vector3 = cam3.project_position(aim_local, 3.0)
+	sprite.global_transform = Transform3D(cam_xf.basis, sprite_center - cam_xf.basis.y * 0.5)
+	sprite.rebuild()
+	await _frames(10)
+	plugin.editor.active_mesh = sprite
+	await _frames(6)
+	var sprite_mat_before: Material = sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0])
+	var sprite_pt := _window_pos(vp, host, sprite_center)
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+	await _frames(6)
+	_mouse_motion(sprite_pt)
+	await _frames(6)
+	if not pc_ps.paintable and pc_ps.blocked_reason == "billboard sprite":
+		_pass("BILLBOARD-PAINT: hovering a sprite reports it unpaintable (%s)" % pc_ps.blocked_reason)
+	else:
+		var probe: Dictionary = plugin._pick_paint_surface(cam3, sprite_pt)
+		_fail("BILLBOARD-PAINT: paintable=%s reason='%s' pt=%s pick=%s" % [
+			str(pc_ps.paintable), pc_ps.blocked_reason, str(sprite_pt), str(probe.get("mesh", null))])
+	if plugin.tool_overlay != null and plugin.tool_overlay.has_creation_extents() \
+			and plugin.tool_overlay._extents_label.text.contains("Not paintable"):
+		_pass("BILLBOARD-PAINT: the overlay says why (%s)" % plugin.tool_overlay._extents_label.text)
+	else:
+		_fail("BILLBOARD-PAINT: no overlay line explaining the refusal")
+	_mouse_button(sprite_pt, true)
+	await _frames(6)
+	_mouse_button(sprite_pt, false)
+	await _frames(6)
+	if sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0]) == sprite_mat_before \
+			and sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0]) is StandardMaterial3D \
+			and (sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0]) as StandardMaterial3D).transparency \
+				== BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR \
+			and not pc_ps.is_stroke_active:
+		_pass("BILLBOARD-PAINT: a brush click paints nothing and keeps the alpha scissor")
+	else:
+		_fail("BILLBOARD-PAINT: the sprite material was converted by a paint click (%s)"
+			% sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0]))
+	# The stamp path over the same sprite: nothing pasted either.
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.STAMP)
+	await _frames(6)
+	_mouse_motion(sprite_pt)
+	await _frames(4)
+	_mouse_button(sprite_pt, true)
+	await _frames(6)
+	_mouse_button(sprite_pt, false)
+	await _frames(6)
+	if sprite.pb_mesh_data.get_face_material(sprite.pb_mesh_data.faces[0]) == sprite_mat_before:
+		_pass("BILLBOARD-PAINT: a stamp click leaves the sprite material alone")
+	else:
+		_fail("BILLBOARD-PAINT: the stamp converted the sprite material")
+	plugin.editor.active_mesh = null
+	sprite.queue_free()
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+	await _frames(6)
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
@@ -2161,6 +2307,17 @@ func _run() -> void:
 		print("[GUI TEST] Interactive mode: Leaving editor open for interactive play/inspection. Close window to exit.")
 	else:
 		get_tree().quit(_failures)
+
+## The palette material wrapping a given texture file (the card the user
+## clicks). The dock hands these to the tool selectors.
+static func _palette_material(dock: PBMaterialDock, file_name: String) -> Material:
+	if dock == null:
+		return null
+	for mat in dock._project_materials:
+		if mat != null and mat.has_meta("source_texture_path") \
+				and str(mat.get_meta("source_texture_path")).get_file() == file_name:
+			return mat
+	return null
 
 func _press_key(keycode: Key) -> void:
 	var ev := InputEventKey.new()
