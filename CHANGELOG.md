@@ -3,6 +3,46 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.160 — the GLB flavors say what they are; the docs say which one to ship
+
+### The export dialog steers GLB users to the modern optimized bake
+
+The modern `.glb` export has had a baked-splat path since v0.9.151
+(`Modern paint: Bake into textures`, compositing splat layers AND the decal
+channel into per-face textures), and the frame-pacing benchmark's modern
+variant was already measured with it (`splat_mode = BAKE`,
+`bake_lighting = false` in `export_bench_variants`). The dialog now makes
+that path the obvious default instead of a hidden knob:
+
+- The format list reorders to **PBM (default) → GLB — Modern Bake
+  (lightmap-ready) → GLB — Retro Baked Map (vertex-lit)**: the modern bake
+  is the first GLB flavor, and PBM stays the overall default.
+- Every format switch re-parks the paint mode on **Bake into textures**, so
+  selecting the modern GLB always lands on the optimized bake (paint baked,
+  lighting left to realtime lights / LightmapGI — the retro flavors keep
+  baking vertex light and keep the paint switch disabled).
+- Each format entry carries a tooltip naming exactly what it produces.
+- The old "(live materials)" label is gone — with the bake as the default it
+  described only the INCLUDE minority path.
+
+Test: `test_export_dialog_defaults_to_pbm` now pins the new order, the
+modern-bake defaults, and the INCLUDE reset.
+
+### The docs say it outright: ship the baked map
+
+The performance page gained a "Which one do you ship?" section and the FAQ,
+first-minutes, walkthrough and export pages now all state the same rule:
+the PoiBuilder scene as-is is the authoring format — building, testing,
+iterating — and it renders ~2.3× the baked GLB's frame time on the
+benchmark baseline. When you want to play or share the map, export it
+(modern GLB or PBM) and play the baked result.
+
+### The addon zip carries the license
+
+`LICENSE` (MIT) now lives in `addons/poibuilder/` next to `plugin.cfg`, so
+the nightly zip (and any manual copy of the folder) ships the license text
+with the code.
+
 ## v0.9.159 — the alpha docs sweep: demo map, frame-pacing benchmark, known issues
 
 The alpha-release documentation round. The website gained the two things it
