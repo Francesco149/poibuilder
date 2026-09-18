@@ -395,3 +395,47 @@ func test_placed_sprite_casts_shadows_with_cutout_material() -> void:
 	var mat := node.pb_mesh_data.materials[0] as StandardMaterial3D
 	assert_eq(mat.transparency, BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR,
 		"Sprite material must be alpha-scissor so the shadow pass renders it")
+
+## The second sprite used to be created under the same "Billboard_Sprite" name
+## and Godot deduplicated the collision with its non-human-readable form
+## ("@MeshInstance3D@7"): the node no longer read as a billboard in the scene
+## tree, and the exporter's name-prefix billboard rule keys on sprite/billboard
+## /tree. The emitter placer has always named its nodes uniquely; this is the
+## same rule for sprites.
+func test_placed_sprites_get_unique_names() -> void:
+	var placed: Array[PBMesh] = []
+	for i in range(2):
+		var placer := PBSpritePlacer.new()
+		placer.scene_root_override = _root
+		placer.refresh_available_textures()
+		placer.last_texture = placer.available_textures[0]
+		placer.sprite_placed.connect(func(n: PBMesh): placed.append(n))
+		placer.arm()
+		var hit := {"point": Vector3(float(i), 0, 0), "normal": Vector3.UP}
+
+		# Press + release: a clean click creates the sprite and enters RAISE.
+		for is_press in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = is_press
+			ev.position = Vector2(400, 300)
+			placer.handle_input(_camera, ev, hit, _host)
+		assert_eq(placer.state, PBSpritePlacer.State.RAISE, "Fixture: sprite spawned")
+		assert_eq(placer.preview_node.name, "Billboard_Sprite2" if i == 1 else "Billboard_Sprite",
+				"The PREVIEW already carries the unique name")
+
+		# Lock the elevation, then confirm the scale: the placement lands.
+		for step in range(2):
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = true
+			ev.position = Vector2(400, 300)
+			placer.handle_input(_camera, ev, hit, _host)
+
+	assert_eq(placed.size(), 2, "Fixture: both sprites landed")
+	assert_eq(placed[0].name, "Billboard_Sprite", "The first sprite keeps the plain name")
+	assert_eq(placed[1].name, "Billboard_Sprite2",
+			"The second sprite gets its own name, not Godot's @Class@id dedup")
+	for n in placed:
+		assert_false(String(n.name).begins_with("@"), "Placed sprites never carry auto-generated names")
+		assert_eq(n.get_parent(), _root)

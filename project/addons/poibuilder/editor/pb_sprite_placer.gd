@@ -466,6 +466,23 @@ func _start_raise_phase(camera: Camera3D) -> void:
 	_update_raise_transform(camera)
 	state_changed.emit(state)
 
+## Unique scene-tree name for a placed billboard: Billboard_Sprite, then
+## Billboard_Sprite2, Billboard_Sprite3… The second sprite used to be added
+## under the same name, and Godot dedups a colliding child name with its
+## non-human-readable form — "@MeshInstance3D@7" — which stops reading as a
+## billboard at all (the sprite placer's sibling emitter placer has named its
+## nodes uniquely since it was written; this is the same rule).
+func _sprite_name(scene_root: Node) -> String:
+	var base := "Billboard_Sprite"
+	if scene_root == null:
+		return base
+	if scene_root.get_node_or_null(NodePath(base)) == null:
+		return base
+	var i := 2
+	while scene_root.get_node_or_null(NodePath("%s%d" % [base, i])) != null:
+		i += 1
+	return "%s%d" % [base, i]
+
 func _spawn_preview_node() -> void:
 	if preview_node != null and is_instance_valid(preview_node):
 		if preview_node.get_parent() != null:
@@ -479,7 +496,7 @@ func _spawn_preview_node() -> void:
 		scene_root = plugin.get_editor_interface().get_edited_scene_root()
 
 	preview_node = PBMesh.new()
-	preview_node.name = "Billboard_Sprite"
+	preview_node.name = _sprite_name(scene_root)
 
 	# Calculate proportional dimensions from texture aspect ratio
 	var dims := compute_texture_dimensions(selected_texture, 1.5)
