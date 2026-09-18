@@ -18,7 +18,7 @@ Dedicated 2D UV canvas with bidirectional live sync.
 - Pan, zoom, a unit quad, optional texture underlay and tiling.
 - Wireframe of the islands.
 - Element modes on the UV toolbar: Vertex / Edge / Face / Island.
-- Channels UV1 / UV2.
+- Channels UV1 / UV2 / Splat masks.
 - Snap toggle + step.
 - Frame Selection / Frame Unit Quad.
 
@@ -46,22 +46,21 @@ Both directions:
 
 Texture mode ([[kbd:6]]) is the 3D-side equivalent for quick rotates without opening the panel.
 
-## UV2 — the splat debug view
+## Splat masks — the paint debug view
 
-The second channel is not a second unwrap. The texture splatting system owns UV2: every face's splat masks are authored in face-planar coordinates, normalized so each face fills the whole 0–1 square. The UV2 view draws that square for the selected face's material — the base texture with every painted layer and stamp composited on top.
+The third channel is not a UV channel at all. Splat masks are authored in face-planar coordinates, normalized so each face fills the whole 0–1 square, and they travel in their own vertex channel (CUSTOM0) — never in UV2. The mask view draws that square for the selected face's material: the base texture with every painted layer and decal composited on top.
 
-That explains the odd look on elongated faces: a splat in the middle of a long wall shows as a centered blot in a square, because the square *is* the face's splat bounding area. The status line shows its real-world size (e.g. `Splat area 4.00 × 0.50 m`) so you can read the true proportions.
+That explains the odd look on elongated faces: a splat in the middle of a long wall shows as a centered blot in a square, because the square *is* the face's paint area. The status line shows its real-world size (e.g. `Splat area 4.00 × 0.50 m`) so you can read the true proportions.
 
-> [gotcha] UV2 is **read-only** here, by design. Selection works so you can inspect paint; the transform, projection, seam and texel tools go inert while UV2 is up. Splat paint is edited by painting in the viewport — see [Painting](paint.html) — never by dragging UVs.
+> [gotcha] The mask view is **read-only**, by design. Selection works so you can inspect paint; the transform, projection, seam and texel tools go inert here. Splat paint and decals are edited by painting in the viewport — see [Painting](paint.html) — never by dragging UVs.
 
 ### UV2 and lightmaps
 
-Godot's LightmapGI bakes with UV2, so which channel owns it matters:
+UV2 belongs to *you*: the splat system never writes it, whatever is painted on the mesh.
 
-- **No splat paint on the mesh** — UV2 is yours. Unwrap it (or import a lightmap set from a DCC) and rebuilds leave it untouched.
-- **Splat-painted mesh** — the splat system regenerates UV2 on every rebuild. Splatting and lightmap UV2 are mutually exclusive *per mesh*; a lightmap unwrap on a painted mesh would be silently overwritten.
-
-To lightmap splat-painted geometry, keep the paint on a separate mesh, or bake the paint down first — the **retro export** does it at export time, and `./bake_splat.sh <scene.tscn>` does it in place (paint becomes plain baked tile textures, splat data and UV2 are cleared, then LightmapGI just works).
+- Unwrap it with the toolbar's **Lightmap** button (it also flips the mesh to *GI Mode: Static*, which is what the LightmapGI baker looks for), or set it up in a DCC, and rebuilds leave it untouched.
+- Paint, decals and geometry edits do not disturb it — you can keep painting on a mesh whose lightmap is already baked.
+- `./bake_splat.sh <scene.tscn>` still exists to flatten paint into plain tile textures (useful when a consumer cannot run the splat shader); it now clears only the splat data and keeps UV2.
 
 ## Use case — a stretched ramp
 

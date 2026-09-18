@@ -7,7 +7,10 @@ Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://expor
 
 ## Modern GLB
 
-Keeps authored geometry. Stamps and splat data ride as extras. Collision meshes named `Collider_*`. Use this for Godot, Blender, any glTF consumer.
+Keeps authored geometry; collision meshes are named `Collider_*`. Paint has its own switch, **Modern paint**:
+
+- **Bake into textures** (default) — every painted face is composited into its own texture at the same texel density the editor used (256 texels/m), and its UV1 is rewritten into that texture. Self-contained: Godot, Blender, any glTF consumer shows your paint.
+- **Include splat data** — the geometry keeps its mask coordinates (`TEXCOORD_2`), each painted face's material carries a `poi_splat` record in its glTF `extras`, and the masks, layer textures and decal channel ship as PNGs next to the `.glb` under `<map>.splat/`. Use this when the consumer should re-blend at runtime. The recipe (with a reference shader) is in `docs/modern_glb_splat.md`; `PBSplatImport.rebuild_from_extras()` restores live, editable paint after a round trip into Godot.
 
 ## Retro baked map
 
@@ -17,7 +20,7 @@ What the export does:
 
 - Subdivides faces to the texture tiling grid (optional).
 - Bakes direct light, shadows, AO into **vertex colours**.
-- Bakes splat paint and stamps into unique **tile** textures; unpainted tiles reuse the base.
+- Bakes splat paint and the decal layer into unique **tile** textures; unpainted tiles reuse the base.
 - Writes collision hulls.
 - Writes lights, billboards, particle emitters, walkable meshes, environment preset.
 

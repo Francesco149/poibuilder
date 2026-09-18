@@ -88,7 +88,7 @@ EOF
 echo "== [3/4] Importing assets (4k textures, one-time per launch) =="
 GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless --path "$MODERN_DIR" --import . >/dev/null 2>&1 || true
 
-echo "==    Building playground scene (splat floor + props) =="
+echo "==    Building playground scene (splat + decal floor, lightmap-ready) =="
 GODOT_DISABLE_LEAK_CHECKS=1 godot-mono --headless --path "$MODERN_DIR" -s res://build_modern_playground.gd 2>&1 | grep -E "splat|instanced|saved|ERROR|skip" || true
 [ -f "$MODERN_DIR/playground.tscn" ] || { echo "ERROR: playground scene was not built"; exit 1; }
 

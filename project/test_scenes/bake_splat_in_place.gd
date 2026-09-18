@@ -1,9 +1,10 @@
 ## Bake Splat In Place — converts a scene's splat paint to baked tile textures.
 ##
-## The "switch to lightmaps" path: after this runs, painted PBMeshes carry
-## plain StandardMaterial3Ds with baked composite tiles, splat data is gone,
-## and UV2 is free for a LightmapGI unwrap (Godot also auto-generates UV2 at
-## bake time). Geometry UV1 is rewritten into tile slots — by design.
+## Flattens a painted PBMesh into plain StandardMaterial3Ds with baked composite
+## tiles, for consumers that cannot run the splat shader. The splat data (masks,
+## decal layer, splat_uvs) is cleared; UV2 is NOT touched — it has been the
+## author's channel since v0.9.151, so a lightmap unwrap survives this bake.
+## Geometry UV1 is rewritten into tile slots — by design.
 ##
 ## Run inside the project that owns the scene (scratch/modern/main):
 ##   godot-mono --headless --path <proj> -s res://bake_splat_in_place.gd -- res://playground.tscn

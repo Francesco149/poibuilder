@@ -3,6 +3,64 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.151 — splat/decals: masks off UV2, stamps as painted pixels, modern-GLB paint modes
+
+Three changes that all come from one insight: UV2 was never the right place for
+splat masks, and scene nodes were never the right shape for stamps.
+
+### Splat masks leave UV2 (paint and lightmaps now coexist)
+- Mask coordinates moved from UV2 to the **CUSTOM0 vertex attribute**
+  (`PBMeshData.splat_uvs`; the shader reads a `splat_uv` varying). UV2 is author
+  data again — a LightmapGI unwrap survives painting, and the rebuild never
+  touches `textures1`.
+- New UV editor shape: **UV1** and **UV2** are both editable; the mask debug
+  view is its own read-only **Splat masks** channel. New **Lightmap** button
+  unwraps UV2 (xatlas) with a per-face vertex split + a COLOR tag so the
+  write-back survives the engine's vertex merge, stores the atlas size hint and
+  flips the mesh to GI mode Static.
+- Verified with a real editor LightmapGI bake on a splat-painted, CUSTOM0-masked
+  floor: the atlas bakes, the paint renders with it. (Earlier the two were
+  mutually exclusive; the bake-down path existed only because of that.)
+
+### Stamps became painted pixels (the decal layer)
+- A stamp is now a paste into a per-material **decal layer** (RGBA image mapped
+  1:1 over each face's planar rect), not a `PBStamps` child node. No node to
+  desync, nothing to leak into exports, and undo/redo covers it like any paint.
+- **Multi-face**: a paste projects onto every face its oriented footprint
+  touches, so a stamp can overhang an edge, span a floor's tiles or wrap a
+  corner. Faces are given their own splat material on write, so painting one
+  face no longer bleeds onto every face sharing the material.
+- **Footprints keep the image's aspect ratio**: a 4:1 banner lands (and
+  previews) 4:1 — the old square decal quads squished them horizontally.
+- Brush gains a target selector (**Splat layers / Decal layer**): in Decal mode
+  it paints the palette texture as pixels along the stroke and **Erase** fades
+  the layer, which is how parts of a stamp are removed. STAMP_DELETE mode and
+  the decal-quad machinery are gone.
+- Legacy scenes: `PBStamps` records are re-pasted into the decal layer on load
+  in the editor and the container is dropped.
+- Retro export composites the decal layer into the tile bake instead of decal
+  nodes; **the regenerated `showcase_retro_baked.pbm` is byte-identical to the
+  pre-change export** (verified).
+
+### Modern `.glb` paint: bake or include
+- New export option **Modern paint**: *Bake into textures* (default) composites
+  each painted face into its own texture at the live mask resolution and
+  rewrites its UV1 into mask space; *Include splat data* ships the live stack —
+  mask coordinates as `TEXCOORD_2`, masks/layers/decals as sidecar PNGs, a
+  `poi_splat` record in the material extras — with
+  `docs/modern_glb_splat.md` (consumer recipe + reference shader) and
+  `PBSplatImport.rebuild_from_extras()` for the Godot round trip.
+
+### Verification
+- `./run_tests.sh`: 1132 tests / 21355 assertions, 72 suites ✓ (5 new suites'
+  worth of contracts: UV2 coexistence, lightmap unwrap, decal rasterizer,
+  modern bake/include round trip).
+- `./run_gui_tests.sh`: 110 checks, failures=0 ✓ (real editor, decal paste /
+  erase / clear driven through the dock).
+- Real PSP (`./run_psp_hw.sh`): stairs 3.37 ms, worst view 5.95 ms — inside the
+  16.67 ms budget; the retro path is unchanged by design (byte-identical map,
+  PSP engine untouched).
+
 ## Current Status
 
 Phase 0 (Scaffolding) complete ✓

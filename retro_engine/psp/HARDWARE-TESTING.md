@@ -606,7 +606,7 @@ cache-resident texture at identical coverage is.
 | triangle throughput (`tris_4096`) | ~2.2 M tris/s |
 | guardband clipper (big quad, clip planes on vs off) | 0.26 vs 0.26 ms — **free** |
 | CPU per frame (display-list construction, scene) | 2.1-2.8 ms — the floor in most views |
-| **scene, current build (worst of the camera sweep)** | **4.98 ms/frame** at the waterfall foot (200 fps); 2.1-3.6 ms at every other pose |
+| **scene, current build (worst of the camera sweep)** | **5.95 ms/frame** at the waterfall foot (168 fps), 3.37 ms at the stairs; 2.62-4.10 ms across the LOD sweep (all inside the 16.67 ms budget) — re-measured v0.9.151 (2026-09-18). The map is byte-identical to the pre-change export and the PSP engine was untouched by that round, so the delta against the older row comes from earlier renderer rounds (the older row predates the particle/transparency work); hardware sign-off for this round is the maintainer's |
 | scene, before the LOD-cliff fix | 25.2 ms at the waterfall foot, 11.1 at the stairs, 8.8 at the spawn |
 
 The scene rows move with every renderer change — re-run the battery rather than
