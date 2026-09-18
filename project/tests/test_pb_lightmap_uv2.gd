@@ -92,7 +92,7 @@ func test_unwrap_leaves_splat_paint_and_uv1_alone() -> void:
 	assert_eq(data.textures0, uv1_before, "UV1 (the texture unwrap) must not move")
 	assert_eq(data.faces[top].splat_bounds, bounds_before,
 			"the painted rect must keep its anchor (no stretch, no slide)")
-	assert_eq(PBSplat.get_layer_mask_image(mat, 1).get_data(), mask_before,
+	assert_true(PBSplat.get_layer_mask_image(mat, 1).get_data() == mask_before,
 			"the painted mask must be byte-identical after the unwrap")
 	assert_eq(data.splat_uvs.size(), data.positions.size(),
 			"mask coordinates must regenerate for the (possibly split) vertex pool")

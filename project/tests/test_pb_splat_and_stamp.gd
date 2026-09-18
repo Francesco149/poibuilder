@@ -175,6 +175,11 @@ func test_decal_layer_default_resolution_scales_with_face_size() -> void:
 	assert_eq(clampi(small_res.x, PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION), small_res.x,
 			"mask resolution stays inside the documented clamp window")
 
+## Byte-array equality without GUT formatting megabyte arrays into the report
+## (mono aborts on the resulting string).
+func _same_bytes(a: PackedByteArray, b: PackedByteArray) -> bool:
+	return a == b
+
 func _solid_image(col: Color) -> Image:
 	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	img.fill(col)
@@ -266,33 +271,62 @@ func test_brush_painting_zero_lag_benchmark() -> void:
 # 5. Stamp Pasting Tests
 # ==============================================================================
 
-func test_stamp_face_pasting_with_rotation_and_scale() -> void:
-	var data := _test_cube.pb_mesh_data
+func test_paste_decal_paints_pixels_with_rotation_and_scale() -> void:
+	var data: PBMeshData = PBShapeGenerators.create_plane(2.0, 2.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
 	var face := data.faces[0]
 	PBSplat.ensure_mesh_splat_uv(data)
 
-	var mat := PBSplat.create_splat_material()
 	var stamp_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
 	stamp_img.fill(Color(0.2, 0.6, 0.9, 1.0)) # Rich blue stamp
-	var center_local := Vector3.ZERO
-	var idxs := face.get_distinct_indexes()
-	for idx in idxs:
-		center_local += data.positions[idx]
-	center_local /= float(idxs.size())
 
-	# Stamp 1m wide at center, rotated 45 degrees
-	var stamped := PBSplat.stamp_face(data, face, mat, stamp_img, center_local, 1.0, 45.0, 1.0)
-	assert_true(stamped, "stamp_face should return true")
-	assert_true(PBSplat.has_stamp_layer(mat), "Dedicated stamp layer should be enabled")
+	var center_local := _face_center_local(data, face)
+	var painted := PBSplat.paste_decal(data, center_local, Vector3.UP, 45.0, 1.0, 1.0, stamp_img)
+	assert_eq(painted, 1, "The paste must land on the face under the cursor")
 
-	var stamp_target := PBSplat.get_stamp_layer_image(mat)
-	assert_not_null(stamp_target)
-	var mid := stamp_target.get_width() / 2
-	var px := stamp_target.get_pixel(mid, mid)
-	assert_almost_eq(px.a, 1.0, 0.05, "Stamped center pixel should have alpha 1.0")
-	assert_almost_eq(px.r, 0.2, 0.05, "Stamped center pixel should have copied 1:1 red channel")
-	assert_almost_eq(px.g, 0.6, 0.05, "Stamped center pixel should have copied 1:1 green channel")
-	assert_almost_eq(px.b, 0.9, 0.05, "Stamped center pixel should have copied 1:1 blue channel")
+	var mat := data.get_face_material(face) as ShaderMaterial
+	assert_true(PBSplat.has_decal_layer(mat), "A paste must create the decal layer")
+	assert_eq(face.splat_bounds.size(), 4, "The paste must anchor the face's mask rect")
+
+	var decal := PBSplat.get_decal_layer_image(mat)
+	assert_not_null(decal)
+	var mid := decal.get_width() / 2
+	var px := decal.get_pixel(mid, mid)
+	assert_almost_eq(px.b, 0.9, 0.05, "Decal pixel must keep the stamp's own color (1:1 copy)")
+	assert_almost_eq(px.a, 1.0, 0.05, "Decal pixel must be opaque at the stamp center")
+
+## A wide stamp must LAND wide: the footprint follows the image's aspect ratio.
+## (The old decal system pasted onto a square quad, so a 4:1 banner like the
+## hello-world one came out horizontally squished.)
+func test_wide_stamp_keeps_its_aspect_ratio() -> void:
+	var data: PBMeshData = PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var banner := Image.create(64, 16, false, Image.FORMAT_RGBA8)
+	banner.fill(Color.WHITE)
+
+	var painted := PBSplat.paste_decal(data, _face_center_local(data, face), Vector3.UP, 0.0, 2.0, 1.0, banner)
+	assert_eq(painted, 1, "Fixture: the banner must land on the face")
+
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var min_x := decal.get_width()
+	var max_x := -1
+	var min_y := decal.get_height()
+	var max_y := -1
+	for y in range(decal.get_height()):
+		for x in range(decal.get_width()):
+			if decal.get_pixel(x, y).a > 0.5:
+				min_x = mini(min_x, x)
+				max_x = maxi(max_x, x)
+				min_y = mini(min_y, y)
+				max_y = maxi(max_y, y)
+	assert_true(max_x > min_x and max_y > min_y, "The banner must have painted pixels")
+	if max_x <= min_x or max_y <= min_y:
+		return
+	var ratio := float(max_x - min_x + 1) / float(max_y - min_y + 1)
+	assert_almost_eq(ratio, 4.0, 0.15, "A 4:1 source must paint a 4:1 footprint (got %.2f)" % ratio)
+
 func test_stamp_basis_upright_on_all_surfaces() -> void:
 	for norm in [Vector3.RIGHT, Vector3.LEFT, Vector3.FORWARD, Vector3.BACK]:
 		var basis := PBSplat.get_stamp_basis(norm)
@@ -310,38 +344,26 @@ func test_stamp_basis_upright_on_all_surfaces() -> void:
 	assert_almost_eq(floor_basis["right"].x, 1.0, 0.001)
 	assert_almost_eq(floor_basis["up"].z, -1.0, 0.001)
 
-func test_stamp_decompresses_compressed_vram_texture() -> void:
+func test_paste_decal_handles_compressed_source_images() -> void:
 	var data := _test_cube.pb_mesh_data
-	var face := data.faces[0]
+	var face := data.faces[4]
 	PBSplat.ensure_mesh_splat_uv(data)
-	var mat := PBSplat.create_splat_material()
 
-	var pattern_tex := load("res://addons/poibuilder/materials/textures/circular_square_pattern.png") as Texture2D
-	assert_not_null(pattern_tex)
-	var raw_img := pattern_tex.get_image()
-	assert_not_null(raw_img)
+	var raw_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	raw_img.fill(Color.WHITE)
+	var center_local := _face_center_local(data, face)
 
-	var center_local := Vector3.ZERO
-	var idxs := face.get_distinct_indexes()
-	for idx in idxs:
-		center_local += data.positions[idx]
-	center_local /= float(idxs.size())
+	# A source with an alpha channel: the paste must read pixels without the
+	# "Can't get_pixel() on compressed image" failure mode.
+	var compressed := raw_img.duplicate()
+	compressed.compress(Image.COMPRESS_ETC2, Image.COMPRESS_SOURCE_GENERIC)
+	var painted := PBSplat.paste_decal(data, center_local, Vector3.UP, 0.0, 1.0, 1.0, compressed)
+	assert_eq(painted, 1, "A compressed source must still paste")
 
-	# Stamping should automatically decompress raw_img without throwing "Can't get_pixel() on compressed image"
-	var stamped := PBSplat.stamp_face(data, face, mat, raw_img, center_local, 1.0, 0.0, 1.0)
-	assert_true(stamped)
-	assert_false(raw_img.is_compressed(), "Image should be decompressed after stamp_face")
-
-	var target_img := PBSplat.get_stamp_layer_image(mat)
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var target_img := PBSplat.get_decal_layer_image(mat)
 	assert_not_null(target_img)
-	var mid := target_img.get_width() / 2
-	var px := target_img.get_pixel(mid, mid)
-	# Circular square pattern has center white/light-blue shape with alpha > 0.8
-	assert_true(px.a > 0.5, "Center pixel should have positive alpha (not 0)")
-	assert_true(px.r > 0.2, "Center pixel should have color (not black square)")
-# ==============================================================================
-# 6. Undo/Redo & Splat Cloning Tests
-# ==============================================================================
+	assert_gt(target_img.get_width(), 0, "Decal layer must exist after the paste")
 
 func test_clone_splat_material_deep_copies_masks() -> void:
 	var mat := PBSplat.create_splat_material()
@@ -361,12 +383,12 @@ func test_clone_splat_material_deep_copies_masks() -> void:
 
 	# Modifying clone should not mutate original
 	mask_clone.set_pixel(10, 10, Color(0.1, 0.1, 0.1, 1.0))
-	# Also test dedicated stamp layer cloning
-	var stamp_img := PBSplat.get_stamp_layer_image(mat)
+	# Also test decal layer cloning
+	var stamp_img := PBSplat.get_decal_layer_image(mat)
 	stamp_img.set_pixel(20, 20, Color(0.3, 0.7, 0.1, 0.9))
 	var clone2 := PBSplat.clone_splat_material(mat)
-	assert_true(PBSplat.has_stamp_layer(clone2))
-	var clone2_stamp_img := PBSplat.get_stamp_layer_image(clone2)
+	assert_true(PBSplat.has_decal_layer(clone2))
+	var clone2_stamp_img := PBSplat.get_decal_layer_image(clone2)
 	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).r, 0.3, 0.01)
 	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).a, 0.9, 0.01)
 # ==============================================================================
@@ -418,45 +440,45 @@ func test_uniform_resolution_calculation() -> void:
 func test_dynamic_image_resizing_on_large_faces() -> void:
 	var mat := PBSplat.create_splat_material()
 	# Create initial 256x256 image
-	var img_256 := PBSplat.get_stamp_layer_image(mat, Vector2i(256, 256))
+	var img_256 := PBSplat.get_decal_layer_image(mat, Vector2i(256, 256))
 	assert_eq(img_256.get_width(), 256)
 
-	# Request 1024x1024 on same material (e.g. when stamping on a larger 4m face)
-	var img_1024 := PBSplat.get_stamp_layer_image(mat, Vector2i(1024, 1024))
+	# Request 1024x1024 on the same material (a larger face needs more texels)
+	var img_1024 := PBSplat.get_decal_layer_image(mat, Vector2i(1024, 1024))
 	assert_eq(img_1024.get_width(), 1024, "Stamp layer image should dynamically upscale to 1024")
 	assert_eq(img_1024.get_height(), 1024, "Stamp layer image should dynamically upscale to 1024")
 
-func test_billboard_decal_stamping() -> void:
+func test_stamp_mode_paints_the_decal_layer_without_scene_nodes() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
-
 	var ctrl := PBPaintController.new()
 	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	var stamp_tex := ImageTexture.create_from_image(Image.create(32, 32, false, Image.FORMAT_RGBA8))
+	var stamp_tex := ImageTexture.create_from_image(_solid_image(Color(0.9, 0.3, 0.2)))
 	ctrl.stamp_texture = stamp_tex
-	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
-
+	ctrl.stamp_scale = 1.0
+	ctrl.update_cursor(Vector3(0, 1.0, 0.2), Vector3.UP, cube, 4)
 	ctrl.apply_stamp()
-	var stamps := cube.get_node_or_null("PBStamps")
-	assert_not_null(stamps, "PBStamps container should be created on target mesh")
-	assert_eq(stamps.get_child_count(), 1, "Should contain 1 stamp decal")
 
-	var decal := stamps.get_child(0) as MeshInstance3D
-	assert_not_null(decal)
-	assert_true(decal.mesh is QuadMesh, "Decal mesh should be QuadMesh")
-	assert_true(decal.material_override != null, "Decal should have a valid material")
-	if decal.material_override is ShaderMaterial:
-		var smat := decal.material_override as ShaderMaterial
-		assert_eq(smat.get_shader_parameter("albedo_texture"), stamp_tex)
-	elif decal.material_override is StandardMaterial3D:
-		assert_eq((decal.material_override as StandardMaterial3D).albedo_texture, stamp_tex)
+	assert_null(cube.get_node_or_null("PBStamps"),
+			"Stamps are pixels now — no decal nodes are created")
+	var data := cube.pb_mesh_data
+	var mat := data.get_face_material(data.faces[4]) as ShaderMaterial
+	assert_true(PBSplat.is_splat_material(mat), "The stamped face must carry a splat material")
+	assert_true(PBSplat.has_decal_layer(mat), "The stamp must land in the decal layer")
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var mid := decal.get_width() / 2
+	assert_almost_eq(decal.get_pixel(mid, mid).a, 1.0, 0.05, "Stamp pixels must be in the middle of the layer")
 
-	# Clear all stamps
-	ctrl.clear_all_stamps(cube)
-	assert_eq(stamps.get_child_count(), 0, "Stamps should be cleared")
-# ==============================================================================
-# 8. PBMaterialDock Integration Tests
-# ==============================================================================
+	# A second stamp at another spot composites into the SAME layer
+	ctrl.update_cursor(Vector3(0.4, 1.0, 0.0), Vector3.UP, cube, 4)
+	ctrl.apply_stamp()
+	assert_eq(PBSplat.get_decal_layer_image(mat).get_width(), decal.get_width(),
+			"Both stamps live in one per-face decal layer")
+
+	# Clearing wipes the layer
+	ctrl.clear_decal_layer(cube)
+	assert_almost_eq(PBSplat.get_decal_layer_image(mat).get_pixel(mid, mid).a, 0.0, 0.01,
+			"Clear Decal Layer must erase the painted pixels")
 
 func test_material_dock_modes_and_sections() -> void:
 	var dock := PBMaterialDock.new()
@@ -667,81 +689,61 @@ func test_erase_applies_opacity_once_per_stroke() -> void:
 	assert_almost_eq(mask.get_pixel(mid, mid).r, 0.5, 0.05,
 		"A NEW stroke erases another 0.25 step")
 
-## Stamps carry a normalized face anchor; re-evaluating the anchor against the
-## CURRENT geometry reproduces the stored transform (roundtrip).
-func test_stamp_anchor_roundtrip() -> void:
+## A stamp is projected onto EVERY face its oriented footprint touches: it can
+## overhang an edge or wrap a corner, which a node-based decal could not do.
+func test_stamp_wraps_across_faces() -> void:
+	var data: PBMeshData = PBShapeGenerators.create_plane(4.0, 4.0, 2, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	assert_eq(data.faces.size(), 2, "Fixture: two coplanar faces sharing an edge")
+
+	# Stamp centered on the shared edge (x = 0), 2 m across.
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1.0, 1.0, 1.0, 1.0))
+	var painted := PBSplat.paste_decal(data, Vector3(0, 0, 0), Vector3.UP, 0.0, 2.0, 1.0, img)
+	assert_eq(painted, 2, "A stamp straddling the edge must paint BOTH faces")
+
+	for face in data.faces:
+		var mat := data.get_face_material(face) as ShaderMaterial
+		assert_true(PBSplat.has_decal_layer(mat), "Each touched face gets its own decal layer")
+		assert_true(PBSplat.get_decal_layer_image(mat).get_width() > 0, "…with pixels in it")
+
+## Resizing the face must NOT stretch or slide decal pixels: the layer maps to
+## the object-space rect recorded at paste time, so pixels stay put and new
+## geometry simply clips them.
+func test_decal_does_not_stretch_or_slide_when_face_resized() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
-	var ctrl := PBPaintController.new()
-	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
-	ctrl.stamp_scale = 0.8
-	ctrl.stamp_rotation = 30.0
-	ctrl.update_cursor(Vector3(0.3, 1.0, 0.2), Vector3.UP, cube, 4)
-	ctrl.apply_stamp()
-
-	var stamps := cube.get_node_or_null("PBStamps")
-	assert_not_null(stamps)
-	assert_eq(stamps.get_child_count(), 1)
-	var decal := stamps.get_child(0) as MeshInstance3D
-	assert_true(decal.has_meta("anchor_center"), "Stamp should carry a normalized anchor_center")
-	assert_true(decal.has_meta("anchor_du") and decal.has_meta("anchor_dv"))
-	assert_true(decal.mesh is QuadMesh)
-	assert_almost_eq((decal.mesh as QuadMesh).size.x, 1.0, 0.001, "Stamp quad is unit size; extents live in the basis")
-
 	var data := cube.pb_mesh_data
 	var face := data.faces[4]
-	var res := PBSplat.stamp_transform_from_anchor(data, face, {
-		"center": decal.get_meta("anchor_center"),
-		"du": decal.get_meta("anchor_du"),
-		"dv": decal.get_meta("anchor_dv"),
-	})
-	assert_false(res.is_empty(), "Anchor must produce a transform")
-	var xf: Transform3D = res["transform"]
-	assert_almost_eq(xf.origin.distance_to(decal.transform.origin), 0.0, 0.001, "Anchor reproduces the stamp center")
-	assert_almost_eq(xf.basis.x.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent")
-	assert_almost_eq(xf.basis.y.length(), ctrl.stamp_scale, 0.01, "Anchor reproduces the stamp extent (y)")
-
-## Resizing the face must NOT stretch or slide the stamp (nothing should stretch or slide).
-func test_stamp_does_not_stretch_or_slide_when_face_resized() -> void:
-	var cube := PBMesh.create_cube(2.0)
-	add_child_autofree(cube)
 	var ctrl := PBPaintController.new()
 	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
-	ctrl.stamp_scale = 0.5
+	ctrl.stamp_texture = ImageTexture.create_from_image(_solid_image(Color(0.9, 0.4, 0.1)))
+	ctrl.stamp_scale = 0.6
 	ctrl.stamp_rotation = 0.0
-	ctrl.update_cursor(Vector3(0.0, 1.0, 0.0), Vector3.UP, cube, 4)
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
 	ctrl.apply_stamp()
 
-	var decals := cube.get_node_or_null("PBStamps")
-	var decal := decals.get_child(0) as MeshInstance3D
-	var before_extent: float = decal.transform.basis.x.length()
-	var before_pos: Vector3 = decal.transform.origin
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var mid := decal.get_width() / 2
+	assert_almost_eq(decal.get_pixel(mid, mid).a, 1.0, 0.05, "Precondition: the stamp is in the middle")
+	var bounds_before := face.splat_bounds.duplicate()
 
-	# Uniformly double the top face (face 4) about its in-plane center.
-	var data := cube.pb_mesh_data
-	var face := data.faces[4]
-	var center := _face_center_local(data, face)
-	for idx in face.get_distinct_indexes():
-		data.positions[idx] = center + (data.positions[idx] - center) * 2.0
-	cube.rebuild()
-
-	var after_extent: float = decal.transform.basis.x.length()
-	assert_almost_eq(after_extent, before_extent, 0.01,
-		"Resizing the face must NOT stretch the stamp")
-	assert_almost_eq(decal.transform.origin.distance_to(before_pos), 0.0, 0.001,
-		"Resizing the face must NOT slide the stamp")
-
-	# Non-uniform growth: stretch the face along +X only -> stamp still does not stretch or shear
+	# Stretch the face 3x along X.
 	for idx in face.get_distinct_indexes():
 		var p: Vector3 = data.positions[idx]
-		data.positions[idx] = center + Vector3((p - center).x * 4.0, (p - center).y, (p - center).z)
+		data.positions[idx] = Vector3(p.x * 3.0, p.y, p.z)
 	cube.rebuild()
-	assert_almost_eq(decal.transform.basis.x.length(), before_extent, 0.01,
-		"Non-uniform face stretch must NOT stretch the stamp x axis")
-	assert_almost_eq(decal.transform.basis.y.length(), before_extent, 0.01,
-		"Non-uniform face stretch must NOT stretch the stamp y axis")
+
+	assert_eq(face.splat_bounds, bounds_before,
+			"The painted rect must keep its anchor across a resize")
+	assert_true(_same_bytes(PBSplat.get_decal_layer_image(mat).get_data(), decal.get_data()),
+			"Decal pixels must be byte-identical after the resize (no resample, no stretch)")
+	assert_almost_eq(PBSplat.get_decal_layer_image(mat).get_pixel(mid, mid).a, 1.0, 0.05,
+			"…and the painted pixel is still where it was")
+	var live_bounds := PBSplat.get_face_planar_bounds(data, face, true)
+	assert_true(live_bounds["range_u"] > absf(bounds_before[1] - bounds_before[0]),
+			"…while the geometry itself did grow (precondition for the clip case)")
 
 ## Resizing geometry does NOT stretch or slide painted texture layers (UV2 tracks object space).
 func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
@@ -792,72 +794,64 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 			# simply clips instead of stretching the paint.
 			assert_true(data.splat_uvs[idx].x > 1.5, "Moved vertices map outside the painted rect, not rescaled to 1.0")
 
-## Moving/raising an object in object mode keeps stamp clipping perfectly aligned (mesh-local clipping).
-func test_stamp_clipping_moves_with_object_in_object_mode() -> void:
+## Moving the object in Object Mode does not disturb decal pixels: the layer is
+## stored in mesh-local space, so the stamp travels with the mesh.
+func test_decal_pixels_are_mesh_local_under_object_moves() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
 	var ctrl := PBPaintController.new()
 	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	ctrl.stamp_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.stamp_texture = ImageTexture.create_from_image(_solid_image(Color(0.2, 0.8, 0.4)))
 	ctrl.stamp_scale = 1.0
-	# Stamp placed near the bottom edge of face 0 (z = -1, y from -1 to 1)
-	ctrl.update_cursor(Vector3(0.0, -0.8, -1.0), Vector3.FORWARD, cube, 0)
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
 	ctrl.apply_stamp()
 
-	var decals := cube.get_node_or_null("PBStamps")
-	assert_not_null(decals)
-	var decal := decals.get_child(0) as MeshInstance3D
-	assert_not_null(decal)
-	var smat := decal.material_override as ShaderMaterial
-	assert_not_null(smat)
+	var mat := cube.pb_mesh_data.get_face_material(cube.pb_mesh_data.faces[4]) as ShaderMaterial
+	var before := PBSplat.get_decal_layer_image(mat).get_data()
 
-	var stamp_to_mesh: Transform3D = smat.get_shader_parameter("stamp_to_mesh")
-	var face_bounds: Vector4 = smat.get_shader_parameter("face_bounds")
-	var face_u: Vector3 = smat.get_shader_parameter("face_u")
-	var face_v: Vector3 = smat.get_shader_parameter("face_v")
+	cube.position = Vector3(10, 5, -3)
+	assert_true(_same_bytes(PBSplat.get_decal_layer_image(mat).get_data(), before),
+			"Object-mode moves must not touch decal pixels (mesh-local storage)")
 
-	# Point on bottom edge of stamp quad in decal local coordinates (y = -0.5)
-	var p_local := Vector3(0.0, -0.5, 0.0)
-	var p_mesh := stamp_to_mesh * p_local
-	var v_coord := face_v.dot(p_mesh)
-	var is_clipped_before := (v_coord < face_bounds.z or v_coord > face_bounds.w)
-
-	# Move the cube in object mode: raise Y by 10m and shift X by 5m
-	cube.global_position = Vector3(5.0, 10.0, 0.0)
-
-	# Clipping calculation is mesh-local and invariant to object-mode movement:
-	var stamp_to_mesh_after: Transform3D = smat.get_shader_parameter("stamp_to_mesh")
-	assert_almost_eq(stamp_to_mesh_after.origin.distance_to(stamp_to_mesh.origin), 0.0, 0.001,
-		"stamp_to_mesh is invariant to object-mode translation")
-	var p_mesh_after := stamp_to_mesh_after * p_local
-	var v_coord_after := face_v.dot(p_mesh_after)
-	var is_clipped_after := (v_coord_after < face_bounds.z or v_coord_after > face_bounds.w)
-
-	assert_eq(is_clipped_after, is_clipped_before,
-		"Stamp clipping relative to the face is 100% preserved when the object moves in object mode")
-## The export-facing collector returns plain, node-free stamp records.
-func test_collect_stamp_data_exports_anchors() -> void:
+## Legacy scenes carried stamps as decal quads under PBStamps. Loading one now
+## re-pastes every recorded decal into the decal layer and drops the nodes.
+func test_legacy_stamp_nodes_migrate_into_the_decal_layer() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
-	var ctrl := PBPaintController.new()
-	ctrl.set_mode(PBPaintController.Mode.STAMP)
-	var stamp_tex := ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
-	ctrl.stamp_texture = stamp_tex
-	ctrl.stamp_opacity = 0.8
-	ctrl.update_cursor(Vector3(0.0, 1.0, 0.0), Vector3.UP, cube, 4)
-	ctrl.apply_stamp()
+	var container := Node3D.new()
+	container.name = "PBStamps"
+	cube.add_child(container)
+	var quad := MeshInstance3D.new()
+	quad.name = "Stamp_1"
+	quad.mesh = QuadMesh.new()
+	quad.transform = Transform3D(Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, 1, 0)), Vector3(0, 1.0, 0))
+	quad.set_meta("anchor_center", Vector2(0.5, 0.5))
+	quad.set_meta("anchor_du", Vector2(0.25, 0.0))
+	quad.set_meta("anchor_dv", Vector2(0.0, 0.25))
+	quad.set_meta("face_idx", 4)
+	quad.set_meta("stamp_scale", 0.5)
+	quad.set_meta("stamp_rotation", 0.0)
+	quad.set_meta("stamp_opacity", 1.0)
+	var tex_img := _solid_image(Color(0.9, 0.1, 0.6))
+	var tex := ImageTexture.create_from_image(tex_img)
+	var path := "user://pb_test_legacy_stamp.png"
+	tex_img.save_png(path)
+	quad.set_meta("stamp_texture_path", ProjectSettings.globalize_path(path))
+	container.add_child(quad)
 
-	var collected := PBSplat.collect_stamp_data(cube)
-	assert_eq(collected.size(), 1, "collect_stamp_data returns one record per anchored stamp")
-	var rec: Dictionary = collected[0]
-	assert_eq(rec["face_idx"], 4)
-	assert_true(rec["anchor_center"] is Vector2)
-	assert_true(rec["anchor_du"] is Vector2 and rec["anchor_dv"] is Vector2)
-	assert_almost_eq(rec["opacity"], 0.8, 0.001)
-	# Records are export-friendly: u,v of a unit-square anchor of a centered
-	# stamp on a 2m top face sits at the face center.
-	assert_almost_eq((rec["anchor_center"] as Vector2).x, 0.5, 0.05)
-	assert_almost_eq((rec["anchor_center"] as Vector2).y, 0.5, 0.05)
+	var migrated := PBSplat.migrate_legacy_stamps(cube)
+	assert_eq(migrated, 1, "The recorded decal must be re-pasted")
+	await get_tree().process_frame
+
+	var data := cube.pb_mesh_data
+	var mat := data.get_face_material(data.faces[4]) as ShaderMaterial
+	assert_true(PBSplat.is_splat_material(mat), "Migration must give the face a splat material")
+	assert_true(PBSplat.has_decal_layer(mat), "Migration must write into the decal layer")
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var mid := decal.get_width() / 2
+	assert_almost_eq(decal.get_pixel(mid, mid).a, 1.0, 0.05, "The migrated decal must have pixels")
+
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 ## The export-facing face paint state collector returns base material + layers
 ## + normalized planar bounds for a painted face, and {} for an unpainted one.
@@ -889,57 +883,38 @@ func test_collect_face_paint_state_exports_layers_and_bounds() -> void:
 		"Planar bounds must be exported (normalized mapping for baking)")
 	assert_true(bounds["range_u"] > 0.0 and bounds["range_v"] > 0.0)
 
-func test_stamp_delete_hover_and_click_deletion() -> void:
-	var root := Node3D.new()
-	add_child_autofree(root)
-	var mesh_node := PBMesh.new()
-	root.add_child(mesh_node)
+## Erasing is a brush operation now: painting into the decal layer with Erase
+## fades the pixels instead of deleting a node.
+func test_decal_brush_erases_parts_of_a_stamp() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	ctrl.stamp_texture = ImageTexture.create_from_image(_solid_image(Color.WHITE))
+	ctrl.stamp_scale = 1.6
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
+	ctrl.apply_stamp()
 
-	var stamps_container := Node3D.new()
-	stamps_container.name = "PBStamps"
-	mesh_node.add_child(stamps_container)
+	var data := cube.pb_mesh_data
+	var mat := data.get_face_material(data.faces[4]) as ShaderMaterial
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var mid := decal.get_width() / 2
+	assert_almost_eq(decal.get_pixel(mid, mid).a, 1.0, 0.05, "Precondition: opaque stamp center")
 
-	var stamp := MeshInstance3D.new()
-	stamp.name = "Stamp_1"
-	var qm := QuadMesh.new()
-	qm.size = Vector2.ONE
-	stamp.mesh = qm
-	stamp.transform = Transform3D(Basis.IDENTITY, Vector3(0, 1, 0))
-	stamps_container.add_child(stamp)
+	# Erase the middle of it with the decal brush.
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.paint_texture = ImageTexture.create_from_image(_solid_image(Color.WHITE))
+	ctrl.brush_radius = 0.25
+	ctrl.brush_softness = 0.0
+	ctrl.brush_opacity = 1.0
+	ctrl.erase_mode = true
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
 
-	var controller := PBPaintController.new()
-	controller.setup_previews(root)
-	controller.set_mode(PBPaintController.Mode.STAMP_DELETE)
-
-	var cam := Camera3D.new()
-	root.add_child(cam)
-	cam.position = Vector3(0, 1, 4)
-	cam.look_at(Vector3(0, 1, 0), Vector3.UP)
-
-	# Ray straight at the stamp
-	var screen_center := Vector2(200, 200)
-	# Update hover
-	# Ray straight at the stamp
-	controller.update_delete_hover(cam, screen_center, root, Vector3(0, 1, 4), Vector3(0, 0, -1))
-	assert_not_null(controller.hovered_stamp, "Stamp should be hovered by ray")
-	assert_eq(controller.hovered_stamp, stamp)
-	assert_true(controller.delete_highlight_mesh.visible, "Highlight mesh should be visible when hovering stamp")
-
-	# Test miss
-	controller.update_delete_hover(cam, screen_center, root, Vector3(5, 5, 5), Vector3(0, 0, -1))
-	assert_null(controller.hovered_stamp, "Miss ray should clear hover")
-	assert_false(controller.delete_highlight_mesh.visible, "Miss ray should hide highlight mesh")
-
-	# Re-hover
-	controller.update_delete_hover(cam, screen_center, root, Vector3(0, 1, 4), Vector3(0, 0, -1))
-	# Delete the hovered stamp
-	var deleted := controller.delete_hovered_stamp()
-	assert_true(deleted, "delete_hovered_stamp should return true")
-	assert_null(controller.hovered_stamp, "Hovered stamp should be cleared after deletion")
-	assert_false(controller.delete_highlight_mesh.visible, "Highlight should hide after deletion")
-	assert_eq(stamps_container.get_child_count(), 0, "Stamp node should be removed from container")
-
-	controller.cleanup_previews()
+	assert_almost_eq(PBSplat.get_decal_layer_image(mat).get_pixel(mid, mid).a, 0.0, 0.05,
+			"Erasing must fade the decal pixels away")
 
 func test_cross_object_paint_stroke_multi_mesh_undo() -> void:
 	var floor_mesh := PBMesh.create_cube(20.0)

@@ -1,6 +1,6 @@
 ---
 title: Paint & stamps
-lead: Up to eight splat layers per face, decal stamps clipped to the face, and a sprite placer on B.
+lead: Up to eight splat layers per face, a paintable decal layer for stamps, and a sprite placer on B.
 ---
 
 ## Splatting
@@ -17,10 +17,16 @@ The brush writes weights, not new geometry.
 
 ## Decal stamps
 
-High-res billboards, upright, clipped to the face they sit on. Place a poster, a sign, a moss patch. Delete the stamp node (under `PBStamps`) to remove it. Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture.
+A stamp is a PNG painted **into the surface**, not a node hovering over it. Click to paste one (no dragging): it lands in the face's **decal layer** at 256 texels/m — the same uniform density as the splat masks — and it keeps its own colors and alpha 1:1.
+
+Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, wrap the corner of a wall, cover a whole staircase side. Stamps are projected along the surface normal, so a face nearly perpendicular to the stamp plane (a wall a floor stamp runs into) receives a stretched smear rather than a bend.
+
+Erase parts of it with the brush: in the paint panel set **Paint into → Decal layer** and enable **Erase**. The same brush (with **Paint into → Decal layer**, Erase off) paints the selected palette texture as pixels, which is how you touch up or extend a decal by hand. **Clear Decal Layer** wipes all of it at once. Every one of those actions is undoable.
+
+Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern_glb_splat.html).
 
 :::shot paint-stamp.png
-Decal stamps, clipped to the face.
+A stamp painted across two faces, then partly erased.
 :::
 
 ## Sprite placer
@@ -43,6 +49,8 @@ Scrolling sheets on a wall panel.
 
 > [gotcha] A scrolling face is **not** packed into the retro tile atlas — an offset would drag it across the slot. Export keeps it as its own texture. Do not also splat-paint that face; paint is baked to a static tile.
 
-> [gotcha] Splat paint lives in a custom shader plus per-face masks, which a modern **.glb export cannot carry**: the exported surface keeps the layer's base texture, but the painted blend itself is lost. Keep the scene in Godot (or the PoiBuilder viewer), use the retro export (bakes paint into unique tiles), or run `./bake_splat.sh <scene.tscn>` to bake the paint into the scene itself — which also frees UV2 for lightmaps.
+> [gotcha] A modern **.glb export** cannot carry a custom shader. Choose **Modern paint → Bake into textures** (each painted face becomes its own texture — any engine shows your paint) or **Include splat data** (masks and decal channels ship as sidecar PNGs plus a `poi_splat` record in the material extras; see [Splatting in a modern .glb](modern_glb_splat.html) for the consumer recipe). To flatten paint inside Godot itself, run `./bake_splat.sh <scene.tscn>`.
 
-To see what a face's paint looks like up close, the UV editor's **UV2 (Splat — read-only)** channel shows the composited paint for the selected face — see [UV editor](uv.html).
+> [note] **Splat paint and LightmapGI now coexist on one mesh.** Masks travel in their own vertex channel (CUSTOM0), so UV2 — the channel a lightmap unwrap lives in — is never touched by painting. Unwrap it from the UV editor's **Lightmap** button (it also flips the mesh to *GI Mode: Static*), bake the LightmapGI, and keep painting: the paint will not disturb the bake's UVs.
+
+To see what a face's paint looks like up close, the UV editor's **Splat masks** channel shows the composited paint for the selected face (read-only — that space is written by painting, not by hand). **UV1 (Texture)** and **UV2 (Lightmap)** are both editable channels — see [UV editor](uv.html).

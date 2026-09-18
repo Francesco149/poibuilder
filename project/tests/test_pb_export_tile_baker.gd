@@ -21,38 +21,31 @@ func test_unpainted_face_reuses_base_material() -> void:
 	for i in range(1, 4):
 		assert_eq(baked.tile_materials[frags[i]], first_mat, "Unpainted tiles must share base material")
 
-func test_stamped_face_bakes_only_touched_tile() -> void:
+func test_decal_face_bakes_only_touched_tile() -> void:
 	var mesh_node := PBMesh.create_cube(2.0)
 	autofree(mesh_node)
 	var mesh_data: PBMeshData = mesh_node.pb_mesh_data
-	var face: PBFace = mesh_data.faces[0]
+	var face: PBFace = mesh_data.faces[4] # top face (normal +Y)
 
-	# Add a PBStamps container and a stamp positioned in one corner
-	var stamps_container := Node3D.new()
-	stamps_container.name = "PBStamps"
-	mesh_node.add_child(stamps_container)
+	# Paste a decal in one corner of the face's planar rect (the decal layer is
+	# the same pixels a stamp writes, so the bake path is identical).
+	var patch := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	patch.fill(Color(0.9, 0.2, 0.2, 1.0))
+	var center := Vector3.ZERO
+	for idx in face.get_distinct_indexes():
+		center += mesh_data.positions[idx]
+	center /= float(face.get_distinct_indexes().size())
+	# 0.4 m across, offset to one corner of the 2 m face.
+	var painted := PBSplat.paste_decal(mesh_data, center + Vector3(0.7, 0, 0.7), Vector3.UP, 0.0, 0.4, 1.0, patch)
+	assert_eq(painted, 1, "Fixture: the decal must land on the face")
 
-	var stamp_quad := MeshInstance3D.new()
-	stamp_quad.name = "Stamp_0"
-	# Position in top-right corner in planar space: anchor_center=(0.5, 0.5), size=(0.2, 0.2)
-	stamp_quad.set_meta("face_idx", 0)
-	stamp_quad.set_meta("stamp_texture_path", "res://addons/poibuilder/materials/textures/flower_patch.png")
-	stamp_quad.set_meta("stamp_opacity", 1.0)
-	stamp_quad.set_meta("stamp_scale", 1.0)
-	stamp_quad.set_meta("stamp_rotation", 0.0)
-	stamp_quad.set_meta("anchor_center", Vector2(-0.5, 0.5))
-	stamp_quad.set_meta("anchor_du", Vector2(0.1, 0.0))
-	stamp_quad.set_meta("anchor_dv", Vector2(0.0, 0.1))
-	stamps_container.add_child(stamp_quad)
-
-	var frags := PBFaceSubdivider.subdivide_face(mesh_data, face, 0, true, 1.0)
+	var frags := PBFaceSubdivider.subdivide_face(mesh_data, face, 4, true, 1.0)
 	assert_eq(frags.size(), 4)
 
 	var cache := {}
-	var baked := PBTileBaker.bake_face_tiles(mesh_node, mesh_data, face, 0, frags, true, 64, cache)
+	var baked := PBTileBaker.bake_face_tiles(mesh_node, mesh_data, face, 4, frags, true, 64, cache)
 
-	# Exactly 1 tile should be baked, 3 should reuse base material
-	assert_eq(baked.baked_textures.size(), 1, "Only the 1 stamped tile should generate a baked texture")
+	assert_eq(baked.baked_textures.size(), 1, "Only the 1 decal tile should generate a baked texture")
 
 	var baked_count := 0
 	var base_count := 0
@@ -89,20 +82,17 @@ func test_baked_tile_samples_texel_centers_not_endpoints() -> void:
 	var face: PBFace = mesh_data.faces[0]
 	mesh_data.set_face_material(face, base_mat)
 
-	var stamps_container := Node3D.new()
-	stamps_container.name = "PBStamps"
-	mesh_node.add_child(stamps_container)
-	var stamp_quad := MeshInstance3D.new()
-	stamp_quad.name = "Stamp_0"
-	stamp_quad.set_meta("face_idx", 0)
-	stamp_quad.set_meta("stamp_texture_path", "res://addons/poibuilder/materials/textures/flower_patch.png")
-	stamp_quad.set_meta("stamp_opacity", 0.0) # touches every tile, paints nothing
-	stamp_quad.set_meta("stamp_scale", 4.0)
-	stamp_quad.set_meta("stamp_rotation", 0.0)
-	stamp_quad.set_meta("anchor_center", Vector2(0.0, 0.0))
-	stamp_quad.set_meta("anchor_du", Vector2(2.0, 0.0))
-	stamp_quad.set_meta("anchor_dv", Vector2(0.0, 2.0))
-	stamps_container.add_child(stamp_quad)
+	# A near-transparent decal across the whole face: every tile has paint
+	# (so every tile bakes) while the base ramp still sets the color.
+	var faint := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	faint.fill(Color(0.5, 0.5, 0.5, 0.02))
+	var face_center := Vector3.ZERO
+	for idx in face.get_distinct_indexes():
+		face_center += mesh_data.positions[idx]
+	face_center /= float(face.get_distinct_indexes().size())
+	var face_normal := PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
+	assert_gt(PBSplat.paste_decal(mesh_data, face_center, face_normal, 0.0, 4.0, 1.0, faint), 0,
+			"Fixture: the faint decal must cover the face")
 
 	var frags := PBFaceSubdivider.subdivide_face(mesh_data, face, 0, true, 1.0)
 	assert_eq(frags.size(), 4)

@@ -57,7 +57,24 @@ const PBM_ALPHA_CUTOUT := 1
 const PBM_ALPHA_BLEND := 2
 ## Configuration settings for map export.
 class ExportSettings extends RefCounted:
+	## How a MODERN export carries splat paint. Retro export always bakes paint
+	## into tiles (the device has no shaders to run a splat stack).
+	enum SplatMode {
+		## Composite every painted face into its own texture: the .glb is
+		## self-contained and any glTF consumer shows the paint as authored.
+		BAKE = 0,
+		## Keep the live stack: geometry carries the mask coordinates in
+		## TEXCOORD_2 (Godot re-imports them as CUSTOM0), and every mask, layer
+		## texture and decal channel is written as a sidecar PNG next to the
+		## .glb, described in the material's `poi_splat` extras. External
+		## engines reproduce the blend from the documented recipe.
+		INCLUDE = 1,
+	}
 	var export_mode: ExportMode = ExportMode.RETRO
+	var splat_mode: SplatMode = SplatMode.BAKE
+	## Target file of the running export (set by export_map / export_map_async).
+	## Splat sidecar files are written next to it.
+	var export_path: String = ""
 	var subdivide_quads: bool = true
 	var grid_size: float = 1.0
 	var bake_lighting: bool = true
@@ -149,6 +166,7 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 		return export_retro_pbm(root, file_path, settings)
 	if settings == null:
 		settings = ExportSettings.new()
+	settings.export_path = file_path
 
 	ensure_export_dir(file_path)
 
@@ -565,23 +583,35 @@ static func _face_tint(mesh_data: PBMeshData, face: PBFace) -> Color:
 		return Color.WHITE
 	return acc / float(n)
 
-## Exports a PBMesh in Modern mode with metadata/extras and decals.
+## Exports a PBMesh in Modern mode: native geometry, no forced subdivision.
+##
+## Splat paint has two routes here (settings.splat_mode):
+##   BAKE    — each painted face is composited into its own texture at the live
+##             mask resolution, and its UV1 is rewritten into mask space. The
+##             result is an ordinary textured surface for any glTF consumer.
+##   INCLUDE — the geometry keeps its mask coordinates (exported as
+##             TEXCOORD_2, so Godot re-imports them as CUSTOM0), each painted
+##             face's material carries a `poi_splat` extras record, and the
+##             masks/layers/decals are written as sidecar PNGs (see
+##             docs/modern_glb_splat.md for the consumer recipe).
 static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3D],
 		grid: PBLightBaker.SpatialGrid, base_material_cache: Dictionary,
 		settings: ExportSettings) -> void:
 	var mesh_data := pb.pb_mesh_data
 	var node_xf := _get_world_transform(pb)
+	var has_splat := _mesh_has_splat(mesh_data)
 
-	var am: ArrayMesh = mesh_data.to_array_mesh()
-
-	# GLTF has no representation for custom ShaderMaterials: a splat material
-	# exports as an untextured default and the paint vanishes for other
-	# engines. Substitute the splat base look (texture/color/roughness) as a
-	# StandardMaterial3D so modern exports at least keep the base surface —
-	# painted layer content needs the retro bake or a live PoiBuilder scene.
-	for s in range(am.get_surface_count()):
-		if PBSplat.is_splat_material(am.surface_get_material(s)):
-			am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
+	var am: ArrayMesh = null
+	if has_splat and settings.splat_mode == ExportSettings.SplatMode.BAKE:
+		am = _build_modern_baked_splat_mesh(mesh_data, settings)
+	if am == null:
+		am = mesh_data.to_array_mesh()
+		# glTF has no representation for custom ShaderMaterials: a splat material
+		# exports as its base look. In BAKE mode that is the fallback for faces
+		# whose paint could not be composited (non-opaque materials, empty).
+		for s in range(am.get_surface_count()):
+			if PBSplat.is_splat_material(am.surface_get_material(s)):
+				am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
 
 	# If bake lighting is toggled on, bake vertex colors directly onto the ArrayMesh surfaces
 	if settings.bake_lighting:
@@ -601,42 +631,324 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 					if ci < authored.size() and authored[ci] != Color.WHITE:
 						cols[ci] = cols[ci] * authored[ci]
 			arrays[Mesh.ARRAY_COLOR] = cols
-			new_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			var fmt_flags: int = am.surface_get_format(s) & (Mesh.ARRAY_FORMAT_CUSTOM0 << 1 | Mesh.ARRAY_FORMAT_CUSTOM0)
+			new_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt_flags)
 			new_am.surface_set_material(s, am.surface_get_material(s))
 		am = new_am
 
 	var export_mi := MeshInstance3D.new()
 	export_mi.name = pb.name
 	export_mi.mesh = am
-	export_mi.transform = _get_world_transform(pb)
-
-	# Encode stamp placements and paint state as metadata
-	var stamps := PBSplat.collect_stamp_data(pb)
-	if not stamps.is_empty():
-		export_mi.set_meta("poi_stamps", stamps)
+	export_mi.transform = node_xf
 
 	parent.add_child(export_mi)
 
-	# Also export stamps as explicit child decal quad nodes for universal engine support
-	var stamps_container := pb.get_node_or_null("PBStamps")
-	if stamps_container != null:
-		var export_stamps := Node3D.new()
-		export_stamps.name = "PBStamps"
-		export_mi.add_child(export_stamps)
-
-		for stamp in stamps_container.get_children():
-			if stamp is MeshInstance3D:
-				var mi := stamp as MeshInstance3D
-				var dup := MeshInstance3D.new()
-				dup.name = mi.name
-				dup.mesh = mi.mesh if mi.mesh != null else QuadMesh.new()
-				dup.material_override = mi.material_override
-				dup.transform = mi.transform
-				export_stamps.add_child(dup)
+	if has_splat and settings.splat_mode == ExportSettings.SplatMode.INCLUDE:
+		_write_splat_sidecars(pb, am, settings)
 
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
 		_export_collider_mesh(pb, parent)
+
+
+## ── Modern "include" splat export ────────────────────────────────────────────
+##
+## The live splat stack is not expressible as glTF materials, so INCLUDE mode
+## exports it as DATA a consumer can rebuild:
+##   * the geometry keeps its mask coordinates — ARRAY_CUSTOM0 travels to
+##     TEXCOORD_2 in the .glb (and back into CUSTOM0 when Godot re-imports it),
+##   * every mask, layer texture and decal channel is written as a PNG next to
+##     the .glb under `<name>.splat/`,
+##   * the painted face's material carries `poi_splat` in its glTF extras:
+##     the layer list (texture file, blend color, roughness) and the decal file.
+## The blend recipe is documented in docs/modern_glb_splat.md with a reference
+## shader; `PBSplatImport.rebuild_from_extras()` does the same for Godot.
+static func _write_splat_sidecars(pb: PBMesh, am: ArrayMesh, settings: ExportSettings) -> void:
+	if settings.export_path.is_empty() or pb == null or pb.pb_mesh_data == null:
+		return
+	var mesh_data := pb.pb_mesh_data
+	var dir := settings.export_path.get_basename() + ".splat"
+	DirAccess.make_dir_recursive_absolute(dir)
+
+	var painted_faces: Array = []
+	for fi in range(mesh_data.faces.size()):
+		var face := mesh_data.faces[fi]
+		if face == null:
+			continue
+		if not PBSplat.is_splat_material(mesh_data.get_face_material(face)):
+			continue
+		var record := _build_splat_record(mesh_data, face, fi, dir)
+		if not record.is_empty():
+			painted_faces.append(record)
+	if painted_faces.is_empty():
+		return
+
+	# Attach each face's record to the material that surface renders with, so a
+	# consumer walking primitives -> material -> extras finds its paint.
+	for s in range(am.get_surface_count()):
+		var mat := am.surface_get_material(s)
+		if mat == null:
+			continue
+		var arrays := am.surface_get_arrays(s)
+		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		for record in painted_faces:
+			if (record["_face"] as PBFace) == null:
+				continue
+			if _surface_covers_face(mesh_data, record["_face"], idx, verts):
+				var extras: Dictionary = mat.get_meta("extras", {})
+				var list: Array = extras.get("poi_splat", [])
+				var clean: Dictionary = record.duplicate()
+				clean.erase("_face")
+				list.append(clean)
+				extras["poi_splat"] = list
+				mat.set_meta("extras", extras)
+				mat.resource_name = mat.resource_name if not mat.resource_name.is_empty() else "Splat_%d" % record["face"]
+
+## One face's splat record plus the PNGs it references.
+static func _build_splat_record(mesh_data: PBMeshData, face: PBFace, face_idx: int, dir: String) -> Dictionary:
+	var state := PBSplat.collect_face_paint_state(mesh_data, face)
+	if state.is_empty():
+		return {}
+	var base_name := "f%d" % face_idx
+	var record: Dictionary = {
+		"version": 1,
+		"face": face_idx,
+		"mask_uv": "TEXCOORD_2",
+		"layers": [],
+		"decal": "",
+		"_face": face,
+	}
+	var decal: Image = state.get("decal_layer_image", null)
+	if decal != null:
+		var decal_file := "%s_decal.png" % base_name
+		_write_png(decal, dir.path_join(decal_file))
+		record["decal"] = "%s/%s" % [dir.get_file(), decal_file]
+	for layer in state.get("layers", []):
+		var slot: int = int(layer.get("slot", 0))
+		var entry: Dictionary = {
+			"slot": slot,
+			"color": _color_array(layer.get("color", Color.WHITE)),
+			"roughness": float(layer.get("roughness", 0.8)),
+			"texture": "",
+			"mask": "",
+		}
+		var tex: Texture2D = layer.get("texture")
+		var tex_img := _texture_image(tex)
+		if tex_img != null:
+			var tex_file := "%s_layer%d_tex.png" % [base_name, slot]
+			_write_png(tex_img, dir.path_join(tex_file))
+			entry["texture"] = "%s/%s" % [dir.get_file(), tex_file]
+		var mask: Image = layer.get("mask_image")
+		if mask != null:
+			var mask_file := "%s_layer%d_mask.png" % [base_name, slot]
+			_write_png(mask, dir.path_join(mask_file))
+			entry["mask"] = "%s/%s" % [dir.get_file(), mask_file]
+		record["layers"].append(entry)
+	return record
+
+static func _color_array(c: Color) -> Array:
+	return [c.r, c.g, c.b, c.a]
+
+static func _texture_image(tex: Texture2D) -> Image:
+	if tex == null:
+		return null
+	var img := tex.get_image()
+	if img == null:
+		return null
+	if img.is_compressed():
+		img = img.duplicate()
+		img.decompress()
+	return img
+
+static func _write_png(img: Image, path: String) -> void:
+	if img == null or img.is_empty():
+		return
+	img.save_png(path)
+
+## True when a surface's geometry contains the given face (same vertex set).
+static func _surface_covers_face(mesh_data: PBMeshData, face: PBFace,
+		_surface_indices: PackedInt32Array, verts: PackedVector3Array) -> bool:
+	var corners: Dictionary = {}
+	for idx in face.get_distinct_indexes():
+		if idx >= 0 and idx < mesh_data.positions.size():
+			corners[mesh_data.positions[idx].snappedf(0.0001)] = true
+	if corners.is_empty():
+		return false
+	var found := 0
+	for v in verts:
+		if corners.has(v.snappedf(0.0001)):
+			found += 1
+			if found >= corners.size():
+				return true
+	return false
+
+
+## True when any face carries splat data (a splat material or painted bounds).
+static func _mesh_has_splat(mesh_data: PBMeshData) -> bool:
+	if mesh_data == null:
+		return false
+	for face in mesh_data.faces:
+		if face != null and face.splat_bounds.size() == 4:
+			return true
+	for mat in mesh_data.materials:
+		if mat != null and PBSplat.is_splat_material(mat):
+			return true
+	return false
+
+## Builds the BAKE-mode mesh: every face with paint becomes ONE surface whose
+## vertices sample a per-face composite texture in mask space; unpainted faces
+## keep their own material and UVs and stay grouped per material.
+##
+## Resolution follows the live mask policy (256 texels/m, clamped), so the baked
+## surface carries the same texel density the editor showed — a big face is
+## never blurrier than a small one.
+static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
+		settings: ExportSettings) -> ArrayMesh:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return null
+	# Work on a copy: the export must never touch the scene's mesh data. Faces
+	# get private corners first, because the bake rewrites UV1 per face.
+	var bake_data := PBCommand.copy_mesh_data(mesh_data)
+	PBUvOps._split_shared_face_vertices(bake_data)
+	bake_data.splat_uvs = PackedVector2Array()
+
+	var texture_cap: int = clampi(settings.max_texture_size * 4,
+			PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION)
+	var groups: Dictionary = {}        # Material -> Array[int] (bake_data face indices)
+	var group_order: Array[Material] = []
+	var painted: Array = []            # [{face_idx, material}]
+	var any_painted := false
+
+	for fi in range(bake_data.faces.size()):
+		var face := bake_data.faces[fi]
+		var src_face := mesh_data.faces[fi] if fi < mesh_data.faces.size() else null
+		if face == null or src_face == null:
+			continue
+		var src_mat := mesh_data.get_face_material(src_face)
+		var composite: Image = null
+		if PBSplat.is_splat_material(src_mat) and not PBTileBaker._is_non_opaque(src_mat) \
+				and _face_has_visible_paint(mesh_data, src_face):
+			composite = PBTileBaker.bake_face_composite(mesh_data, src_face, texture_cap)
+		if composite != null:
+			any_painted = true
+			var baked_mat := StandardMaterial3D.new()
+			baked_mat.resource_name = "BakedSplat_%d" % fi
+			var tex := ImageTexture.create_from_image(composite)
+			tex.resource_name = "SplatFace_%d" % fi
+			baked_mat.albedo_texture = tex
+			baked_mat.albedo_color = Color.WHITE
+			baked_mat.roughness = clampf(float(PBSplat.collect_face_paint_state(mesh_data, src_face).get("roughness", 0.8)), 0.0, 1.0)
+			baked_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			baked_mat.texture_repeat = false
+			baked_mat.vertex_color_use_as_albedo = true
+			painted.append({"face": face, "src_face": src_face, "material": baked_mat})
+			continue
+		var mat := src_mat
+		if PBSplat.is_splat_material(mat):
+			mat = _standard_from_splat(mat)
+		if mat == null:
+			mat = PBMeshData.get_default_material()
+		if not groups.has(mat):
+			groups[mat] = [] as Array[int]
+			group_order.append(mat)
+		groups[mat].append(fi)
+
+	if not any_painted:
+		return null
+
+	# One vertex pool; painted faces get mask-space UVs, everything else keeps
+	# its authored UV1 (faces own their corners after the split, so a per-face
+	# UV rewrite is safe).
+	var uvs: PackedVector2Array = bake_data.textures0
+	if uvs.size() != bake_data.positions.size():
+		uvs = PackedVector2Array()
+		uvs.resize(bake_data.positions.size())
+	for entry in painted:
+		var src_face: PBFace = entry["src_face"]
+		var bounds := PBSplat.get_face_planar_bounds(mesh_data, src_face)
+		if bounds.is_empty():
+			continue
+		var u_axis: Vector3 = bounds["u"]
+		var v_axis: Vector3 = bounds["v"]
+		var min_u: float = bounds["min_u"]
+		var min_v: float = bounds["min_v"]
+		var range_u: float = bounds["range_u"]
+		var range_v: float = bounds["range_v"]
+		for idx in (entry["face"] as PBFace).get_distinct_indexes():
+			if idx < 0 or idx >= bake_data.positions.size():
+				continue
+			var p: Vector3 = bake_data.positions[idx]
+			uvs[idx] = Vector2((u_axis.dot(p) - min_u) / range_u, (v_axis.dot(p) - min_v) / range_v)
+
+	var normals: PackedVector3Array = bake_data.get_normals()
+	var out := ArrayMesh.new()
+
+	var emit_surface := func(index_buffer: PackedInt32Array, mat: Material) -> void:
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = bake_data.positions
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		if not bake_data.colors.is_empty() and bake_data.colors.size() == bake_data.positions.size():
+			arrays[Mesh.ARRAY_COLOR] = bake_data.colors
+		arrays[Mesh.ARRAY_INDEX] = index_buffer
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		out.surface_set_material(out.get_surface_count() - 1, mat)
+
+	for mat in group_order:
+		var indices := PackedInt32Array()
+		for fi in groups[mat]:
+			indices.append_array(_face_indices_cw(bake_data.faces[fi]))
+		if not indices.is_empty():
+			emit_surface.call(indices, mat)
+	for entry in painted:
+		var indices := _face_indices_cw(entry["face"] as PBFace)
+		if not indices.is_empty():
+			emit_surface.call(indices, entry["material"])
+	return out
+
+## True when a face's paint state holds actual pixels: a splat material with an
+## empty mask set exports as its base look (no baked texture) instead of paying
+## for a composite that is the base texture again.
+static func _face_has_visible_paint(mesh_data: PBMeshData, face: PBFace) -> bool:
+	var state := PBSplat.collect_face_paint_state(mesh_data, face)
+	if state.is_empty():
+		return false
+	var decal: Image = state.get("decal_layer_image", null)
+	if decal != null and _image_has_pixels(decal, 4, 3):
+		return true
+	for layer in state.get("layers", []):
+		var mask: Image = layer.get("mask_image")
+		if mask != null and _image_has_pixels(mask, 1, 0):
+			return true
+	return false
+
+## Strided scan: the bakers only need to know whether ANY pixel is set, and a
+## full byte scan of every mask would dominate the export.
+static func _image_has_pixels(img: Image, stride: int, offset: int) -> bool:
+	if img == null or img.is_empty():
+		return false
+	var bytes := img.get_data()
+	var i := offset
+	while i < bytes.size():
+		if bytes[i] != 0:
+			return true
+		i += stride
+	return false
+
+## Internal CCW (Unity convention) -> Godot CW front faces, same reversal the
+## mesh compiler does.
+static func _face_indices_cw(face: PBFace) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if face == null:
+		return out
+	var fi := face.get_indexes()
+	for tri_i in range(0, fi.size() - 2, 3):
+		out.append(fi[tri_i + 2])
+		out.append(fi[tri_i + 1])
+		out.append(fi[tri_i])
+	return out
 
 ## Converts a splat ShaderMaterial into its base StandardMaterial3D look for
 ## material formats that cannot carry custom shaders (modern .glb export).

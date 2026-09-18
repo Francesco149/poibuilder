@@ -59,6 +59,7 @@ var _gizmo_cam_valid: bool = false
 func _ready() -> void:
 	if pb_mesh_data != null:
 		rebuild()
+		_migrate_legacy_stamps()
 	else:
 		_update_collider()
 
@@ -144,7 +145,6 @@ func rebuild() -> void:
 	mesh = pb_mesh_data.to_array_mesh()
 	_needs_rebuild = false
 	_update_collider()
-	_refresh_stamps()
 	mesh_rebuilt.emit()
 ## Fast-path rebuild for position-only edits (active element dragging).
 ## Reuses precompiled submesh index buffers since topology and material
@@ -156,60 +156,29 @@ func rebuild_positions() -> void:
 		return
 	mesh = pb_mesh_data.to_array_mesh(null, true)
 	_needs_rebuild = false
-	_refresh_stamps()
 	mesh_rebuilt.emit()
 
 const STAMP_CONTAINER_NAME := "PBStamps"
 
-## Re-evaluates every face-anchored stamp decal under PBStamps against the
-## CURRENT geometry (stamps grow/shrink/move with face resizes and edits).
-## Cheap no-op when no anchored stamps exist. Runs on rebuild() and
-## rebuild_positions() so decals track live drags too.
-func _refresh_stamps() -> void:
-	if pb_mesh_data == null:
+## One-time migration for scenes saved with the OLD stamp design: decal stamps
+## used to be MeshInstance3D quads under a `PBStamps` child, positioned by node
+## metadata. Those nodes were ordinary scene nodes — visible, selectable, and
+## desynced from the mesh the moment anyone moved one. Decals are painted into
+## the surface now, so every recorded record is re-pasted into the decal layer
+## and the container is dropped. Editor-only; a plain runtime leaves the scene
+## exactly as saved.
+func _migrate_legacy_stamps() -> void:
+	if not Engine.is_editor_hint() or pb_mesh_data == null:
 		return
-	var container := get_node_or_null(STAMP_CONTAINER_NAME)
-	if container == null:
+	if has_meta("pb_legacy_stamps_migrated") or get_node_or_null(STAMP_CONTAINER_NAME) == null:
 		return
-	for stamp in container.get_children():
-		var mi := stamp as MeshInstance3D
-		if mi == null or not (stamp.has_meta("anchor_center") or stamp.has_meta("anchor_u")):
-			continue
-		var fidx: int = int(stamp.get_meta("face_idx", -1))
-		if fidx < 0 or fidx >= pb_mesh_data.faces.size():
-			continue
-		var face := pb_mesh_data.faces[fidx]
-		if face == null:
-			continue
-		var anchor_dict: Dictionary = {}
-		if stamp.has_meta("anchor_u") and stamp.has_meta("anchor_v"):
-			anchor_dict = {
-				"u_center": stamp.get_meta("anchor_u"),
-				"v_center": stamp.get_meta("anchor_v"),
-				"scale_x": stamp.get_meta("anchor_scale_x", 1.0),
-				"scale_y": stamp.get_meta("anchor_scale_y", 1.0),
-				"rot_right": stamp.get_meta("anchor_rot_right", Vector3.RIGHT),
-				"rot_up": stamp.get_meta("anchor_rot_up", Vector3.UP),
-			}
-		else:
-			anchor_dict = {
-				"center": stamp.get_meta("anchor_center"),
-				"du": stamp.get_meta("anchor_du"),
-				"dv": stamp.get_meta("anchor_dv"),
-			}
-		var res := PBSplat.stamp_transform_from_anchor(pb_mesh_data, face, anchor_dict)
-		if res.is_empty():
-			continue
-		mi.transform = res["transform"]
-		# Keep the decal shader's face-edge clipping aligned with the live
-		# geometry bounds (the stamp may partially overhang a resized face).
-		if mi.material_override is ShaderMaterial:
-			var sm := mi.material_override as ShaderMaterial
-			var b: Dictionary = res["bounds"]
-			sm.set_shader_parameter("face_u", b["u"])
-			sm.set_shader_parameter("face_v", b["v"])
-			sm.set_shader_parameter("face_bounds", Vector4(b["min_u"], b["max_u"], b["min_v"], b["max_v"]))
-			sm.set_shader_parameter("stamp_to_mesh", mi.transform)
+	set_meta("pb_legacy_stamps_migrated", true)
+	var migrated := PBSplat.migrate_legacy_stamps(self)
+	if migrated > 0:
+		var logger := PBLogger.new()
+		logger.info("render", "Migrated %d legacy decal node(s) on %s into the decal layer" % [migrated, name])
+		rebuild()
+		update_gizmos()
 
 # ==============================================================================
 # Convenience Factory Methods

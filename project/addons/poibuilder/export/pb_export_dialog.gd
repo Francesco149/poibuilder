@@ -19,6 +19,7 @@ var _chk_bake_ao: CheckBox
 var _spin_ao_samples: SpinBox
 var _spin_ao_distance: SpinBox
 var _chk_bake_textures: CheckBox
+var _opt_splat_mode: OptionButton
 var _spin_tile_res: OptionButton
 var _spin_max_tex_size: OptionButton
 var _chk_export_billboards: CheckBox
@@ -92,10 +93,23 @@ func _build_ui() -> void:
 	# Textures & Baking
 	var hb_tex := HBoxContainer.new()
 	_chk_bake_textures = CheckBox.new()
-	_chk_bake_textures.text = "Bake Splatting & Stamps to Tiles"
+	_chk_bake_textures.text = "Bake Splatting & Decals to Tiles"
 	_chk_bake_textures.button_pressed = true
 	_chk_bake_textures.tooltip_text = "Generates composite tile textures for painted areas; unpainted tiles reuse the base texture"
 	hb_tex.add_child(_chk_bake_textures)
+
+	var hb_splat := HBoxContainer.new()
+	hb_splat.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb_tex.add_child(hb_splat)
+	var lbl_splat := Label.new()
+	lbl_splat.text = "Modern paint:"
+	hb_splat.add_child(lbl_splat)
+	_opt_splat_mode = OptionButton.new()
+	_opt_splat_mode.name = "SplatModeSelector"
+	_opt_splat_mode.add_item("Bake into textures", PBMapExporter.ExportSettings.SplatMode.BAKE)
+	_opt_splat_mode.add_item("Include splat data", PBMapExporter.ExportSettings.SplatMode.INCLUDE)
+	_opt_splat_mode.tooltip_text = "Modern (.glb) export only. Bake: each painted face is composited into its own texture — self-contained, any engine sees the paint. Include: keeps the live layer stack (masks in TEXCOORD_2) and writes masks/layers/decals as sidecar PNGs described in the material extras, for engines that run the documented blend."
+	hb_splat.add_child(_opt_splat_mode)
 
 	var lbl_res := Label.new()
 	lbl_res.text = "Tile Res:"
@@ -270,6 +284,8 @@ func _on_mode_selected(_idx: int) -> void:
 	_chk_subdivide.button_pressed = is_retro
 	_chk_bake_lighting.button_pressed = is_retro
 	_chk_bake_textures.button_pressed = is_retro
+	if _opt_splat_mode != null:
+		_opt_splat_mode.disabled = is_retro
 	# Keep the path's extension honest for the chosen format.
 	var path := _txt_path.text.strip_edges()
 	var want_ext := ".pbm" if _selected_format() == FORMAT_PBM else ".glb"
@@ -321,6 +337,8 @@ func _on_confirmed() -> void:
 	settings.bake_ao = _chk_bake_ao.button_pressed
 	settings.ao_samples = int(_spin_ao_samples.value)
 	settings.bake_textures = _chk_bake_textures.button_pressed
+	if _opt_splat_mode != null:
+		settings.splat_mode = _opt_splat_mode.get_selected_id() as PBMapExporter.ExportSettings.SplatMode
 	settings.tile_resolution = _spin_tile_res.get_selected_id()
 	settings.max_texture_size = _spin_max_tex_size.get_selected_id()
 	settings.export_billboards = _chk_export_billboards.button_pressed

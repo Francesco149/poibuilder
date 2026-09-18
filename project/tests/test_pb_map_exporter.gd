@@ -69,18 +69,17 @@ func test_export_tree_modern_mode() -> void:
 	cube.collider_type = PBMesh.ColliderType.ACCURATE
 	root.add_child(cube)
 
-	# Add stamp child
-	var stamps := Node3D.new()
-	stamps.name = "PBStamps"
-	cube.add_child(stamps)
-	var stamp := MeshInstance3D.new()
-	stamp.name = "Stamp_0"
-	stamp.set_meta("face_idx", 0)
-	stamp.set_meta("stamp_texture_path", "res://addons/poibuilder/materials/textures/flower_patch.png")
-	stamp.set_meta("anchor_center", Vector2(0, 0))
-	stamp.set_meta("anchor_du", Vector2(0.1, 0.0))
-	stamp.set_meta("anchor_dv", Vector2(0.0, 0.1))
-	stamps.add_child(stamp)
+	# Paint one face so the modern export has a splat stack to carry.
+	var mesh_data := cube.pb_mesh_data
+	var patch := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	patch.fill(Color(0.1, 0.8, 0.3, 1.0))
+	var face := mesh_data.faces[0]
+	var center := Vector3.ZERO
+	for idx in face.get_distinct_indexes():
+		center += mesh_data.positions[idx]
+	center /= float(face.get_distinct_indexes().size())
+	PBSplat.paste_decal(mesh_data, center, PBMath.normal_from_positions(mesh_data.positions, face.get_indexes()), 0.0, 0.6, 1.0, patch)
+
 	var settings := PBMapExporter.ExportSettings.new()
 	settings.export_mode = PBMapExporter.ExportMode.MODERN
 	settings.bake_lighting = false
@@ -92,11 +91,17 @@ func test_export_tree_modern_mode() -> void:
 
 	var cube_node := export_tree.get_node_or_null("ModernCube") as MeshInstance3D
 	assert_not_null(cube_node)
-	assert_true(cube_node.has_meta("poi_stamps"), "Modern export should attach poi_stamps metadata")
 
-	var stamps_node := cube_node.get_node_or_null("PBStamps")
-	assert_not_null(stamps_node, "Modern export should preserve PBStamps container")
-	assert_not_null(stamps_node.get_node_or_null("Stamp_0"), "Modern export should preserve decal quads")
+	# Default modern splat mode is BAKE: the painted face must ship a baked
+	# texture, and no scene-node decals may exist any more.
+	var baked_found := false
+	for s in range(cube_node.mesh.get_surface_count()):
+		var mat := cube_node.mesh.surface_get_material(s)
+		if mat is StandardMaterial3D and mat.resource_name.begins_with("BakedSplat"):
+			baked_found = true
+	assert_true(baked_found, "Modern bake must substitute a per-face composite texture")
+	assert_null(cube_node.get_node_or_null("PBStamps"),
+			"Decals are pixels now — no decal nodes may reach the export")
 
 func test_export_map_to_glb_file() -> void:
 	var root := Node3D.new()
@@ -818,77 +823,159 @@ func test_bake_pb_mesh_in_place_frees_uv2_for_lightmaps() -> void:
 	assert_true(report2["ok"], "Second bake must succeed")
 	assert_false(report2["had_splat"], "Second bake must find no splat data")
 
-func test_modern_glb_roundtrip_preserves_stamps() -> void:
-	# Decals must survive the full modern .glb round trip as ordinary meshes:
-	# quad node, a material with texture, and a transform anchored on the face.
+## BAKE mode (the default) composites the paint into a per-face texture and
+## rewrites that face's UVs into mask space, so any glTF consumer shows it.
+func test_modern_glb_bake_embeds_painted_pixels() -> void:
+	var root := Node3D.new()
+	autofree(root)
+
+	var mesh_node := PBMesh.create_cube(2.0)
+	mesh_node.name = "PaintedFloor"
+	mesh_node.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	root.add_child(mesh_node)
+
+	var mesh_data := mesh_node.pb_mesh_data
+	var face := mesh_data.faces[4] # top
+	var center := Vector3.ZERO
+	for idx in face.get_distinct_indexes():
+		center += mesh_data.positions[idx]
+	center /= float(face.get_distinct_indexes().size())
+
+	var patch := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	patch.fill(Color(0.95, 0.1, 0.1, 1.0))
+	assert_eq(PBSplat.paste_decal(mesh_data, center, Vector3.UP, 0.0, 1.2, 1.0, patch), 1,
+			"Fixture: the decal must land on the top face")
+
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.splat_mode = PBMapExporter.ExportSettings.SplatMode.BAKE
+	settings.bake_lighting = false
+	settings.export_colliders = false
+
+	var export_tree := PBMapExporter.build_export_tree(root, settings)
+	assert_not_null(export_tree)
+	autofree(export_tree)
+
+	var exported := export_tree.get_node_or_null("PaintedFloor") as MeshInstance3D
+	assert_not_null(exported)
+	var baked_surface := -1
+	for s_i in range(exported.mesh.get_surface_count()):
+		var m := exported.mesh.surface_get_material(s_i)
+		if m is StandardMaterial3D and m.resource_name.begins_with("BakedSplat"):
+			baked_surface = s_i
+			break
+	assert_true(baked_surface >= 0, "The painted face must export as a baked texture surface")
+	if baked_surface < 0:
+		return
+
+	var baked_mat := exported.mesh.surface_get_material(baked_surface) as StandardMaterial3D
+	var img := baked_mat.albedo_texture.get_image()
+	var px := img.get_pixel(img.get_width() / 2, img.get_height() / 2)
+	assert_almost_eq(px.r, 0.95, 0.08, "Baked texels must carry the painted color")
+	assert_almost_eq(px.g, 0.1, 0.08, "…and not the base material's color")
+
+	# UVs of that surface must be inside the baked texture (mask space).
+	var arrays: Array = exported.mesh.surface_get_arrays(baked_surface)
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	assert_gt(uvs.size(), 0, "Baked surface must carry UVs")
+	for uv in uvs:
+		if uv.x < -0.001 or uv.x > 1.001 or uv.y < -0.001 or uv.y > 1.001:
+			assert_true(false, "Baked UVs must land inside the mask-space texture")
+			break
+
+
+## INCLUDE mode ships the live splat stack: geometry keeps its mask coordinates
+## (CUSTOM0 -> TEXCOORD_2 -> CUSTOM0), each painted face's material carries a
+## `poi_splat` record, and the masks/decal ride as sidecar PNGs. The round trip
+## must reproduce the painted pixels.
+func test_modern_glb_include_roundtrip_reproduces_paint() -> void:
 	var root := Node3D.new()
 	autofree(root)
 
 	var floor_mesh := PBMesh.create_cube(2.0)
-	floor_mesh.name = "StampFloor"
+	floor_mesh.name = "SplatFloor"
 	root.add_child(floor_mesh)
 
-	var stamps := Node3D.new()
-	stamps.name = "PBStamps"
-	floor_mesh.add_child(stamps)
-	var stamp := MeshInstance3D.new()
-	stamp.name = "Poster_0"
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.5, 0.5)
-	stamp.mesh = quad
-	stamp.position = Vector3(0, 1.01, 0)
-	var stamp_mat := StandardMaterial3D.new()
-	stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
-	img.fill(Color.RED)
-	stamp_mat.albedo_texture = ImageTexture.create_from_image(img)
-	stamp.material_override = stamp_mat
-	stamp.set_meta("face_idx", 4)
-	stamp.set_meta("stamp_texture_path", "")
-	stamp.set_meta("stamp_scale", 0.5)
-	stamp.set_meta("stamp_rotation", 0.0)
-	stamp.set_meta("stamp_opacity", 1.0)
-	stamp.set_meta("anchor_center", Vector2(0.5, 0.5))
-	stamp.set_meta("anchor_du", Vector2(0.1, 0.0))
-	stamp.set_meta("anchor_dv", Vector2(0.0, 0.1))
-	stamps.add_child(stamp)
+	var mesh_data := floor_mesh.pb_mesh_data
+	var patch := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	patch.fill(Color(0.2, 0.4, 0.95, 1.0))
+	var face := mesh_data.faces[4] # top
+	var center := Vector3.ZERO
+	for idx in face.get_distinct_indexes():
+		center += mesh_data.positions[idx]
+	center /= float(face.get_distinct_indexes().size())
+	var painted := PBSplat.paste_decal(mesh_data, center, Vector3.UP, 0.0, 0.8, 1.0, patch)
+	assert_eq(painted, 1, "Fixture: the decal must land on the top face")
+	var mat := mesh_data.get_face_material(face) as ShaderMaterial
+	var decal := PBSplat.get_decal_layer_image(mat)
+	var mid := decal.get_width() / 2
+	var alpha_before := decal.get_pixel(mid, mid).a
+	assert_gt(alpha_before, 0.5, "Fixture: the decal layer must hold pixels")
 
+	var out_path := "user://test_splat_include.glb"
 	var settings := PBMapExporter.ExportSettings.new()
 	settings.export_mode = PBMapExporter.ExportMode.MODERN
+	settings.splat_mode = PBMapExporter.ExportSettings.SplatMode.INCLUDE
 	settings.bake_lighting = false
 	settings.export_colliders = false
 
-	var out_path := "user://test_stamp_roundtrip.glb"
 	var err := PBMapExporter.export_map(root, out_path, settings)
-	assert_eq(err, OK, "Modern .glb export with stamps must succeed")
+	assert_eq(err, OK, "Modern INCLUDE export must succeed")
+
+	var sidecar_dir := out_path.get_basename() + ".splat"
+	assert_true(DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(sidecar_dir)),
+			"INCLUDE export must write its sidecar folder")
+	var sidecar_files := DirAccess.get_files_at(sidecar_dir)
+	var has_decal_png := false
+	for f in sidecar_files:
+		if f.ends_with("_decal.png"):
+			has_decal_png = true
+	assert_true(has_decal_png, "The decal channel must ship as a sidecar PNG")
 
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
 	var lerr := doc.append_from_file(out_path, state)
-	assert_eq(lerr, OK, "Re-import of the stamped .glb must succeed")
+	assert_eq(lerr, OK, "Re-import of the INCLUDE .glb must succeed")
 	if lerr != OK:
 		return
 	var scene := doc.generate_scene(state)
 	autofree(scene)
 
-	var imported_floor := scene.get_node_or_null("StampFloor") as MeshInstance3D
-	assert_not_null(imported_floor, "Floor must survive the round trip")
-	var imported_stamps := scene.get_node_or_null("StampFloor/PBStamps")
-	assert_not_null(imported_stamps, "PBStamps container must survive as scene nodes")
-	var imported_quad := scene.get_node_or_null("StampFloor/PBStamps/Poster_0") as MeshInstance3D
-	assert_not_null(imported_quad, "Decal quad must survive as an ordinary MeshInstance3D")
-	if imported_quad == null:
+	var imported := scene.get_node_or_null("SplatFloor") as MeshInstance3D
+	assert_not_null(imported, "Floor must survive the round trip")
+	if imported == null:
 		return
-	assert_not_null(imported_quad.mesh, "Decal quad must keep its mesh")
-	var mat: Material = imported_quad.material_override
-	if mat == null and imported_quad.mesh != null:
-		mat = imported_quad.mesh.surface_get_material(0)
-	assert_not_null(mat, "Decal quad must carry a material after the round trip")
-	if mat is StandardMaterial3D:
-		assert_not_null((mat as StandardMaterial3D).albedo_texture, "Decal material must keep its texture")
-	assert_almost_eq(imported_quad.position.y, 1.01, 0.01,
-			"Decal quad must keep its anchored position above the face")
 
+	# CUSTOM0 must come back from TEXCOORD_2 on every surface that carries it.
+	var custom_found := false
+	var record_found := false
+	for s_i in range(imported.mesh.get_surface_count()):
+		if (imported.mesh.surface_get_format(s_i) & Mesh.ARRAY_FORMAT_CUSTOM0) != 0:
+			custom_found = true
+		var surface_mat := imported.mesh.surface_get_material(s_i)
+		if surface_mat != null and surface_mat.has_meta("extras"):
+			var extras = surface_mat.get_meta("extras")
+			if extras is Dictionary and (extras as Dictionary).has("poi_splat"):
+				record_found = true
+	assert_true(custom_found, "Mask coordinates must round-trip as CUSTOM0 (via TEXCOORD_2)")
+	assert_true(record_found, "The poi_splat record must ride on the painted face's material extras")
+
+	# …and the documented loader rebuilds a live, painted splat material.
+	var rebuilt := PBSplatImport.rebuild_from_extras(scene, out_path)
+	assert_gt(rebuilt, 0, "PBSplatImport must rebuild at least one splat material")
+	var rebuilt_mat: ShaderMaterial = null
+	for s_i in range(imported.mesh.get_surface_count()):
+		var m := imported.get_surface_override_material(s_i)
+		if PBSplat.is_splat_material(m):
+			rebuilt_mat = m
+			break
+	assert_not_null(rebuilt_mat, "The rebuilt surface must carry a splat material")
+	if rebuilt_mat == null:
+		return
+	assert_true(PBSplat.has_decal_layer(rebuilt_mat), "The rebuilt material must carry the decal layer")
+	var rebuilt_decal := PBSplat.get_decal_layer_image(rebuilt_mat)
+	assert_almost_eq(rebuilt_decal.get_pixel(rebuilt_decal.get_width() / 2, rebuilt_decal.get_height() / 2).a,
+			alpha_before, 0.02, "The rebuilt decal must hold the exported pixels")
 func test_async_export_routes_pbm_extension() -> void:
 	# The dialog's path (async entry) must honor .pbm — it used to only write
 	# GLB, leaving the PSP format unreachable from the UI.

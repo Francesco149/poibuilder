@@ -1,4 +1,4 @@
-## PBTileBaker — Bakes texture splatting and stamps into discrete tile textures.
+## PBTileBaker — Bakes texture splatting and decals into textures.
 ##
 ## In retro engines, painted geometry is treated like a tile map: tiles that have
 ## been painted (with splat layers or stamp decals) generate a unique composite
@@ -56,20 +56,15 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 			result.tile_materials[frag] = base_mat
 		return result
 
-	# Collect paint and stamp state for this face
+	# Collect the face's paint state: blend layers plus the decal layer (which
+	# holds every pasted stamp and decal-brush pixel as an image).
 	var paint_state := PBSplat.collect_face_paint_state(mesh_data, face)
-	var all_stamps := PBSplat.collect_stamp_data(mesh_node)
-	var face_stamps: Array = []
-	for s in all_stamps:
-		if s.get("face_idx", -1) == face_idx:
-			face_stamps.append(s)
-
 	var layers_list: Array = paint_state.get("layers", [])
-	var has_paint: bool = not paint_state.is_empty() and not layers_list.is_empty()
-	var has_stamps: bool = not face_stamps.is_empty()
+	var decal_image: Image = paint_state.get("decal_layer_image", null)
+	var has_paint: bool = not paint_state.is_empty() and (not layers_list.is_empty() or decal_image != null)
 
-	# If this face has zero paint and zero stamps, all fragments reuse base material
-	if not has_paint and not has_stamps:
+	# If this face has no paint at all, every fragment reuses the base material
+	if not has_paint:
 		for frag in fragments:
 			result.tile_materials[frag] = base_mat
 		return result
@@ -86,9 +81,6 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 
 	# Pre-load layer images and masks
 	var layer_data: Array = _prepare_layer_data(paint_state)
-
-	# Pre-load stamp images
-	var stamp_data: Array = _prepare_stamp_data(face_stamps)
 	# Compute anchor offset between anchor space (cell_bounds) and object space (splat_bounds)
 	var anchor: Vector3 = mesh_data.get_texture_anchor() if not face.uv_use_world_space else Vector3.ZERO
 	var normal: Vector3 = PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
@@ -101,11 +93,10 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 		var tile_has_paint := false
 		var cell_rect_obj := Rect2(frag.cell_bounds.position + anchor_offset, frag.cell_bounds.size)
 
-		# Check if any stamp touches this tile
-		for sd in stamp_data:
-			if _stamp_touches_rect(sd, cell_rect_obj):
-				tile_has_paint = true
-				break
+		# Check if the decal layer has pixels in this tile
+		if decal_image != null and splat_bounds.size() == 4 \
+				and _decal_touches_rect(decal_image, splat_bounds, cell_rect_obj):
+			tile_has_paint = true
 
 		# Check if any splat layer touches this tile
 		if not tile_has_paint and not layer_data.is_empty() and splat_bounds.size() == 4:
@@ -120,7 +111,7 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 		else:
 			# Painted tile: bake composite texture
 			var composite := _bake_composite_tile(frag.cell_bounds, splat_bounds,
-				base_image, base_color, layer_data, stamp_data, tile_resolution, anchor_offset)
+				base_image, base_color, layer_data, decal_image, tile_resolution, anchor_offset)
 			var tile_tex := ImageTexture.create_from_image(composite)
 			# The retro engine keys its painted-tile policy off this name: a
 			# texture called "TileAtlas*" is sampled with GU_CLAMP (a tile
@@ -152,7 +143,7 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 # ==============================================================================
 
 static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32Array,
-		base_image: Image, base_color: Color, layer_data: Array, stamp_data: Array,
+		base_image: Image, base_color: Color, layer_data: Array, decal_image: Image,
 		resolution: int, anchor_offset: Vector2 = Vector2.ZERO) -> Image:
 	var out := Image.create(resolution, resolution, false, Image.FORMAT_RGBA8)
 
@@ -226,53 +217,25 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 					var lpy := clampi(int(uv_v * float(lh)), 0, lh - 1)
 					var l_pixel := l_img.get_pixel(lpx, lpy) * l_col
 					c = c.lerp(l_pixel, clampf(weight * l_col.a, 0.0, 1.0))
-			# Step 3: Stamps
-			for sd in stamp_data:
-				var s_img: Image = sd.get("image")
-				if s_img == null:
-					continue
-				var opacity: float = sd.get("opacity", 1.0)
-
-				# Transform (pu_obj, pv_obj) into stamp coordinate space
-				var pu_obj := pu + anchor_offset.x
-				var pv_obj := pv + anchor_offset.y
-				var su := 0.0
-				var sv := 0.0
-				var inside := false
-
-				if sd.has("anchor_u") and sd.has("anchor_v"):
-					var uc: float = sd["anchor_u"]
-					var vc: float = sd["anchor_v"]
-					var sx: float = sd.get("anchor_scale_x", 1.0)
-					var sy: float = sd.get("anchor_scale_y", 1.0)
-					su = (pu_obj - uc) / maxf(sx, 0.0001)
-					sv = (pv_obj - vc) / maxf(sy, 0.0001)
-					inside = (su >= -0.5 and su <= 0.5 and sv >= -0.5 and sv <= 0.5)
-				else:
-					var anchor_c: Vector2 = sd.get("anchor_center", Vector2.ZERO)
-					var du: Vector2 = sd.get("anchor_du", Vector2.RIGHT)
-					var dv: Vector2 = sd.get("anchor_dv", Vector2.UP)
-					var rel := Vector2(pu_obj, pv_obj) - anchor_c
-					var det := du.x * dv.y - du.y * dv.x
-					if absf(det) > 0.00001:
-						su = (rel.x * dv.y - rel.y * dv.x) / det
-						sv = (rel.y * du.x - rel.x * du.y) / det
-						inside = (su >= -0.5 and su <= 0.5 and sv >= -0.5 and sv <= 0.5)
-
-				if inside:
-					var stu := su + 0.5
-					var stv := 0.5 - sv
-					var rot_u: Vector3 = sd.get("anchor_rot_up", Vector3.UP)
-					if rot_u.dot(Vector3.BACK) < -0.5:
-						stv = sv + 0.5
-					var sw := s_img.get_width()
-					var sh := s_img.get_height()
-					var spx := clampi(int(stu * float(sw)), 0, sw - 1)
-					var spy := clampi(int(stv * float(sh)), 0, sh - 1)
-					var sp := s_img.get_pixel(spx, spy)
-					var alpha: float = sp.a * opacity
-					if alpha > 0.001:
-						c = c.lerp(Color(sp.r, sp.g, sp.b, 1.0), alpha)
+			# Step 3: decal layer — pasted stamps and decal painting, stored as
+			# pixels in the same planar [0,1] space as the masks.
+			if decal_image != null:
+				var dpu := pu + anchor_offset.x
+				var dpv := pv + anchor_offset.y
+				var dmu := (dpu - splat_min_u) / splat_span_u
+				var dmv := (dpv - splat_min_v) / splat_span_v
+				if dmu >= 0.0 and dmu <= 1.0 and dmv >= 0.0 and dmv <= 1.0:
+					var dw := decal_image.get_width()
+					var dh := decal_image.get_height()
+					var dpx := clampi(int(dmu * float(dw)), 0, dw - 1)
+					var dpy := clampi(int(dmv * float(dh)), 0, dh - 1)
+					var d_col := decal_image.get_pixel(dpx, dpy)
+					if d_col.a > 0.001:
+						c = Color(
+							c.r + (d_col.r - c.r) * d_col.a,
+							c.g + (d_col.g - c.g) * d_col.a,
+							c.b + (d_col.b - c.b) * d_col.a,
+							c.a)
 			out.set_pixel(x, y, c)
 
 	return out
@@ -419,62 +382,38 @@ static func _prepare_layer_data(paint_state: Dictionary) -> Array:
 		})
 	return out
 
-static func _prepare_stamp_data(face_stamps: Array) -> Array:
-	var out: Array = []
-	for s in face_stamps:
-		var path: String = s.get("texture_path", "")
-		if path.is_empty() or not ResourceLoader.exists(path):
-			continue
-		var tex: Texture2D = load(path)
-		if tex == null:
-			continue
-		var img := tex.get_image()
-		if img == null:
-			continue
-		if img.is_compressed():
-			img.decompress()
-		var entry := {
-			"image": img,
-			"anchor_center": s.get("anchor_center", Vector2.ZERO),
-			"anchor_du": s.get("anchor_du", Vector2.RIGHT),
-			"anchor_dv": s.get("anchor_dv", Vector2.UP),
-			"opacity": s.get("opacity", 1.0),
-		}
-		if s.has("anchor_u") and s.has("anchor_v"):
-			entry["anchor_u"] = s["anchor_u"]
-			entry["anchor_v"] = s["anchor_v"]
-			entry["anchor_scale_x"] = s.get("anchor_scale_x", 1.0)
-			entry["anchor_scale_y"] = s.get("anchor_scale_y", 1.0)
-			entry["anchor_rot_right"] = s.get("anchor_rot_right", Vector3.RIGHT)
-			entry["anchor_rot_up"] = s.get("anchor_rot_up", Vector3.UP)
-		out.append(entry)
-	return out
+## True when the decal layer has any opaque pixel inside `rect` (object-space
+## tile bounds), sampled through the same planar mapping the baker uses.
+static func _decal_touches_rect(decal: Image, splat_bounds: PackedFloat32Array, rect: Rect2) -> bool:
+	if decal == null or splat_bounds.size() != 4:
+		return false
+	var su_min: float = splat_bounds[0]
+	var sv_min: float = splat_bounds[2]
+	var span_u: float = maxf(splat_bounds[1] - su_min, 0.0001)
+	var span_v: float = maxf(splat_bounds[3] - sv_min, 0.0001)
+	var splat_rect := Rect2(su_min, sv_min, span_u, span_v)
+	if not splat_rect.intersects(rect):
+		return false
 
-static func _stamp_touches_rect(sd: Dictionary, rect: Rect2) -> bool:
-	if sd.has("anchor_u") and sd.has("anchor_v"):
-		var uc: float = sd["anchor_u"]
-		var vc: float = sd["anchor_v"]
-		var hx: float = sd.get("anchor_scale_x", 1.0) * 0.5
-		var hy: float = sd.get("anchor_scale_y", 1.0) * 0.5
-		var stamp_rect := Rect2(uc - hx, vc - hy, hx * 2.0, hy * 2.0)
-		return stamp_rect.intersects(rect)
+	var w := decal.get_width()
+	var h := decal.get_height()
+	var px0 := clampi(int((rect.position.x - su_min) / span_u * w), 0, w - 1)
+	var px1 := clampi(int((rect.position.x + rect.size.x - su_min) / span_u * w), 0, w - 1)
+	var py0 := clampi(int((rect.position.y - sv_min) / span_v * h), 0, h - 1)
+	var py1 := clampi(int((rect.position.y + rect.size.y - sv_min) / span_v * h), 0, h - 1)
+	if px0 > px1:
+		var t := px0; px0 = px1; px1 = t
+	if py0 > py1:
+		var t := py0; py0 = py1; py1 = t
 
-	var center: Vector2 = sd.get("anchor_center", Vector2.ZERO)
-	var du: Vector2 = sd.get("anchor_du", Vector2.RIGHT)
-	var dv: Vector2 = sd.get("anchor_dv", Vector2.UP)
-	# Bounding box of the stamp quad
-	var p0 := center - du - dv
-	var p1 := center + du - dv
-	var p2 := center + du + dv
-	var p3 := center - du + dv
+	var step_x := maxi(1, (px1 - px0) / 32)
+	var step_y := maxi(1, (py1 - py0) / 32)
+	for py in range(py0, py1 + 1, step_y):
+		for px in range(px0, px1 + 1, step_x):
+			if decal.get_pixel(px, py).a > 0.01:
+				return true
+	return false
 
-	var s_min_x := minf(p0.x, minf(p1.x, minf(p2.x, p3.x)))
-	var s_max_x := maxf(p0.x, maxf(p1.x, maxf(p2.x, p3.x)))
-	var s_min_y := minf(p0.y, minf(p1.y, minf(p2.y, p3.y)))
-	var s_max_y := maxf(p0.y, maxf(p1.y, maxf(p2.y, p3.y)))
-
-	var stamp_rect := Rect2(s_min_x, s_min_y, s_max_x - s_min_x, s_max_y - s_min_y)
-	return stamp_rect.intersects(rect)
 
 static func _mask_touches_rect(mask: Image, splat_bounds: PackedFloat32Array, rect: Rect2) -> bool:
 	if mask == null or splat_bounds.size() != 4:
@@ -648,3 +587,161 @@ static func bake_pb_mesh_in_place(pb: PBMesh, grid_size: float = 1.0,
 	report["materials"] = mat_order.size()
 	report["baked_textures"] = all_textures.size()
 	return report
+
+# ==============================================================================
+# Modern (per-face) Bake
+# ==============================================================================
+
+## Bakes a face's full paint stack into ONE texture laid out in mask space
+## (face-planar [0,1], the same space the masks and the decal layer live in).
+## This is what a modern .glb export ships when the author picks "bake paint":
+## the receiving engine needs no shader of ours — the face samples the texture
+## with its (rewritten) UV1, exactly like any other baked surface.
+##
+## Resolution follows the live mask policy (256 texels/m, clamped 256..2048,
+## so a large face is never blurrier than a small one and the export matches
+## what the editor showed).
+static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: int = 2048) -> Image:
+	if mesh_data == null or face == null:
+		return null
+	var paint_state := PBSplat.collect_face_paint_state(mesh_data, face)
+	if paint_state.is_empty():
+		return null
+
+	var res := PBSplat.calculate_uniform_face_resolution(mesh_data, face)
+	res.x = clampi(res.x, 16, max_size)
+	res.y = clampi(res.y, 16, max_size)
+
+	var base_image: Image = _extract_base_image(mesh_data.get_face_material(face), paint_state)
+	var base_color: Color = _extract_base_color(mesh_data.get_face_material(face), paint_state)
+	var layer_data: Array = _prepare_layer_data(paint_state)
+	var decal_image: Image = paint_state.get("decal_layer_image", null)
+	var bounds := PBSplat.get_face_planar_bounds(mesh_data, face)
+	if bounds.is_empty():
+		return null
+
+	var u_axis: Vector3 = bounds["u"]
+	var v_axis: Vector3 = bounds["v"]
+	var min_u: float = bounds["min_u"]
+	var min_v: float = bounds["min_v"]
+	var range_u: float = bounds["range_u"]
+	var range_v: float = bounds["range_v"]
+
+	# Triangle soup in mask space, each corner carrying its UV1: sampling the
+	# base texture this way (instead of assuming a linear UV ramp) keeps n-gons,
+	# manual UVs and resized faces correct.
+	var tris: Array = []
+	for tri_i in range(0, face.get_indexes().size() - 2, 3):
+		var fi := face.get_indexes()
+		var tri: Array = []
+		var ok := true
+		for k in range(3):
+			var vi: int = fi[tri_i + k]
+			if vi < 0 or vi >= mesh_data.positions.size():
+				ok = false
+				break
+			var p: Vector3 = mesh_data.positions[vi]
+			tri.append({
+				"u": (u_axis.dot(p) - min_u) / range_u,
+				"v": (v_axis.dot(p) - min_v) / range_v,
+				"uv": mesh_data.textures0[vi] if vi < mesh_data.textures0.size() else Vector2.ZERO,
+			})
+		if ok:
+			tris.append(tri)
+	if tris.is_empty():
+		return null
+
+	var out := Image.create(res.x, res.y, false, Image.FORMAT_RGBA8)
+	var base_w := base_image.get_width() if base_image != null else 0
+	var base_h := base_image.get_height() if base_image != null else 0
+
+	for y in range(res.y):
+		var mv := (float(y) + 0.5) / float(res.y)
+		for x in range(res.x):
+			var mu := (float(x) + 0.5) / float(res.x)
+			var uv1: Variant = _barycentric_uv1(tris, mu, mv)
+			var c := base_color
+			var base_alpha := 1.0
+			if base_image != null and uv1 != null:
+				var uv: Vector2 = uv1
+				var base_px := clampi(int(wrapf(uv.x, 0.0, 1.0) * float(base_w)), 0, base_w - 1)
+				var base_py := clampi(int(wrapf(uv.y, 0.0, 1.0) * float(base_h)), 0, base_h - 1)
+				var base_col := _sample_image_repeat(base_image, uv.x, uv.y)
+				c = base_col * base_color
+				base_alpha = base_col.a * base_color.a
+
+			for ld in layer_data:
+				var mask: Image = ld.get("mask_image")
+				var l_img: Image = ld.get("image")
+				var l_col: Color = ld.get("color", Color.WHITE)
+				if mask == null or l_img == null:
+					continue
+				var l_uv: Variant = _barycentric_uv1(tris, mu, mv)
+				if l_uv == null:
+					continue
+				var weight := _sample_image_clamp(mask, mu, mv).r
+				var fw: float = 1.5 / float(mask.get_width())
+				var edge_w: float = lerpf(maxf(fw * 2.0, 0.02), 0.48, float(ld.get("roughness", 0.8)))
+				var blend := smoothstep(0.5 - edge_w, 0.5 + edge_w, weight)
+				if blend <= 0.0:
+					continue
+				var luv: Vector2 = l_uv
+				var layer_col := _sample_image_repeat(l_img, luv.x, luv.y) * l_col
+				var a: float = blend * layer_col.a
+				c = Color(
+					c.r + (layer_col.r - c.r) * a,
+					c.g + (layer_col.g - c.g) * a,
+					c.b + (layer_col.b - c.b) * a,
+					c.a)
+
+			if decal_image != null:
+				var d_col := _sample_image_clamp(decal_image, mu, mv)
+				if d_col.a > 0.001:
+					c = Color(
+						c.r + (d_col.r - c.r) * d_col.a,
+						c.g + (d_col.g - c.g) * d_col.a,
+						c.b + (d_col.b - c.b) * d_col.a,
+						maxf(c.a, d_col.a))
+			c.a = maxf(c.a, base_alpha)
+			out.set_pixel(x, y, c)
+	return out
+
+## Wrapped/clamped pixel reads (the base and layer textures tile, masks and the
+## decal layer do not).
+static func _sample_image_repeat(img: Image, u: float, v: float) -> Color:
+	if img == null or img.is_empty():
+		return Color.WHITE
+	return img.get_pixel(
+			posmod(int(floor(u * img.get_width())), img.get_width()),
+			posmod(int(floor(v * img.get_height())), img.get_height()))
+
+static func _sample_image_clamp(img: Image, u: float, v: float) -> Color:
+	if img == null or img.is_empty():
+		return Color(0, 0, 0, 1)
+	return img.get_pixel(
+			clampi(int(floor(u * img.get_width())), 0, img.get_width() - 1),
+			clampi(int(floor(v * img.get_height())), 0, img.get_height() - 1))
+
+## UV1 at a mask-space point, found by locating the point inside the face's
+## triangles (barycentric) — returns null when the point is outside the face.
+static func _barycentric_uv1(tris: Array, mu: float, mv: float) -> Variant:
+	for tri in tris:
+		var a: Dictionary = tri[0]
+		var b: Dictionary = tri[1]
+		var c: Dictionary = tri[2]
+		var v0 := Vector2(b["u"] - a["u"], b["v"] - a["v"])
+		var v1 := Vector2(c["u"] - a["u"], c["v"] - a["v"])
+		var den := v0.x * v1.y - v0.y * v1.x
+		if absf(den) < 1e-12:
+			continue
+		var rel := Vector2(mu - a["u"], mv - a["v"])
+		var wb := (rel.x * v1.y - rel.y * v1.x) / den
+		var wc := (rel.y * v0.x - rel.x * v0.y) / den
+		var wa := 1.0 - wb - wc
+		if wa < -0.001 or wb < -0.001 or wc < -0.001:
+			continue
+		var uva: Vector2 = a["uv"]
+		var uvb: Vector2 = b["uv"]
+		var uvc: Vector2 = c["uv"]
+		return uva * wa + uvb * wb + uvc * wc
+	return null

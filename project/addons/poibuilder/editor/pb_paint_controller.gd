@@ -1,26 +1,23 @@
-## PBPaintController — Interactive controller for Texture Splatting and Stamping.
+## PBPaintController — Interactive controller for Texture Splatting and Decals.
 ##
-## Manages Paint Mode (brush painting with radius and softness over splat layers)
-## and Stamp Mode (paste any texture/image anywhere on meshes with live preview,
-## wheel rotation, and ctrl+wheel scaling).
+## Paint Mode drags a brush over splat layers (blend weights) or over the decal
+## layer (paints the selected image), Stamp Mode pastes an image as a decal in
+## one click (live preview, wheel rotation, ctrl+wheel scaling). Stamps are
+## PIXELS in the surface's decal layer, not scene nodes: a stamp may span
+## several faces, and parts of it can be erased or repainted with the brush.
 @tool
 class_name PBPaintController
 extends RefCounted
 
-enum Mode { NONE, PAINT, STAMP, STAMP_DELETE }
+enum Mode { NONE, PAINT, STAMP }
+
+## What the paint brush writes into: a splat layer's blend weight, or the
+## decal layer's pixels (the same layer stamps paste into).
+enum PaintTarget { SPLAT, DECAL }
 
 # Constants
 const RAY_MISS := Vector3(INF, INF, INF)
 const PREVIEW_NODE_NAME := "PBSplatPreviewNode"
-
-const DECAL_SHADER_PATH := "res://addons/poibuilder/materials/shaders/pb_decal_shader.gdshader"
-static var _cached_decal_shader: Shader = null
-
-static func get_decal_shader() -> Shader:
-	if _cached_decal_shader == null:
-		if ResourceLoader.exists(DECAL_SHADER_PATH):
-			_cached_decal_shader = ResourceLoader.load(DECAL_SHADER_PATH) as Shader
-	return _cached_decal_shader
 
 # Active mode
 var mode: Mode = Mode.NONE
@@ -44,6 +41,10 @@ var erase_mode: bool = false:
 		erase_mode = v
 		_update_preview_material()
 		brush_changed.emit()
+var paint_target: PaintTarget = PaintTarget.SPLAT:
+	set(v):
+		paint_target = v
+		brush_changed.emit()
 var active_layer_idx: int = 1:
 	set(v):
 		active_layer_idx = clampi(v, 1, PBSplat.MAX_LAYERS)
@@ -51,6 +52,7 @@ var active_layer_idx: int = 1:
 var paint_texture: Texture2D = null:
 	set(v):
 		paint_texture = v
+		_cached_paint_image = null
 		brush_changed.emit()
 
 var _texture_layer_map: Dictionary = {}
@@ -108,6 +110,7 @@ var stamp_texture: Texture2D = null:
 		_cached_stamp_image = null
 		_update_stamp_preview_texture()
 		stamp_changed.emit()
+## Width of the pasted decal in metres; the height follows the image's aspect.
 var stamp_scale: float = 1.0:
 	set(v):
 		stamp_scale = clampf(v, 0.05, 50.0)
@@ -124,7 +127,8 @@ var stamp_opacity: float = 1.0:
 		_update_preview_material()
 		stamp_changed.emit()
 
-# Cached CPU Image of the stamp texture
+# Cached CPU Images of the paint / stamp textures (decoded once, sampled per dab)
+var _cached_paint_image: Image = null
 var _cached_stamp_image: Image = null
 
 # Hit tracking
@@ -153,8 +157,6 @@ var _stroke_last_dab_mesh: PBMesh = null
 var preview_root: Node3D = null
 var brush_mesh_instance: MeshInstance3D = null
 var stamp_mesh_instance: MeshInstance3D = null
-var delete_highlight_mesh: MeshInstance3D = null
-var hovered_stamp: MeshInstance3D = null
 
 # Callback references
 var plugin: EditorPlugin = null
@@ -226,41 +228,18 @@ func setup_previews(parent_node: Node) -> void:
 	stamp_mesh_instance.name = "StampQuad"
 	preview_root.add_child(stamp_mesh_instance)
 
-	var dshader := get_decal_shader()
-	if dshader != null:
-		var stamp_mat := ShaderMaterial.new()
-		stamp_mat.shader = dshader
-		stamp_mat.set_shader_parameter("albedo_texture", stamp_texture)
-		stamp_mat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
-		stamp_mat.set_shader_parameter("clip_to_face", false)
-		stamp_mat.render_priority = 100
-		stamp_mesh_instance.material_override = stamp_mat
-	else:
-		var stamp_mat := StandardMaterial3D.new()
-		stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		stamp_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		stamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		stamp_mat.no_depth_test = true
-		stamp_mat.render_priority = 100
-		stamp_mat.albedo_texture = stamp_texture
-		stamp_mesh_instance.material_override = stamp_mat
+	# Unshaded, unclipped preview: the decal is painted as PIXELS across every
+	# face it touches, so what you see is where it will land — including the
+	# part that overhangs an edge.
+	var stamp_mat := StandardMaterial3D.new()
+	stamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	stamp_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	stamp_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	stamp_mat.no_depth_test = true
+	stamp_mat.render_priority = 100
+	stamp_mat.albedo_texture = stamp_texture
+	stamp_mesh_instance.material_override = stamp_mat
 
-	# 3. Stamp Delete Highlight Quad (Translucent red highlight overlay)
-	delete_highlight_mesh = MeshInstance3D.new()
-	delete_highlight_mesh.name = "StampDeleteHighlight"
-	preview_root.add_child(delete_highlight_mesh)
-	var del_qm := QuadMesh.new()
-	del_qm.size = Vector2(1.06, 1.06)
-	delete_highlight_mesh.mesh = del_qm
-	var del_mat := StandardMaterial3D.new()
-	del_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	del_mat.albedo_color = Color(1.0, 0.22, 0.22, 0.55)
-	del_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	del_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	del_mat.no_depth_test = true
-	del_mat.render_priority = 110
-	delete_highlight_mesh.material_override = del_mat
-	delete_highlight_mesh.visible = false
 	_update_stamp_preview_texture()
 	_update_preview_mesh()
 	_update_preview_visibility()
@@ -271,8 +250,6 @@ func cleanup_previews() -> void:
 		preview_root = null
 		brush_mesh_instance = null
 		stamp_mesh_instance = null
-		delete_highlight_mesh = null
-		hovered_stamp = null
 
 # ==============================================================================
 # Preview Mesh Updates
@@ -281,22 +258,11 @@ func cleanup_previews() -> void:
 func _update_preview_visibility() -> void:
 	if preview_root == null or not is_instance_valid(preview_root):
 		return
-	if mode == Mode.STAMP_DELETE:
-		preview_root.visible = (hovered_stamp != null)
-		if brush_mesh_instance != null:
-			brush_mesh_instance.visible = false
-		if stamp_mesh_instance != null:
-			stamp_mesh_instance.visible = false
-		if delete_highlight_mesh != null:
-			delete_highlight_mesh.visible = (hovered_stamp != null)
-		return
 	preview_root.visible = (mode != Mode.NONE and has_hit)
 	if brush_mesh_instance != null:
 		brush_mesh_instance.visible = (mode == Mode.PAINT and has_hit)
 	if stamp_mesh_instance != null:
 		stamp_mesh_instance.visible = (mode == Mode.STAMP and has_hit)
-	if delete_highlight_mesh != null:
-		delete_highlight_mesh.visible = false
 
 func _update_preview_mesh() -> void:
 	if mode == Mode.PAINT and brush_mesh_instance != null:
@@ -314,28 +280,16 @@ func _update_preview_material() -> void:
 
 	if stamp_mesh_instance != null and stamp_mesh_instance.material_override != null:
 		var tint := Color(1.0, 1.0, 1.0, stamp_opacity)
-		# The stamp preview wears the decal shader (it clips itself to the face),
-		# so the tint is a shader parameter. Casting to StandardMaterial3D here
-		# produced null and the assignment threw on every opacity change.
-		var smat := stamp_mesh_instance.material_override as ShaderMaterial
-		if smat != null:
-			smat.set_shader_parameter("albedo_color", tint)
-		else:
-			var mat := stamp_mesh_instance.material_override as StandardMaterial3D
-			if mat != null:
-				mat.albedo_color = tint
+		var mat := stamp_mesh_instance.material_override as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color = tint
 
 func _update_stamp_preview_texture() -> void:
-	if stamp_mesh_instance != null and stamp_mesh_instance.material_override != null:
-		if stamp_mesh_instance.material_override is ShaderMaterial:
-			var smat := stamp_mesh_instance.material_override as ShaderMaterial
-			smat.set_shader_parameter("albedo_texture", stamp_texture)
-			smat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
-		elif stamp_mesh_instance.material_override is StandardMaterial3D:
-			var mat := stamp_mesh_instance.material_override as StandardMaterial3D
-			mat.albedo_texture = stamp_texture
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
+	var mat := stamp_mesh_instance.material_override as StandardMaterial3D if stamp_mesh_instance != null else null
+	if mat != null:
+		mat.albedo_texture = stamp_texture
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
 
 func _build_brush_mesh() -> void:
 	if brush_mesh_instance == null:
@@ -365,8 +319,14 @@ func _build_brush_mesh() -> void:
 func _build_stamp_mesh() -> void:
 	if stamp_mesh_instance == null:
 		return
+	# The preview matches the paste: `stamp_scale` is the stamp's WIDTH in
+	# metres and the height follows the image's aspect ratio (a 4:1 banner must
+	# preview — and land — 4:1, not squished into a square).
 	var qm := QuadMesh.new()
-	qm.size = Vector2(stamp_scale, stamp_scale)
+	var aspect := 1.0
+	if stamp_texture != null and stamp_texture.get_width() > 0:
+		aspect = float(stamp_texture.get_height()) / float(stamp_texture.get_width())
+	qm.size = Vector2(stamp_scale, stamp_scale * aspect)
 	stamp_mesh_instance.mesh = qm
 
 # ==============================================================================
@@ -410,20 +370,6 @@ func update_cursor(point: Vector3, normal: Vector3, mesh_node: PBMesh, face_idx:
 		stamp_mesh_instance.visible = true
 		if brush_mesh_instance != null:
 			brush_mesh_instance.visible = false
-
-		# Update face bounds clipping on preview decal
-		if stamp_mesh_instance.material_override is ShaderMaterial and mesh_node != null and mesh_node.pb_mesh_data != null:
-			var smat := stamp_mesh_instance.material_override as ShaderMaterial
-			var data := mesh_node.pb_mesh_data
-			if face_idx >= 0 and face_idx < data.faces.size():
-				var face := data.faces[face_idx]
-				var bounds := PBSplat.get_face_planar_bounds(data, face)
-				smat.set_shader_parameter("face_u", bounds["u"])
-				smat.set_shader_parameter("face_v", bounds["v"])
-				smat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
-				var preview_to_mesh := mesh_node.global_transform.affine_inverse() * stamp_mesh_instance.global_transform
-				smat.set_shader_parameter("stamp_to_mesh", preview_to_mesh)
-				smat.set_shader_parameter("clip_to_face", true)
 
 func clear_cursor() -> void:
 	has_hit = false
@@ -481,25 +427,32 @@ func apply_paint_stroke() -> void:
 		if _stroke_last_dab_local.distance_squared_to(local_now) < spacing * spacing:
 			return
 
-	var splat_mat := _ensure_face_splat_material(target_mesh, face)
-	if splat_mat == null:
-		return
-
-	# Ensure a layer exists for paint_texture on splat_mat
-	if paint_texture != null:
-		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
-		if layer > 0:
-			active_layer_idx = layer
-
 	# Convert world hit point to node local coordinates
 	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
 
-	# Paint on target face under cursor
-	var modified := PBSplat.paint_face_splat(
-		data, face, splat_mat, active_layer_idx,
-		local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
-		_stroke_ctx
-	)
+	var modified := false
+	if paint_target == PaintTarget.DECAL:
+		# Decal painting draws IMAGE pixels, so the dab is a paste along the
+		# stroke (erase fades the layer's alpha instead of writing pixels).
+		var decal_img := get_paint_image()
+		if decal_img != null:
+			modified = PBSplat.paint_decal_dab(data, local_hit, cursor_normal, stamp_rotation,
+					brush_radius, brush_softness, brush_opacity, erase_mode, decal_img) > 0
+	else:
+		var splat_mat := _ensure_face_splat_material(target_mesh, face)
+		if splat_mat == null:
+			return
+		# Ensure a layer exists for paint_texture on splat_mat
+		if paint_texture != null:
+			var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
+			if layer > 0:
+				active_layer_idx = layer
+		# Paint on target face under cursor
+		modified = PBSplat.paint_face_splat(
+			data, face, splat_mat, active_layer_idx,
+			local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
+			_stroke_ctx
+		)
 
 	_stroke_last_dab_local = local_hit
 	_stroke_last_dab_mesh = target_mesh
@@ -539,226 +492,69 @@ func apply_stamp() -> void:
 		return
 	if stamp_texture == null:
 		return
+	var data := target_mesh.pb_mesh_data
+	if data == null:
+		return
+	var img := get_stamp_image()
+	if img == null:
+		return
 
-	# Compute canonical stamp basis on surface
-	var sbasis := PBSplat.get_stamp_basis(cursor_normal)
-	var u_right: Vector3 = sbasis["right"]
-	var v_up: Vector3 = sbasis["up"]
-	var n_axis: Vector3 = sbasis["normal"]
+	var before := PBCommand.copy_mesh_data(data)
+	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
+	# Paste as pixels: every face the oriented footprint touches receives its
+	# part of the image, so a stamp can overhang an edge or wrap a corner.
+	var painted := PBSplat.paste_decal(data, local_hit, cursor_normal, stamp_rotation,
+			stamp_scale, stamp_opacity, img)
+	if painted <= 0:
+		return
 
-	var rot_rad := deg_to_rad(stamp_rotation)
-	var rot_right := cos(rot_rad) * u_right + sin(rot_rad) * v_up
-	var rot_up := -sin(rot_rad) * u_right + cos(rot_rad) * v_up
-
-	var world_pos := cursor_point + n_axis * 0.002
-	# Basis columns X/Y carry the FULL quad extent; the quad mesh itself is unit
-	# size. This makes the re-anchoring math (PBSplat.compute_stamp_anchor)
-	# shear-capable: a non-uniform face resize can stretch the decal.
-	var world_basis := Basis(rot_right * stamp_scale, rot_up * stamp_scale, n_axis)
-	var world_xf := Transform3D(world_basis, world_pos)
-
-	# Get or create PBStamps container child under target_mesh
-	var stamps_container := target_mesh.get_node_or_null("PBStamps") as Node3D
-	if stamps_container == null:
-		stamps_container = Node3D.new()
-		stamps_container.name = "PBStamps"
-		target_mesh.add_child(stamps_container)
-		var scene_root := target_mesh.get_tree().get_edited_scene_root() if target_mesh.is_inside_tree() else null
-		if scene_root != null:
-			stamps_container.owner = scene_root
-
-	# Create high-fidelity billboard decal quad (unit size; extents live in the
-	# transform basis so anchors stay meaningful across face resizes)
-	var stamp_node := MeshInstance3D.new()
-	stamp_node.name = "Stamp_%d" % (stamps_container.get_child_count() + 1)
-	var qm := QuadMesh.new()
-	qm.size = Vector2.ONE
-	stamp_node.mesh = qm
-
-	stamp_node.transform = stamps_container.global_transform.affine_inverse() * world_xf
-
-	var dshader := get_decal_shader()
-	if dshader != null:
-		var mat := ShaderMaterial.new()
-		mat.shader = dshader
-		mat.set_shader_parameter("albedo_texture", stamp_texture)
-		mat.set_shader_parameter("albedo_color", Color(1.0, 1.0, 1.0, stamp_opacity))
-		mat.set_shader_parameter("stamp_to_mesh", stamp_node.transform)
-		mat.set_shader_parameter("clip_to_face", true)
-
-		var data := target_mesh.pb_mesh_data
-		if data != null and target_face_idx >= 0 and target_face_idx < data.faces.size():
-			var face := data.faces[target_face_idx]
-			# Geometry bounds (not persisted splat_bounds): decals clip against
-			# the live face extent and follow resizes via PBMesh._refresh_stamps.
-			var bounds := PBSplat.get_face_planar_bounds(data, face, true)
-			mat.set_shader_parameter("face_u", bounds["u"])
-			mat.set_shader_parameter("face_v", bounds["v"])
-			mat.set_shader_parameter("face_bounds", Vector4(bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]))
-
-		stamp_node.material_override = mat
-	else:
-		var mat := StandardMaterial3D.new()
-		mat.albedo_texture = stamp_texture
-		mat.albedo_color = Color(1.0, 1.0, 1.0, stamp_opacity)
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		stamp_node.material_override = mat
-
-	# Store metadata for export baking (resolution-independent so the future
-	# bake step can re-rasterize at any tile size)
-	stamp_node.set_meta("stamp_scale", stamp_scale)
-	stamp_node.set_meta("stamp_rotation", stamp_rotation)
-	stamp_node.set_meta("stamp_opacity", stamp_opacity)
-	stamp_node.set_meta("stamp_texture_path", stamp_texture.resource_path)
-	stamp_node.set_meta("face_idx", target_face_idx)
-
-	# Face-anchored placement: stamps maintain fixed object-space position and size
-	# (PBMesh._refresh_stamps re-evaluates these anchors on every rebuild).
-	var anchor_data := target_mesh.pb_mesh_data
-	if anchor_data != null and target_face_idx >= 0 and target_face_idx < anchor_data.faces.size():
-		var anchor := PBSplat.compute_stamp_anchor(anchor_data, anchor_data.faces[target_face_idx], stamp_node.transform)
-		if not anchor.is_empty():
-			stamp_node.set_meta("anchor_center", anchor["center"])
-			stamp_node.set_meta("anchor_du", anchor["du"])
-			stamp_node.set_meta("anchor_dv", anchor["dv"])
-			stamp_node.set_meta("anchor_u", anchor["u_center"])
-			stamp_node.set_meta("anchor_v", anchor["v_center"])
-			stamp_node.set_meta("anchor_scale_x", anchor["scale_x"])
-			stamp_node.set_meta("anchor_scale_y", anchor["scale_y"])
-			stamp_node.set_meta("anchor_rot_right", anchor["rot_right"])
-			stamp_node.set_meta("anchor_rot_up", anchor["rot_up"])
-	if plugin != null and plugin.has_method("get_undo_redo"):
-		var undo = plugin.get_undo_redo()
-		if undo != null:
-			var scene_root := plugin.get_editor_interface().get_edited_scene_root()
-			undo.create_action("Add Stamp Decal", UndoRedo.MERGE_DISABLE, target_mesh)
-			undo.add_do_method(plugin, "_attach_detached", stamp_node, stamps_container)
-			undo.add_do_method(plugin, "_own_node", stamp_node)
-			undo.add_do_reference(stamp_node)
-			undo.add_undo_method(plugin, "_detach_node", stamp_node)
-			undo.commit_action()
-			stroke_committed.emit()
-			return
-
-	stamps_container.add_child(stamp_node)
-	var sr := target_mesh.get_tree().get_edited_scene_root() if target_mesh.is_inside_tree() else null
-	if sr != null:
-		stamp_node.owner = sr
+	_commit_multi_mesh_action("Paste Decal", {target_mesh: {
+		"before": before,
+		"after": PBCommand.copy_mesh_data(data),
+	}})
 	stroke_committed.emit()
 
-## Removes all stamps under target_mesh's PBStamps container.
-func clear_all_stamps(mesh: PBMesh) -> void:
-	if mesh == null:
+## Clears the decal layer of every material on `mesh` (all stamps and painted
+## decal pixels at once). Undoable through the mesh snapshot.
+func clear_decal_layer(mesh: PBMesh) -> void:
+	if mesh == null or not is_instance_valid(mesh) or mesh.pb_mesh_data == null:
 		return
-	var container := mesh.get_node_or_null("PBStamps") as Node3D
-	if container == null:
+	var data := mesh.pb_mesh_data
+	var before := PBCommand.copy_mesh_data(data)
+	var cleared := false
+	for m in data.materials:
+		if PBSplat.is_splat_material(m) and PBSplat.has_decal_layer(m as ShaderMaterial):
+			PBSplat.clear_decal_layer(m as ShaderMaterial)
+			cleared = true
+	if not cleared:
 		return
-	for c in container.get_children():
-		container.remove_child(c)
-		c.queue_free()
+	_commit_multi_mesh_action("Clear Decal Layer", {mesh: {
+		"before": before,
+		"after": PBCommand.copy_mesh_data(data),
+	}})
+## CPU image of the paint palette's current texture (the decal brush's source).
+func get_paint_image() -> Image:
+	if _cached_paint_image != null:
+		return _cached_paint_image
+	_cached_paint_image = _to_rgba8_image(paint_texture)
+	return _cached_paint_image
 
-## Updates delete hover highlighting for stamp billboards in the scene.
-func update_delete_hover(camera: Camera3D, screen_pos: Vector2, scene_root: Node, custom_ray_o: Vector3 = Vector3.INF, custom_ray_d: Vector3 = Vector3.ZERO) -> void:
-	if mode != Mode.STAMP_DELETE or scene_root == null:
-		if delete_highlight_mesh != null:
-			delete_highlight_mesh.visible = false
-		hovered_stamp = null
-		return
-
-	var ray_o: Vector3
-	var ray_d: Vector3
-	if custom_ray_o.is_finite():
-		ray_o = custom_ray_o
-		ray_d = custom_ray_d.normalized()
-	elif camera != null:
-		ray_o = camera.project_ray_origin(screen_pos)
-		ray_d = camera.project_ray_normal(screen_pos)
-	else:
-		return
-
-	hovered_stamp = pick_stamp_at_ray(scene_root, ray_o, ray_d)
-	if delete_highlight_mesh != null:
-		if hovered_stamp != null:
-			delete_highlight_mesh.global_transform = hovered_stamp.global_transform
-			delete_highlight_mesh.visible = true
-		else:
-			delete_highlight_mesh.visible = false
-
-static func pick_stamp_at_ray(scene_root: Node, ray_o: Vector3, ray_d: Vector3) -> MeshInstance3D:
-	if scene_root == null:
+static func _to_rgba8_image(tex: Texture2D) -> Image:
+	if tex == null:
 		return null
-	var best_dist := INF
-	var best_stamp: MeshInstance3D = null
+	var img := tex.get_image()
+	if img == null:
+		return null
+	if img.is_compressed():
+		var err := img.decompress()
+		if err != OK:
+			var uncompressed := Image.create(img.get_width(), img.get_height(), false, Image.FORMAT_RGBA8)
+			uncompressed.blit_rect(img, Rect2i(0, 0, img.get_width(), img.get_height()), Vector2i.ZERO)
+			img = uncompressed
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	return img
 
-	var candidates: Array[Node] = []
-	_find_stamp_nodes_recursive(scene_root, candidates)
-
-	for node in candidates:
-		var mi := node as MeshInstance3D
-		if mi == null or not mi.visible or (mi.is_inside_tree() and not mi.is_visible_in_tree()):
-			continue
-		var xf := mi.global_transform
-		var p0 := xf * Vector3(-0.5, -0.5, 0.0)
-		var p1 := xf * Vector3(0.5, -0.5, 0.0)
-		var p2 := xf * Vector3(0.5, 0.5, 0.0)
-		var p3 := xf * Vector3(-0.5, 0.5, 0.0)
-
-		# Test both front and back facing triangles
-		var hit1 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p1, p2)
-		var hit2 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p2, p3)
-		var hit3 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p2, p1)
-		var hit4 := PBMath.ray_intersects_triangle(ray_o, ray_d, p0, p3, p2)
-
-		var min_t := INF
-		if hit1.get("hit", false): min_t = minf(min_t, hit1["distance"])
-		if hit2.get("hit", false): min_t = minf(min_t, hit2["distance"])
-		if hit3.get("hit", false): min_t = minf(min_t, hit3["distance"])
-		if hit4.get("hit", false): min_t = minf(min_t, hit4["distance"])
-
-		if min_t < best_dist:
-			best_dist = min_t
-			best_stamp = mi
-	return best_stamp
-
-static func _find_stamp_nodes_recursive(node: Node, out_stamps: Array[Node]) -> void:
-	if node == null:
-		return
-	if node.name == "PBStamps":
-		for c in node.get_children():
-			if c is MeshInstance3D:
-				out_stamps.append(c)
-		return
-	for c in node.get_children():
-		_find_stamp_nodes_recursive(c, out_stamps)
-## Deletes the currently hovered stamp billboard with full undo/redo.
-func delete_hovered_stamp() -> bool:
-	if mode != Mode.STAMP_DELETE or hovered_stamp == null or not is_instance_valid(hovered_stamp):
-		return false
-	var stamp_to_delete := hovered_stamp
-	var container := stamp_to_delete.get_parent()
-	var mesh := container.get_parent() if container != null else null
-	hovered_stamp = null
-	if delete_highlight_mesh != null:
-		delete_highlight_mesh.visible = false
-
-	if plugin != null and plugin.has_method("get_undo_redo"):
-		var undo = plugin.get_undo_redo()
-		if undo != null and mesh != null:
-			undo.create_action("Delete Stamp Billboard", UndoRedo.MERGE_DISABLE, mesh)
-			undo.add_do_method(plugin, "_detach_node", stamp_to_delete)
-			undo.add_undo_method(plugin, "_attach_detached", stamp_to_delete, container)
-			undo.add_undo_method(plugin, "_own_node", stamp_to_delete)
-			undo.add_undo_reference(stamp_to_delete)
-			undo.commit_action()
-			return true
-
-	if container != null:
-		container.remove_child(stamp_to_delete)
-	stamp_to_delete.queue_free()
-	stroke_committed.emit()
-	return true
 func get_stamp_image() -> Image:
 	if _cached_stamp_image != null:
 		return _cached_stamp_image

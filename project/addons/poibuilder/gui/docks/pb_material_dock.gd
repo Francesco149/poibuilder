@@ -121,8 +121,8 @@ var _btn_clear_layer: Button
 
 # Stamp Tool Controls
 var _active_stamp_label: Label
-var _btn_stamp_place: Button
-var _btn_stamp_delete: Button
+var _opt_paint_target: OptionButton
+var _btn_clear_stamps: Button
 var _stamp_hint: Label
 var _spin_stamp_scale: Range
 var _spin_stamp_rotation: Range
@@ -193,6 +193,9 @@ func _on_paint_controller_changed() -> void:
 		_chk_erase.button_pressed = paint_controller.erase_mode
 	if _spin_paint_layer != null:
 		_spin_paint_layer.value = paint_controller.active_layer_idx
+		_spin_paint_layer.editable = paint_controller.paint_target == PBPaintController.PaintTarget.SPLAT
+	if _opt_paint_target != null:
+		_opt_paint_target.selected = int(paint_controller.paint_target)
 	if _spin_stamp_scale != null:
 		_spin_stamp_scale.value = paint_controller.stamp_scale
 	if _spin_stamp_rotation != null:
@@ -555,6 +558,18 @@ func _build_ui() -> void:
 	paint_grid.columns = 2
 	paint_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
+	paint_grid.add_child(_make_label("Paint into:"))
+	_opt_paint_target = OptionButton.new()
+	_opt_paint_target.name = "PaintTargetSelector"
+	_opt_paint_target.add_item("Splat layers", PBPaintController.PaintTarget.SPLAT)
+	_opt_paint_target.add_item("Decal layer", PBPaintController.PaintTarget.DECAL)
+	_opt_paint_target.tooltip_text = "Splat layers blend the palette texture into a layer's alpha mask. Decal layer paints the palette texture as pixels (1:1 with the surface), the same layer stamps paste into — erase here to rub parts of a stamp out."
+	_opt_paint_target.item_selected.connect(func(idx: int):
+		if paint_controller != null and not _syncing:
+			paint_controller.paint_target = idx as PBPaintController.PaintTarget
+	)
+	paint_grid.add_child(_opt_paint_target)
+
 	paint_grid.add_child(_make_label("Radius:"))
 	_spin_brush_radius = _make_spinbox(0.02, 10.0, 0.01, 0.5, "m")
 	_spin_brush_radius.value_changed.connect(func(v):
@@ -605,7 +620,7 @@ func _build_ui() -> void:
 	_paint_tool_section.add_child(paint_action_row)
 
 	var paint_hint := Label.new()
-	paint_hint.text = "LMB drag in viewport to paint splat layer. Zero lag."
+	paint_hint.text = "LMB drag in the viewport to paint. In Decal mode the brush paints the selected image and Erase fades the decal layer's alpha."
 	paint_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	paint_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_paint_tool_section.add_child(paint_hint)
@@ -622,28 +637,6 @@ func _build_ui() -> void:
 	stamp_header.text = "Stamp Tool Settings"
 	_stamp_tool_section.add_child(stamp_header)
 
-	var stamp_submode_row := HBoxContainer.new()
-	stamp_submode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	_btn_stamp_place = Button.new()
-	_btn_stamp_place.text = "Place Stamp"
-	_btn_stamp_place.tooltip_text = "Place stamp decals on surfaces"
-	_btn_stamp_place.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_btn_stamp_place.toggle_mode = true
-	_btn_stamp_place.button_pressed = true
-	_btn_stamp_place.pressed.connect(func(): _set_stamp_submode(false))
-	stamp_submode_row.add_child(_btn_stamp_place)
-
-	_btn_stamp_delete = Button.new()
-	_btn_stamp_delete.text = "Delete Tool"
-	_btn_stamp_delete.tooltip_text = "Delete stamp billboards: Hover over any placed stamp to highlight it in red, click to delete"
-	_btn_stamp_delete.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_btn_stamp_delete.toggle_mode = true
-	_btn_stamp_delete.button_pressed = false
-	_btn_stamp_delete.pressed.connect(func(): _set_stamp_submode(true))
-	stamp_submode_row.add_child(_btn_stamp_delete)
-
-	_stamp_tool_section.add_child(stamp_submode_row)
 	_active_stamp_label = Label.new()
 	_active_stamp_label.text = "Stamp: (Select a palette card)"
 	_active_stamp_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
@@ -717,13 +710,13 @@ func _build_ui() -> void:
 	_stamp_tool_section.add_child(stamp_grid)
 
 	var btn_clear_stamps := Button.new()
-	btn_clear_stamps.text = "Clear All Stamps"
-	btn_clear_stamps.tooltip_text = "Removes all placed stamp decals on the active mesh"
+	btn_clear_stamps.text = "Clear Decal Layer"
+	btn_clear_stamps.tooltip_text = "Erases every stamp and painted decal pixel on the active mesh's decal layers (undoable)"
 	btn_clear_stamps.pressed.connect(_on_clear_all_stamps_pressed)
 	_stamp_tool_section.add_child(btn_clear_stamps)
 
 	_stamp_hint = Label.new()
-	_stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
+	_stamp_hint.text = "Click to paste the image as a decal (no dragging).\nIt paints across every face it touches — overhanging an edge or wrapping a corner. Erase parts of it with the brush in Decal mode."
 	_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(_stamp_hint)
@@ -919,7 +912,7 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 				if paint_controller.paint_texture == null:
 					_select_first_classified("texture", _select_paint_material)
 			DockMode.STAMP:
-				_set_stamp_submode(false)
+				paint_controller.set_mode(PBPaintController.Mode.STAMP)
 				if paint_controller.stamp_texture == null:
 					_select_first_classified("stamp", _select_stamp_material)
 			DockMode.SPRITE:
@@ -950,7 +943,7 @@ func _update_tool_labels() -> void:
 			var tex_name := paint_controller.stamp_texture.resource_path.get_file()
 			if tex_name.is_empty():
 				tex_name = "Texture"
-			_active_stamp_label.text = "Stamp: %s (%.1fm, %d°)" % [tex_name, paint_controller.stamp_scale, int(paint_controller.stamp_rotation)]
+			_active_stamp_label.text = "Stamp: %s (%.2fm wide, %d°)" % [tex_name, paint_controller.stamp_scale, int(paint_controller.stamp_rotation)]
 		else:
 			_active_stamp_label.text = "Stamp: (Select a palette card)"
 
@@ -971,24 +964,6 @@ func _update_tool_labels() -> void:
 		else:
 			_particle_active_label.text = "Emitter: (Select a palette card)"
 
-
-func _set_stamp_submode(delete_active: bool) -> void:
-	if _btn_stamp_place != null:
-		_btn_stamp_place.button_pressed = not delete_active
-	if _btn_stamp_delete != null:
-		_btn_stamp_delete.button_pressed = delete_active
-	if paint_controller != null:
-		if delete_active:
-			paint_controller.set_mode(PBPaintController.Mode.STAMP_DELETE)
-		else:
-			paint_controller.set_mode(PBPaintController.Mode.STAMP)
-	if _stamp_hint != null:
-		if delete_active:
-			_stamp_hint.text = "Delete Tool active: Hover over any placed stamp billboard to highlight it in red. Click to delete."
-			_stamp_hint.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
-		else:
-			_stamp_hint.text = "Hover mesh for live preview. Click to paste.\nScale & Rotate via buttons and spinners above."
-			_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 
 # ==============================================================================
 # Shape palette (SHAPE tab) — always-armed primitive placement
@@ -1298,23 +1273,9 @@ func _on_clear_all_stamps_pressed() -> void:
 	var mesh: PBMesh = editor.active_mesh if editor != null else null
 	if mesh == null and paint_controller != null:
 		mesh = paint_controller.target_mesh
-	if mesh == null:
+	if mesh == null or paint_controller == null:
 		return
-	var stamps := mesh.get_node_or_null("PBStamps") as Node3D
-	if stamps == null or stamps.get_child_count() == 0:
-		return
-	if plugin != null and plugin.has_method("get_undo_redo"):
-		var undo = plugin.get_undo_redo()
-		if undo != null:
-			undo.create_action("Clear All Stamps", UndoRedo.MERGE_DISABLE, mesh)
-			for c in stamps.get_children():
-				undo.add_do_method(plugin, "_detach_node", c)
-				undo.add_undo_method(plugin, "_attach_detached", c, stamps)
-				undo.add_undo_method(plugin, "_own_node", c)
-			undo.commit_action()
-			return
-	for c in stamps.get_children():
-		c.queue_free()
+	paint_controller.clear_decal_layer(mesh)
 
 
 # ==============================================================================

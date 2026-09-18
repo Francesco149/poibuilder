@@ -1267,7 +1267,6 @@ func _run() -> void:
 
 			# Test applying billboard decal stamp
 			var target_b := root.get_node_or_null("GuiTestB") as PBMesh
-			var stamps: Node3D = null
 			if target_b != null:
 				plugin.editor.active_mesh = target_b
 				# Find GuiTestB's TOP face: the stamp cursor must be coherent
@@ -1283,85 +1282,86 @@ func _run() -> void:
 				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
 				plugin.paint_controller.apply_stamp()
 				await _frames(2)
-				stamps = target_b.get_node_or_null("PBStamps") as Node3D
-				if stamps != null and stamps.get_child_count() > 0:
-					_pass("SPLAT-STAMP: applied high-fidelity billboard decal stamp under PBStamps container")
 
-					# Face-anchor tracking: growing the face must grow the stamp.
-					var decal := stamps.get_child(0) as MeshInstance3D
-					var data_b := target_b.pb_mesh_data
-					if decal != null and data_b != null and decal.has_meta("anchor_center"):
-						var face0: PBFace = data_b.faces[top_face]
-						var c0 := Vector3.ZERO
-						for idx0 in face0.get_distinct_indexes():
-							c0 += data_b.positions[idx0]
-						c0 /= float(face0.get_distinct_indexes().size())
-						var saved: Dictionary = {}
-						for idx1 in face0.get_distinct_indexes():
-							saved[idx1] = data_b.positions[idx1]
-						var ext0: float = decal.transform.basis.x.length()
-						for idx2 in face0.get_distinct_indexes():
-							data_b.positions[idx2] = c0 + (data_b.positions[idx2] - c0) * 2.0
-						target_b.rebuild()
-						await _frames(2)
-						var ext1: float = decal.transform.basis.x.length()
-						if absf(ext1 - ext0) < 0.02:
-							_pass("SPLAT-STAMP: stamp decal does not stretch with face resize")
-						else:
-							_fail("SPLAT-STAMP: stamp stretched with face (extent %.3f -> %.3f)" % [ext0, ext1])
-						# Restore geometry for subsequent tests
-						for idx3 in saved:
-							data_b.positions[idx3] = saved[idx3]
-						target_b.rebuild()
-						await _frames(1)
-					else:
-						_fail("SPLAT-STAMP: stamp decal missing face anchor metadata")
+				var data_b := target_b.pb_mesh_data
+				var stamp_mat := data_b.get_face_material(data_b.faces[top_face]) as ShaderMaterial
+				if target_b.get_node_or_null("PBStamps") == null:
+					_pass("SPLAT-DECAL: stamp painted pixels instead of scene nodes (no PBStamps container)")
 				else:
-					_fail("SPLAT-STAMP: failed to create decal stamp node under PBStamps")
+					_fail("SPLAT-DECAL: a PBStamps container was created for a stamp")
 
-				# Test Stamp Delete Tool
-				plugin.paint_controller.set_mode(PBPaintController.Mode.STAMP)
-				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
-				plugin.paint_controller.apply_stamp()
+				if PBSplat.has_decal_layer(stamp_mat):
+					var decal_img := PBSplat.get_decal_layer_image(stamp_mat)
+					var mid := decal_img.get_width() / 2
+					if decal_img.get_pixel(mid, mid).a > 0.5:
+						_pass("SPLAT-DECAL: stamp pixels landed in the face's decal layer")
+					else:
+						_fail("SPLAT-DECAL: decal layer exists but holds no pixels")
+				else:
+					_fail("SPLAT-DECAL: stamping did not create a decal layer")
+
+				# Face-anchoring: resizing the face must NOT touch the painted
+				# pixels (they map to the rect recorded at paste time).
+				var face0: PBFace = data_b.faces[top_face]
+				var pixels_before: PackedByteArray = PBSplat.get_decal_layer_image(stamp_mat).get_data()
+				var bounds_before: PackedFloat32Array = face0.splat_bounds.duplicate()
+				var saved_pos: Dictionary = {}
+				for idx1 in face0.get_distinct_indexes():
+					saved_pos[idx1] = data_b.positions[idx1]
+					var p1: Vector3 = data_b.positions[idx1]
+					data_b.positions[idx1] = Vector3(p1.x * 2.0, p1.y, p1.z)
+				target_b.rebuild()
 				await _frames(2)
-				stamps = target_b.get_node_or_null("PBStamps") as Node3D
-				if stamps != null and stamps.get_child_count() > 0:
-					var placed_stamp := stamps.get_child(0) as MeshInstance3D
-					plugin.material_dock._set_stamp_submode(true)
-					if plugin.paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
-						_pass("STAMP-DELETE: activated STAMP_DELETE mode from dock")
-					else:
-						_fail("STAMP-DELETE: failed to set STAMP_DELETE mode")
+				var unchanged := true
+				if face0.splat_bounds != bounds_before:
+					unchanged = false
+				if PBSplat.get_decal_layer_image(stamp_mat).get_data() != pixels_before:
+					unchanged = false
+				if unchanged:
+					_pass("SPLAT-DECAL: resizing the face leaves the decal anchored (no stretch, no slide)")
+				else:
+					_fail("SPLAT-DECAL: resizing the face disturbed the decal anchor")
+				for idx3 in saved_pos:
+					data_b.positions[idx3] = saved_pos[idx3]
+				target_b.rebuild()
+				await _frames(1)
 
-					# Raycast directly at placed stamp
-					var ray_d: Vector3 = (placed_stamp.global_position - cam.global_position).normalized()
-					plugin.paint_controller.update_delete_hover(cam, Vector2.ZERO, target_b.get_tree().get_edited_scene_root(), cam.global_position, ray_d)
-					if plugin.paint_controller.hovered_stamp == placed_stamp and plugin.paint_controller.delete_highlight_mesh != null and plugin.paint_controller.delete_highlight_mesh.visible:
-						_pass("STAMP-DELETE: hovered stamp billboard highlighted in red")
-					else:
-						_fail("STAMP-DELETE: failed to highlight hovered stamp billboard")
+				# Erase is a brush operation on the decal layer now.
+				plugin.paint_controller.paint_target = PBPaintController.PaintTarget.DECAL
+				plugin.paint_controller.paint_texture = ImageTexture.create_from_image(
+					Image.create(8, 8, false, Image.FORMAT_RGBA8))
+				plugin.paint_controller.erase_mode = true
+				plugin.paint_controller.brush_radius = 0.4
+				plugin.paint_controller.brush_softness = 0.0
+				plugin.paint_controller.brush_opacity = 1.0
+				plugin.paint_controller.set_mode(PBPaintController.Mode.PAINT)
+				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
+				plugin.paint_controller.begin_stroke()
+				plugin.paint_controller.end_stroke()
+				await _frames(2)
+				var erased := PBSplat.get_decal_layer_image(stamp_mat)
+				if erased.get_pixel(erased.get_width() / 2, erased.get_height() / 2).a < 0.5:
+					_pass("SPLAT-DECAL: brush erase faded the painted decal pixels")
+				else:
+					_fail("SPLAT-DECAL: brushing in Decal mode with Erase did not remove pixels")
+				plugin.paint_controller.erase_mode = false
+				plugin.paint_controller.paint_target = PBPaintController.PaintTarget.SPLAT
 
-					var count_before: int = stamps.get_child_count()
-					var del_ok: bool = plugin.paint_controller.delete_hovered_stamp()
-					await _frames(2)
-					if del_ok and stamps.get_child_count() == count_before - 1 and not stamps.get_children().has(placed_stamp):
-						_pass("STAMP-DELETE: click deleted hovered stamp billboard")
-					else:
-						_fail("STAMP-DELETE: failed to delete hovered stamp billboard (before=%d, after=%d)" % [count_before, stamps.get_child_count()])
-
-				# Test Clear All Stamps fallback
+				# Clear Decal Layer wipes whatever is left.
 				plugin.material_dock._on_clear_all_stamps_pressed()
 				await _frames(2)
-				if stamps == null or stamps.get_child_count() == 0:
-					_pass("SPLAT-STAMP: cleared all decal stamps successfully")
+				var cleared := PBSplat.get_decal_layer_image(stamp_mat)
+				if cleared.get_pixel(cleared.get_width() / 2, cleared.get_height() / 2).a < 0.01:
+					_pass("SPLAT-DECAL: Clear Decal Layer erased the layer")
 				else:
-					_fail("SPLAT-STAMP: Clear All Stamps failed to clear stamps")
+					_fail("SPLAT-DECAL: Clear Decal Layer left pixels behind")
+
 				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 				await _frames(2)
 				if plugin.paint_controller.mode == PBPaintController.Mode.NONE:
-					_pass("SPLAT-STAMP: reset to MATERIAL mode set paint_controller to NONE")
+					_pass("SPLAT-DECAL: reset to MATERIAL mode set paint_controller to NONE")
 				else:
-					_fail("SPLAT-STAMP: failed to reset paint_controller")
+					_fail("SPLAT-DECAL: failed to reset paint_controller")
 
 				# Test Billboard Sprite Placer
 				plugin._start_sprite_tool()

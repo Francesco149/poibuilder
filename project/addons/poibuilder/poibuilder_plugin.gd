@@ -4101,9 +4101,6 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
 		_last_mouse_pos = event.position
 		_last_mouse_camera = camera
-		if paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
-			paint_controller.update_delete_hover(camera, event.position, scene_root)
-			return AFTER_GUI_INPUT_PASS
 		var hit := _pick_paint_surface(camera, event.position)
 		if not hit.is_empty():
 			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
@@ -4120,11 +4117,6 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		# Plain mouse clicks only. Mouse wheel passes through to camera zoom untouched.
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				if paint_controller.mode == PBPaintController.Mode.STAMP_DELETE:
-					paint_controller.update_delete_hover(camera, event.position, scene_root)
-					if paint_controller.delete_hovered_stamp():
-						return AFTER_GUI_INPUT_STOP
-					return AFTER_GUI_INPUT_PASS
 				if _export_dialog != null and _export_dialog.visible:
 					return AFTER_GUI_INPUT_PASS
 				# Make sure hit is up-to-date at click time
