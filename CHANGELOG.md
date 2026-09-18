@@ -36,7 +36,10 @@ the particles stretch and clip" report). The quad's width now follows the
 the QuadMesh (`aspect` in the emitter record), so the editor preview, the retro
 viewer and the device agree. The knobs' tooltips state the sheet semantics
 (1 = the whole image is one cell). Single-frame textures are unchanged at 1:1
-and now keep their own aspect when it is not square.
+and now keep their own aspect when it is not square. `test_scenes/emitter_probe.gd`
+renders the cases (a 3-cell sheet of red/green/blue cells shows one cell per
+particle and a different mix a second later; a 3-column sheet of tall cells
+comes out narrow instead of stretched).
 
 ### Billboards get their own names
 The second sprite was created under the same "Billboard_Sprite" name, so Godot
