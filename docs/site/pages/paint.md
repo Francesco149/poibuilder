@@ -17,7 +17,7 @@ The brush writes weights, not new geometry.
 
 ## Decal stamps
 
-A stamp is a PNG painted **into the surface**, not a node hovering over it. Click to paste one (no dragging): it lands in the face's **decal layer** at 256 texels/m — the same uniform density as the splat masks — and it keeps its own colors and alpha 1:1. The layer is cropped to the area you actually paint and grows as you spread out, so a stamp is as crisp on a 32 m courtyard floor as on a 2 m panel; the source image is resampled to the footprint (interpolated up, filtered down) rather than dropped to the nearest texel.
+A stamp is a PNG painted **into the surface**, not a node hovering over it, and it is a **single click** — no dragging, no stroke: pick a tile pattern or a magic circle and click it onto a wall or a floor. Click to paste (no dragging): it lands in the face's **decal layer** at 256 texels/m — the same uniform density as the splat masks — and it keeps its own colors and alpha 1:1. The layer is cropped to the area you actually paint and grows as you spread out, so a stamp is as crisp on a 32 m courtyard floor as on a 2 m panel; the source image is resampled to the footprint (interpolated up, filtered down) rather than dropped to the nearest texel.
 
 Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, continue onto the neighbouring wall, cover a whole staircase side. It paints only faces its plane is roughly parallel to, so a stamp never smears sideways down a perpendicular wall; stamp and brush sizes are metres on screen, whatever the mesh's own scale.
 

@@ -43,6 +43,25 @@ completely broken on the wall".
   layer when the brush targets Decal; the Stamp tab's "erase parts of it with
   the brush in Decal mode" hint is now a button that opens that brush (it
   described a brush the user had no way to find).
+- A stamp is ONE click (`click, not drag — a fixed pattern on a wall or a
+  floor`), so the paste can no longer walk the footprint pixel by pixel in
+  GDScript: a 4.32 m banner took 1.2 s and an 8 m stamp 3.4 s, per click. When
+  the stamp's axes line up with the face's — rotation 0 on an axis-aligned
+  face, the normal case — the sprite is a crop + resize in C++ and the paste is
+  one blend call: measured 79/261/1221/3350 ms -> 8/14/64/161 ms for 1/2/4.32/
+  8 m stamps. A rotated stamp builds its sprite once and caches it, so only the
+  first of a given size/rotation pays (130 ms for 2 m, ~1.1 s for 4.32 m) and
+  repeats are ~5 ms.
+- The footprint's own bounding box drives the window and the pixel walk, not a
+  circumscribed square: a 4:1 banner walked 4x its pixels, and its window is
+  1024x512 now instead of 1024x1024.
+- Brush dabs composite a cached sprite with one `Image.blend_rect()` call
+  instead of walking pixels: at a 0.5 m radius, 67 ms -> 3.5 ms per colour dab
+  and 53 ms -> 3.2 ms per palette-image dab (the sprite is built once per
+  stroke). Erase stays on the per-pixel loop — no C++ image op fades a
+  destination alpha — at 39 ms for the same footprint, the class the splat
+  brush has always run in. Sprites are skipped above 1024 px an axis, where a
+  huge radius would cost more memory than the loop costs time.
 
 ### The courtyard demo lost its stamps
 - The showcase builder still built `PBStamps` node quads, which the exporter

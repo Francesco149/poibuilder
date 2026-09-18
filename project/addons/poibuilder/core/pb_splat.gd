@@ -42,6 +42,10 @@ const DECAL_MAX_WINDOW_PX := 2048
 ## Slack (window pixels) kept around the written footprint so a stroke that
 ## drifts a little does not reallocate the window on every dab.
 const DECAL_WINDOW_PAD_PX := 8
+## Above this many pixels on an axis a brush dab falls back to the per-pixel
+## loop instead of building a sprite: the sprite path trades memory for speed,
+## and a 10 m radius brush sprite would be hundreds of megabytes.
+const DECAL_MAX_SPRITE_PX := 1024
 ## Computes uniform texture resolution (w, h) in pixels for `face` based on its physical size in meters.
 ## Guarantees a consistent texel density across both small and large faces.
 static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFace,
@@ -94,6 +98,13 @@ static var _decal_resample_cache: Dictionary = {}
 ## id (the palette and stamp images are static, so a stroke hits this every
 ## dab instead of copying the pixels again).
 static var _decal_source_cache: Dictionary = {}
+
+## Brush dab sprites: the falloff disc of a flat-colour brush, rendered once per
+## (colour, radius, softness, opacity, density) and then composited with one
+## Image.blend_rect() C++ call per dab. The same per-pixel work in GDScript
+## costs ~36 ms for a 0.35 m dab (~100 ms at the default 0.5 m radius) — the
+## difference between a responsive brush and a stuttering one.
+static var _dab_sprite_cache: Dictionary = {}
 
 static func _get_cached_image(mat: ShaderMaterial, key: String) -> Image:
 	if mat == null:
@@ -1063,6 +1074,193 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		})
 	return out
 
+## The stamp sprite for an AXIS-ALIGNED paste: the source cropped to the
+## footprint's texel range and resized to the footprint's pixel grid, all in
+## C++. Returns null when the stamp's axes do not line up with the face's (a
+## rotated stamp), where the caller falls back to the per-pixel loop.
+##
+## The mapping from a sprite pixel to source uv is affine:
+##   sx = a*x + b*y + c, sy = d*x + e*y + f
+## and it is axis-aligned when the CROSS terms stay under half a source texel
+## across the whole sprite.
+static func _aligned_stamp_sprite(src: Dictionary, ext: Vector2, center_u: float,
+		center_v: float, u_face: Vector3, v_face: Vector3, rot_right: Vector3,
+		rot_up: Vector3, px_per_m_u: float, px_per_m_v: float) -> Image:
+	if src.is_empty():
+		return null
+	var sw: int = src["w"]
+	var sh: int = src["h"]
+	var w := maxi(1, int(round(ext.x * px_per_m_u)))
+	var h := maxi(1, int(round(ext.y * px_per_m_v)))
+	if w < 1 or h < 1:
+		return null
+	var a := u_face.dot(rot_right) / ext.x / px_per_m_u
+	var b := v_face.dot(rot_right) / ext.x / px_per_m_v
+	var d := -u_face.dot(rot_up) / ext.y / px_per_m_u
+	var e := -v_face.dot(rot_up) / ext.y / px_per_m_v
+	var half_w := float(w) * 0.5
+	var half_h := float(h) * 0.5
+	var c := 0.5 - half_w * a - half_h * b
+	var f := 0.5 - half_w * d - half_h * e
+	# Half a source texel of drift is the most a bilinear resample can hide.
+	if absf(b) * float(h) * float(maxi(sw - 1, 1)) > 0.5 \
+			or absf(d) * float(w) * float(maxi(sh - 1, 1)) > 0.5:
+		return null
+	var src_img := Image.create_from_data(sw, sh, false, Image.FORMAT_RGBA8, src["bytes"])
+	var x0 := c * float(sw - 1)
+	var x1 := (a * float(w - 1) + c) * float(sw - 1)
+	var y0 := f * float(sh - 1)
+	var y1 := (e * float(h - 1) + f) * float(sh - 1)
+	var lo_x := clampi(int(floor(minf(x0, x1))), 0, sw - 1)
+	var lo_y := clampi(int(floor(minf(y0, y1))), 0, sh - 1)
+	var hi_x := clampi(int(ceil(maxf(x0, x1))), 0, sw - 1)
+	var hi_y := clampi(int(ceil(maxf(y0, y1))), 0, sh - 1)
+	var crop := src_img.get_region(Rect2i(lo_x, lo_y, hi_x - lo_x + 1, hi_y - lo_y + 1))
+	crop.resize(w, h, Image.INTERPOLATE_BILINEAR)
+	if a < 0.0:
+		crop.flip_x()
+	if e < 0.0:
+		crop.flip_y()
+	return crop
+
+## The flat-colour brush's falloff disc as an image: `color` (with the brush's
+## opacity baked into alpha) inside the brush's cosine falloff. Cached, because
+## a stroke asks for the same sprite on every dab.
+static func _flat_dab_sprite(src: Dictionary, radius: float, lut: PackedByteArray,
+		opacity_b: int, texels_per_m: float) -> Image:
+	var src_b: PackedByteArray = src["bytes"]
+	var sr := int(src_b[0])
+	var sg := int(src_b[1])
+	var sb := int(src_b[2])
+	var sa := int(src_b[3])
+	var key := "%d_%d_%d_%d_%d_%d" % [sr, sg, sb, sa, int(round(radius * texels_per_m)),
+			int(round(opacity_b)) | (lut.size() << 9) | (int(round(radius * 1000.0)) << 20)]
+	if _dab_sprite_cache.has(key):
+		return _dab_sprite_cache[key]
+	var side := maxi(3, int(round(radius * 2.0 * texels_per_m)))
+	if side > DECAL_MAX_SPRITE_PX:
+		return null
+	var sprite := Image.create(side, side, false, Image.FORMAT_RGBA8)
+	sprite.fill(Color(0, 0, 0, 0))
+	var b := sprite.get_data()
+	var half := float(side) * 0.5
+	var inv_r_sq := 1.0 / (radius * radius)
+	var lut_max := float(BRUSH_LUT_SIZE - 1)
+	for y in range(side):
+		var dy := (float(y) + 0.5 - half) / texels_per_m
+		var dy_sq := dy * dy
+		for x in range(side):
+			var dx := (float(x) + 0.5 - half) / texels_per_m
+			var li := int((dx * dx + dy_sq) * inv_r_sq * lut_max)
+			if li >= BRUSH_LUT_SIZE - 1:
+				continue
+			var w255 := int(lut[li])
+			if w255 <= 0:
+				continue
+			var weight := (w255 * opacity_b + 127) / 255
+			if weight <= 0:
+				continue
+			var di := (y * side + x) * 4
+			b[di] = sr
+			b[di + 1] = sg
+			b[di + 2] = sb
+			b[di + 3] = (sa * weight + 127) / 255
+	sprite.set_data(side, side, false, Image.FORMAT_RGBA8, b)
+	if _dab_sprite_cache.size() >= 8:
+		_dab_sprite_cache.clear()
+	_dab_sprite_cache[key] = sprite
+	return sprite
+
+## An oriented decal sprite: the source projected through the face's axes into
+## the footprint's pixel grid, ready for one Image.blend_rect(). With a `lut`
+## the brush falloff fades it (a dab); without one the pixels are copied as-is
+## (a stamp). Cached per source/rotation/basis/density, because a stroke and a
+## repeated stamp ask for the same sprite over and over — building it is the
+## only per-pixel GDScript work left on this path.
+##
+## Returns null when the mapping needs a sprite larger than DECAL_MAX_SPRITE_PX
+## or the source has nothing to paint, so the caller can walk pixels instead.
+static func _oriented_sprite(src: Dictionary, u_face: Vector3, v_face: Vector3,
+		rot_right: Vector3, rot_up: Vector3, ext: Vector2, px_per_m_u: float,
+		px_per_m_v: float, lut: PackedByteArray, opacity_b: int, radius: float) -> Image:
+	if src.is_empty():
+		return null
+	var is_dab: bool = lut.size() > 0
+	var side_u := maxi(1, int(round((radius * 2.0 if is_dab else ext.x) * px_per_m_u)))
+	var side_v := maxi(1, int(round((radius * 2.0 if is_dab else ext.y) * px_per_m_v)))
+	if side_u < 3 or side_v < 3 or side_u > DECAL_MAX_SPRITE_PX or side_v > DECAL_MAX_SPRITE_PX:
+		return null
+
+	var key_u := "%d_%d_%d" % [int(round(u_face.x * 100.0)), int(round(u_face.y * 100.0)), int(round(u_face.z * 100.0))]
+	var key_v := "%d_%d_%d" % [int(round(v_face.x * 100.0)), int(round(v_face.y * 100.0)), int(round(v_face.z * 100.0))]
+	var key := "%s_%s_%s_%d_%d_%dx%d_%d_%d_%d" % [src["key"], key_u, key_v,
+			int(round(ext.x * 1000.0)), int(round(ext.y * 1000.0)),
+			side_u, side_v, opacity_b, int(round(radius * 1000.0)), 1 if is_dab else 0]
+	if _dab_sprite_cache.has(key):
+		return _dab_sprite_cache[key]
+
+	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
+			maxi(1, int(round(ext.y * px_per_m_v))))
+	if rsrc.is_empty():
+		return null
+	var src_b: PackedByteArray = rsrc["bytes"]
+	var sw: int = rsrc["w"]
+	var sh: int = rsrc["h"]
+	var sprite := Image.create(side_u, side_v, false, Image.FORMAT_RGBA8)
+	sprite.fill(Color(0, 0, 0, 0))
+	var b := sprite.get_data()
+	var half_u := float(side_u) * 0.5
+	var half_v := float(side_v) * 0.5
+	var inv_r_sq := 1.0 / maxf(radius * radius, 0.000001)
+	var lut_max := float(BRUSH_LUT_SIZE - 1)
+	var last_sx := float(sw - 1)
+	var last_sy := float(sh - 1)
+	var dirty := false
+	for y in range(side_v):
+		var dv := (float(y) + 0.5 - half_v) / px_per_m_v
+		var dv_sq := dv * dv
+		for x in range(side_u):
+			var du := (float(x) + 0.5 - half_u) / px_per_m_u
+			var weight := 255
+			if is_dab:
+				var li := int((du * du + dv_sq) * inv_r_sq * lut_max)
+				if li >= BRUSH_LUT_SIZE - 1:
+					continue
+				var w255 := int(lut[li])
+				if w255 <= 0:
+					continue
+				weight = (w255 * opacity_b + 127) / 255
+				if weight <= 0:
+					continue
+			var dp := du * u_face + dv * v_face
+			var sx := dp.dot(rot_right) / ext.x + 0.5
+			if sx < 0.0 or sx > 1.0:
+				continue
+			var sy := 0.5 - dp.dot(rot_up) / ext.y
+			if sy < 0.0 or sy > 1.0:
+				continue
+			var si := (clampi(int(sy * last_sy), 0, sh - 1) * sw 					+ clampi(int(sx * last_sx), 0, sw - 1)) * 4
+			var sa := int(src_b[si + 3])
+			if sa <= 0:
+				continue
+			var a := (sa * weight + 127) / 255
+			if a <= 0:
+				continue
+			var di := (y * side_u + x) * 4
+			b[di] = src_b[si]
+			b[di + 1] = src_b[si + 1]
+			b[di + 2] = src_b[si + 2]
+			b[di + 3] = a
+			dirty = true
+	if not dirty:
+		return null
+	sprite.set_data(side_u, side_v, false, Image.FORMAT_RGBA8, b)
+	if side_u * side_v <= DECAL_MAX_SPRITE_PX * 256:
+		if _dab_sprite_cache.size() >= 8:
+			_dab_sprite_cache.clear()
+		_dab_sprite_cache[key] = sprite
+	return sprite
+
 ## Source image as raw RGBA8 bytes (decompress + convert once per write, never
 ## per pixel: the pixel loops index the byte array directly). Mipmaps are
 ## dropped: get_data() concatenates every level, so a mipmapped source would
@@ -1120,10 +1318,12 @@ static func _resample_source(src: Dictionary, fw: int, fh: int) -> Dictionary:
 	_decal_resample_cache[key] = out
 	return out
 
-## The pixel bbox of a decal footprint inside a target's window image: the
-## footprint's circumscribed square in face-mask uv, clamped to the window.
+## The pixel bbox of a decal footprint inside a target's window image, from the
+## footprint's own half extents in face metres per axis (NOT a circumscribed
+## square: a 4:1 banner would make that square 4x the pixels for nothing),
+## clamped to the window.
 static func _decal_pixel_window(t: Dictionary, win: Rect2, center_u: float,
-		center_v: float, half_extent: float) -> Dictionary:
+		center_v: float, half_u: float, half_v: float) -> Dictionary:
 	var img: Image = t["img"]
 	var w := img.get_width()
 	var h := img.get_height()
@@ -1131,10 +1331,10 @@ static func _decal_pixel_window(t: Dictionary, win: Rect2, center_u: float,
 	var min_v: float = t["min_v"]
 	var range_u: float = t["range_u"]
 	var range_v: float = t["range_v"]
-	var fu0: float = (center_u - half_extent - min_u) / range_u
-	var fv0: float = (center_v - half_extent - min_v) / range_v
-	var fu1: float = (center_u + half_extent - min_u) / range_u
-	var fv1: float = (center_v + half_extent - min_v) / range_v
+	var fu0: float = (center_u - half_u - min_u) / range_u
+	var fv0: float = (center_v - half_v - min_v) / range_v
+	var fu1: float = (center_u + half_u - min_u) / range_u
+	var fv1: float = (center_v + half_v - min_v) / range_v
 	var x0 := clampi(int(floor((fu0 - win.position.x) / win.size.x * float(w - 1))), 0, w - 1)
 	var x1 := clampi(int(ceil((fu1 - win.position.x) / win.size.x * float(w - 1))), 0, w - 1)
 	var y0 := clampi(int(floor((fv0 - win.position.y) / win.size.y * float(h - 1))), 0, h - 1)
@@ -1164,14 +1364,20 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	var range_v: float = t["range_v"]
 	var center_u: float = u_face.dot(center_local)
 	var center_v: float = v_face.dot(center_local)
-	var half: float = 0.5 * sqrt(ext.x * ext.x + ext.y * ext.y)
+	# The footprint's OWN bounding box in the face's plane. A stamp is usually
+	# not square (a 4:1 banner), and the circumscribed square would walk four
+	# times its pixels for nothing.
+	var k_r_u := u_face.dot(rot_right)
+	var k_r_v := v_face.dot(rot_right)
+	var k_u_u := u_face.dot(rot_up)
+	var k_u_v := v_face.dot(rot_up)
+	var half_u: float = 0.5 * (absf(ext.x * k_r_u) + absf(ext.y * k_u_u))
+	var half_v: float = 0.5 * (absf(ext.x * k_r_v) + absf(ext.y * k_u_v))
 
 	var mat: ShaderMaterial = t["mat"]
-	# The footprint (as its circumscribed square) in the face's mask uv, grown
-	# by one pixel so the window always covers the written bbox.
 	var need := Rect2(
-		(center_u - half - min_u) / range_u, (center_v - half - min_v) / range_v,
-		2.0 * half / range_u, 2.0 * half / range_v)
+		(center_u - half_u - min_u) / range_u, (center_v - half_v - min_v) / range_v,
+		2.0 * half_u / range_u, 2.0 * half_v / range_v)
 	var inv_u := 1.0 / maxf(range_u * maxf(texels_per_m, 1.0), 0.001)
 	var inv_v := 1.0 / maxf(range_v * maxf(texels_per_m, 1.0), 0.001)
 	need = need.grow_individual(inv_u, inv_v, inv_u, inv_v)
@@ -1182,9 +1388,45 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	var win := get_decal_window(mat)
 	var px_per_m_u := float(dst_img.get_width() - 1) / maxf(win.size.x * range_u, 0.000001)
 	var px_per_m_v := float(dst_img.get_height() - 1) / maxf(win.size.y * range_v, 0.000001)
-	var win_data := _decal_pixel_window(t, win, center_u, center_v, half)
+	var win_data := _decal_pixel_window(t, win, center_u, center_v, half_u, half_v)
 	if win_data["x0"] > win_data["x1"] or win_data["y0"] > win_data["y1"]:
 		return false
+
+	# A stamp is ONE click, so its paste must not walk the footprint pixel by
+	# pixel in GDScript (a 4.32 m banner took 1.2 s that way). When the stamp's
+	# axes line up with the face's — rotation 0 on an axis-aligned face, which
+	# is the normal case — the sprite is a crop + resize (+ flip), and the paste
+	# is one Image.blend_rect() call.
+	var sprite := _aligned_stamp_sprite(src, ext, center_u, center_v, u_face, v_face,
+			rot_right, rot_up, px_per_m_u, px_per_m_v)
+	if sprite != null:
+		var half_px := Vector2(sprite.get_width() * 0.5, sprite.get_height() * 0.5)
+		var centre_px := Vector2(
+			(center_u - min_u) / range_u, (center_v - min_v) / range_v)
+		var at := Vector2i(
+			int(round((centre_px.x - win.position.x) / win.size.x * float(dst_img.get_width() - 1) - half_px.x)),
+			int(round((centre_px.y - win.position.y) / win.size.y * float(dst_img.get_height() - 1) - half_px.y)))
+		dst_img.blend_rect(sprite, Rect2i(0, 0, sprite.get_width(), sprite.get_height()), at)
+		_commit_decal_target(mat, dst_img)
+		return true
+
+	# A rotated stamp (or one whose sprite is too large to prebuild): the
+	# sprite is still built once and cached, so only the first stamp of a given
+	# source/rotation/size pays for the pixel walk — the ones after it are one
+	# blend. Stamps placed repeatedly (a tile pattern across a floor) are the
+	# normal case.
+	var osprite := _oriented_sprite(src, u_face, v_face, rot_right, rot_up, ext,
+			px_per_m_u, px_per_m_v, PackedByteArray(), 255, 0.0)
+	if osprite != null:
+		var ohalf := Vector2(osprite.get_width() * 0.5, osprite.get_height() * 0.5)
+		var ocentre := Vector2(
+			(center_u - min_u) / range_u, (center_v - min_v) / range_v)
+		dst_img.blend_rect(osprite, Rect2i(0, 0, osprite.get_width(), osprite.get_height()),
+				Vector2i(
+					int(round((ocentre.x - win.position.x) / win.size.x * float(dst_img.get_width() - 1) - ohalf.x)),
+					int(round((ocentre.y - win.position.y) / win.size.y * float(dst_img.get_height() - 1) - ohalf.y))))
+		_commit_decal_target(mat, dst_img)
+		return true
 
 	# Footprint-sized source: the oriented fetch stays a 1:1 read.
 	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
@@ -1270,90 +1512,197 @@ static func _brush_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	var win := get_decal_window(mat)
 	var px_per_m_u := float(dst_img.get_width() - 1) / maxf(win.size.x * range_u, 0.000001)
 	var px_per_m_v := float(dst_img.get_height() - 1) / maxf(win.size.y * range_v, 0.000001)
-	var win_data := _decal_pixel_window(t, win, center_u, center_v, radius)
+	var win_data := _decal_pixel_window(t, win, center_u, center_v, radius, radius)
 	if win_data["x0"] > win_data["x1"] or win_data["y0"] > win_data["y1"]:
 		return false
 
-	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
-			maxi(1, int(round(ext.y * px_per_m_v))))
-
+	# Only the footprint's own box travels between the image and the byte
+	# buffer: a dab touches a fraction of the window, and get_data()/set_data()
+	# on the whole window copies megabytes for it.
 	var w: int = win_data["w"]
 	var h: int = win_data["h"]
 	var inv_w := 1.0 / float(maxi(w - 1, 1))
 	var inv_h := 1.0 / float(maxi(h - 1, 1))
-	var src_b: PackedByteArray = rsrc["bytes"]
-	var sw: int = rsrc["w"]
-	var sh: int = rsrc["h"]
-	var dst_b := dst_img.get_data()
+	var box := Rect2i(win_data["x0"], win_data["y0"],
+			win_data["x1"] - win_data["x0"] + 1, win_data["y1"] - win_data["y0"] + 1)
+	var region := dst_img.get_region(box)
+	var dst_b := region.get_data()
+	var bw := box.size.x
+	var bh := box.size.y
+
+	# Face-metre position of the box's first pixel and the step per pixel. The
+	# distance field only needs (u, v); the oriented source fetch needs sx/sy,
+	# which are AFFINE in the pixel index (the face's axes are linear in uv and
+	# the stamp basis is a fixed projection) — so both loops step floats
+	# instead of rebuilding a Vector3 and two dot products per pixel.
+	var step_u := inv_w * win.size.x * range_u
+	var step_v := inv_h * win.size.y * range_v
+	var u_at := min_u + (win.position.x + float(box.position.x) * inv_w * win.size.x) * range_u
+	var v_at := min_v + (win.position.y + float(box.position.y) * inv_h * win.size.y) * range_v
+	var dsx_du := step_u * u_face.dot(rot_right) / ext.x
+	var dsy_du := -step_u * u_face.dot(rot_up) / ext.y
+	var dsx_dv := step_v * v_face.dot(rot_right) / ext.x
+	var dsy_dv := -step_v * v_face.dot(rot_up) / ext.y
+	var sx_row := ((u_at - center_u) * u_face + (v_at - center_v) * v_face).dot(rot_right) / ext.x + 0.5
+	var sy_row := 0.5 - ((u_at - center_u) * u_face + (v_at - center_v) * v_face).dot(rot_up) / ext.y
+
 	var inv_r_sq := 1.0 / (radius * radius)
 	var lut_max := float(BRUSH_LUT_SIZE - 1)
-
 	var dirty := false
-	for y in range(win_data["y0"], win_data["y1"] + 1):
-		var v_coord := min_v + (win.position.y + float(y) * inv_h * win.size.y) * range_v
-		var dv := v_coord - center_v
-		var row := y * w
-		for x in range(win_data["x0"], win_data["x1"] + 1):
-			var u_coord := min_u + (win.position.x + float(x) * inv_w * win.size.x) * range_u
-			var du := u_coord - center_u
-			var dist_sq := du * du + dv * dv
-			var li := int(dist_sq * inv_r_sq * lut_max)
-			if li >= BRUSH_LUT_SIZE - 1:
-				continue
-			var w255 := int(lut[li])
-			if w255 <= 0:
-				continue
-			var weight := (w255 * opacity_b + 127) / 255
-			if weight <= 0:
-				continue
-			var di := (row + x) * 4
 
-			if erase:
-				var da := int(dst_b[di + 3])
-				if da == 0:
+	if src["w"] == 1 and src["h"] == 1:
+		# FLAT source (the colour brush, and every erase dab): one colour for
+		# the whole footprint, so the sample fetch and the oriented basis drop
+		# out entirely. This is the hot path — the basic brush.
+		if not erase:
+			# Paint as a prebuilt sprite: one C++ blend per dab instead of a
+			# per-pixel GDScript loop (see _dab_sprite_cache).
+			var sprite := _flat_dab_sprite(src, radius, lut, opacity_b, texels_per_m)
+			if sprite != null:
+				var half_px := Vector2(sprite.get_width() * 0.5, sprite.get_height() * 0.5)
+				var centre_px := Vector2(
+					((center_u - min_u) / range_u - win.position.x) / win.size.x * float(w - 1),
+					((center_v - min_v) / range_v - win.position.y) / win.size.y * float(h - 1))
+				var at := Vector2i(int(round(centre_px.x - half_px.x)), int(round(centre_px.y - half_px.y)))
+				dst_img.blend_rect(sprite, Rect2i(0, 0, sprite.get_width(), sprite.get_height()), at)
+				_commit_decal_target(mat, dst_img)
+				return true
+		var src_b: PackedByteArray = src["bytes"]
+		var sr := int(src_b[0])
+		var sg := int(src_b[1])
+		var sb := int(src_b[2])
+		var sa := int(src_b[3])
+		for y in range(bh):
+			var dv := v_at - center_v
+			var dv_sq := dv * dv
+			for x in range(bw):
+				var du := u_at + float(x) * step_u - center_u
+				var li := int((du * du + dv_sq) * inv_r_sq * lut_max)
+				# (reached for erase, and for radii too large for a sprite)
+				if li >= BRUSH_LUT_SIZE - 1:
 					continue
-				var faded := (da * (255 - weight) + 127) / 255
-				if faded == da:
+				var w255 := int(lut[li])
+				if w255 <= 0:
 					continue
-				dst_b[di + 3] = faded
+				var weight := (w255 * opacity_b + 127) / 255
+				if weight <= 0:
+					continue
+				var di := (y * bw + x) * 4
+				if erase:
+					var da := int(dst_b[di + 3])
+					if da == 0:
+						continue
+					var faded := (da * (255 - weight) + 127) / 255
+					if faded != da:
+						dst_b[di + 3] = faded
+						dirty = true
+					continue
+				var a := (sa * weight + 127) / 255
+				if a <= 0:
+					continue
+				var da2 := int(dst_b[di + 3])
+				if da2 == 0:
+					dst_b[di] = sr
+					dst_b[di + 1] = sg
+					dst_b[di + 2] = sb
+					dst_b[di + 3] = a
+				else:
+					var inv := 255 - a
+					var out_a := a + (da2 * inv + 127) / 255
+					if out_a <= 0:
+						continue
+					var half := out_a / 2
+					dst_b[di] = clampi((sr * a + (int(dst_b[di]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+					dst_b[di + 1] = clampi((sg * a + (int(dst_b[di + 1]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+					dst_b[di + 2] = clampi((sb * a + (int(dst_b[di + 2]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+					dst_b[di + 3] = out_a
 				dirty = true
-				continue
+			v_at += step_v
+		if not dirty:
+			return false
+		region.set_data(bw, bh, false, Image.FORMAT_RGBA8, dst_b)
+		dst_img.blit_rect(region, Rect2i(0, 0, bw, bh), box.position)
+		_commit_decal_target(mat, dst_img)
+		return true
 
-			var dp := du * u_face + dv * v_face
-			var sx := dp.dot(rot_right) / ext.x + 0.5
-			if sx < 0.0 or sx > 1.0:
-				continue
-			var sy := 0.5 - dp.dot(rot_up) / ext.y
-			if sy < 0.0 or sy > 1.0:
-				continue
-			var si := (clampi(int(sy * float(sh - 1)), 0, sh - 1) * sw 					+ clampi(int(sx * float(sw - 1)), 0, sw - 1)) * 4
-			var sa := int(src_b[si + 3])
-			if sa == 0:
-				continue
-			var a := (sa * weight + 127) / 255
-			if a <= 0:
-				continue
+	# ORIENTED source (a palette-image dab): the sampled content is projected
+	# through the stamp basis, so each pixel needs its sx/sy position. Like the
+	# flat brush, the sprite is position-independent within a stroke (fixed
+	# source, rotation, size and face basis), so it is built once and blended
+	# per dab — the same reason the colour brush is fast.
+	if not erase:
+		var osprite := _oriented_sprite(src, u_face, v_face, rot_right, rot_up,
+				ext, px_per_m_u, px_per_m_v, lut, opacity_b, radius)
+		if osprite != null:
+			var ohalf := Vector2(osprite.get_width() * 0.5, osprite.get_height() * 0.5)
+			var ocentre := Vector2(
+				((center_u - min_u) / range_u - win.position.x) / win.size.x * float(w - 1),
+				((center_v - min_v) / range_v - win.position.y) / win.size.y * float(h - 1))
+			dst_img.blend_rect(osprite, Rect2i(0, 0, osprite.get_width(), osprite.get_height()),
+					Vector2i(int(round(ocentre.x - ohalf.x)), int(round(ocentre.y - ohalf.y))))
+			_commit_decal_target(mat, dst_img)
+			return true
 
-			var da2 := int(dst_b[di + 3])
-			if da2 == 0:
-				dst_b[di] = src_b[si]
-				dst_b[di + 1] = src_b[si + 1]
-				dst_b[di + 2] = src_b[si + 2]
-				dst_b[di + 3] = a
-			else:
-				var inv := 255 - a
-				var out_a := a + (da2 * inv + 127) / 255
-				if out_a <= 0:
-					continue
-				for c in range(3):
-					var num := int(src_b[si + c]) * a + (int(dst_b[di + c]) * da2 * inv + 127) / 255
-					dst_b[di + c] = clampi((num + out_a / 2) / out_a, 0, 255)
-				dst_b[di + 3] = out_a
-			dirty = true
+	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
+			maxi(1, int(round(ext.y * px_per_m_v))))
+	var src_b: PackedByteArray = rsrc["bytes"]
+	var sw2: int = rsrc["w"]
+	var sh2: int = rsrc["h"]
+	var last_sx := float(sw2 - 1)
+	var last_sy := float(sh2 - 1)
+	for y in range(bh):
+		var dv := v_at - center_v
+		var dv_sq := dv * dv
+		var sx := sx_row
+		var sy := sy_row
+		for x in range(bw):
+			var du := u_at + float(x) * step_u - center_u
+			var li := int((du * du + dv_sq) * inv_r_sq * lut_max)
+			if li < BRUSH_LUT_SIZE - 1:
+				var w255 := int(lut[li])
+				if w255 > 0:
+					var weight := (w255 * opacity_b + 127) / 255
+					if weight > 0:
+						var di := (y * bw + x) * 4
+						if erase:
+							var da := int(dst_b[di + 3])
+							if da != 0:
+								var faded := (da * (255 - weight) + 127) / 255
+								if faded != da:
+									dst_b[di + 3] = faded
+									dirty = true
+						elif sx >= 0.0 and sx <= 1.0 and sy >= 0.0 and sy <= 1.0:
+							var si := (clampi(int(sy * last_sy), 0, sh2 - 1) * sw2 									+ clampi(int(sx * last_sx), 0, sw2 - 1)) * 4
+							var sa2 := int(src_b[si + 3])
+							if sa2 > 0:
+								var a := (sa2 * weight + 127) / 255
+								if a > 0:
+									var da2 := int(dst_b[di + 3])
+									if da2 == 0:
+										dst_b[di] = src_b[si]
+										dst_b[di + 1] = src_b[si + 1]
+										dst_b[di + 2] = src_b[si + 2]
+										dst_b[di + 3] = a
+									else:
+										var inv := 255 - a
+										var out_a := a + (da2 * inv + 127) / 255
+										if out_a > 0:
+											var half := out_a / 2
+											dst_b[di] = clampi((int(src_b[si]) * a + (int(dst_b[di]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+											dst_b[di + 1] = clampi((int(src_b[si + 1]) * a + (int(dst_b[di + 1]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+											dst_b[di + 2] = clampi((int(src_b[si + 2]) * a + (int(dst_b[di + 2]) * da2 * inv + 127) / 255 + half) / out_a, 0, 255)
+											dst_b[di + 3] = out_a
+									dirty = true
+			sx += dsx_du
+			sy += dsy_du
+		sx_row += dsx_dv
+		sy_row += dsy_dv
+		v_at += step_v
 
 	if not dirty:
 		return false
-	dst_img.set_data(w, h, false, Image.FORMAT_RGBA8, dst_b)
+	region.set_data(bw, bh, false, Image.FORMAT_RGBA8, dst_b)
+	dst_img.blit_rect(region, Rect2i(0, 0, bw, bh), box.position)
 	_commit_decal_target(mat, dst_img)
 	return true
 

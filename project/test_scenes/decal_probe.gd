@@ -119,11 +119,13 @@ func _run_next() -> void:
 	if c.has("view_dist"):
 		dist = c["view_dist"]
 		wc = world_hit
-	# Frame the PAINTED side: the camera sits along the face's own normal (a
-	# wall's back is culled, so a fixed offset showed nothing for half the cases).
+	# Floors keep the familiar three-quarter view (looking down the floor from
+	# -Z would read every stamp upside down on screen); walls and ceilings are
+	# framed along the face's own normal, since their back is culled.
 	var n := world_normal.normalized()
-	var cam_up := Vector3.UP if absf(n.y) < 0.9 else Vector3.FORWARD
-	var cam_offset := (n * 0.8 + cam_up * 0.45).normalized()
+	var cam_offset := Vector3(0.45, 0.7, 0.55).normalized()
+	if absf(n.y) < 0.9:
+		cam_offset = (n * 0.8 + Vector3.UP * 0.45).normalized()
 	_cam.look_at_from_position(wc + cam_offset * dist, wc)
 	await process_frame
 	await process_frame

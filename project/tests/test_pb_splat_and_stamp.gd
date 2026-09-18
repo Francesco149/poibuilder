@@ -518,6 +518,51 @@ func test_stamp_mode_paints_the_decal_layer_without_scene_nodes() -> void:
 	assert_almost_eq(PBSplat.get_decal_layer_image(mat).get_pixel(mid, mid).a, 0.0, 0.01,
 			"Clear Decal Layer must erase the painted pixels")
 
+## The decal brush's own cost: a colour dab walks the LUT + byte buffer over
+## the window's pixels only (a window is a fraction of a whole-face image on a
+## large face, so this is the cheap path), and an image dab must hit the cached
+## resampled source instead of re-copying it per dab.
+func test_decal_brush_dab_cost_is_bounded() -> void:
+	var data := PBShapeGenerators.create_plane(8.0, 8.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var centre := Vector3.ZERO
+	var start := Time.get_ticks_msec()
+	for i in range(100):
+		var offset := Vector3(sin(i * 0.4) * 0.9, 0.0, cos(i * 0.4) * 0.9)
+		PBSplat.paint_decal_dab(data, centre + offset, Vector3.UP, 0.0, 0.35, 0.5, 0.4,
+				false, null, Color(0.2, 0.4, 0.8, 1.0))
+	var colour_msec: int = Time.get_ticks_msec() - start
+	assert_true(colour_msec < 1200,
+			"100 colour dabs (0.35 m radius) should take < 1200ms (took %d ms)" % colour_msec)
+
+	var src := Image.create(256, 128, false, Image.FORMAT_RGBA8)
+	src.fill(Color(0.9, 0.5, 0.2, 1.0))
+	start = Time.get_ticks_msec()
+	for i in range(100):
+		var offset := Vector3(sin(i * 0.4) * 0.9, 0.0, cos(i * 0.4) * 0.9)
+		PBSplat.paint_decal_dab(data, centre + offset, Vector3.UP, 0.0, 0.35, 0.5, 0.4,
+				false, src)
+	var image_msec: int = Time.get_ticks_msec() - start
+	assert_true(image_msec < 1200,
+			"100 image dabs should take < 1200ms (took %d ms)" % image_msec)
+
+## A stamp is ONE click, so its paste may not walk the footprint in GDScript
+## when the stamp lines up with the face (the axis-aligned case: the sprite is a
+## crop + resize in C++ and the paste is one blend). Measured 8-64 ms for 1-4.32
+## m stamps; the pixel walk it replaced took 79-1221 ms.
+func test_aligned_stamp_paste_is_a_single_click() -> void:
+	var data := PBShapeGenerators.create_plane(12.0, 12.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var src := Image.create(256, 128, false, Image.FORMAT_RGBA8)
+	src.fill(Color(0.9, 0.5, 0.2, 1.0))
+	var start := Time.get_ticks_msec()
+	assert_eq(PBSplat.paste_decal(data, Vector3.ZERO, Vector3.UP, 0.0, 4.32, 1.0, src), 1,
+			"Fixture: the banner must land")
+	var stamp_msec: int = Time.get_ticks_msec() - start
+	assert_true(stamp_msec < 400,
+			"a 4.32 m aligned stamp must land in one click (< 400 ms, took %d ms)" % stamp_msec)
+
 ## The reported "very pixelated" stamp: a source SMALLER than its footprint
 ## must be resampled smoothly. Nearest-neighbour (the old paste) duplicated
 ## source texels into hard blocks, which is what the pixelation was.
