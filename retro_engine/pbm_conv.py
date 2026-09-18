@@ -22,7 +22,6 @@ PBM_META_STRING = 1
 PBM_META_JSON   = 2
 PBM_META_ENTITY = 3
 PBM_META_EMITTER = 4
-PBM_ENTITY_PATROL_SPHERE = 1
 
 # PbmEmitter.flags (§8 of the format specification).
 PBM_EMIT_ADDITIVE = 1
@@ -767,24 +766,6 @@ def convert_glb_to_pbm(glb_path, pbm_path, format_16bit=True):
         "type": PBM_META_JSON,
         "data": rigid_bodies_json
     })
-    # 2. Scripted Entity: 3-Point Cyclic Patrol Sphere
-    ent_name = b"PatrolSphere\x00".ljust(32, b"\x00")
-    ent_type = PBM_ENTITY_PATROL_SPHERE
-    ent_radius = 0.35
-    ent_color = 0xFF00C8FF # Gold: A=255, B=0, G=200, R=255
-    ent_speed = 2.5 # m/s
-    waypoints = [
-        -3.0, 1.2, -1.0,  # Waypoint 0 (near west stairs)
-         0.0, 2.2, -4.5,  # Waypoint 1 (front of arched doorway)
-         3.0, 1.2,  0.5   # Waypoint 2 (near east ramp)
-    ]
-    ent_data = struct.pack("<32sIfIfI9f", ent_name, ent_type, ent_radius, ent_color, ent_speed, 3, *waypoints)
-    metadata_entries.append({
-        "tag": "entities",
-        "type": PBM_META_ENTITY,
-        "data": ent_data
-    })
-
     print(f"Writing PBMv3: {len(textures)} textures, {len(all_meshes)} meshes ({sum(len(m['vertices']) for m in all_meshes)} vertices), {len(all_colliders)} colliders, {len(metadata_entries)} metadata entries...")
     
     with open(pbm_path, "wb") as f:

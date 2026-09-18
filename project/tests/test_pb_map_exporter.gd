@@ -1217,3 +1217,43 @@ func test_pbm_header_spawn_honors_spawn_node() -> void:
 	assert_almost_eq(hy, 0.8, 0.001, "Header spawn Y must come from the Spawn node")
 	assert_almost_eq(hz, 2.5, 0.001, "Header spawn Z must come from the Spawn node")
 	assert_almost_eq(wrapf(hyaw, -PI, PI), PI * 0.5, 0.01, "Header spawn yaw must come from the Spawn node")
+
+## Godot's ArrayMesh refuses a 257th surface — and it only LOGS the refusal, so
+## every surface past the cap was silently dropped from the exported map. The
+## retro bake makes one surface per painted tile, and a large painted floor is
+## hundreds: on a real 60 m painted floor the export tree came out as a single
+## 256-surface node and ~70 errors, with most of the paint missing from the
+## device. Surfaces now pour into as many nodes as it takes.
+func test_export_surfaces_are_chunked_below_the_godot_cap() -> void:
+	var chunker := PBMapExporter.SurfaceChunker.new()
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.UP])
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
+	var surfaces := PBMapExporter.MAX_SURFACES_PER_EXPORT_MESH * 2 + 5
+	for i in range(surfaces):
+		chunker.add(arrays, null)
+	chunker.flush()
+	assert_eq(chunker.meshes.size(), 3, "Two full meshes and a remainder")
+	var total := 0
+	for m in chunker.meshes:
+		assert_lte(m.get_surface_count(), PBMapExporter.MAX_SURFACES_PER_EXPORT_MESH,
+			"No mesh may reach Godot's 256-surface cap")
+		total += m.get_surface_count()
+	assert_eq(total, surfaces, "Every surface lands, none is dropped")
+	assert_lt(PBMapExporter.MAX_SURFACES_PER_EXPORT_MESH, 256,
+		"The chunk size stays under Godot's cap with headroom")
+
+	# The nodes carry the same name plus an index, and the geometry is real.
+	var root := Node3D.new()
+	autofree(root)
+	PBMapExporter._attach_meshes(root, "Floor", Transform3D.IDENTITY, chunker.meshes)
+	assert_eq(root.get_child_count(), 3)
+	assert_eq(String(root.get_child(0).name), "Floor")
+	assert_eq(String(root.get_child(1).name), "Floor_2")
+	assert_eq(String(root.get_child(2).name), "Floor_3")
+	for child in root.get_children():
+		var mi := child as MeshInstance3D
+		assert_eq(mi.mesh.get_surface_count(), mi.mesh.get_surface_count())
+		assert_true(mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] != null,
+			"A chunk keeps its geometry")

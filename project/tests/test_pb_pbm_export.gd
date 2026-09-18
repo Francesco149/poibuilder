@@ -66,7 +66,10 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	assert_eq(num_colliders, 8, "Collider count must match Oracle (8 collider nodes)")
 
 	var num_metadata := f.get_32()
-	assert_eq(num_metadata, 8, "Metadata count must be 8 (map_name, env_preset, spawn, walkable, triggers, rigid_bodies, entities, emitters)")
+	# map_name, env_preset, player_spawn, walkable_mesh, triggers, rigid_bodies,
+	# emitters. No `entities`: the exporter used to hard-code a demo PatrolSphere
+	# into every map, which is exactly what a map must not carry.
+	assert_eq(num_metadata, 7, "Metadata count must be 7 (map_name, env_preset, spawn, walkable, triggers, rigid_bodies, emitters)")
 	var spawn_x := f.get_float()
 	var spawn_y := f.get_float()
 	var spawn_z := f.get_float()
@@ -268,16 +271,12 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 	var rigid_json = JSON.parse_string(meta_tags["rigid_bodies"]["data"].get_string_from_utf8())
 	assert_true(rigid_json is Dictionary and rigid_json.get("type") == "ball_pit")
 
-	# Verify entities (PatrolSphere)
-	assert_true(meta_tags.has("entities"))
-	assert_eq(meta_tags["entities"]["type"], PBPbmConverter.PBM_META_ENTITY)
-	assert_eq(meta_tags["entities"]["size"], 88)
-	var ent_data: PackedByteArray = meta_tags["entities"]["data"]
-	assert_eq(ent_data.decode_u32(32), PBPbmConverter.PBM_ENTITY_PATROL_SPHERE)
-	assert_almost_eq(ent_data.decode_float(36), 0.35, 0.01)
-	assert_eq(ent_data.decode_u32(40), 0xFF00C8FF)
-	assert_almost_eq(ent_data.decode_float(44), 2.5, 0.01)
-	assert_eq(ent_data.decode_u32(48), 3)
+	# No demo payload: the PatrolSphere entity was a test of carrying arbitrary
+	# binary in the file, hard-coded into every export. A map only carries the
+	# lumps its own nodes ask for (poi_metadata_tag), never the exporter's
+	# leftover demo data.
+	assert_false(meta_tags.has("entities"),
+		"Exports must not carry the demo PatrolSphere entity")
 	f.close()
 
 ## What the converter has to work with, read back out of the GLB it converts:

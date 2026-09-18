@@ -30,7 +30,6 @@ const PBM_META_JSON   := 2
 const PBM_META_ENTITY := 3
 ## Standard lump: particle emitters (SPEC_RETRO_FORMAT.md §8).
 const PBM_META_EMITTER := 4
-const PBM_ENTITY_PATROL_SPHERE := 1
 
 ## Particle emitter flags (PbmEmitter.flags).
 const PBM_EMIT_ADDITIVE := 1
@@ -470,6 +469,80 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 	for child in source_node.get_children():
 		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
 
+## Godot's ArrayMesh refuses a 257th surface — and it only LOGS the refusal:
+## every surface past the cap was silently dropped from the exported map. The
+## retro bake makes one surface per painted TILE and the modern bake one per
+## painted face, so a large painted floor (hundreds of tiles) walked straight
+## into it: the export log fills with "MAX_MESH_SURFACES" and the device gets a
+## floor with most of its paint missing.
+##
+## Surfaces are therefore poured through SurfaceChunker, which starts a new mesh
+## past this count. Each mesh becomes its own node, so the geometry, the
+## materials and the primitive count on the device are unchanged: every surface
+## was already its own primitive, and every baked tile its own draw.
+const MAX_SURFACES_PER_EXPORT_MESH := 128
+
+## Collects triangle surfaces into ArrayMeshes of at most
+## MAX_SURFACES_PER_EXPORT_MESH surfaces each (see the constant).
+class SurfaceChunker:
+	var meshes: Array[ArrayMesh] = []
+	var _mesh: ArrayMesh = null
+
+	func add(arrays: Array, material: Material, flags: int = 0) -> void:
+		if _mesh == null or _mesh.get_surface_count() >= MAX_SURFACES_PER_EXPORT_MESH:
+			_flush()
+			_mesh = ArrayMesh.new()
+		_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, flags)
+		if material != null:
+			_mesh.surface_set_material(_mesh.get_surface_count() - 1, material)
+
+	func flush() -> void:
+		_flush()
+
+	func _flush() -> void:
+		if _mesh != null and _mesh.get_surface_count() > 0:
+			meshes.append(_mesh)
+		_mesh = null
+
+## Instantiates one MeshInstance3D per chunk, numbered `name`, `name_2`, …
+static func _attach_meshes(parent: Node, node_name: String, xf: Transform3D,
+		meshes: Array[ArrayMesh]) -> void:
+	for i in range(meshes.size()):
+		var mi := MeshInstance3D.new()
+		mi.name = node_name if i == 0 else "%s_%d" % [node_name, i + 1]
+		mi.mesh = meshes[i]
+		mi.transform = xf
+		parent.add_child(mi)
+
+## The custom-channel TYPE bits of a surface's format, to pass back as the
+## `flags` argument when its arrays are added to another mesh.
+##
+## `add_surface_from_arrays` derives the presence bits from the arrays but takes
+## each custom channel's TYPE from `flags` (engine: `format |= (mask << (BASE +
+## i * BITS)) & p_compress_format`). Omitting them defaults every channel to
+## RGBA8_UNORM, which rejects the PackedFloat32Array a float channel comes back
+## as — the surface is dropped with an error and the mesh silently loses that
+## geometry. PoiBuilder's mask coordinates (splat_uvs -> CUSTOM0) are exactly
+## such a float channel, so any re-emit of a painted mesh has to carry them.
+static func _custom_channel_flags(fmt: int) -> int:
+	var flags := 0
+	for i in range(4):
+		var shift: int = Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT + Mesh.ARRAY_FORMAT_CUSTOM_BITS * i
+		flags |= ((fmt >> shift) & Mesh.ARRAY_FORMAT_CUSTOM_MASK) << shift
+	return flags
+
+## Re-emits an existing mesh's surfaces as chunked meshes. The unpainted modern
+## path hands over `to_array_mesh()`, which carries one surface per material —
+## the same cap, reached by a mesh whose faces each own a material.
+static func _chunk_mesh_surfaces(am: Mesh) -> Array[ArrayMesh]:
+	var chunker := SurfaceChunker.new()
+	if am != null:
+		for s in range(am.get_surface_count()):
+			chunker.add(am.surface_get_arrays(s), am.surface_get_material(s),
+					_custom_channel_flags(am.surface_get_format(s)))
+	chunker.flush()
+	return chunker.meshes
+
 ## Exports a PBMesh in Retro Baked mode.
 static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3D],
 		grid: PBLightBaker.SpatialGrid, base_material_cache: Dictionary,
@@ -507,8 +580,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 			mat_groups[mat] = [] as Array[PBFaceSubdivider.TileFragment]
 		mat_groups[mat].append(frag)
 
-	var array_mesh := ArrayMesh.new()
-
+	var chunker := SurfaceChunker.new()
 	for mat: Material in mat_groups:
 		var group_frags: Array = mat_groups[mat]
 		var surf_positions := PackedVector3Array()
@@ -553,15 +625,10 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 		arrays[Mesh.ARRAY_COLOR] = surf_colors
 		arrays[Mesh.ARRAY_INDEX] = surf_indices
 
-		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		var surf_idx := array_mesh.get_surface_count() - 1
-		array_mesh.surface_set_material(surf_idx, mat)
+		chunker.add(arrays, mat)
 
-	var export_mi := MeshInstance3D.new()
-	export_mi.name = pb.name
-	export_mi.mesh = array_mesh
-	export_mi.transform = _get_world_transform(pb)
-	parent.add_child(export_mi)
+	chunker.flush()
+	_attach_meshes(parent, pb.name, _get_world_transform(pb), chunker.meshes)
 
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
@@ -601,50 +668,49 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 	var node_xf := _get_world_transform(pb)
 	var has_splat := _mesh_has_splat(mesh_data)
 
-	var am: ArrayMesh = null
+	var meshes: Array[ArrayMesh] = []
 	if has_splat and settings.splat_mode == ExportSettings.SplatMode.BAKE:
-		am = _build_modern_baked_splat_mesh(mesh_data, settings)
-	if am == null:
-		am = mesh_data.to_array_mesh()
+		meshes = _build_modern_baked_splat_mesh(mesh_data, settings)
+	if meshes.is_empty():
+		var am := mesh_data.to_array_mesh()
 		# glTF has no representation for custom ShaderMaterials: a splat material
 		# exports as its base look. In BAKE mode that is the fallback for faces
 		# whose paint could not be composited (non-opaque materials, empty).
 		for s in range(am.get_surface_count()):
 			if PBSplat.is_splat_material(am.surface_get_material(s)):
 				am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
+		meshes = _chunk_mesh_surfaces(am)
 
 	# If bake lighting is toggled on, bake vertex colors directly onto the ArrayMesh surfaces
 	if settings.bake_lighting:
-		var new_am := ArrayMesh.new()
-		for s in range(am.get_surface_count()):
-			var arrays := am.surface_get_arrays(s)
-			var pos: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var norm: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-			var cols := PBLightBaker.bake_vertex_colors(pos, norm, node_xf, lights, grid,
-				true, settings.bake_shadows, settings.bake_ao, settings.ao_samples,
-				settings.ao_distance, settings.ao_intensity, settings.ambient_color)
-			# The authored tint (incl. opacity alpha) survives the bake: it
-			# was in ARRAY_COLOR before the bake replaced it.
-			var authored: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
-			if not authored.is_empty():
-				for ci in range(cols.size()):
-					if ci < authored.size() and authored[ci] != Color.WHITE:
-						cols[ci] = cols[ci] * authored[ci]
-			arrays[Mesh.ARRAY_COLOR] = cols
-			var fmt_flags: int = am.surface_get_format(s) & (Mesh.ARRAY_FORMAT_CUSTOM0 << 1 | Mesh.ARRAY_FORMAT_CUSTOM0)
-			new_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt_flags)
-			new_am.surface_set_material(s, am.surface_get_material(s))
-		am = new_am
+		var baked_meshes: Array[ArrayMesh] = []
+		for chunk in meshes:
+			var new_am := ArrayMesh.new()
+			for s in range(chunk.get_surface_count()):
+				var arrays := chunk.surface_get_arrays(s)
+				var pos: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				var norm: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+				var cols := PBLightBaker.bake_vertex_colors(pos, norm, node_xf, lights, grid,
+					true, settings.bake_shadows, settings.bake_ao, settings.ao_samples,
+					settings.ao_distance, settings.ao_intensity, settings.ambient_color)
+				# The authored tint (incl. opacity alpha) survives the bake: it
+				# was in ARRAY_COLOR before the bake replaced it.
+				var authored: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+				if not authored.is_empty():
+					for ci in range(cols.size()):
+						if ci < authored.size() and authored[ci] != Color.WHITE:
+							cols[ci] = cols[ci] * authored[ci]
+				arrays[Mesh.ARRAY_COLOR] = cols
+				var fmt_flags: int = _custom_channel_flags(chunk.surface_get_format(s))
+				new_am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, fmt_flags)
+				new_am.surface_set_material(s, chunk.surface_get_material(s))
+			baked_meshes.append(new_am)
+		meshes = baked_meshes
 
-	var export_mi := MeshInstance3D.new()
-	export_mi.name = pb.name
-	export_mi.mesh = am
-	export_mi.transform = node_xf
-
-	parent.add_child(export_mi)
+	_attach_meshes(parent, pb.name, node_xf, meshes)
 
 	if has_splat and settings.splat_mode == ExportSettings.SplatMode.INCLUDE:
-		_write_splat_sidecars(pb, am, settings)
+		_write_splat_sidecars(pb, meshes, settings)
 
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
@@ -663,7 +729,7 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 ##     the layer list (texture file, blend color, roughness) and the decal file.
 ## The blend recipe is documented in docs/modern_glb_splat.md with a reference
 ## shader; `PBSplatImport.rebuild_from_extras()` does the same for Godot.
-static func _write_splat_sidecars(pb: PBMesh, am: ArrayMesh, settings: ExportSettings) -> void:
+static func _write_splat_sidecars(pb: PBMesh, meshes: Array[ArrayMesh], settings: ExportSettings) -> void:
 	if settings.export_path.is_empty() or pb == null or pb.pb_mesh_data == null:
 		return
 	var mesh_data := pb.pb_mesh_data
@@ -685,25 +751,26 @@ static func _write_splat_sidecars(pb: PBMesh, am: ArrayMesh, settings: ExportSet
 
 	# Attach each face's record to the material that surface renders with, so a
 	# consumer walking primitives -> material -> extras finds its paint.
-	for s in range(am.get_surface_count()):
-		var mat := am.surface_get_material(s)
-		if mat == null:
-			continue
-		var arrays := am.surface_get_arrays(s)
-		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		for record in painted_faces:
-			if (record["_face"] as PBFace) == null:
+	for chunk in meshes:
+		for s in range(chunk.get_surface_count()):
+			var mat := chunk.surface_get_material(s)
+			if mat == null:
 				continue
-			if _surface_covers_face(mesh_data, record["_face"], idx, verts):
-				var extras: Dictionary = mat.get_meta("extras", {})
-				var list: Array = extras.get("poi_splat", [])
-				var clean: Dictionary = record.duplicate()
-				clean.erase("_face")
-				list.append(clean)
-				extras["poi_splat"] = list
-				mat.set_meta("extras", extras)
-				mat.resource_name = mat.resource_name if not mat.resource_name.is_empty() else "Splat_%d" % record["face"]
+			var arrays := chunk.surface_get_arrays(s)
+			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			for record in painted_faces:
+				if (record["_face"] as PBFace) == null:
+					continue
+				if _surface_covers_face(mesh_data, record["_face"], idx, verts):
+					var extras: Dictionary = mat.get_meta("extras", {})
+					var list: Array = extras.get("poi_splat", [])
+					var clean: Dictionary = record.duplicate()
+					clean.erase("_face")
+					list.append(clean)
+					extras["poi_splat"] = list
+					mat.set_meta("extras", extras)
+					mat.resource_name = mat.resource_name if not mat.resource_name.is_empty() else "Splat_%d" % record["face"]
 
 ## One face's splat record plus the PNGs it references.
 static func _build_splat_record(mesh_data: PBMeshData, face: PBFace, face_idx: int, dir: String) -> Dictionary:
@@ -808,9 +875,9 @@ static func _mesh_has_splat(mesh_data: PBMeshData) -> bool:
 ## surface carries the same texel density the editor showed — a big face is
 ## never blurrier than a small one.
 static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
-		settings: ExportSettings) -> ArrayMesh:
+		settings: ExportSettings) -> Array[ArrayMesh]:
 	if mesh_data == null or mesh_data.faces.is_empty():
-		return null
+		return []
 	# Work on a copy: the export must never touch the scene's mesh data. Faces
 	# get private corners first, because the bake rewrites UV1 per face.
 	var bake_data := PBCommand.copy_mesh_data(mesh_data)
@@ -859,7 +926,7 @@ static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
 		groups[mat].append(fi)
 
 	if not any_painted:
-		return null
+		return []
 
 	# One vertex pool; painted faces get mask-space UVs, everything else keeps
 	# its authored UV1 (faces own their corners after the split, so a per-face
@@ -886,7 +953,7 @@ static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
 			uvs[idx] = Vector2((u_axis.dot(p) - min_u) / range_u, (v_axis.dot(p) - min_v) / range_v)
 
 	var normals: PackedVector3Array = bake_data.get_normals()
-	var out := ArrayMesh.new()
+	var chunker := SurfaceChunker.new()
 
 	var emit_surface := func(index_buffer: PackedInt32Array, mat: Material) -> void:
 		var arrays: Array = []
@@ -897,8 +964,7 @@ static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
 		if not bake_data.colors.is_empty() and bake_data.colors.size() == bake_data.positions.size():
 			arrays[Mesh.ARRAY_COLOR] = bake_data.colors
 		arrays[Mesh.ARRAY_INDEX] = index_buffer
-		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		out.surface_set_material(out.get_surface_count() - 1, mat)
+		chunker.add(arrays, mat)
 
 	for mat in group_order:
 		var indices := PackedInt32Array()
@@ -910,7 +976,8 @@ static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
 		var indices := _face_indices_cw(entry["face"] as PBFace)
 		if not indices.is_empty():
 			emit_surface.call(indices, entry["material"])
-	return out
+	chunker.flush()
+	return chunker.meshes
 
 ## True when a face's paint state holds actual pixels: a splat material with an
 ## empty mask set exports as its base look (no baked texture) instead of paying
@@ -2066,22 +2133,6 @@ static func _collect_metadata_from_scene(root: Node, export_tree: Node, settings
 			payload_bytes.append(0)
 			ptype = PBM_META_JSON
 		entries.append({ "tag": tag_name.substr(0, 31), "type": ptype, "data": payload_bytes })
-
-	# 7. Patrol Sphere Entity
-	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
-	ent_name_bytes.resize(32)
-	var ent_buf := PackedByteArray()
-	ent_buf.resize(88)
-	for bi in range(32): ent_buf[bi] = ent_name_bytes[bi]
-	ent_buf.encode_u32(32, PBM_ENTITY_PATROL_SPHERE)
-	ent_buf.encode_float(36, 0.35)
-	ent_buf.encode_u32(40, 0xFF00C8FF) # Gold
-	ent_buf.encode_float(44, 2.5)
-	ent_buf.encode_u32(48, 3)
-	ent_buf.encode_float(52, -3.0); ent_buf.encode_float(56, 1.2); ent_buf.encode_float(60, -1.0)
-	ent_buf.encode_float(64, 0.0);  ent_buf.encode_float(68, 2.2); ent_buf.encode_float(72, -4.5)
-	ent_buf.encode_float(76, 3.0);  ent_buf.encode_float(80, 1.2); ent_buf.encode_float(84, 0.5)
-	entries.append({ "tag": "entities", "type": PBM_META_ENTITY, "data": ent_buf })
 
 	return entries
 

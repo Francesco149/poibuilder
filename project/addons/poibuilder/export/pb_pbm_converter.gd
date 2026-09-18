@@ -26,8 +26,6 @@ const PBM_META_ENTITY := 3
 const PBM_META_EMITTER := 4
 const PBM_EMITTER_SIZE := 176
 
-const PBM_ENTITY_PATROL_SPHERE := 1
-
 ## Packs the standard "emitters" lump (SPEC_RETRO_FORMAT.md §8). The record
 ## layout is normative and mirrored byte for byte by the Python oracle
 ## (retro_engine/pbm_conv.py) — the two converters are expected to agree on the
@@ -830,31 +828,6 @@ static func convert_glb_to_pbm(glb_path: String, pbm_path: String, format_16bit:
 		"tag": "rigid_bodies",
 		"type": PBM_META_JSON,
 		"data": rigid_bytes
-	})
-
-	# Metadata 2: PatrolSphere Entity
-	var ent_name_bytes := "PatrolSphere".to_ascii_buffer()
-	ent_name_bytes.resize(32)
-	var ent_buf := PackedByteArray()
-	ent_buf.resize(88)
-	# name: 32 bytes
-	for bi in range(32): ent_buf[bi] = ent_name_bytes[bi]
-	ent_buf.encode_u32(32, PBM_ENTITY_PATROL_SPHERE)
-	ent_buf.encode_float(36, 0.35) # radius
-	ent_buf.encode_u32(40, 0xFF00C8FF) # color (gold)
-	ent_buf.encode_float(44, 2.5) # speed
-	ent_buf.encode_u32(48, 3) # num_waypoints
-	# Waypoint 0
-	ent_buf.encode_float(52, -3.0); ent_buf.encode_float(56, 1.2); ent_buf.encode_float(60, -1.0)
-	# Waypoint 1
-	ent_buf.encode_float(64, 0.0);  ent_buf.encode_float(68, 2.2); ent_buf.encode_float(72, -4.5)
-	# Waypoint 2
-	ent_buf.encode_float(76, 3.0);  ent_buf.encode_float(80, 1.2); ent_buf.encode_float(84, 0.5)
-
-	metadata_entries.append({
-		"tag": "entities",
-		"type": PBM_META_ENTITY,
-		"data": ent_buf
 	})
 
 	# 9. Write PBMv2 File
