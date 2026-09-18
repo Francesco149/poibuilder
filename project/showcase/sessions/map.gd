@@ -534,19 +534,16 @@ func _paint() -> void:
 	await d.frames(6)
 	await d.click()
 	await d.frames(10)
-	var holder := floor_node.get_node_or_null("PBStamps")
-	d.check(holder != null and holder.get_child_count() > 0,
-		"the sign decal landed on the floor (%d stamps)" % (holder.get_child_count() if holder != null else 0))
+	d.check(ShowcaseUtil.has_decal_paint(floor_node),
+		"the sign decal landed in the floor's decal layer (painted pixels, no scene nodes)")
 	await d.cam_swing(f["center"], 34.0, 18.0, 32.0, 40.0, f["dist"], 34, 1, f["aim"])
 	pc.mode = PBPaintController.Mode.NONE
 	await d.click_dock_member("_btn_mode_mat", 10)
 	await d.click_button("materials", 10)
 	var fall_p: Node = pieces.get("FallWall")
 	if fall_p != null:
-		var stray = fall_p.get_node_or_null("PBStamps")
-		if stray != null:
-			fall_p.remove_child(stray)
-			stray.queue_free()
+		d.check(not ShowcaseUtil.has_decal_paint(fall_p),
+			"no decal paint leaked onto the fall wall")
 
 ## The atmosphere the map carries: the mist at the fall's foot and the brazier
 ## flames on the pillar (both GPUParticles3D emitters, which is what the retro
@@ -555,10 +552,8 @@ func _particles() -> void:
 	d.plugin.paint_controller.mode = PBPaintController.Mode.NONE
 	var fall_pt: Node = pieces.get("FallWall")
 	if fall_pt != null:
-		var stray_pt = fall_pt.get_node_or_null("PBStamps")
-		if stray_pt != null:
-			fall_pt.remove_child(stray_pt)
-			stray_pt.queue_free()
+		d.check(not ShowcaseUtil.has_decal_paint(fall_pt),
+			"no decal paint leaked onto the fall wall (particles beat)")
 	var brazier_box := AABB(Vector3(-3.9, 2.4, -4.6), Vector3(1.6, 2.0, 1.6))
 	var f := d.framing(brazier_box, 0.8, 20.0, 14.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
@@ -576,10 +571,8 @@ func _export() -> void:
 	d.plugin.paint_controller.mode = PBPaintController.Mode.NONE
 	var fall_ex: Node = pieces.get("FallWall")
 	if fall_ex != null:
-		var stray_ex = fall_ex.get_node_or_null("PBStamps")
-		if stray_ex != null:
-			fall_ex.remove_child(stray_ex)
-			stray_ex.queue_free()
+		d.check(not ShowcaseUtil.has_decal_paint(fall_ex),
+			"no decal paint leaked onto the fall wall (export beat)")
 	var f := _view(AABB(Vector3(-6.0, 0.0, -6.0), Vector3(12.0, 6.0, 12.0)), 0.92, 38.0, 26.0)
 	d.cam_at_polar(f["center"], f["az"], f["elev"], f["dist"], f["aim"])
 	await d.frames(6)

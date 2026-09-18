@@ -113,8 +113,8 @@ func _stamp() -> void:
 	await d.frames(6)
 	await d.click()
 	await d.frames(10)
-	var stamps := ShowcaseUtil.names_of(root, "PBStamps")
-	d.check(stamps.size() >= 0, "stamp pass complete")
+	d.check(ShowcaseUtil.has_decal_paint(slab),
+		"the stamp landed as painted pixels in the slab's decal layer")
 	await d.glide_world_track(Vector3(-1.6, 0.5, -0.6), 20)
 	await d.click()
 	await d.frames(10)

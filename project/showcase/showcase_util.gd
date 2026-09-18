@@ -200,6 +200,27 @@ static func activate(plugin: Node, node: PBMesh, mode: int = -1) -> void:
 	if mode >= 0:
 		plugin.editor.select_mode = mode
 
+## True when any of `node`'s splat materials carries painted decal pixels
+## (a pasted stamp or decal-brush strokes). Stamps are pixels now, so a session
+## checks paint, not child nodes.
+static func has_decal_paint(node: Node) -> bool:
+	var pb := node as PBMesh
+	if pb == null or pb.pb_mesh_data == null:
+		return false
+	for m in pb.pb_mesh_data.materials:
+		if not PBSplat.is_splat_material(m) or not PBSplat.has_decal_layer(m as ShaderMaterial):
+			continue
+		var img := PBSplat.get_decal_layer_image(m as ShaderMaterial)
+		if img == null:
+			continue
+		var bytes := img.get_data()
+		var i := 3
+		while i < bytes.size():
+			if bytes[i] != 0:
+				return true
+			i += 4
+	return false
+
 static func names_of(root: Node, prefix: String) -> Array:
 	var out := []
 	for c in root.get_children():
