@@ -19,6 +19,23 @@ Combines multiple selected PBMesh nodes into one, baking relative transforms.
 | Freeze Xform | Bake the transform into vertex positions, reset the node transform |
 | Poibuilderize | Convert selected MeshInstance3D or CSGShape3D (including CSGCombiner3D) into a `PBMesh` |
 
+## Object state — Lit & Cast Shadows
+
+Row 3 (Extended Tools) carries two toggles that apply to the whole scene
+selection — any `PBMesh`, `MeshInstance3D` or CSG node:
+
+- **Lit** — shading on/off. Unlit objects render at full brightness and
+  ignore scene lights.
+- **Cast Shadows** — shadow casting on/off.
+
+Both follow mixed-checkbox semantics: all selected objects on = checked,
+all off (or mixed) = unchecked, and checking it synchronizes every selected
+object. They are rebindable in Editor Settings (*Object: Toggle Lit / Cast
+Shadows*).
+
+Typical use: unshadow a scrolling water plane before a retro export, or
+unlight a glow strip so it reads emissive.
+
 ## Poibuilderize
 
 :::op poibuilderize

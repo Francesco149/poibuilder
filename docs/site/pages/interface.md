@@ -23,13 +23,13 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 
 **Row 2** — modes, space, shapes, docks, export.
 
-**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth.
+**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth, object state.
 
 | Control | What it does |
 |---|---|
 | [[icon:object]] Object / [[icon:vertex]] Vertex / [[icon:edge]] Edge / [[icon:face]] Face / [[icon:texture]] Texture | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
 | [[icon:space]] Space | Cycles Element / Object / World ([[kbd:X]]). |
-| Grid | Opens grid & snap settings. Readout shows the current snap step. |
+| Grid | Opens grid & snap settings. Readout shows the current snap step. Lives on row 3. |
 | [[icon:new_shape]] New Shape | Always enabled. Pick a primitive, then drag. |
 | [[icon:ngon]] N-Gon | Draw a polygon, extrude it. |
 | [[icon:edit_params]] Edit Params | Live only while the selected mesh is a pristine, unedited factory shape. |
@@ -45,7 +45,9 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 
 | Group | Controls | What it does |
 |---|---|---|
+| Grid & snapping | Grid, snap-step readout | Grid settings moved here when row 3 exists — it has the room for the readout. |
 | Selection | [[icon:all]] All, [[icon:invert]] Invert, [[icon:grow]] Grow, [[icon:shrink]] Shrink, [[icon:coplanar]] Coplanar, [[icon:similar]] Similar, [[icon:boundary]] Boundary, [[icon:loop]] Loop, [[icon:ring]] Ring | Advanced selection suite. Invert [[kbd:Ctrl]]+[[kbd:I]], Grow [[kbd:Alt]]+[[kbd:G]], Shrink [[kbd:Shift]]+[[kbd:Alt]]+[[kbd:G]], Coplanar [[kbd:Alt]]+[[kbd:C]], Loop [[kbd:Alt]]+[[kbd:L]], Ring [[kbd:Alt]]+[[kbd:R]]. |
+| Object state | [[icon:lit]] Lit, [[icon:shadow]] Cast Shadows | Shading and shadow casting for every selected object (PBMesh, MeshInstance3D, CSG). Mixed-checkbox semantics: all on = checked, all off / mixed = unchecked, and checking synchronizes the whole selection. Rebindable as *Object: Toggle Lit / Cast Shadows*. |
 | Objects | [[icon:merge_objects]] Merge Objs, [[icon:mirror]] Mirror, [[icon:center_pivot]] Center Pivot, [[icon:freeze]] Freeze Xform, [[icon:poibuilderize]] Poibuilderize | Combine meshes, mirror across X, recenter pivot to bounds, bake transform into vertices, convert MeshInstance3D/CSG to PBMesh. |
 | CSG | [[icon:csg_union]] CSG Union, [[icon:csg_subtract]] CSG Subtract, [[icon:csg_intersect]] CSG Intersect | Real-time CSG booleans with full undo. Select target first, cutter last. |
 | Smoothing | [[icon:auto_smooth]] Auto Smooth | Recalculate smoothing groups by dihedral angle (45° threshold). |
@@ -57,6 +59,10 @@ A compact floating panel in the viewport.
 - Selection readout while something is selected.
 - Drag readout while dragging.
 - Params modal for shape create and bevel.
+- **⚙ Edit Emitter Properties** while a placed particle emitter is in the
+  selection — the fine-tuning surface for [emitters](paint.html#sprite-placer)
+  (count, size, speed, spread, blending, flipbook). It works from object
+  mode too; the emitter session stays open even while no mesh is selected.
 - Drag it by the header. Pin with **Panel**. Recover with the reset button.
 
 Params modal rules (do not mix these up):
@@ -68,11 +74,15 @@ Params modal rules (do not mix these up):
 
 ## Docks
 
-- **Material & UV** — palette, per-face assignment, splat layers, stamps, scroll speed.
+- **Material & UV** — six modes on one dock: **Material & UV** (palette,
+  per-face assignment), **Texture Paint** (the splat brush), **Stamp**
+  (decals), **Sprite** (billboard placement), **Shapes** (always-armed
+  primitive placement), and **Particles** (click-to-place emitters). See
+  [Materials](materials.html) and [Paint & stamps](paint.html).
 - **UV Editor** — bottom panel, can pop out to a window. See [UV editor](uv.html).
 
 ## Status
 
-During creation the overlay shows a hint (base drag, then height). Extents print in metres. Directional shapes (doors, stairs) display an orange facing arrow on the base plane; holding [[kbd:Ctrl]] locks the arrow direction so lateral sizing won't flip the facing. Environment presets write a scene meta the export reads.
+During creation the overlay shows a hint (base drag, then height). Extents print in metres. Directional shapes (doors, stairs) display an orange facing arrow on the base plane; holding [[kbd:Ctrl]] locks the arrow direction so lateral sizing won't flip the facing. Environment presets write a scene meta the export reads. While a placement mode is armed (paint, stamp, sprite, shapes, particles) a small banner at the top of the viewport names it and how to leave it — it is a pure readout and never eats clicks.
 
 > [gotcha] The toolbar never hides. If a button is grey, read its tooltip — it is waiting for faces, or edges, or two objects.

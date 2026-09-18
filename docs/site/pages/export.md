@@ -5,6 +5,9 @@ lead: PBM is the headline product — a quick export bakes a tile-baked .pbm wit
 
 Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — everything else on the page applies per format.
 
+For the whole journey on one map, see the [walkthroughs](walkthrough-modern.html):
+build → export → play, once per pipeline.
+
 ## Modern GLB
 
 Keeps authored geometry; collision meshes are named `Collider_*`. Paint has its own switch, **Modern paint**:

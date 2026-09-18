@@ -6,10 +6,10 @@ hero: true
 
 <div class="cards">
 <a class="card" href="first-minutes.html"><strong>60 seconds</strong><span>A cube, a pulled face, a doorway. The first win.</span></a>
-<a class="card" href="shapes.html"><strong>15 primitives</strong><span>Stairs, arches, trims, sprites — dragged on the floor, a wall, or a slope.</span></a>
+<a class="card" href="walkthrough-modern.html"><strong>Build a map</strong><span>Empty project → splats, decals, waterfall, particles, neon lightmap room → play and export. End to end.</span></a>
+<a class="card" href="walkthrough-retro.html"><strong>Go retro</strong><span>The same map as a .pbm — verify it, then implement the format in your engine from the spec and the reference renderer.</span></a>
 <a class="card" href="ops.html"><strong>Mesh ops</strong><span>Extrude, inset, bevel, knife, loop cut, weld, detach. Shift+Move extrudes live.</span></a>
 <a class="card" href="uv.html"><strong>UV editor</strong><span>A dedicated 2D canvas, selection synced both ways, projections for ramps.</span></a>
-<a class="card" href="trims.html"><strong>Trim</strong><span>Skirting in one drag. Click walls for a mitred ring.</span></a>
 <a class="card" href="export.html"><strong>Retro export</strong><span>Tile-baked .pbm with vertex light, running on a Sony PSP.</span></a>
 </div>
 
@@ -33,8 +33,12 @@ Typical work:
 1. Drag a floor, walls, stairs, a door.
 2. Pull faces, cut loops, bevel edges, fill holes.
 3. Assign materials, paint blends, stamp a poster, scroll a waterfall.
-4. Poibuilderize a GLB prop you dragged in, boolean a hole with CSG.
-5. Export a modern GLB, or a retro `.pbm` with textures sanitized for the PSP.
+4. Place particle emitters and billboards from the dock.
+5. Poibuilderize a GLB prop you dragged in, boolean a hole with CSG.
+6. Export a modern GLB, or a retro `.pbm` with textures sanitized for the PSP.
+
+The [walkthroughs](walkthrough-modern.html) do all of it in one pass on one map —
+with screenshots of the finished result.
 
 ## Two ways to read these docs
 

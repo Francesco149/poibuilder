@@ -80,8 +80,8 @@ cd /work/project && godot-mono --headless -s /tmp/export_bench.gd'
 	fi
 }
 
-if [ "$REEXPORT" -eq 1 ] || [ ! -f "$REPO_DIR/project/test_scenes/alpha_demo_retro_baked.glb" ] \
-	|| [ ! -f "$REPO_DIR/project/test_scenes/alpha_demo_modern.glb" ]; then
+if [ "$REEXPORT" -eq 1 ] || [ ! -f "$REPO_DIR/project/exports/alpha_demo_retro_baked.glb" ] \
+	|| [ ! -f "$REPO_DIR/project/exports/alpha_demo_modern.glb" ]; then
 	bench_export
 else
 	echo "== [1/2] Variants already exported (--reexport to force) =="

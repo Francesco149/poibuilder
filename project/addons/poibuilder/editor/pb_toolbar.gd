@@ -255,7 +255,9 @@ func _build_ui() -> void:
 	_sep_grid = _make_sep()
 	_btn_grid_panel = Button.new()
 	_btn_grid_panel.name = "GridPanelToggle"
-	_btn_grid_panel.text = "Grid"
+	_btn_grid_panel.icon = _load_icon("icon_grid.svg")
+	if _btn_grid_panel.icon == null:
+		_btn_grid_panel.text = "Grid"
 	_btn_grid_panel.toggle_mode = true
 	_btn_grid_panel.flat = true
 	_btn_grid_panel.focus_mode = Control.FOCUS_NONE
@@ -481,7 +483,9 @@ func _build_ui() -> void:
 
 	_btn_export_more = Button.new()
 	_btn_export_more.name = "ExportDialogButton"
-	_btn_export_more.text = "Export..."
+	_btn_export_more.icon = _load_icon("icon_export.svg")
+	if _btn_export_more.icon == null:
+		_btn_export_more.text = "Export..."
 	_btn_export_more.flat = true
 	_btn_export_more.focus_mode = Control.FOCUS_NONE
 	_btn_export_more.tooltip_text = "Export...: open the export dialog (PBM default; GLB retro-baked or modern live-materials, bake options)"

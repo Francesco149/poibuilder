@@ -23,10 +23,17 @@ paint.md Paint & stamps
 Objects
 objects.md Objects & CSG
 
+Walkthroughs
+walkthrough-modern.md Build a map (modern)
+walkthrough-retro.md Export to PSP / retro
+
 Retro
 grid.md Grid
 export.md Export & retro
 
 Reference
+performance.md Performance
 keys.md Keys
+modern-glb-splat.md Splat in a modern .glb
+known-issues.md Known issues
 faq.md FAQ

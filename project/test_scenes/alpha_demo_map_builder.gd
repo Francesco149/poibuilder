@@ -564,14 +564,14 @@ static func save_demo_scene(file_path: String, include_player: bool = false) -> 
 
 ## Exports the demo map in the two GLB flavors the frame-pacing benchmark
 ## compares against the live PB scene:
-##   - retro baked  -> res://test_scenes/alpha_demo_retro_baked.glb (+ .pbm
-##     in res://exports/)
-##   - modern       -> res://test_scenes/alpha_demo_modern.glb (paint baked
+##   - retro baked  -> res://exports/alpha_demo_retro_baked.glb (+ .pbm)
+##   - modern       -> res://exports/alpha_demo_modern.glb (paint baked
 ##     into textures; collision included)
-## The GLBs land in test_scenes/ (NOT exports/ — that directory carries a
-## .gdignore, so a Godot run can never load anything from it; the showcase
-## GLBs live here for the same reason). An editor import pass after the
-## export is what makes them loadable.
+## The GLBs stay under res://exports/ — an export target must NOT be a
+## scanned directory: ensure_export_dir drops a .gdignore there, and one in
+## res://test_scenes/ would make the editor's class scan skip this whole
+## directory (test_pb_map_showcase then silently loses TestMapShowcaseBuilder).
+## The benchmark therefore parses them with GLTFDocument, like the viewer.
 ## Returns {retro_glb: Error, pbm: Error, modern_glb: Error}.
 static func export_bench_variants() -> Dictionary:
 	var results := {}
@@ -593,7 +593,7 @@ static func export_bench_variants() -> Dictionary:
 	retro.export_billboards = true
 	retro.ambient_color = p["ambient_color"]
 	results["retro_glb"] = PBMapExporter.export_map(root,
-		"res://test_scenes/alpha_demo_retro_baked.glb", retro)
+		"res://exports/alpha_demo_retro_baked.glb", retro)
 	results["pbm"] = PBMapExporter.export_map(root,
 		"res://exports/alpha_demo_retro_baked.pbm", retro)
 
@@ -604,7 +604,7 @@ static func export_bench_variants() -> Dictionary:
 	modern.export_colliders = true
 	modern.export_billboards = true
 	results["modern_glb"] = PBMapExporter.export_map(root,
-		"res://test_scenes/alpha_demo_modern.glb", modern)
+		"res://exports/alpha_demo_modern.glb", modern)
 
 	root.free()
 	return results

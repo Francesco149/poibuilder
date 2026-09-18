@@ -40,6 +40,7 @@ Arched doorway, built from its parameters, not from a boolean.
 
 ## What to try next
 
+- [Build the whole demo map](walkthrough-modern.html) — every feature in one pass
 - [Stairs between two floors](shapes.html#a-staircase-between-two-floors)
 - [Skirting in one drag](trims.html)
 - [Fix a stretched ramp in the UV editor](uv.html)

@@ -3,6 +3,90 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.159 — the alpha docs sweep: demo map, frame-pacing benchmark, known issues
+
+The alpha-release documentation round. The website gained the two things it
+was missing — end-to-end walkthroughs and a "what still hurts" page — plus
+the tooling that made them honest, and one exporter crash fix the new map
+flushed out.
+
+### nil splat layer params crashed the modern-GLB bake (fix + regression test)
+
+`collect_face_paint_state` passed shader parameters straight through, and a
+splat layer enabled WITHOUT ever setting its `layer_N_color` /
+`layer_N_roughness` params (legal: the shader declares defaults; scripted
+authoring does this) produced a present-but-NIL dict entry. Every consumer
+reads it with `dict.get("color", Color.WHITE)` — whose default only covers a
+MISSING key — so `PBTileBaker.bake_face_composite`'s typed
+`var l_col: Color = ...` died and the modern export aborted mid-bake.
+The paint state now coalesces nils to the shader's own defaults
+(WHITE / 0.8). Test: `test_collect_paint_state_coalesces_unset_layer_params`.
+
+### The alpha demo map (`AlphaDemoMapBuilder` + `./run_demo_map.sh`)
+
+A scripted map that exercises every core feature, used by the walkthroughs
+and by the benchmark: courtyard floor splat (2 blended albedos + stamped
+decals), an arched doorway, exterior stairs to a walkable roof, the layered
+scrolling-texture waterfall with its mist emitter, brazier flame/embers,
+billboards, and the closed neon room — UV2-unwrapped, GI-Static, BAKE_STATIC
+coloured lights, emissive strips, and the PSX_Modular_Medieval barrels
+(props by valsekamerplant, itch.io) as plain imported MeshInstance3D.
+`alpha_demo_shots.gd` photographs the map in a real GPU run; the docs'
+walkthrough screenshots come from it.
+
+### The frame-pacing benchmark (`frame_pacing_bench.gd` + `./run_bench.sh`)
+
+Not a static average-fps test: the demo map is flown along a gameplay-like
+path (courtyard → through the door → neon room → out and up the stairs →
+roof) while every frame's wall-clock time is recorded, cold pass and warm
+pass, reporting median / 1% low / worst / jitter / hitches for the PB scene
+as-is vs the retro-baked GLB vs the modern GLB. Headline (Intel UHD 630,
+gl_compatibility, 720p, vsync off): GLBs ~89–99 fps with sub-30 ms worst
+frames; the PB scene as-is is GPU-bound at ~40 fps (median 24.5 ms, fully
+steady, no warm-up drift). The GLB variants parse via GLTFDocument like the
+retro viewer — export targets live behind `.gdignore` and are invisible to
+the import system.
+
+### The .gdignore lesson, written into the exporter
+
+Exporting into `res://test_scenes/` dropped a `.gdignore` there
+(`ensure_export_dir` writes one into every target dir), which made the
+editor's class scan skip the whole directory — `TestMapShowcaseBuilder`
+disappeared from the class cache and `test_pb_map_showcase` was silently
+skipped (the runner's suite-count guard caught it: 72 files, 71 suites).
+The bench GLBs went back to `res://exports/` and the constraint is
+documented in `export_bench_variants`.
+
+### godot_guard.sh: opt-in display/GPU/asset passthrough
+
+`GUARD_X11=1` mounts the host's X socket dir, passes `DISPLAY` through
+every exec, and adds `/dev/dri` + keep-groups so rendered runs (shots,
+benchmark) run on the real GPU instead of falling back to llvmpipe inside
+the container. `GUARD_ASSETS=1` mounts `/mnt/ephemeral` read-only so
+builders can instance pack props. Still exactly one capped container, runs
+still fail closed when the cap cannot be enforced.
+
+### Docs: current, with walkthroughs and known issues
+
+- New pages: **Build a map (modern)** — empty project to finished, played,
+  exported map with screenshots; **Export to PSP / retro** — the .pbm bake,
+  device verification, and implementing the format in your own engine from
+  SPEC_RETRO_FORMAT.md + the reference renderer; **Known issues (alpha)** —
+  PSP-unlit billboards, PSP shadows on transparent scrolling planes, stamps
+  not spanning two objects, small-face paint lag, dotted strokes at speed,
+  mangled retro UVs after Poibuilderize — each with its workaround;
+  **Godot-side performance** — the benchmark methodology and the measured
+  table; **Splat in a modern .glb** — the sidecar recipe finally published
+  as a page (the link had been dangling).
+- Refreshed: interface (row-3 Lit/Cast Shadows toggles, the six dock modes,
+  Edit Emitter Properties, the mode banner), materials (dock modes, palette
+  dedupe), objects (object state), paint (transparent surfaces refuse
+  paint), index (walkthrough cards), faq/first-minutes/export cross-links.
+- Toolbar locator updated to the current rows: Grid on row 3, the object
+  state toggles on row 3, Export... in row 2. The Grid and Export buttons
+  got SVG icons (icon_grid.svg / icon_export.svg) instead of text, per the
+  toolbar icon rule.
+
 ## v0.9.158 — free sheet knobs with brief docs, the flame is a 2x2 sheet, and emitter props in object mode
 
 ### The sheet knobs are free again; the docs carry the rule instead

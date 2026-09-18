@@ -127,9 +127,9 @@ func _load_variant(variant: String) -> Node3D:
 		"pb":
 			path = "res://test_scenes/alpha_demo_map.tscn"
 		"retro_glb":
-			path = "res://test_scenes/alpha_demo_retro_baked.glb"
+			path = "res://exports/alpha_demo_retro_baked.glb"
 		"modern_glb":
-			path = "res://test_scenes/alpha_demo_modern.glb"
+			path = "res://exports/alpha_demo_modern.glb"
 		_:
 			push_error("unknown variant '%s' (pb | retro_glb | modern_glb)" % variant)
 			return null
@@ -151,9 +151,9 @@ func _load_variant(variant: String) -> Node3D:
 		print("[bench] variant=%s meshes=%d emitters=%d lights=%d" % [
 			variant, census["mesh"], census["particles"], census["lights"]])
 		return inst
-	# The exported GLBs live in .gdignore'd directories (an export target is
-	# deliberately invisible to the import system), so they are parsed with
-	# GLTFDocument directly — the same thing the retro viewer does.
+	# The exported GLBs live under res://exports/ behind its .gdignore —
+	# deliberately invisible to the import system — so they are parsed with
+	# GLTFDocument directly, the same thing the retro viewer does.
 	if not FileAccess.file_exists(path):
 		push_error("%s missing — export it first (run_bench.sh does both)" % path)
 		return null

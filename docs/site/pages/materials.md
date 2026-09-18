@@ -5,11 +5,24 @@ lead: Per-face materials, auto-UV that does not stretch on resize, and a dock th
 
 ## The dock
 
-Toolbar **Material** focuses the Material & UV dock.
+Toolbar **Material** focuses the Material & UV dock. It is six modes on one segmented row:
 
-- Palette / swatch grid of project materials.
+| Mode | What it does |
+|---|---|
+| **Material & UV** | The palette below — per-face assignment, drag-and-drop, UV speed. |
+| **Texture Paint** | The splat brush — see [Paint & stamps](paint.html). |
+| **Stamp** | Decal stamps in one click. |
+| **Sprite** | Always-armed billboard placement. |
+| **Shapes** | Always-armed primitive placement: pick a shape, drag it on any surface. |
+| **Particles** | Click-to-place particle emitters (PSP-budget aware). |
+
+The palette itself:
+
+- Swatch grid of project materials.
 - Click a face (face or texture mode), click a swatch — that face takes the material.
 - Drag a texture from the FileSystem dock onto a face.
+- **+ Add** pulls a material or texture from anywhere in the project; the
+  scan deduplicates by content so one texture does not appear twice.
 
 Texture mode ([[kbd:6]]) transforms UVs in 3D with the same gizmo. For island work, use the [2D UV editor](uv.html).
 

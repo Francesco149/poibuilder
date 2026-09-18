@@ -34,7 +34,7 @@ The decal layer is paintable on its own, and it is the same layer stamps land in
 
 **Clear Layer** (paint panel) clears the decal layer whenever the brush is pointed at Decal; **Clear Decal Layer** (stamp panel) wipes all of it at once. Every one of those actions is undoable.
 
-Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern_glb_splat.html).
+Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern-glb-splat.html).
 
 :::shot paint-stamp.png
 A stamp painted across two faces, then partly erased.
@@ -60,8 +60,18 @@ Scrolling sheets on a wall panel.
 
 > [gotcha] A scrolling face is **not** packed into the retro tile atlas — an offset would drag it across the slot. Export keeps it as its own texture. Do not also splat-paint that face; paint is baked to a static tile.
 
-> [gotcha] A modern **.glb export** cannot carry a custom shader. Choose **Modern paint → Bake into textures** (each painted face becomes its own texture — any engine shows your paint) or **Include splat data** (masks and decal channels ship as sidecar PNGs plus a `poi_splat` record in the material extras; see [Splatting in a modern .glb](modern_glb_splat.html) for the consumer recipe). To flatten paint inside Godot itself, run `./bake_splat.sh <scene.tscn>`.
+> [gotcha] A modern **.glb export** cannot carry a custom shader. Choose **Modern paint → Bake into textures** (each painted face becomes its own texture — any engine shows your paint) or **Include splat data** (masks and decal channels ship as sidecar PNGs plus a `poi_splat` record in the material extras; see [Splatting in a modern .glb](modern-glb-splat.html) for the consumer recipe). To flatten paint inside Godot itself, run `./bake_splat.sh <scene.tscn>`.
 
 > [note] **Splat paint and LightmapGI now coexist on one mesh.** Masks travel in their own vertex channel (CUSTOM0), so UV2 — the channel a lightmap unwrap lives in — is never touched by painting. Unwrap it from the UV editor's **Lightmap** button (it also flips the mesh to *GI Mode: Static*), bake the LightmapGI, and keep painting: the paint will not disturb the bake's UVs.
 
+> [gotcha] **Transparent surfaces refuse paint.** A billboard sprite or any
+> alpha-blended material loses its alpha the moment it is converted to a
+> splat (the conversion keeps albedo/colour/roughness only), so painting is
+> REFUSED before anything changes: the brush ring goes grey, the overlay
+> names the reason (`transparent material`), and strokes and stamp clicks on
+> such faces are no-ops. A stamp spanning several faces paints only the
+> opaque ones.
+
 To see what a face's paint looks like up close, the UV editor's **Splat masks** channel shows the composited paint for the selected face (read-only — that space is written by painting, not by hand). **UV1 (Texture)** and **UV2 (Lightmap)** are both editable channels — see [UV editor](uv.html).
+
+Two brush behaviours to know while this is in alpha: painting small faces runs noticeably laggier than big ones, and fast drags come out dotted — dab spacing follows stroke events, not distance. Both have workarounds and a planned fix on [Known issues](known-issues.html).

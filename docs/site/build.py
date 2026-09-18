@@ -34,6 +34,26 @@ ICONS_SRC = REPO / "project" / "addons" / "poibuilder" / "icons"
 # Complete catalog of operations, modes, and tools with toolbar location metadata.
 OPS_CATALOG: dict[str, dict] = {
     # Row 1: Mesh Operations
+    "export": {
+        "label": "Export...", "icon": "icon_export.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
+        "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Opens the export dialog: PBM (the retro .pbm map) or GLB — retro baked or modern live materials — with the bake options."
+    },
+    "grid": {
+        "label": "Grid", "icon": "icon_grid.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
+        "key": "= / - subdivisions, [ / ] elevation, Y snap, G draw-on-grid", "req": "Nothing (always enabled)",
+        "desc": "Opens the grid & snapping settings (unit, subdivisions, elevation, draw-on-grid); the readout beside it shows the current snap step."
+    },
+    "obj_lit": {
+        "label": "Lit", "icon": "icon_lit.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
+        "key": "Rebindable (Object: Toggle Lit)", "req": "Selected objects",
+        "desc": "Shading on/off for every selected object (PBMesh, MeshInstance3D, CSG). Mixed selections render unchecked; checking synchronizes all of them."
+    },
+    "obj_shadow": {
+        "label": "Cast Shadows", "icon": "icon_shadow.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
+        "key": "Rebindable (Object: Toggle Cast Shadows)", "req": "Selected objects",
+        "desc": "Shadow casting on/off for every selected object. Same mixed-checkbox semantics as Lit."
+    },
     "extrude": {
         "label": "Extrude", "icon": "icon_extrude.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
         "key": "Shift + Move / Alt + E", "req": "Face or Edge selection",
@@ -221,14 +241,15 @@ ROW_BUTTON_LISTS = {
         ("texture", "icon_texture_mode.svg", "Texture"), ("new_shape", "icon_new_shape.svg", "New Shape"),
         ("ngon", "icon_ngon.svg", "N-Gon"), ("edit_params", "icon_edit_params.svg", "Edit Params"),
         ("materials", "icon_materials.svg", "Materials"), ("uv", "icon_uv_unwrap.svg", "UV Editor"),
-        ("export", "icon_docs.svg", "Export")
+        ("export", "icon_export.svg", "Export...")
     ],
     3: [
-        ("select_all", "icon_select_all.svg", "All"), ("invert_selection", "icon_invert_selection.svg", "Invert"),
+        ("grid", "icon_grid.svg", "Grid"), ("select_all", "icon_select_all.svg", "All"), ("invert_selection", "icon_invert_selection.svg", "Invert"),
         ("grow_selection", "icon_grow_selection.svg", "Grow"), ("shrink_selection", "icon_shrink_selection.svg", "Shrink"),
         ("select_coplanar", "icon_select_coplanar.svg", "Coplanar"), ("select_similar", "icon_select_similar.svg", "Similar"),
         ("select_boundary", "icon_select_boundary.svg", "Boundary"), ("face_loop", "icon_face_loop.svg", "Loop"),
-        ("face_ring", "icon_face_ring.svg", "Ring"), ("smooth_auto", "icon_auto_smooth.svg", "Smooth")
+        ("face_ring", "icon_face_ring.svg", "Ring"), ("smooth_auto", "icon_auto_smooth.svg", "Smooth"),
+        ("obj_lit", "icon_lit.svg", "Lit"), ("obj_shadow", "icon_shadow.svg", "Cast Shadows")
     ],
     4: [
         ("merge_objects", "icon_merge_objects.svg", "Merge"), ("mirror", "icon_mirror.svg", "Mirror"),
@@ -385,8 +406,11 @@ ICON_ALIASES: dict[str, str] = {
     "reset": "icon_panel_reset.svg",
     "panel_reset": "icon_panel_reset.svg",
     "settings": "icon_settings.svg",
-    "export": "icon_docs.svg",
+    "export": "icon_export.svg",
     "docs": "icon_docs.svg",
+    "lit": "icon_lit.svg",
+    "shadow": "icon_shadow.svg",
+    "grid": "icon_grid.svg",
     "split_rows": "icon_split_rows.svg",
     "extended": "icon_split_rows.svg",
     "all": "icon_select_all.svg",
