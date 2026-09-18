@@ -119,6 +119,46 @@ static func _count_opaque(img: Image) -> int:
 		i += 4
 	return n
 
+## Decal colour at a NODE-LOCAL point on a face (the sample the shader takes).
+static func _decal_centre_colour(data: PBMeshData, mat: ShaderMaterial, face: PBFace,
+		local_point: Vector3) -> Color:
+	if mat == null or not PBSplat.has_decal_layer(mat):
+		return Color(0, 0, 0, 0)
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	if bounds.is_empty():
+		return Color(0, 0, 0, 0)
+	var duv := PBSplat.decal_uv_from_mask_uv(mat, Vector2(
+		((bounds["u"] as Vector3).dot(local_point) - bounds["min_u"]) / bounds["range_u"],
+		((bounds["v"] as Vector3).dot(local_point) - bounds["min_v"]) / bounds["range_v"]))
+	var img := PBSplat.get_decal_layer_image(mat)
+	if duv.x < 0.0 or duv.x > 1.0 or duv.y < 0.0 or duv.y > 1.0:
+		return Color(0, 0, 0, 0)
+	return img.get_pixel(clampi(int(duv.x * img.get_width()), 0, img.get_width() - 1),
+			clampi(int(duv.y * img.get_height()), 0, img.get_height() - 1))
+
+## Painted bounding box (pixels) of a decal layer image.
+static func _decal_paint_bbox(img: Image) -> Rect2:
+	if img == null:
+		return Rect2()
+	var w := img.get_width()
+	var h := img.get_height()
+	var bytes := img.get_data()
+	var min_x := w
+	var max_x := -1
+	var min_y := h
+	var max_y := -1
+	for y in range(h):
+		var row := y * w * 4
+		for x in range(w):
+			if bytes[row + x * 4 + 3] > 25:  # (0.1 alpha)
+				min_x = mini(min_x, x)
+				max_x = maxi(max_x, x)
+				min_y = mini(min_y, y)
+				max_y = maxi(max_y, y)
+	if max_x < 0:
+		return Rect2()
+	return Rect2(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+
 static func _img_diff(a: Image, b: Image) -> int:
 	if a == null or b == null or a.get_size() != b.get_size():
 		return -1
@@ -1389,6 +1429,185 @@ func _run() -> void:
 					_pass("SPLAT-DECAL: reset to MATERIAL mode set paint_controller to NONE")
 				else:
 					_fail("SPLAT-DECAL: failed to reset paint_controller")
+
+				# ── Decal brush & stamp panel: every control must reach the pixels.
+				# The panel's widgets are driven the way a user click drives them
+				# (the signals the editor emits), then the PAINTED PIXELS are read
+				# back: a control that does not change the paint is a control that
+				# lies about what the brush will do.
+				var pc: PBPaintController = plugin.paint_controller
+				var dock_p: PBMaterialDock = plugin.material_dock
+				var brush_target: PBMesh = root.get_node_or_null("GuiTestB") as PBMesh
+				if pc == null or dock_p == null or brush_target == null:
+					_fail("BRUSH-PANEL: paint controller, dock or target mesh missing")
+				else:
+					plugin.editor.active_mesh = brush_target
+					dock_p._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+					await _frames(2)
+					var tgt_face := -1
+					for fi in range(brush_target.pb_mesh_data.faces.size()):
+						var fn := PBMath.normal_from_positions(brush_target.pb_mesh_data.positions,
+							brush_target.pb_mesh_data.faces[fi].get_indexes())
+						if fn.y > 0.99:
+							tgt_face = fi
+							break
+
+					# 1. Painting defaults to splatting.
+					if pc.paint_target == PBPaintController.PaintTarget.SPLAT:
+						_pass("BRUSH-PANEL: painting defaults to texture splatting")
+					else:
+						_fail("BRUSH-PANEL: paint target did not default to splatting")
+
+					# 2. The panel's widgets move the controller (click semantics).
+					dock_p._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.DECAL)
+					dock_p._opt_brush_source.item_selected.emit(PBPaintController.BrushSource.COLOR)
+					dock_p._btn_brush_color.color = Color(0.1, 0.9, 0.2, 1.0)
+					dock_p._btn_brush_color.color_changed.emit(Color(0.1, 0.9, 0.2, 1.0))
+					await _frames(2)
+					if pc.paint_target == PBPaintController.PaintTarget.DECAL \
+							and pc.brush_source == PBPaintController.BrushSource.COLOR:
+						_pass("BRUSH-PANEL: target/source selections reach the controller")
+					else:
+						_fail("BRUSH-PANEL: panel selection did not reach the controller (target=%d source=%d)"
+							% [pc.paint_target, pc.brush_source])
+					if pc.brush_color.is_equal_approx(Color(0.1, 0.9, 0.2, 1.0)):
+						_pass("BRUSH-PANEL: the colour picker reaches the controller")
+					else:
+						_fail("BRUSH-PANEL: colour picker did not reach the controller (%s)" % pc.brush_color)
+
+					# 3. The brush ring preview must exist and be visible.
+					pc.brush_radius = 0.6
+					pc.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, brush_target, tgt_face)
+					await _frames(2)
+					var ring_im := pc.brush_mesh_instance.mesh as ImmediateMesh if \
+							pc.brush_mesh_instance != null and pc.brush_mesh_instance.visible else null
+					if ring_im != null:
+						var ring_verts := (ring_im.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+						if ring_im.get_surface_count() >= 2 and ring_verts >= 90:
+							_pass("BRUSH-PANEL: the brush ring is visible at the cursor (%d band verts)" % ring_verts)
+						else:
+							_fail("BRUSH-PANEL: the brush ring has no band geometry")
+					else:
+						_fail("BRUSH-PANEL: no visible brush ring at the cursor")
+
+					# 4. Painting with the picked colour writes THAT colour.
+					pc.brush_softness = 0.0
+					pc.brush_opacity = 1.0
+					pc.erase_mode = false
+					pc.set_mode(PBPaintController.Mode.PAINT)
+					pc.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, brush_target, tgt_face)
+					pc.begin_stroke()
+					pc.end_stroke()
+					await _frames(2)
+					var colour_mat := brush_target.pb_mesh_data.get_face_material(
+						brush_target.pb_mesh_data.faces[tgt_face]) as ShaderMaterial
+					var painted_rgb := _decal_centre_colour(brush_target.pb_mesh_data, colour_mat,
+						brush_target.pb_mesh_data.faces[tgt_face],
+						brush_target.global_transform.affine_inverse() * Vector3(3, 0.5, 0))
+					if painted_rgb.g > 0.6 and painted_rgb.r < 0.4:
+						_pass("BRUSH-PANEL: the brush painted the picked colour (%s)" % painted_rgb)
+					else:
+						_fail("BRUSH-PANEL: the brush painted %s, not the picked colour" % painted_rgb)
+
+					# 5. Erase takes it back out.
+					var before_erase := _count_opaque(PBSplat.get_decal_layer_image(colour_mat))
+					pc.erase_mode = true
+					pc.begin_stroke()
+					pc.end_stroke()
+					await _frames(2)
+					var after_erase := _count_opaque(PBSplat.get_decal_layer_image(colour_mat))
+					if after_erase < before_erase:
+						_pass("BRUSH-PANEL: erase removes the painted pixels (%d -> %d)"
+							% [before_erase, after_erase])
+					else:
+						_fail("BRUSH-PANEL: erase painted instead of erasing (%d -> %d)"
+							% [before_erase, after_erase])
+					pc.erase_mode = false
+
+					# 6. Stamp scale and rotation change the PREVIEW and the paste.
+					dock_p._set_dock_mode(PBMaterialDock.DockMode.STAMP)
+					await _frames(2)
+					var hello_tex = load("res://addons/poibuilder/materials/textures/stamp_hello_world.png")
+					pc.stamp_texture = hello_tex
+					pc.stamp_scale = 3.0
+					pc.stamp_rotation = 0.0
+					await _frames(2)
+					var quad := pc.stamp_mesh_instance.mesh as QuadMesh
+					if quad != null and absf(quad.size.x - 3.0) < 0.01 \
+							and absf(quad.size.y - 1.5) < 0.05:
+						_pass("BRUSH-PANEL: the stamp preview follows the scale spinbox (%s)" % quad.size)
+					else:
+						_fail("BRUSH-PANEL: stamp preview ignored the scale (%s)"
+							% (quad.size if quad != null else Vector2.ZERO))
+					var aspect_ok := false
+					var width_ok := false
+					var stamp_ratio := 0.0
+					var stamp_metres := 0.0
+					var stamp_px := 0
+					var stamp_win := Rect2()
+					var stamp_face_m := 0.0
+					if quad != null:
+						# Measure the stamp alone: wipe whatever the brush checks
+						# above left in the layer.
+						pc.clear_decal_layer(brush_target)
+						await _frames(2)
+						pc.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, brush_target, tgt_face)
+						pc.apply_stamp()
+						await _frames(2)
+						var pasted_mat := brush_target.pb_mesh_data.get_face_material(
+							brush_target.pb_mesh_data.faces[tgt_face]) as ShaderMaterial
+						var pasted_bbox := _decal_paint_bbox(PBSplat.get_decal_layer_image(pasted_mat))
+						var ratio: float = pasted_bbox.size.x / maxf(pasted_bbox.size.y, 1.0)
+						var pasted_bounds := PBSplat.get_face_planar_bounds(brush_target.pb_mesh_data,
+							brush_target.pb_mesh_data.faces[tgt_face])
+						# px -> metres: the window's uv span times the face rect is
+						# the window's size in metres, spread over its pixels.
+						var metres: float = pasted_bbox.size.x * PBSplat.get_decal_window(pasted_mat).size.x \
+							* pasted_bounds["range_u"] / maxf(float(
+								PBSplat.get_decal_layer_image(pasted_mat).get_width() - 1), 1.0)
+						aspect_ok = ratio > 1.5 and ratio < 2.4
+						width_ok = absf(metres - 3.0) < 0.6
+						stamp_ratio = ratio
+						stamp_metres = metres
+						stamp_px = pasted_bbox.size.x
+						stamp_win = PBSplat.get_decal_window(pasted_mat)
+						stamp_face_m = pasted_bounds["range_u"]
+					if aspect_ok:
+						_pass("BRUSH-PANEL: a 2:1 stamp keeps its aspect after pasting")
+					else:
+						_fail("BRUSH-PANEL: the pasted stamp is squashed (ratio %.2f, expected 2.0)" % stamp_ratio)
+					if width_ok:
+						_pass("BRUSH-PANEL: the pasted stamp honours the scale spinbox")
+					else:
+						_fail("BRUSH-PANEL: the pasted stamp ignored the scale spinbox (%d px, %.2f m, win %s, face %.2f m)"
+							% [stamp_px, stamp_metres, str(stamp_win), stamp_face_m])
+					# 7. Clear Layer clears the mesh the BRUSH points at, with
+					# nothing selected (painting never needed a selection).
+					plugin.editor.selection.clear_all()
+					pc.paint_target = PBPaintController.PaintTarget.DECAL
+					pc.erase_mode = false
+					pc.set_mode(PBPaintController.Mode.PAINT)
+					pc.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, brush_target, tgt_face)
+					pc.begin_stroke()
+					pc.end_stroke()
+					await _frames(2)
+					var clear_mat := brush_target.pb_mesh_data.get_face_material(
+						brush_target.pb_mesh_data.faces[tgt_face]) as ShaderMaterial
+					var before_clear := _count_opaque(PBSplat.get_decal_layer_image(clear_mat))
+					dock_p._on_clear_layer_pressed()
+					await _frames(2)
+					var clear_mat2 := brush_target.pb_mesh_data.get_face_material(
+						brush_target.pb_mesh_data.faces[tgt_face]) as ShaderMaterial
+					var after_clear := _count_opaque(PBSplat.get_decal_layer_image(clear_mat2))
+					if before_clear > 0 and after_clear == 0:
+						_pass("BRUSH-PANEL: Clear Layer clears the brush's mesh with nothing selected (%d -> 0)"
+							% before_clear)
+					else:
+						_fail("BRUSH-PANEL: Clear Layer missed the brush's mesh with no selection (%d -> %d)"
+							% [before_clear, after_clear])
+
+					dock_p._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+					await _frames(2)
 
 				# Test Billboard Sprite Placer
 				plugin._start_sprite_tool()

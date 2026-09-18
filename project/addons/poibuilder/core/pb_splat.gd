@@ -1186,8 +1186,22 @@ static func _oriented_sprite(src: Dictionary, u_face: Vector3, v_face: Vector3,
 	if src.is_empty():
 		return null
 	var is_dab: bool = lut.size() > 0
-	var side_u := maxi(1, int(round((radius * 2.0 if is_dab else ext.x) * px_per_m_u)))
-	var side_v := maxi(1, int(round((radius * 2.0 if is_dab else ext.y) * px_per_m_v)))
+	var half_u_m := radius
+	var half_v_m := radius
+	if not is_dab:
+		# The footprint's bbox in the FACE's plane. A stamp that is not axis-
+		# aligned with the face (rotated, or on a face whose planar basis differs
+		# from the stamp's) occupies its ext ROTATED, so sizing the sprite by the
+		# unrotated ext clipped the content — which read as a horizontally
+		# squashed stamp.
+		var k_r_u := u_face.dot(rot_right)
+		var k_r_v := v_face.dot(rot_right)
+		var k_u_u := u_face.dot(rot_up)
+		var k_u_v := v_face.dot(rot_up)
+		half_u_m = 0.5 * (absf(ext.x * k_r_u) + absf(ext.y * k_u_u))
+		half_v_m = 0.5 * (absf(ext.x * k_r_v) + absf(ext.y * k_u_v))
+	var side_u := maxi(1, int(round(half_u_m * 2.0 * px_per_m_u)))
+	var side_v := maxi(1, int(round(half_v_m * 2.0 * px_per_m_v)))
 	if side_u < 3 or side_v < 3 or side_u > DECAL_MAX_SPRITE_PX or side_v > DECAL_MAX_SPRITE_PX:
 		return null
 

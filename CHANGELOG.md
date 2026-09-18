@@ -3,6 +3,48 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.153 — the paint & stamp panel actually drives the brush
+
+Reported against v0.9.152: every control in the paint panel did nothing
+(painting was always the default red, "Palette image" and the colour picker
+changed nothing, Erase kept painting, the stamp's scale/rotation were ignored)
+and the hello-world stamp came out squashed.
+
+### The whole panel was silently dead
+`_on_paint_controller_changed` takes a `_syncing` re-entrancy guard, then pushes
+the controller into the widgets — and the layer spinbox assignment used
+`editable`, which `EditorSpinSlider` does not have. That threw, and a GDScript
+runtime error aborts the function BEFORE the guard is cleared, so from the first
+controller change onward `_syncing` stayed true — and every widget handler in
+the panel checks it. The brush kept its default red, the target/source/colour/
+erase selections never arrived, and the stamp panel's scale and rotation were
+inert. The refresh now runs in its own function (nothing inside it can strand
+the guard) and uses `read_only`.
+
+The real-editor harness now drives the panel's own signals and asserts the
+PAINTED PIXELS — target/source/colour/erase, the ring, and the stamp's preview,
+scale and aspect — which is what caught this. The old checks read the
+controller directly, so they passed while the panel was dead.
+
+### The squashed stamp
+A stamp whose axes do not line up with the face's — a rotated stamp, or a face
+whose planar basis differs from the canvas basis (a tilted ramp) — was built
+into a sprite sized by its UNROTATED extents, so the content was clipped inside
+it. A 2:1 plate at 90 degrees measured 1.42 x 1.50 m; it now measures
+1.0 x 2.0 m, and every rotation keeps the stamp's full footprint.
+
+### Also
+- The brush ring is a 6%-wide band with a crosshair instead of a 1-px line
+  loop, which was invisible on a big scene viewed from any distance. It still
+  marks the true brush radius.
+- **Clear Layer / Clear Decal Layer** act on the mesh the brush is pointed at
+  (the paint tools never needed a selection), and the decal clear covers the
+  whole mesh: a decal layer is one image per material, so a face selection has
+  nothing to narrow.
+- The Paint panel's colour row has its own label — the picker was landing in the
+  grid's label column and pushing every row after it out of alignment, and the
+  layer spinbox is disabled (rather than editable) when painting Decal.
+
 ## v0.9.152 — decal layer: uniform density, real resampling, a colour brush
 
 Second pass on the stamp/decal layer, driven by "very pixelated on the floor,

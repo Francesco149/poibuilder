@@ -316,20 +316,32 @@ func _build_brush_mesh() -> void:
 	var segments := 48
 	var r := brush_radius
 
-	im.surface_begin(Mesh.PRIMITIVE_LINES)
-	for i in range(segments):
-		var theta1 := (float(i) / float(segments)) * TAU
-		var theta2 := (float(i + 1) / float(segments)) * TAU
-		var p1 := Vector3(cos(theta1) * r, 0.0, sin(theta1) * r)
-		var p2 := Vector3(cos(theta2) * r, 0.0, sin(theta2) * r)
-		im.surface_add_vertex(p1)
-		im.surface_add_vertex(p2)
-	# Crosshair at center
-	var cr := r * 0.15
-	im.surface_add_vertex(Vector3(-cr, 0.0, 0.0))
-	im.surface_add_vertex(Vector3(cr, 0.0, 0.0))
-	im.surface_add_vertex(Vector3(0.0, 0.0, -cr))
-	im.surface_add_vertex(Vector3(0.0, 0.0, cr))
+	# A BAND, not a 1 px line loop: the ring has to read at any zoom, and a
+	# line primitive is invisible on a big scene viewed from far away. The band
+	# is 6% of the radius wide, so the ring still shows the true brush area.
+	var inner := r * 0.94
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in range(segments + 1):
+		var theta := (float(i) / float(segments)) * TAU
+		var dir := Vector3(cos(theta), 0.0, sin(theta))
+		im.surface_add_vertex(dir * inner)
+		im.surface_add_vertex(dir * r)
+	im.surface_end()
+
+	# Crosshair: thin quads (same reason), half-length arms both ways.
+	var arm := r * 0.18
+	var hw := maxf(r * 0.02, 0.0005)
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	var axes: Array[Vector3] = [Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, 1.0)]
+	for axis in axes:
+		var perp: Vector3 = Vector3(axis.z, 0.0, -axis.x) * hw
+		var a: Vector3 = axis * arm
+		im.surface_add_vertex(-a - perp)
+		im.surface_add_vertex(-a + perp)
+		im.surface_add_vertex(a + perp)
+		im.surface_add_vertex(-a - perp)
+		im.surface_add_vertex(a + perp)
+		im.surface_add_vertex(a - perp)
 	im.surface_end()
 
 	brush_mesh_instance.mesh = im

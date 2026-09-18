@@ -670,6 +670,42 @@ func test_stamp_on_a_rotated_mesh_keeps_the_source_aspect() -> void:
 	assert_almost_eq(ratio, 4.0, 0.3,
 			"A 4:1 source must stay 4:1 on a rotated mesh (got %.2f)" % ratio)
 
+## A stamp whose axes do not line up with the face's — a rotated stamp, or a
+## face whose planar basis differs (a tilted ramp) — used to be sized by its
+## UNROTATED extents, so the content was clipped inside the sprite and read as a
+## horizontally squashed stamp.
+func test_rotated_stamp_keeps_its_footprint() -> void:
+	var data := PBShapeGenerators.create_plane(8.0, 8.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var src := Image.create(64, 32, false, Image.FORMAT_RGBA8)
+	src.fill(Color.WHITE)  # an opaque 2:1 plate, so the painted bbox IS the stamp
+
+	assert_eq(PBSplat.paste_decal(data, Vector3.ZERO, Vector3.UP, 90.0, 2.0, 1.0, src), 1,
+			"Fixture: the rotated stamp must land")
+	var mat := data.get_face_material(data.faces[0]) as ShaderMaterial
+	var img := PBSplat.get_decal_layer_image(mat)
+	var win := PBSplat.get_decal_window(mat)
+	var bounds := PBSplat.get_face_planar_bounds(data, data.faces[0])
+	var bytes := img.get_data()
+	var w := img.get_width()
+	var h := img.get_height()
+	var min_x := w
+	var max_x := -1
+	var min_y := h
+	var max_y := -1
+	for y in range(h):
+		for x in range(w):
+			if bytes[(y * w + x) * 4 + 3] > 25:
+				min_x = mini(min_x, x)
+				max_x = maxi(max_x, x)
+				min_y = mini(min_y, y)
+				max_y = maxi(max_y, y)
+	var m_u: float = float(max_x - min_x + 1) * win.size.x * bounds["range_u"] / float(w - 1)
+	var m_v: float = float(max_y - min_y + 1) * win.size.y * bounds["range_v"] / float(h - 1)
+	# A 2:1 stamp turned 90 degrees is 1 m wide and 2 m tall.
+	assert_almost_eq(m_u, 1.0, 0.12, "A 90-degree 2x1 m stamp must be 1 m wide (got %.2f)" % m_u)
+	assert_almost_eq(m_v, 2.0, 0.12, "A 90-degree 2x1 m stamp must be 2 m tall (got %.2f)" % m_v)
+
 ## The basic brush: a solid colour dab, no palette image involved.
 func test_colour_brush_paints_and_erases_decal_pixels() -> void:
 	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)

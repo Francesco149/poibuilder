@@ -186,6 +186,15 @@ func _on_paint_controller_changed() -> void:
 	if _syncing or paint_controller == null:
 		return
 	_syncing = true
+	_refresh_paint_widgets()
+	_syncing = false
+
+## Mirrors the controller into the panel's widgets. Deliberately NOT inlined in
+## the handler: a runtime error here (a widget property that does not exist, a
+## null inside a lambda) aborts the enclosing function, so `_syncing` was left
+## true forever — and every control in the panel checks that guard, so the whole
+## paint panel went silently dead while looking connected.
+func _refresh_paint_widgets() -> void:
 	if _spin_brush_radius != null:
 		_spin_brush_radius.value = paint_controller.brush_radius
 	if _spin_brush_softness != null:
@@ -196,7 +205,11 @@ func _on_paint_controller_changed() -> void:
 		_chk_erase.button_pressed = paint_controller.erase_mode
 	if _spin_paint_layer != null:
 		_spin_paint_layer.value = paint_controller.active_layer_idx
-		_spin_paint_layer.editable = paint_controller.paint_target == PBPaintController.PaintTarget.SPLAT
+		var layer_spin := _spin_paint_layer as EditorSpinSlider
+		if layer_spin != null:
+			# EditorSpinSlider has no `editable` (that assignment threw, which
+			# is what left the paint panel's guard stuck) — it is `read_only`.
+			layer_spin.read_only = paint_controller.paint_target != PBPaintController.PaintTarget.SPLAT
 	if _opt_paint_target != null:
 		_opt_paint_target.selected = int(paint_controller.paint_target)
 	if _opt_brush_source != null:
@@ -210,7 +223,6 @@ func _on_paint_controller_changed() -> void:
 	if _spin_stamp_opacity != null:
 		_spin_stamp_opacity.value = paint_controller.stamp_opacity
 	_update_tool_labels()
-	_syncing = false
 
 # ==============================================================================
 # Settings
@@ -589,6 +601,7 @@ func _build_ui() -> void:
 	)
 	paint_grid.add_child(_opt_brush_source)
 
+	paint_grid.add_child(_make_label("Colour:"))
 	_btn_brush_color = ColorPickerButton.new()
 	_btn_brush_color.name = "BrushColorPicker"
 	_btn_brush_color.edit_alpha = true
@@ -1293,32 +1306,40 @@ func _extract_texture(mat: Material) -> Texture2D:
 		return def.albedo_texture
 	return null
 
-func _on_clear_layer_pressed() -> void:
-	var mesh: PBMesh = editor.active_mesh if editor != null else null
-	if mesh == null or mesh.pb_mesh_data == null or paint_controller == null:
-		return
+## The mesh the paint tools are pointed at: whatever the brush last touched,
+## else the selection. Painting never required a selection (the brush picks the
+## mesh under the cursor), so the layer buttons must not require one either.
+func paint_target_mesh() -> PBMesh:
+	if paint_controller != null and paint_controller.target_mesh != null \
+			and is_instance_valid(paint_controller.target_mesh):
+		return paint_controller.target_mesh
+	return editor.active_mesh if editor != null else null
 
-	var sel_faces := _get_target_faces(mesh)
-	if sel_faces.is_empty():
+
+func _on_clear_layer_pressed() -> void:
+	var mesh := paint_target_mesh()
+	if mesh == null or mesh.pb_mesh_data == null or paint_controller == null:
 		return
 
 	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 	var cleared := false
 	# The button clears whatever the brush is pointed at: the decal layer's
-	# pixels when painting Decal, the active splat mask otherwise.
+	# pixels when painting Decal (the whole layer — a decal is one image per
+	# material, so a face selection has nothing to narrow), the active splat
+	# mask otherwise (that one IS per face, so a face selection still applies).
 	var on_decal: bool = paint_controller.paint_target == PBPaintController.PaintTarget.DECAL
 
-	for face in sel_faces:
-		var mat = mesh.pb_mesh_data.get_face_material(face)
-		if not PBSplat.is_splat_material(mat):
-			continue
-		if on_decal:
-			if PBSplat.has_decal_layer(mat as ShaderMaterial):
+	if on_decal:
+		for mat in mesh.pb_mesh_data.materials:
+			if PBSplat.is_splat_material(mat) and PBSplat.has_decal_layer(mat as ShaderMaterial):
 				PBSplat.clear_decal_layer(mat as ShaderMaterial)
 				cleared = true
-		else:
-			PBSplat.clear_layer(mat as ShaderMaterial, paint_controller.active_layer_idx)
-			cleared = true
+	else:
+		for face in _get_target_faces(mesh):
+			var mat = mesh.pb_mesh_data.get_face_material(face)
+			if PBSplat.is_splat_material(mat):
+				PBSplat.clear_layer(mat as ShaderMaterial, paint_controller.active_layer_idx)
+				cleared = true
 
 	if cleared:
 		var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
@@ -1333,9 +1354,7 @@ func _on_open_decal_brush_pressed() -> void:
 
 
 func _on_clear_all_stamps_pressed() -> void:
-	var mesh: PBMesh = editor.active_mesh if editor != null else null
-	if mesh == null and paint_controller != null:
-		mesh = paint_controller.target_mesh
+	var mesh := paint_target_mesh()
 	if mesh == null or paint_controller == null:
 		return
 	paint_controller.clear_decal_layer(mesh)
