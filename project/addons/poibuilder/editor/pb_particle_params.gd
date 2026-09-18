@@ -80,7 +80,7 @@ static func get_param_defs() -> Array:
 		{"name": "count", "label": "Particles", "min": 1.0, "max": float(MAX_PER_EMITTER), "step": 1.0,
 			"tooltip": "Simultaneous particles. 64 is the per-emitter format cap; the whole map budgets 256 (measured 0.72 ms GPU on PSP)."},
 		{"name": "size", "label": "Particle Size", "min": 0.05, "max": MAX_QUAD_HEIGHT, "step": 0.05, "suffix": "m",
-			"tooltip": "Quad height in metres. Screen AREA is the cost on PSP, not the count — keep big particles deliberate."},
+			"tooltip": "Quad height in metres; the width follows the texture's aspect (a sheet cell's, when the flipbook knobs are set). Screen AREA is the cost on PSP, not the count — keep big particles deliberate."},
 		{"name": "speed", "label": "Speed", "min": 0.0, "max": 8.0, "step": 0.05, "suffix": "m/s",
 			"tooltip": "Initial speed along the emission cone."},
 		{"name": "lifetime", "label": "Lifetime", "min": 0.1, "max": 8.0, "step": 0.05, "suffix": "s",
@@ -96,9 +96,9 @@ static func get_param_defs() -> Array:
 		{"name": "y_locked", "label": "Lock Upright", "kind": "bool",
 			"tooltip": "Cylinder billboard: quads stay world-upright instead of facing the camera (the mist emitter's look)."},
 		{"name": "atlas_cols", "label": "Sheet Columns", "min": 1.0, "max": 8.0, "step": 1.0,
-			"tooltip": "Flipbook columns of the texture (1 = single frame)."},
+			"tooltip": "Flipbook columns. The texture must BE a sprite sheet: each particle shows one cell (tex_width / columns wide, e.g. 192x64 with 3 columns = three 64x64 frames), and the quad takes the cell's aspect. 1 = the whole image is one frame."},
 		{"name": "atlas_rows", "label": "Sheet Rows", "min": 1.0, "max": 8.0, "step": 1.0,
-			"tooltip": "Flipbook rows of the texture (1 = single frame)."},
+			"tooltip": "Flipbook rows (tex_height / rows per cell). 1 = a single row of frames."},
 	]
 
 ## ── Node construction (shared by placement + properties) ────────────────────
@@ -216,8 +216,19 @@ static func apply_values(node: GPUParticles3D, values: Dictionary, texture: Text
 	var quad_h := clampf(float(values.get("size", 0.5)), 0.05, MAX_QUAD_HEIGHT)
 	var cols := int(clampf(float(values.get("atlas_cols", 1.0)), 1.0, 8.0))
 	var rows := int(clampf(float(values.get("atlas_rows", 1.0)), 1.0, 8.0))
+	# The quad shows ONE frame of the sheet, so its width follows the FRAME's
+	# aspect (tex_w/cols : tex_h/rows), not the image's: a 3-column sheet of
+	# square frames is a 3:1 image, and a square quad stretched each frame 3x
+	# (the "columns make the particles stretch" report). The exporter reads the
+	# same aspect off the QuadMesh, so editor, viewer and device agree.
+	var frame_aspect := 1.0
+	if texture != null and texture.get_width() > 0 and texture.get_height() > 0:
+		var frame_w := float(texture.get_width()) / float(cols)
+		var frame_h := float(texture.get_height()) / float(rows)
+		if frame_w > 0.0 and frame_h > 0.0:
+			frame_aspect = frame_w / frame_h
 	var qm := QuadMesh.new()
-	qm.size = Vector2(quad_h, quad_h)
+	qm.size = Vector2(quad_h * frame_aspect, quad_h)
 	var sm := StandardMaterial3D.new()
 	if texture != null:
 		sm.albedo_texture = texture

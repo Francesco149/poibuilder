@@ -287,3 +287,63 @@ func test_material_dock_particle_mode_filters_palette() -> void:
 	if placer.last_texture != null:
 		assert_true(PBAssetCatalog.classify_path(placer.last_texture.resource_path) == "particle",
 			"Auto-selected emitter texture is particle-classified")
+
+## The flipbook quad shows ONE cell of the sheet, so its width follows the
+## CELL's aspect (tex_w/cols : tex_h/rows) — a square quad against a 1/3-wide
+## cell stretched the art 3x, which is what "the columns make the particles
+## stretch" was. The exporter reads the aspect off the QuadMesh, so the viewer
+## and the device draw the same proportions.
+func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
+	# A 192x64 sheet with 3 columns is three square 64x64 cells.
+	var sheet := ImageTexture.create_from_image(Image.create(192, 64, false, Image.FORMAT_RGBA8))
+	var values := PBParticleParams.preset_for_texture("glow")
+	values["size"] = 0.5
+	values["atlas_cols"] = 3.0
+	var node := PBParticleParams.build_node(sheet, values, "Emitter_Sheet")
+	autofree(node)
+	var qm := node.draw_pass_1 as QuadMesh
+	assert_almost_eq(qm.size.y, 0.5, 0.001, "Sheet cell keeps the size knob as its height")
+	assert_almost_eq(qm.size.x, 0.5, 0.001, "Square cells -> square quad (not 3x stretched)")
+	var sm := qm.material as StandardMaterial3D
+	assert_eq(sm.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES, "The sheet grid lives in the particles mode")
+	assert_eq(sm.particles_anim_h_frames, 3)
+	assert_eq(sm.particles_anim_v_frames, 1)
+	var rec := PBMapExporter._emitter_from_node(node)
+	assert_eq(int(rec["atlas_cols"]), 3)
+	assert_almost_eq(float(rec["aspect"]), 1.0, 0.001, "The cell aspect reaches the emitter record")
+
+	# A 2:1 row of cells (128x32 with 2 columns -> 64x32 cells) is a wide quad.
+	var wide := ImageTexture.create_from_image(Image.create(128, 32, false, Image.FORMAT_RGBA8))
+	values["atlas_cols"] = 2.0
+	var node_wide := PBParticleParams.build_node(wide, values, "Emitter_Wide")
+	autofree(node_wide)
+	var qm_wide := node_wide.draw_pass_1 as QuadMesh
+	assert_almost_eq(qm_wide.size.y, 0.5, 0.001)
+	assert_almost_eq(qm_wide.size.x, 1.0, 0.001, "64x32 cells are 2:1 wide")
+	assert_almost_eq(float(PBMapExporter._emitter_from_node(node_wide)["aspect"]), 2.0, 0.001)
+
+	# Rows: a 64x192 sheet with 3 rows is three square cells again.
+	var tall := ImageTexture.create_from_image(Image.create(64, 192, false, Image.FORMAT_RGBA8))
+	values["atlas_cols"] = 1.0
+	values["atlas_rows"] = 3.0
+	var node_tall := PBParticleParams.build_node(tall, values, "Emitter_Tall")
+	autofree(node_tall)
+	var qm_tall := node_tall.draw_pass_1 as QuadMesh
+	assert_almost_eq(qm_tall.size.x, 0.5, 0.001, "3 square rows -> square quad")
+	assert_eq((qm_tall.material as StandardMaterial3D).particles_anim_v_frames, 3)
+
+	# A single-frame texture keeps its own aspect (no sheet knobs touched).
+	var banner := ImageTexture.create_from_image(Image.create(128, 64, false, Image.FORMAT_RGBA8))
+	values["atlas_rows"] = 1.0
+	var node_banner := PBParticleParams.build_node(banner, values, "Emitter_Banner")
+	autofree(node_banner)
+	var qm_banner := node_banner.draw_pass_1 as QuadMesh
+	assert_almost_eq(qm_banner.size.y, 0.5, 0.001)
+	assert_almost_eq(qm_banner.size.x, 1.0, 0.001, "A 2:1 image is a 2:1 particle, not squished square")
+	assert_eq((qm_banner.material as StandardMaterial3D).billboard_mode,
+			BaseMaterial3D.BILLBOARD_ENABLED, "A single frame is not a flipbook")
+
+	# The properties modal round-trips the height, not the (frame-dependent) width.
+	var back := PBParticleParams.values_from_node(node_wide)
+	assert_almost_eq(float(back["size"]), 0.5, 0.001)
+	assert_almost_eq(float(back["atlas_cols"]), 2.0, 0.001)
