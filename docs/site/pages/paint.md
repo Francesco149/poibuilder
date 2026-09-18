@@ -30,6 +30,8 @@ The decal layer is paintable on its own, and it is the same layer stamps land in
 
 > [note] The **Brush** row belongs to the decal layer: **Paint into → Splat layers** always paints the selected palette texture into a layer's mask, so the row is disabled (and says so) while that target is chosen. **Palette image** is the default source.
 
+> [note] **Decal density is per face.** The decal image is cropped to the area you actually painted and holds 256 texels/m — until that area gets big: past the window's caps (4096 px per axis, 32 MB of texels) the density falls so the paint never has to be dropped, and a 60 m floor painted across 25 m lands around 130 texels/m. The overlay's readout says what the face you are hovering gives you (`Decal: 133 texels/m`), and a stamp on its own — a small painted span — always keeps the full density. Large painted *areas* belong in splat layers; the decal layer is for stickers and dabbed detail.
+
 **Clear Layer** (paint panel) clears the decal layer whenever the brush is pointed at Decal; **Clear Decal Layer** (stamp panel) wipes all of it at once. Every one of those actions is undoable.
 
 Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern_glb_splat.html).

@@ -34,11 +34,27 @@ const MAX_RESOLUTION := 2048
 ## (not the whole face rect), so it can hold this density — the same 256
 ## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px
 ## wide whether it lands on a 2 m panel or a 60 m floor. The window grows in
-## powers of two as paint spreads; past DECAL_MAX_WINDOW_PX (8 m of painted
-## span) the density drops instead, so one face can never blow up memory.
+## DECAL_WINDOW_ALIGN_PX steps as paint spreads; past DECAL_MAX_WINDOW_PX or
+## DECAL_MAX_WINDOW_TEXELS the density drops instead, so one face can never blow
+## up memory. `decal_density()` reports what a face ended up with.
 const DECAL_TEXELS_PER_M := 256.0
 const DECAL_MIN_WINDOW_PX := 64
-const DECAL_MAX_WINDOW_PX := 2048
+## Per-axis ceiling for the window image. Past the texel budget below the
+## DENSITY drops instead of the covered area (dropping area would silently move
+## or lose paint).
+const DECAL_MAX_WINDOW_PX := 4096
+## Total texel budget (RGBA8: 8 M texels = 32 MB) the window's density is
+## chosen to respect. Together with DECAL_MAX_WINDOW_PX it decides how far a
+## face keeps DECAL_TEXELS_PER_M: the old 2048-per-axis cap put a 60 m floor's
+## painted bbox (25 m of span) at 70 texels/m — about half the base texture's
+## density — so every decal on that face read as blocky next to the surface
+## around it. 32 MB is the same order the splat masks already spend on a face
+## (8 layers x 2048 x 2048 x 1 B) and doubles the reach of the sharp band.
+const DECAL_MAX_WINDOW_TEXELS := 8388608
+## Window sizes are rounded up to a multiple of this many pixels: tidy
+## allocations with a bounded waste (powers of two doubled the budget's texels
+## whenever the span sat just past one).
+const DECAL_WINDOW_ALIGN_PX := 64
 ## Slack (window pixels) kept around the written footprint so a stroke that
 ## drifts a little does not reallocate the window on every dab.
 const DECAL_WINDOW_PAD_PX := 8
@@ -510,8 +526,23 @@ static func ensure_decal_window(mat: ShaderMaterial, need_uv: Rect2,
 		return existing
 	return _realloc_decal_window(mat, existing, win, win.merge(need_uv), face_size_m, texels_per_m)
 
+## The decal layer's real texel density on `mat`, in texels per metre, from the
+## window image and the face's planar rect (`face_range_m` = that rect's size in
+## metres). 0 when the material has no decal layer. This is what an author needs
+## to know when a decal looks blocky: the density is DECAL_TEXELS_PER_M until
+## the window hits DECAL_MAX_WINDOW_PX / DECAL_MAX_WINDOW_TEXELS, and past that
+## it falls as the painted span on the face grows.
+static func decal_density(mat: ShaderMaterial, face_range_m: Vector2) -> float:
+	var img := get_decal_layer_image(mat)
+	if img == null:
+		return 0.0
+	var win := get_decal_window(mat)
+	var span_x := maxf(win.size.x * maxf(face_range_m.x, 0.000001), 0.000001)
+	var span_y := maxf(win.size.y * maxf(face_range_m.y, 0.000001), 0.000001)
+	return minf(float(img.get_width()) / span_x, float(img.get_height()) / span_y)
+
 ## Allocates a new decal window image covering `want_uv` (padded + rounded up to
-## a power of two per axis) and copies `old_img` (which covered `old_uv`) into
+## DECAL_WINDOW_ALIGN_PX) and copies `old_img` (which covered `old_uv`) into
 ## it. Density follows the requested texels/m until the window would exceed
 ## DECAL_MAX_WINDOW_PX, then the covered span wins and the density drops — the
 ## only way a face can hold a very large painted span without unbounded memory.
@@ -522,26 +553,26 @@ static func _realloc_decal_window(mat: ShaderMaterial, old_img: Image, old_uv: R
 			float(DECAL_WINDOW_PAD_PX) / (face_m.y * maxf(texels_per_m, 1.0)))
 	var rect := want_uv.grow_individual(margin.x, margin.y, margin.x, margin.y)
 
-	# Density: as requested, until the window would exceed DECAL_MAX_WINDOW_PX.
-	# Past that the DENSITY drops, never the covered area — a window always
-	# covers everything painted through it (dropping the area would silently
-	# move or lose paint).
+	# Density: as requested, until the window would exceed DECAL_MAX_WINDOW_PX
+	# per axis OR DECAL_MAX_WINDOW_TEXELS in total. Past that the DENSITY drops,
+	# never the covered area — a window always covers everything painted
+	# through it (dropping the area would silently move or lose paint).
+	var span_m := Vector2(maxf(rect.size.x * face_m.x, 0.000001), maxf(rect.size.y * face_m.y, 0.000001))
 	var span_cap := float(DECAL_MAX_WINDOW_PX)
-	var dens := maxf(minf(texels_per_m,
-			minf(span_cap / maxf(rect.size.x * face_m.x, 0.000001),
-					span_cap / maxf(rect.size.y * face_m.y, 0.000001))), 1.0)
+	var area_cap := sqrt(float(DECAL_MAX_WINDOW_TEXELS) / (span_m.x * span_m.y))
+	var dens := maxf(minf(minf(texels_per_m, span_cap / span_m.x), minf(span_cap / span_m.y, area_cap)), 1.0)
 	var px_per_uv := face_m * dens
 	var size_px := Vector2i(
-		clampi(_next_po2(int(ceil(rect.size.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
-		clampi(_next_po2(int(ceil(rect.size.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
+		clampi(_align_window_px(int(ceil(rect.size.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
+		clampi(_align_window_px(int(ceil(rect.size.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
 	# Keep the requested rect centred inside the (possibly larger) image.
 	var span_uv := Vector2(float(size_px.x) / px_per_uv.x, float(size_px.y) / px_per_uv.y)
 	if span_uv.x < rect.size.x or span_uv.y < rect.size.y:
-		# _next_po2 rounding can overshoot the cap; grow the span instead.
+		# The alignment/rounding can overshoot the cap; grow the span instead.
 		span_uv = Vector2(maxf(span_uv.x, rect.size.x), maxf(span_uv.y, rect.size.y))
 		size_px = Vector2i(
-			clampi(_next_po2(int(ceil(span_uv.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
-			clampi(_next_po2(int(ceil(span_uv.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
+			clampi(_align_window_px(int(ceil(span_uv.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
+			clampi(_align_window_px(int(ceil(span_uv.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
 		span_uv = Vector2(float(size_px.x) / px_per_uv.x, float(size_px.y) / px_per_uv.y)
 	rect.position -= (span_uv - rect.size) * 0.5
 
@@ -567,11 +598,9 @@ static func _realloc_decal_window(mat: ShaderMaterial, old_img: Image, old_uv: R
 	mask_state_version += 1
 	return img
 
-static func _next_po2(v: int) -> int:
-	var out := 1
-	while out < v:
-		out <<= 1
-	return out
+## Window sizes round up to DECAL_WINDOW_ALIGN_PX (see the constant).
+static func _align_window_px(v: int) -> int:
+	return int(ceil(float(v) / float(DECAL_WINDOW_ALIGN_PX))) * DECAL_WINDOW_ALIGN_PX
 
 ## Clears the decal window to transparent on `mat` (the window itself stays, so
 ## the mapping the shader holds does not change).
@@ -1610,7 +1639,16 @@ static func _brush_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 		if not erase:
 			# Paint as a prebuilt sprite: one C++ blend per dab instead of a
 			# per-pixel GDScript loop (see _dab_sprite_cache).
-			var sprite := _flat_dab_sprite(src, radius, lut, opacity_b, texels_per_m)
+			#
+			# The sprite must be built at the WINDOW's real density, not the
+			# requested one: past DECAL_MAX_WINDOW_PX the window holds fewer
+			# texels per metre, and a sprite built at the requested density was
+			# drawn that much larger in window pixels — its soft falloff ran
+			# past the window edge and was cut off (the "paint cuts off
+			# abruptly as it expands" report: a stroke's last dabs rendered ~2x
+			# oversized and clipped).
+			var sprite := _flat_dab_sprite(src, radius, lut, opacity_b,
+					(px_per_m_u + px_per_m_v) * 0.5)
 			if sprite != null:
 				var half_px := Vector2(sprite.get_width() * 0.5, sprite.get_height() * 0.5)
 				var centre_px := Vector2(

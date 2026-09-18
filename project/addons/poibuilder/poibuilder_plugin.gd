@@ -3564,7 +3564,7 @@ func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
 	if new_mode != PBMaterialDock.DockMode.PAINT and new_mode != PBMaterialDock.DockMode.STAMP:
 		if paint_controller != null:
 			paint_controller.clear_cursor()
-		_sync_paint_block_hint()
+		_sync_paint_readout()
 	match new_mode:
 		PBMaterialDock.DockMode.SPRITE:
 			_start_sprite_tool()
@@ -4111,12 +4111,12 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		var hit := _pick_paint_surface(camera, event.position)
 		if not hit.is_empty():
 			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
-			_sync_paint_block_hint()
+			_sync_paint_readout()
 			if paint_controller.is_stroke_active:
 				paint_controller.apply_paint_stroke()
 		else:
 			paint_controller.clear_cursor()
-			_sync_paint_block_hint()
+			_sync_paint_readout()
 
 		if paint_controller.is_stroke_active:
 			return AFTER_GUI_INPUT_STOP
@@ -4132,7 +4132,7 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 				var hit := _pick_paint_surface(camera, event.position)
 				if not hit.is_empty():
 					paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
-				_sync_paint_block_hint()
+				_sync_paint_readout()
 				if paint_controller.mode == PBPaintController.Mode.PAINT:
 					paint_controller.begin_stroke()
 					return AFTER_GUI_INPUT_STOP
@@ -4147,24 +4147,49 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE:
 			paint_controller.reset()
-			_sync_paint_block_hint()
+			_sync_paint_readout()
 			if material_dock != null:
 				material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
 
-## The overlay's extents row carries the "why nothing is happening" line while
-## the brush hovers a surface the paint tools refuse (a billboard sprite's
-## transparent quad): a click that silently does nothing is the bug report this
-## whole guard exists to prevent.
-func _sync_paint_block_hint() -> void:
+## The overlay's extents row carries the paint cursor's state: why nothing is
+## happening when the brush hovers a surface the tools refuse (a billboard
+## sprite's transparent quad), or the decal layer's REAL texel density where a
+## stamp will land — the number that says whether a decal can be crisp on this
+## face (it drops on huge faces once the window hits its cap, which is why the
+## same sticker reads sharper on a small panel than on a 60 m floor).
+func _sync_paint_readout() -> void:
 	if tool_overlay == null or paint_controller == null:
 		return
-	if paint_controller.blocked_reason.is_empty():
+	if not paint_controller.blocked_reason.is_empty():
+		tool_overlay.set_creation_extents("Not paintable: %s — painting would drop its alpha"
+			% paint_controller.blocked_reason)
+		return
+	var mesh := paint_controller.target_mesh
+	if paint_controller.mode != PBPaintController.Mode.STAMP or mesh == null \
+			or mesh.pb_mesh_data == null or not paint_controller.paintable:
 		tool_overlay.set_creation_extents("")
 		return
-	tool_overlay.set_creation_extents("Not paintable: %s — painting would drop its alpha"
-		% paint_controller.blocked_reason)
+	var data := mesh.pb_mesh_data
+	var face_idx := paint_controller.target_face_idx
+	if face_idx < 0 or face_idx >= data.faces.size():
+		tool_overlay.set_creation_extents("")
+		return
+	var face := data.faces[face_idx]
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var mat := data.get_face_material(face)
+	if bounds.is_empty() or not PBSplat.is_splat_material(mat):
+		tool_overlay.set_creation_extents("")
+		return
+	var dens := PBSplat.decal_density(mat as ShaderMaterial,
+			Vector2(bounds["range_u"], bounds["range_v"]))
+	if dens <= 0.0:
+		tool_overlay.set_creation_extents("")
+		return
+	tool_overlay.set_creation_extents("Decal: %.0f texels/m%s" % [dens,
+		" — low for this face (the window is capped; a smaller painted span is sharper)"
+			if dens < PBSplat.DECAL_TEXELS_PER_M * 0.5 else ""])
 
 func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)

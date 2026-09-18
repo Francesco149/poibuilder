@@ -1452,6 +1452,22 @@ func _run() -> void:
 							tgt_face = fi
 							break
 
+					# 0. The ring must exist on the FIRST hover after entering the
+					# tab: it used to be built only by a size/softness nudge, so
+					# coming from the Stamp tab showed no ring at all.
+					dock_p._set_dock_mode(PBMaterialDock.DockMode.STAMP)
+					await _frames(4)
+					dock_p._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+					await _frames(4)
+					pc.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, brush_target, tgt_face)
+					await _frames(2)
+					var first_ring := pc.brush_mesh_instance.mesh as ImmediateMesh \
+							if pc.brush_mesh_instance != null else null
+					if first_ring != null and first_ring.get_surface_count() >= 2:
+						_pass("BRUSH-RING: the ring is built on the first hover after entering the tab")
+					else:
+						_fail("BRUSH-RING: no ring geometry on the first hover (mesh=%s)" % str(first_ring))
+
 					# 1. Painting defaults to splatting.
 					if pc.paint_target == PBPaintController.PaintTarget.SPLAT:
 						_pass("BRUSH-PANEL: painting defaults to texture splatting")

@@ -1560,3 +1560,129 @@ func test_dock_disables_the_brush_source_where_it_does_not_apply() -> void:
 	# …and switching the target takes it away again.
 	dock._opt_paint_target.item_selected.emit(PBPaintController.PaintTarget.SPLAT)
 	assert_true(dock._opt_brush_source.disabled, "Brush source disables again on Splat layers")
+
+# ==============================================================================
+# Decal window density: the brush sprite must match it
+# ==============================================================================
+
+## Painted alpha along the window's centre row, and the window's last column.
+func _decal_row_alpha(img: Image) -> PackedByteArray:
+	var out := PackedByteArray()
+	var row := img.get_height() / 2
+	var b := img.get_data()
+	for x in range(img.get_width()):
+		out.append(b[(row * img.get_width() + x) * 4 + 3])
+	return out
+
+## The colour brush's dab sprite is built at the WINDOW's real density, not the
+## requested 256 texels/m. When the window's density has dropped (a long painted
+## span on a big face), a sprite built at the requested density is drawn that
+## much larger in window pixels: the stroke's late dabs run past the window edge
+## and are clipped mid-falloff — the "paint cuts off abruptly at the edge of the
+## texture as it expands" report. A correct stroke ends in a soft fade INSIDE
+## the window.
+func test_decal_stroke_fades_out_inside_the_window() -> void:
+	# A 60 m face (where the window's density really does drop) with a stroke
+	# that spans 28 m: the window lands around 100 texels/m, well under the
+	# 256 the dab sprite asks for.
+	var data := PBShapeGenerators.create_plane(60.0, 60.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var mesh := PBMesh.new()
+	mesh.name = "StrokeProbe"
+	mesh.pb_mesh_data = data
+	add_child_autofree(mesh)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.brush_source = PBPaintController.BrushSource.COLOR
+	ctrl.brush_color = Color(0.85, 0.25, 0.2, 1.0)
+	ctrl.brush_radius = 0.5
+	ctrl.brush_softness = 1.0
+	ctrl.brush_opacity = 1.0
+	for i in range(29):
+		ctrl.update_cursor(Vector3(-14.0 + float(i), 0, 0), Vector3.UP, mesh, 0)
+		ctrl.begin_stroke()
+		ctrl.end_stroke()
+
+	var face := data.faces[0]
+	var mat := data.get_face_material(face) as ShaderMaterial
+	assert_true(PBSplat.is_splat_material(mat), "Fixture: the stroke created a splat material")
+	var img := PBSplat.get_decal_layer_image(mat)
+	assert_not_null(img, "Fixture: the stroke painted into the decal window")
+	var dens := PBSplat.decal_density(mat, Vector2(60.0, 60.0))
+	assert_lt(dens, PBSplat.DECAL_TEXELS_PER_M,
+		"Fixture: a 28 m painted span lowers the window's density (%.0f texels/m)" % dens)
+
+	var alpha := _decal_row_alpha(img)
+	var width := img.get_width()
+	var painted := 0
+	for x in range(width):
+		if alpha[x] > 2:
+			painted += 1
+	assert_gt(painted, 0, "Fixture: the stroke painted pixels")
+	assert_eq(int(alpha[width - 1]), 0, "The window's last column is untouched (the dab sprite used to overshoot it)")
+	assert_eq(int(alpha[width - 2]), 0, "…and so is the column before it")
+
+	# The stroke's own end fades: the last painted texel is a falloff tail, not
+	# a slab cut by the window edge.
+	var last := -1
+	for x in range(width):
+		if alpha[x] > 2:
+			last = x
+	assert_lt(last, width - 2, "The paint ends inside the window")
+	assert_lt(int(alpha[last]), 128, "The last painted texel is a tail (%d), not a cut slab" % int(alpha[last]))
+
+## The window's density is chosen against a per-axis cap AND a texel budget. A
+## big face's painted span used to collapse to the 2048-per-axis cap (a 60 m
+## floor's 25 m span landed at ~70 texels/m, half the base texture's density,
+## so its decals read blocky next to the surface around them).
+func test_decal_window_density_respects_cap_and_budget() -> void:
+	var data := PBShapeGenerators.create_plane(60.0, 60.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var mat := PBSplat.create_splat_material()
+	var face := data.faces[0]
+	PBSplat.ensure_face_splat_bounds(data, face)
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var face_m := Vector2(bounds["range_u"], bounds["range_v"])
+	assert_almost_eq(face_m.x, 60.0, 0.001, "Fixture: a 60 m face")
+
+	# Two stickers 19 m apart: the window has to cover both (a 19 m span).
+	PBSplat.ensure_decal_window(mat, Rect2(0.01, 0.01, 0.02, 0.02), face_m)
+	var img := PBSplat.ensure_decal_window(mat, Rect2(0.33, 0.33, 0.02, 0.02), face_m)
+	assert_not_null(img)
+	var texels := img.get_width() * img.get_height()
+	assert_lte(texels, int(PBSplat.DECAL_MAX_WINDOW_TEXELS * 1.25),
+		"The window stays inside its texel budget (%d texels)" % texels)
+	assert_lte(maxi(img.get_width(), img.get_height()), PBSplat.DECAL_MAX_WINDOW_PX,
+		"…and inside the per-axis cap")
+	var dens := PBSplat.decal_density(mat, face_m)
+	# 19.2 m of span + padding: the budget allows ~140 texels/m, the old
+	# 2048-px cap only 106.
+	assert_gt(dens, 120.0, "A 19 m painted span keeps a usable density (%.0f texels/m)" % dens)
+	assert_lte(dens, PBSplat.DECAL_TEXELS_PER_M, "…and never exceeds the requested density")
+
+	# A small span keeps the full 256 texels/m.
+	var small := PBSplat.create_splat_material()
+	PBSplat.ensure_decal_window(small, Rect2(0.4, 0.4, 0.02, 0.02), face_m)
+	assert_almost_eq(PBSplat.decal_density(small, face_m), PBSplat.DECAL_TEXELS_PER_M, 1.0,
+		"A compact decal keeps the full density")
+
+# ==============================================================================
+# Brush ring: built when the mode is entered
+# ==============================================================================
+
+## The ring's mesh used to be built only by the stamp path (and by a radius /
+## softness nudge): with the previews set up while the dock was on another tab,
+## entering PAINT showed no ring until the size was touched once.
+func test_brush_ring_mesh_exists_on_mode_entry() -> void:
+	var host := Node3D.new()
+	add_child_autofree(host)
+	var ctrl := PBPaintController.new()
+	ctrl.setup_previews(host)
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	assert_null(ctrl.brush_mesh_instance.mesh, "Fixture: the stamp tab has not built the ring")
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	assert_not_null(ctrl.brush_mesh_instance.mesh,
+		"Entering PAINT builds the ring — no size nudge needed")
+	var im := ctrl.brush_mesh_instance.mesh as ImmediateMesh
+	assert_eq(im.get_surface_count(), 2, "The ring carries its band + crosshair surfaces")

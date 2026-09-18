@@ -211,9 +211,13 @@ func set_mode(new_mode: Mode) -> void:
 	if is_stroke_active:
 		end_stroke()
 	mode = new_mode
+	# Build the mesh for the mode being entered: only the stamp quad used to be
+	# rebuilt here, so a brush ring whose mesh was never built (the previews
+	# were set up while the dock was on another tab) stayed invisible until a
+	# radius/softness nudge happened to rebuild it.
 	if mode == Mode.STAMP:
 		_update_stamp_preview_texture()
-		_build_stamp_mesh()
+	_update_preview_mesh()
 	_update_preview_visibility()
 	mode_changed.emit(mode)
 
