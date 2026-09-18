@@ -3,6 +3,62 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.154 — a sprite keeps its alpha, stickers keep their shape, emitters keep their cells
+
+Five reports from the paint/particles round.
+
+### Transparent surfaces are not paintable
+Painting a billboard sprite replaced its material with a splat shader, and the
+splat shader carries albedo/colour/roughness only — the **alpha scissor lived on
+the material that was thrown away**, so the sprite's silhouette turned into an
+opaque rectangle with undo as the only way back. `PBSplat.paint_block_reason` /
+`face_paint_block_reason` now refuse transparent materials and billboard sprites
+before anything is converted: the brush ring goes grey over them, the overlay's
+readout says "Not paintable: billboard sprite — painting would drop its alpha",
+a stroke or stamp click is a no-op, and faces inside a stamp's footprint are
+skipped one by one (a stamp may span faces). Opaque and already-splat-painted
+faces are unaffected.
+
+### Sticker previews follow the selected image
+The stamp preview's quad is sized from the image's aspect ratio, but only the
+*texture* was re-bound on a palette click — the quad kept the previous image's
+proportions. The hello-world sticker therefore previewed squashed until a spinbox
+nudge, and a square sticker afterwards previewed stretched to hello world's 2:1
+until the next nudge. `stamp_texture` now rebuilds the quad (and the material)
+on every switch.
+
+### Emitter sprite sheets: the quad is the CELL, not the image
+`Sheet Columns/Rows` sample one cell of a flipbook out of the texture, but the
+draw quad was always square, so a cell that was not square was stretched back to
+1:1 (a 3-column sheet of square cells stretched each cell 3x — the "columns make
+the particles stretch and clip" report). The quad's width now follows the
+**cell's** aspect (tex_w/cols : tex_h/rows), which the exporter already reads off
+the QuadMesh (`aspect` in the emitter record), so the editor preview, the retro
+viewer and the device agree. The knobs' tooltips state the sheet semantics
+(1 = the whole image is one cell). Single-frame textures are unchanged at 1:1
+and now keep their own aspect when it is not square.
+
+### Billboards get their own names
+The second sprite was created under the same "Billboard_Sprite" name, so Godot
+deduplicated the collision with its non-human-readable form
+(`@MeshInstance3D@7`) — a name that no longer reads as a billboard in the scene
+tree. Sprites are now named Billboard_Sprite, Billboard_Sprite2, … (the emitter
+placer's rule).
+
+### The brush-source row says what it does
+The Paint tab's **Brush: Color | Palette image** row only drives the decal
+brush; the default **Splat layers** target always paints the palette texture, so
+the row read "Color" while the brush painted a texture and switching it changed
+nothing. The default source is now **Palette image**, and the source + colour
+pickers are **disabled with a tooltip** while "Paint into: Splat layers" is
+selected (they enable again for the decal layer). The panel's hint says the
+same in one line.
+
+Verified: 1147/1147 headless tests (72 suites; +7 for the guard, the preview
+switch, the sheet cells, the naming and the source default) and the real-editor
+GUI harness (failures=0), which now drives the palette clicks, the paint
+hovers/clicks over a real sprite and the dock's enable/disable states.
+
 ## v0.9.153 — the paint & stamp panel actually drives the brush
 
 Reported against v0.9.152: every control in the paint panel did nothing
