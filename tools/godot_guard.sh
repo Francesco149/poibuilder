@@ -109,6 +109,22 @@ create_container() {
     ensure_image
     echo "[guard] creating persistent container (${GUARD_MEM} RAM, ${GUARD_CPUS} CPUs)"
     # stderr is kept visible: a failed --memory cgroup setup must not be silent.
+    # GUARD_X11=1 mounts the host's X socket dir so RENDERED runs (screenshot
+    # probes, the frame-pacing benchmark) can open a window on a real display:
+    # export DISPLAY before exec (xwayland-satellite :0 on this workstation).
+    # GUARD_ASSETS=1 mounts the dev machine's asset library (/mnt/ephemeral,
+    # read-only) so builders that instance pack props (the alpha demo map's
+    # barrels) find them. Recreate the container after flipping either flag —
+    # mounts are fixed at creation (GUARD_X11=1 GUARD_ASSETS=1 tools/godot_guard.sh recycle).
+    local -a x11_mounts=()
+    if [ "${GUARD_X11:-0}" = "1" ] && [ -d /tmp/.X11-unix ]; then
+        x11_mounts+=(-v /tmp/.X11-unix:/tmp/.X11-unix:ro)
+        echo "[guard] X11 passthrough enabled (/tmp/.X11-unix mounted)"
+    fi
+    if [ "${GUARD_ASSETS:-0}" = "1" ] && [ -d /mnt/ephemeral ]; then
+        x11_mounts+=(-v /mnt/ephemeral:/mnt/ephemeral:ro)
+        echo "[guard] asset library passthrough enabled (/mnt/ephemeral mounted ro)"
+    fi
     podman run -d --name "$NAME" \
         --label "${LABEL}=1" \
         --memory="$GUARD_MEM" --memory-swap="$GUARD_MEM" \
@@ -118,6 +134,7 @@ create_container() {
         -v /usr/lib:/usr/lib:ro \
         -v "${HOME_DIR}:/home/guard:Z" \
         -v "${REPO_ROOT}:/work:Z" \
+        "${x11_mounts[@]}" \
         -w /work \
         -e HOME=/home/guard \
         -e DOTNET_ROOT=/usr/share/dotnet \
@@ -158,13 +175,28 @@ scope_works() {
     systemd-run --user --scope --quiet -p MemoryMax=16M true >/dev/null 2>&1
 }
 
+## One `podman exec` argument list so every exec path forwards the same env —
+## DISPLAY/XAUTHORITY when set, which is what a GUARD_X11 container needs to
+## open a window on the host display. An ARRAY, not a shell function:
+## systemd-run's scope branch needs a real executable to run.
+podman_exec_args() {
+    PODMAN_EXEC_ARGS=(-e HOME=/home/guard)
+    if [ -n "${DISPLAY:-}" ]; then
+        PODMAN_EXEC_ARGS+=(-e "DISPLAY=${DISPLAY}")
+    fi
+    if [ -n "${XAUTHORITY:-}" ]; then
+        PODMAN_EXEC_ARGS+=(-e "XAUTHORITY=${XAUTHORITY}")
+    fi
+}
+
 ## Runs "$@" inside the container under a cap that is actually enforced.
 ## Never assumes: podman's flag is only trusted while podman manages cgroups,
 ## and an unusable systemd scope fails CLOSED rather than running uncapped.
 run_capped() {
     [ "$#" -gt 0 ] || { echo "[guard] run_capped needs a command" >&2; exit 2; }
+    podman_exec_args
     if [ -n "$(container_cgroup_path)" ]; then
-        podman exec -e HOME=/home/guard "$NAME" "$@"
+        podman exec "${PODMAN_EXEC_ARGS[@]}" "$NAME" "$@"
         return
     fi
     if scope_works; then
@@ -174,14 +206,14 @@ run_capped() {
         # the tree is orphaned.
         systemd-run --user --scope --quiet \
             -p "MemoryMax=${GUARD_MEM}" -p MemorySwapMax=0 -p MemoryZSwapMax=0 \
-            podman exec -e HOME=/home/guard "$NAME" "$@"
+            podman exec "${PODMAN_EXEC_ARGS[@]}" "$NAME" "$@"
         return
     fi
     if [ "${PB_GUARD_UNCAPPED:-0}" = "1" ]; then
         echo "[guard] WARNING: PB_GUARD_UNCAPPED=1 — NO kernel memory cap!" >&2
         echo "[guard] Best-effort ${UNCAPPED_ULIMIT_KB}KB address-space limit only. Ctrl-C if unintended." >&2
         bash -c "ulimit -v ${UNCAPPED_ULIMIT_KB}; exec \"\$@\"" _ \
-            podman exec -e HOME=/home/guard "$NAME" "$@"
+            podman exec "${PODMAN_EXEC_ARGS[@]}" "$NAME" "$@"
         return
     fi
     echo "[guard] FAIL: cannot enforce the ${GUARD_MEM} memory cap" >&2
