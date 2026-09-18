@@ -1,7 +1,9 @@
 ## PBExportDialog — Editor dialog for exporting PoiBuilder maps.
 ##
-## PBM (the PSP/retro map) is the primary format; GLB comes in two flavors
-## (Retro Baked and Modern live-materials). Individual toggles for quad
+## PBM (the PSP/retro map) is the default format; GLB comes in two flavors,
+## Modern Bake (paint baked into textures, no vertex lighting — the format to
+## play and ship on the modern pipeline) and Retro Baked (the vertex-lit
+## transport for the PSP pipeline and viewers). Individual toggles for quad
 ## subdivision, lighting bake (shadows + AO), texture baking, billboards, and
 ## collision meshes apply to the retro bakes.
 @tool
@@ -52,6 +54,8 @@ func _build_ui() -> void:
 	add_child(root_vb)
 
 	# Format selection — PBM is the default (PSP/retro, one-click export).
+	# The Modern Bake is the FIRST GLB flavor: it is the format to play and
+	# ship on the modern pipeline (paint baked, lighting left to the engine).
 	var hb_mode := HBoxContainer.new()
 	var lbl_mode := Label.new()
 	lbl_mode.text = "Format:"
@@ -59,8 +63,11 @@ func _build_ui() -> void:
 	hb_mode.add_child(lbl_mode)
 	_mode_option = OptionButton.new()
 	_mode_option.add_item("PBM — PoiBuilder Retro Map (PSP)", FORMAT_PBM)
-	_mode_option.add_item("GLB — Retro Baked Map", FORMAT_RETRO_GLB)
-	_mode_option.add_item("GLB — Modern Engine (live materials)", FORMAT_MODERN_GLB)
+	_mode_option.add_item("GLB — Modern Bake (lightmap-ready)", FORMAT_MODERN_GLB)
+	_mode_option.add_item("GLB — Retro Baked Map (vertex-lit)", FORMAT_RETRO_GLB)
+	_mode_option.set_item_tooltip(0, "One click to a fully baked retro map: vertex lighting, tile atlas, collision, emitters. Plays on the PSP and any .pbm consumer.")
+	_mode_option.set_item_tooltip(1, "The recommended play/ship format for the modern pipeline: splat paint and decals baked into per-face textures, plain standard materials, collision meshes — no vertex lighting, so realtime lights or LightmapGI stay in charge.")
+	_mode_option.set_item_tooltip(2, "The retro bake as glTF: grid quads, vertex lighting, tile textures. The transport for the retro viewers and the PSP pipeline.")
 	_mode_option.select(0)
 	_mode_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_mode_option.item_selected.connect(_on_mode_selected)
@@ -286,6 +293,11 @@ func _on_mode_selected(_idx: int) -> void:
 	_chk_bake_textures.button_pressed = is_retro
 	if _opt_splat_mode != null:
 		_opt_splat_mode.disabled = is_retro
+		# Every format switch re-parks the paint mode on the optimized bake:
+		# picking the modern GLB lands on it (paint composited into textures,
+		# lighting left to the consuming engine), and the retro flavors keep
+		# the (disabled) selector parked there too.
+		_opt_splat_mode.select(PBMapExporter.ExportSettings.SplatMode.BAKE)
 	# Keep the path's extension honest for the chosen format.
 	var path := _txt_path.text.strip_edges()
 	var want_ext := ".pbm" if _selected_format() == FORMAT_PBM else ".glb"

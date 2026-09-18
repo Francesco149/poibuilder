@@ -1002,16 +1002,45 @@ func test_export_dialog_defaults_to_pbm() -> void:
 	assert_eq(dialog._mode_option.selected, 0, "PBM must be the default format")
 	assert_true(dialog._txt_path.text.ends_with(".pbm"), "Default path must be .pbm")
 
-	# Switching to the modern GLB flavor swaps the extension and relaxes the
-	# retro bake toggles; switching back restores .pbm.
-	dialog._mode_option.select(2)
-	dialog._on_mode_selected(2)
+	# The MODERN bake is the first GLB flavor (the one to play/ship on the
+	# modern pipeline); the retro GLB follows it.
+	assert_eq(dialog._mode_option.get_item_id(1), dialog.FORMAT_MODERN_GLB,
+			"Modern Bake must be the first GLB flavor in the list")
+	assert_eq(dialog._mode_option.get_item_id(2), dialog.FORMAT_RETRO_GLB,
+			"Retro Baked Map must follow the Modern Bake")
+
+	# Switching to the modern GLB flavor swaps the extension, relaxes the
+	# retro bake toggles AND defaults to the optimized bake: paint baked into
+	# textures, no vertex lighting (realtime lights / LightmapGI stay in
+	# charge). Switching back restores .pbm.
+	dialog._mode_option.select(1)
+	dialog._on_mode_selected(1)
 	assert_eq(dialog._mode_option.get_selected_id(), dialog.FORMAT_MODERN_GLB,
 			"Modern GLB flavor must be selectable")
 	assert_true(dialog._txt_path.text.ends_with(".glb"), "Modern flavor must swap the path to .glb")
+	assert_false(dialog._chk_subdivide.button_pressed, "Modern flavor must not force grid subdivision")
+	assert_false(dialog._chk_bake_lighting.button_pressed, "Modern flavor must not bake vertex lighting")
+	assert_eq(dialog._opt_splat_mode.get_selected_id(),
+			PBMapExporter.ExportSettings.SplatMode.BAKE,
+			"Selecting the modern flavor must default the paint mode to Bake")
+	# ...and a deliberate INCLUDE choice resets to Bake when the flavor is
+	# re-picked, so the flavor switch always lands on the optimized bake.
+	dialog._opt_splat_mode.select(PBMapExporter.ExportSettings.SplatMode.INCLUDE)
+	dialog._mode_option.select(1)
+	dialog._on_mode_selected(1)
+	assert_eq(dialog._opt_splat_mode.get_selected_id(),
+			PBMapExporter.ExportSettings.SplatMode.BAKE,
+			"Re-picking the modern flavor must reset the paint mode to Bake")
 	dialog._mode_option.select(0)
 	dialog._on_mode_selected(0)
 	assert_true(dialog._txt_path.text.ends_with(".pbm"), "PBM flavor must swap the path back to .pbm")
+	assert_true(dialog._chk_bake_lighting.button_pressed, "PBM flavor restores the retro bake toggles")
+	assert_eq(dialog._mode_option.get_item_id(2), dialog.FORMAT_RETRO_GLB,
+			"Retro flavor stays selectable after the round trip")
+	dialog._mode_option.select(2)
+	dialog._on_mode_selected(2)
+	assert_true(dialog._chk_bake_lighting.button_pressed, "Retro GLB flavor carries the vertex-light bake")
+	assert_true(dialog._opt_splat_mode.disabled, "The modern paint switch must be inert for the retro flavors")
 
 func test_editor_tool_meshes_are_never_exported() -> void:
 	# The sprite raise guide (ImmediateMesh line art) lives in the live scene;

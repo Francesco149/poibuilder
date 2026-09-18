@@ -478,7 +478,7 @@ func _build_ui() -> void:
 	env_popup.id_pressed.connect(_on_env_menu_pressed)
 
 	# Export group — the dialog carries format + bake options (PBM default,
-	# GLB retro-baked or modern live-materials).
+	# GLB modern bake or retro vertex-lit).
 	_sep_export = _make_sep()
 
 	_btn_export_more = Button.new()
@@ -488,7 +488,7 @@ func _build_ui() -> void:
 		_btn_export_more.text = "Export..."
 	_btn_export_more.flat = true
 	_btn_export_more.focus_mode = Control.FOCUS_NONE
-	_btn_export_more.tooltip_text = "Export...: open the export dialog (PBM default; GLB retro-baked or modern live-materials, bake options)"
+	_btn_export_more.tooltip_text = "Export...: open the export dialog (PBM default; GLB modern bake or retro vertex-lit, bake options)"
 	_btn_export_more.pressed.connect(func(): export_requested.emit())
 
 	_btn_docs = Button.new()

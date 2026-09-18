@@ -52,7 +52,7 @@ working, not a failure.
 
 The "does the bake look right in Godot" check (what other engines would get).
 
-1. Export from scratch: **Export dialog → Retro Engine (.glb)**.
+1. Export from scratch: **Export dialog → GLB — Retro Baked Map (vertex-lit)**.
 2. `./test_baked_glb.sh` — opens the map viewer. **P** toggles FPS play mode
    (walk the map, test colliders), **1–5** render modes, **R** respawn.
 3. **Pass**: atlas tiles + vertex lighting render, painted tiles present,
@@ -63,7 +63,7 @@ The "does the bake look right in Godot" check (what other engines would get).
 The "does the plain .glb hold up outside PoiBuilder" check (boots straight
 into play mode).
 
-1. Export from scratch: **Export dialog → Modern Engine (.glb)**.
+1. Export from scratch: **Export dialog → GLB — Modern Bake (lightmap-ready)** (paint mode defaults to *Bake into textures*).
 2. `./test_modern_glb.sh` — same viewer, FPS from the start.
 3. **Pass**: geometry/materials/colliders intact; decal stamps appear as
    ordinary quads; splat-painted surfaces show the **base** texture (paint
