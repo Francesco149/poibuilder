@@ -166,7 +166,15 @@ wait_link() { psp_wait_link "${1:-$LINK_GRACE}" "waiting for the PSPLink link"; 
 
 reset_device() {
     echo "  resetting the device (psplink reset -> fresh GE/display state)"
-    timeout 30 "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
+    # A reset can only land on a LIVE link. Sending it into a dead one just
+    # burns two 30s pspsh timeouts per attempt while the PSP re-activates on
+    # its own anyway (and, with the usbhostfs watchdog prx, keeps re-activating
+    # every ~15-30s until the daemon claims it).
+    if link_ok; then
+        timeout 30 "${PSPSH[@]}" -n -e "reset" >/dev/null 2>&1 || true
+    else
+        echo "  link already down — waiting for the PSP to re-activate"
+    fi
     if ! wait_link 12; then
         # The daemon can wedge (alive, but never completing the handshake on
         # a re-attached PSP). A fresh daemon claims the PSP's next activation

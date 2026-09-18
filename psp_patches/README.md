@@ -51,6 +51,31 @@ only posts its async receive after its own `send_hello_cmd()` succeeds.
   with dmesg, and `PSP hello exchanged — hostfs link established` is the
   definitive link-up marker (grep target for scripts).
 
+### 0003 — usbhostfs.prx re-activation watchdog (PSP side)
+
+The give-up state itself, killed at the source. The stock PSP-side stack
+shrinks its activation window on every missed host claim and eventually
+stops presenting USB entirely — a state only relaunching PSPLink on the
+device clears (a cable replug does not; the degraded state lives in the
+loaded modules). The watchdog thread in `usbhostfs.prx`:
+
+- does nothing while a host link is up;
+- when no host has been connected for two 15 s intervals, cycles
+  `sceUsbDeactivate`/`sceUsbActivate` — a *software replug*: it resets the
+  activation patience AND aborts in-flight requests, which also unfreezes
+  the `usb_thread` if it is parked in one of its timeout-less transfer
+  waits.
+
+So a waiting host daemon gets a fresh activation to claim every ~15–30 s,
+forever. Combined with the always-on `psp-usbhostfs.service` daemon, the
+recovery from any wedge is: nothing — no replug, no reboot, no pkill.
+
+**Installing it**: this patch changes a PSP-side module, so it must reach
+`ms0:/PSP/GAME/PSPLINK/usbhostfs.prx` once — either a full
+`./setup_psplink.sh` (its memory-stick step copies the patched build) or the
+one-shot `./psp_install_prx.sh` (backs up the old module first). Afterwards
+relaunch PSPLink on the device once.
+
 ## Where things live
 
 | What | Where |

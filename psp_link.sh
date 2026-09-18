@@ -227,7 +227,8 @@ psp_link_state() {
         echo "  state: the PSP has not activated USB in the last 10 min (last seen:"
         echo "  ${since:-never}). It has either given up after repeated missed"
         echo "  activations or is unplugged/suspended. The daemon is up and polling"
-        echo "  every 100 ms — ONE replug (or relaunching PSPLink on the device)"
-        echo "  connects it for good; no rebooting or pkill needed."
+        echo "  every 100 ms — with the usbhostfs watchdog prx installed just WAIT"
+        echo "  ~30s for its re-activation; otherwise ONE replug (or relaunching"
+        echo "  PSPLink on the device) connects it; no rebooting or pkill needed."
     fi
 }

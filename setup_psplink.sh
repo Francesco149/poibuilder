@@ -34,21 +34,30 @@ else
     git clone --depth 1 https://github.com/pspdev/psplinkusb.git "$PSPLINK_SRC"
 fi
 
-# The host tools need the local robustness patches (100 ms activation-window
-# polling, hello-gated async, drop logging — see psp_patches/README.md). A
-# FRESH clone from upstream does not have them; without this check a re-run
-# would silently build and install an unpatched daemon over the good one.
-if ! grep -q USBHOSTFS_POLL_MS "$PSPLINK_SRC/usbhostfs_pc/main.c"; then
-    echo "applying usbhostfs_pc robustness patches from $REPO_DIR/psp_patches/"
-    for p in "$REPO_DIR"/psp_patches/0*.patch; do
-        [ -e "$p" ] || die "no patches found in $REPO_DIR/psp_patches/"
-        git -C "$PSPLINK_SRC" apply --check "$p" 2>/dev/null \
-            || die "patch $(basename "$p") does not apply cleanly to $PSPLINK_SRC"
+# The host tools need the local robustness patches and the PSP side needs the
+# re-activation watchdog (see psp_patches/README.md). A FRESH clone from
+# upstream has neither; without this a re-run would silently build and
+# install unpatched components over the good ones. Per-patch: apply only if
+# it still applies cleanly (already-applied patches fail --check and are
+# skipped); afterwards verify the markers so a conflicting upstream change
+# dies loudly instead of shipping stock behaviour.
+applied=0
+for p in "$REPO_DIR"/psp_patches/0*.patch; do
+    [ -e "$p" ] || die "no patches found in $REPO_DIR/psp_patches/"
+    if git -C "$PSPLINK_SRC" apply --check "$p" 2>/dev/null; then
+        echo "applying $(basename "$p")"
         git -C "$PSPLINK_SRC" apply "$p"
-    done
+        applied=1
+    fi
+done
+if [ "$applied" = 1 ]; then
     git -C "$PSPLINK_SRC" -c user.name="$USER" -c user.email="$USER@localhost" \
-        commit -qam "carry local usbhostfs_pc robustness patches (see psp_patches/)" || true
+        commit -qam "carry local psplinkusb robustness patches (see psp_patches/)" || true
 fi
+grep -q USBHOSTFS_POLL_MS "$PSPLINK_SRC/usbhostfs_pc/main.c" \
+    || die "host-tool patches (0001/0002) missing and would not apply — upstream moved?"
+grep -q usb_watchdog_thread "$PSPLINK_SRC/usbhostfs/main.c" \
+    || die "watchdog patch (0003) missing and would not apply — upstream moved?"
 
 echo "=== [2/5] Building PSP-side modules (pspdev container) ==="
 podman run --rm -v "$PSPLINK_SRC:/src:Z" -w /src docker.io/pspdev/pspdev:latest \
@@ -116,4 +125,7 @@ cat <<'EOF'
 On the PSP: press O to leave USB mode, then Game -> Memory Stick -> PSPLink.
 It will print "Waiting for usbhostfs connection..." and stay there; from then
 on drive everything from this machine with ./run_psp_hw.sh
+NOTE: the memory-stick copy above already includes the usbhostfs watchdog
+(0003). On an already-installed PSP, ./psp_install_prx.sh refreshes just that
+module without re-running the whole setup.
 EOF

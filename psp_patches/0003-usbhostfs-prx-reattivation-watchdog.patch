@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: headpats <headpats@localhost>
+Date: Fri, 18 Sep 2026 16:48:28 +0200
+Subject: [PATCH] =?UTF-8?q?usbhostfs:=20re-activation=20watchdog=20?=
+ =?UTF-8?q?=E2=80=94=20never=20give=20up=20waiting=20for=20a=20host?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The stock PSP-side stack shrinks its activation window on every missed
+host claim and eventually stops presenting USB entirely ('give-up'),
+a state only relaunching PSPLink clears — replugging the cable does
+not, because the degraded state lives in the loaded modules.
+
+Add a watchdog thread to usbhostfs.prx: when no host has been
+connected for two 15s intervals it cycles
+sceUsbDeactivate/sceUsbActivate. That is a software replug — it resets
+the activation patience AND aborts in-flight requests, unfreezing the
+usb_thread if it is parked in one of the timeout-less transfer waits —
+so a waiting host daemon gets a fresh activation to claim every 15s,
+forever. Does nothing while a link is up.
+
+Links -lpspusb_driver for sceUsbActivate/sceUsbDeactivate (psplink.prx
+already did).
+---
+ usbhostfs/Makefile |  2 +-
+ usbhostfs/main.c   | 64 ++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/usbhostfs/Makefile b/usbhostfs/Makefile
+index 23e78cf..182d92c 100644
+--- a/usbhostfs/Makefile
++++ b/usbhostfs/Makefile
+@@ -11,7 +11,7 @@ ASFLAGS = $(CFLAGS)
+ 
+ LIBDIR =
+ 
+-LIBS = -lpspusbbus_driver
++LIBS = -lpspusbbus_driver -lpspusb_driver
+ 
+ PSPSDK=$(shell psp-config --pspsdk-path)
+ include $(PSPSDK)/lib/build_prx.mak
+diff --git a/usbhostfs/main.c b/usbhostfs/main.c
+index 3caf1a6..c42003b 100644
+--- a/usbhostfs/main.c
++++ b/usbhostfs/main.c
+@@ -43,6 +43,8 @@ enum UsbTransEvents
+ 
+ /* Main USB thread id */
+ static SceUID g_thid = -1;
++/* USB re-activation watchdog thread id */
++static SceUID g_watchdog_thid = -1;
+ /* Main USB event flag */
+ static SceUID g_mainevent = -1;
+ /* Main USB transfer event flag */
+@@ -1051,6 +1053,49 @@ int usb_thread(SceSize size, void *argp)
+ 	return 0;
+ }
+ 
++/* USB re-activation watchdog.
++ *
++ * The stock PSP-side behaviour gives up entirely after a run of missed
++ * activation windows (each miss also shortens the next window), leaving a
++ * state where replugging the cable changes nothing and only relaunching
++ * PSPLink recovers. This watchdog removes that state: whenever no host has
++ * been connected for two intervals, it cycles sceUsbDeactivate/sceUsbActivate.
++ * Cycling is a software replug — it also aborts in-flight requests, which
++ * unfreezes the usb_thread if it is parked in one of the (timeout-less)
++ * transfer waits — so a waiting host daemon gets a fresh activation to claim
++ * every WATCHDOG_INTERVAL seconds, forever.
++ *
++ * While a link is up it does nothing, and with no cable plugged the cycling
++ * is idle noise (the same kind of activation retries the stock stack already
++ * performs, just without the give-up). */
++#define WATCHDOG_INTERVAL_SECS 15
++
++int usb_watchdog_thread(SceSize size, void *argp)
++{
++	int idle_cycles = 0;
++
++	while(1)
++	{
++		sceKernelDelayThread(WATCHDOG_INTERVAL_SECS * 1000 * 1000);
++		if(g_connected)
++		{
++			idle_cycles = 0;
++			continue;
++		}
++		if(++idle_cycles >= 2)
++		{
++			idle_cycles = 0;
++			MODPRINTF("usbhostfs watchdog: no host for %ds, recycling USB\n",
++				WATCHDOG_INTERVAL_SECS * 2);
++			sceUsbDeactivate(HOSTFSDRIVER_PID);
++			sceKernelDelayThread(500 * 1000);
++			sceUsbActivate(HOSTFSDRIVER_PID);
++		}
++	}
++
++	return 0;
++}
++
+ /* USB start function */
+ int start_func(int size, void *p)
+ {
+@@ -1145,6 +1190,19 @@ int start_func(int size, void *p)
+ 		return -1;
+ 	}
+ 
++	g_watchdog_thid = sceKernelCreateThread("USBWatchdog", usb_watchdog_thread,
++		10, 0x1000, 0, NULL);
++	if(g_watchdog_thid >= 0)
++	{
++		sceKernelStartThread(g_watchdog_thid, 0, NULL);
++	}
++	else
++	{
++		/* Not fatal: stock behaviour, just without the anti-give-up guard */
++		MODPRINTF("Couldn't create usb watchdog thread %08X\n", g_watchdog_thid);
++		g_watchdog_thid = -1;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1160,6 +1218,12 @@ int stop_func(int size, void *p)
+ 		g_thid = -1;
+ 	}
+ 
++	if(g_watchdog_thid >= 0)
++	{
++		sceKernelTerminateDeleteThread(g_watchdog_thid);
++		g_watchdog_thid = -1;
++	}
++
+ 	if(g_mainevent >= 0)
+ 	{
+ 		sceKernelDeleteEventFlag(g_mainevent);
+-- 
+2.55.0
+
