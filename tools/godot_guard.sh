@@ -125,6 +125,15 @@ create_container() {
         x11_mounts+=(-v /mnt/ephemeral:/mnt/ephemeral:ro)
         echo "[guard] asset library passthrough enabled (/mnt/ephemeral mounted ro)"
     fi
+    # GPU access rides with GUARD_X11: without /dev/dri the container's GLX
+    # falls back to llvmpipe and a "frame-pacing" benchmark would measure the
+    # CPU rasterizer. --group-add keep-groups carries the host user's video
+    # group so the card node (root:video) opens.
+    local -a gpu_flags=()
+    if [ "${GUARD_X11:-0}" = "1" ] && [ -d /dev/dri ]; then
+        gpu_flags+=(--device /dev/dri --group-add keep-groups)
+        echo "[guard] GPU passthrough enabled (/dev/dri)"
+    fi
     podman run -d --name "$NAME" \
         --label "${LABEL}=1" \
         --memory="$GUARD_MEM" --memory-swap="$GUARD_MEM" \
@@ -135,6 +144,7 @@ create_container() {
         -v "${HOME_DIR}:/home/guard:Z" \
         -v "${REPO_ROOT}:/work:Z" \
         "${x11_mounts[@]}" \
+        "${gpu_flags[@]}" \
         -w /work \
         -e HOME=/home/guard \
         -e DOTNET_ROOT=/usr/share/dotnet \
