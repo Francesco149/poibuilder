@@ -1837,6 +1837,17 @@ func _run() -> void:
 						await _frames(2)
 						if plugin.tool_overlay.params_open and plugin._params_session_kind == "emitter_edit":
 							_pass("EMITTER-PROPS: properties session opened")
+							# The sheet rule in the UI: the knobs are greyed out
+							# exactly when the emitter's texture is not *_sheet.
+							var sheetable: bool = PBParticleParams.is_sheet_texture(plugin.particle_placer.last_texture)
+							var cols_spin: SpinBox = plugin.tool_overlay._param_spinboxes.get("atlas_cols", null)
+							if cols_spin != null and cols_spin.editable == sheetable:
+								_pass("EMITTER-PROPS: sheet knobs %s to match the texture (%s)" % [
+									"disabled" if not sheetable else "enabled",
+									plugin.particle_placer.last_texture.resource_path.get_file()])
+							else:
+								_fail("EMITTER-PROPS: sheet knob disabled state wrong (sheetable=%s, spin=%s)" % [
+									str(sheetable), str(cols_spin)])
 							plugin._on_param_changed("count", 5.0)
 							await _frames(1)
 							plugin._on_params_applied()

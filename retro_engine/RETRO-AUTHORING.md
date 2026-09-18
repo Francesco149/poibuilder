@@ -125,6 +125,12 @@ So:
 - **Blended** (smoke, mist) costs its fill like any surface and needs
   back-to-front sorting: keep those emitters small, off-centre, and out of the
   player's face.
+- **Flipbook textures are declared by name**: a texture whose file name
+  carries `_sheet` (the two shipped: `particle_flame_sheet.png`,
+  `particle_smoke_sheet.png`) grids into cells and cycles one cell per
+  particle per lifetime. Any other texture always shows whole — the Sheet
+  Columns/Rows knobs are greyed out for it, because a grid over a single
+  image can only slice it into fragments.
 - The format caps **256 particles per map**; the whole budget measured 0.72 ms
   gpu / 1.14 ms cpu, i.e. about a fifth of a frame. Particle *count* is cheap;
   particle *screen area* is not.

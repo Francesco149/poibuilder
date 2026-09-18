@@ -924,6 +924,7 @@ func _build_ui() -> void:
 		+ "• Click a surface — a live emitter appears; mouse up/down lifts it off the surface, click locks.\n" \
 		+ "• Mouse left/right adjusts the particle count; wheel adjusts the particle size; click commits.\n" \
 		+ "• Fine tuning (speed, spread, additive, flipbook…): select the emitter and use Edit Emitter Properties in the overlay.\n" \
+		+ "• Flipbook: only *_sheet textures grid into cells; other textures always show whole.\n" \
 		+ "• Esc cancels the current placement. Select the Material & UV tab to exit particle mode."
 	_particle_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_particle_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

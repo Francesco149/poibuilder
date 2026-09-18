@@ -615,6 +615,10 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 		spin.step = p_step
 		spin.suffix = str(def.get("suffix", ""))
 		spin.value = float(values.get(param_name, p_min))
+		# SpinBox has no `disabled` (it is a Range): editable=false is the
+		# engine's full read-only — blocks typing AND the up/down arrows, and
+		# draws the disabled style (SpinBox::gui_input gates on it).
+		spin.editable = not bool(def.get("disabled", false))
 		if def.has("tooltip"):
 			spin.tooltip_text = str(def["tooltip"])
 			caption.tooltip_text = str(def["tooltip"])

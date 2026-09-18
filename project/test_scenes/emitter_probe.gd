@@ -14,6 +14,12 @@ extends SceneTree
 ##              particle and walks through the colours over the lifetime
 ##   c_sheet1x3 the same as a 64x192 sheet with 3 ROWS
 ##   d_wide     a 128x64 (2:1) single frame - the particle must be 2:1 wide
+##   e_tall_cells a 96x64 sheet of 32x64 cells - square quads used to stretch
+##              them; each particle is a 0.5:1-tall cell
+##   f_glow_cols2 the shipped glow (NOT a sheet) with Sheet Columns = 2
+##              requested - the sheet rule clamps it, so every particle shows
+##              the WHOLE glow instead of a sliced half-disc ("rows/cols cut
+##              my particles")
 ##
 ## Prints each emitter's quad size + frame grid; the assertions live in
 ## tests/test_pb_particle_placer.gd. This is for looking at the result.
@@ -40,10 +46,17 @@ func _init() -> void:
 	var cells := _sheet_cells(glow, 3, 1)
 	_cases = [
 		{"name": "a_single", "tex": glow, "cols": 1, "rows": 1},
-		{"name": "b_sheet3x1", "tex": _tinted_sheet(cells, 3, 1), "cols": 3, "rows": 1},
-		{"name": "c_sheet1x3", "tex": _tinted_sheet(cells, 1, 3), "cols": 1, "rows": 3},
+		{"name": "b_sheet3x1", "tex": _tinted_sheet(cells, 3, 1, "sheet3x1"), "cols": 3, "rows": 1},
+		{"name": "c_sheet1x3", "tex": _tinted_sheet(cells, 1, 3, "sheet1x3"), "cols": 1, "rows": 3},
 		{"name": "d_wide", "tex": _wide_frame(glow), "cols": 1, "rows": 1},
 		{"name": "e_tall_cells", "tex": _tall_cells_sheet(cells), "cols": 3, "rows": 1},
+		# The "rows/cols cut my particles" report: the plain glow is NOT a
+		# sheet, so cranking the knobs must still render the WHOLE glow.
+		{"name": "f_glow_cols2", "tex": glow, "cols": 2, "rows": 1},
+		# The same emitter ADDITIVE — how the glow preset actually renders in
+		# the editor and on the device (the case above forces blended so the
+		# frame grid reads; additive quads sum to white under overlap).
+		{"name": "g_glow_add", "tex": glow, "cols": 2, "rows": 1, "additive": 1.0},
 	]
 	_run_next()
 
@@ -67,7 +80,7 @@ func _run_next() -> void:
 	values["spread"] = 70.0
 	values["rise"] = 0.0
 	values["lifetime"] = 2.0
-	values["additive"] = 0.0
+	values["additive"] = float(c.get("additive", 0.0))
 	values["opacity"] = 1.0
 	values["atlas_cols"] = float(c["cols"])
 	values["atlas_rows"] = float(c["rows"])
@@ -105,8 +118,9 @@ func _sheet_cells(glow: Texture2D, _cols: int, _rows: int) -> Array:
 		out.append(img)
 	return out
 
-## Lays `cells` out as a `cols` x `rows` sheet.
-func _tinted_sheet(cells: Array, cols: int, rows: int) -> Texture2D:
+## Lays `cells` out as a `cols` x `rows` sheet. The path carries the `_sheet`
+## marker: under the sheet rule only a declared sheet may grid.
+func _tinted_sheet(cells: Array, cols: int, rows: int, kind: String) -> Texture2D:
 	var cw: int = (cells[0] as Image).get_width()
 	var ch: int = (cells[0] as Image).get_height()
 	var sheet := Image.create(cw * cols, ch * rows, false, Image.FORMAT_RGBA8)
@@ -114,7 +128,9 @@ func _tinted_sheet(cells: Array, cols: int, rows: int) -> Texture2D:
 		var cell: Image = cells[i]
 		sheet.blit_rect(cell, Rect2i(0, 0, cw, ch),
 				Vector2i((i % cols) * cw, (i / cols) * ch))
-	return ImageTexture.create_from_image(sheet)
+	var tex := ImageTexture.create_from_image(sheet)
+	tex.resource_path = "res://probe/%s_sheet.png" % kind
+	return tex
 
 ## A 3-column sheet whose cells are 32x64 (0.5:1): the shape a square quad
 ## used to stretch 2x wider than the art.
@@ -125,7 +141,9 @@ func _tall_cells_sheet(cells: Array) -> Texture2D:
 	for i in range(3):
 		var cell: Image = (cells[i] as Image).get_region(Rect2i(0, 0, cw, ch))
 		sheet.blit_rect(cell, Rect2i(0, 0, cw, ch), Vector2i(i * cw, 0))
-	return ImageTexture.create_from_image(sheet)
+	var tex := ImageTexture.create_from_image(sheet)
+	tex.resource_path = "res://probe/tall_cells_sheet.png"
+	return tex
 
 ## The imported PNGs arrive compressed; get_pixel/resize need RGBA8.
 func _uncompressed(tex: Texture2D) -> Image:

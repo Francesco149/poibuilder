@@ -575,6 +575,13 @@ Fields Godot has no concept for are reachable as explicit `poi_*` metadata on th
 node — an override list, not a second authoring path: `poi_additive`,
 `poi_y_locked`, `poi_wobble_amp`, `poi_wobble_freq`, `poi_knee`, `poi_seed`.
 
+Authoring rule (enforced by PoiBuilder's emitter UI since v0.9.157): the
+flipbook grid is a promise about the texture's layout. Its sheet knobs grid
+only textures whose file name carries the `_sheet` marker (the shipped
+`particle_flame_sheet.png` / `particle_smoke_sheet.png`); for any other
+texture the knobs are inert and the emitter shows the whole image, because a
+cols×rows grid over a single-frame image can only slice it into fragments.
+
 ### 8.7 Recipes
 
 **A looping animation on one quad (the cheapest emitter there is).** Set
