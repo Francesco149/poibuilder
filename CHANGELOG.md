@@ -3,6 +3,63 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.157 — the sheet knobs only grid declared sheets (the "rows/cols cut my particles" report)
+
+### The flipbook grid is inert on non-sheet textures
+The report: with a glow emitter selected, raising Sheet Columns sliced the
+64x64 glow into narrow fragments — each particle a fraction of the art, worse
+the higher the knobs went. That is all a flipbook grid CAN do: the format
+samples the texture as a cols x rows grid, one cell per particle, cycling over
+the lifetime, so on a single-frame image any grid >1x1 is a slicing
+instruction. The previous round made the modal's readout say so; this round
+makes the knobs stop doing it. The `_sheet` file-name marker — the same one
+`preset_for_texture` arms 4x1 from — is the declaration that an image is laid
+out as cells:
+
+- `PBParticleParams.is_sheet_texture` is the rule; `apply_values` clamps the
+  grid to 1x1 on anything else (the quad takes the whole image's aspect, the
+  exporter record follows the material, so editor, viewer and device agree).
+- `values_from_node` reports the rendered truth: a legacy hand-sliced node
+  opens in the properties modal — and re-saves on its next edit — as one whole
+  frame.
+- The properties modal greys the two spinners out for non-sheet emitters
+  (SpinBox is a Range with no `disabled`; `editable = false` is the engine's
+  full read-only — typing and arrows both dead, disabled style drawn). A
+  snap-back in the param-changed path keeps spinners, node and readout at 1x1
+  even if a grid change slips through. The dock's help text teaches the rule,
+  and SPEC_RETRO_FORMAT 8.6 / RETRO-AUTHORING 4.3 record it.
+- Rendered proof (`test_scenes/emitter_probe.gd`): case f renders the shipped
+  glow with Columns = 2 requested as WHOLE round discs (was: sliced wedges
+  like the report's screenshot); case b shows a real 3x1 sheet still
+  flipbooking one full cell per particle; new case g renders the glow additive
+  — how the preset actually appears in the editor and on the device.
+- Tests: the flipbook fixture sheets are now declared via `_sheet` paths (the
+  rule under test), a new `test_sheet_knobs_cannot_slice_a_single_frame` pins
+  clamp + readback + exporter parity, and the GUI harness asserts the greyed
+  spinners in a real editor ("EMITTER-PROPS: sheet knobs disabled to match the
+  texture").
+
+### The probe's dark rim is the blended preview, not the art
+The f-case render shows a dark ring at each particle's rim: the probe forces
+BLENDED mode so the frame grid reads (overlapping additive quads sum to
+white), and the glow's alpha is 1-bit BY DESIGN — additive art keeps its
+falloff in the RGB channels so it stays RGBA5551 on the device
+(`gen_particle_textures.py` documents the convention). Straight-alpha
+filtering of that edge band dims it into a visible ring only in blended mode;
+in additive — the editor preview's and the PSP's path for the glow preset —
+black edge texels add nothing, and probe case g shows the clean falloff.
+
+### PSPLink harness: the PSP-side USB re-activation watchdog
+Landed this round (commit `50eae25`): patch 0003 adds a watchdog thread to
+`usbhostfs.prx` that cycles `sceUsbDeactivate`/`sceUsbActivate` when no host
+has claimed the link for two 15s intervals — a software replug that resets the
+activation patience and unfreezes timeout-less transfer waits, so the
+always-on daemon claims a fresh activation every ~15-30s, forever. The
+give-up state that used to need a PSPLink relaunch on the device is gone.
+`psp_install_prx.sh` installs the patched module onto the memory stick
+(backing up the old one); `setup_psplink.sh` applies patches per-patch with
+marker verification; `run_psp_hw.sh` only sends `reset` into a live link.
+
 ## v0.9.156 — one writer for the map format, no demo lumps, and sheets that show what the knobs do
 
 ### The GLB->PBM converters and the raylib demo are retired
