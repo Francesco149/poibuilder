@@ -8,7 +8,7 @@ Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://expor
 For the whole journey on one map, see the [walkthroughs](walkthrough-modern.html):
 build → export → play, once per pipeline.
 
-> [gotcha] The PoiBuilder scene as-is is the *authoring* format — the live splat shader and decal layers carry a significant performance cost (~2.3× the baked GLB's frame time on the [benchmark baseline](performance.html)). It is highly recommended to **export and play the baked map** (GLB for the modern pipeline, PBM for retro); keep the editable scene for building, testing and iterating.
+> [gotcha] The PoiBuilder scene as-is is the *authoring* format — the live splat shader and decal layers carry a significant performance cost (~2.5× the baked GLB's frame time on the [benchmark baseline](performance.html)). It is highly recommended to **export and play the baked map** (GLB for the modern pipeline, PBM for retro); keep the editable scene for building, testing and iterating.
 
 ## Modern GLB (baked)
 
@@ -34,6 +34,15 @@ Output: `.glb` as transport, and/or `.pbm` (the binary map). Both land in `proje
 :::shot map-export.png
 One click to a retro .pbm map.
 :::
+
+## Scrolling textures
+
+A scrolling texture is a property of the **material**: the Material dock writes a speed (in texture repeats per second, per UV axis, signed — negative V falls down a wall) onto the material, and the editor viewport animates it live. The exports carry the *speed*, not the animation — whichever consumer wants motion applies the one-line recipe `uv(t) = uv(0) + t · speed`:
+
+- **PBM** — each mesh's header stores `uv_scroll_u` / `uv_scroll_v` ([format §5.1](https://github.com/Francesco149/poibuilder/blob/master/SPEC_RETRO_FORMAT.md)), and the bake exempts scrolling faces from the tile atlas so the face keeps a texture that can slide. For a proven implementation, read the reference PSP engine — `retro_engine/psp/psp_render.c` applies the offset per moving mesh on the device — or the Godot viewer, which replays it the same way.
+- **GLB (either flavor)** — the speed rides the material's glTF `extras` as `"poi_uv_scroll": [u, v]` (repeats per second), in both the retro and modern bakes. A consumer that wants the falls to fall reads that record and offsets the material's UVs over time; without those few lines the GLB shows the water at rest — which is exactly what a static glTF viewer will do.
+
+> [gotcha] Do not splat-paint a scrolling face. Paint bakes to a static tile; keep painted and scrolling surfaces on separate faces.
 
 ## Texture sanitization
 

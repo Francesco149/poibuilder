@@ -74,6 +74,20 @@ static func build_demo_scene(include_player: bool = false, preset_name: String =
 		var flower_img: Image = (load(flower_path) as Texture2D).get_image()
 		PBSplat.paste_decal(floor_node.pb_mesh_data,
 			Vector3(-4.6, FLOOR_TOP_LOCAL_Y, 1.2), Vector3.UP, 0.0, 1.6, 0.9, flower_img)
+	# Wet-stain dabs ringing the pool — a stamp used as MATERIAL rather than
+	# a sticker: soft dark blotches that damp whatever they land on,
+	# overlapping each other and the pool's rim.
+	var stain_path := TEX + "stamp_wet_stain.png"
+	if ResourceLoader.exists(stain_path):
+		var stain_img: Image = (load(stain_path) as Texture2D).get_image()
+		for dab: Array in [
+			[Vector3(-4.7, FLOOR_TOP_LOCAL_Y, 0.1), 25.0, 2.8, 0.85],
+			[Vector3(-5.4, FLOOR_TOP_LOCAL_Y, -2.4), 160.0, 2.4, 0.8],
+			[Vector3(-6.9, FLOOR_TOP_LOCAL_Y, 1.3), 195.0, 2.6, 0.7],
+			[Vector3(-4.2, FLOOR_TOP_LOCAL_Y, -1.2), 90.0, 1.8, 0.6],
+		]:
+			PBSplat.paste_decal(floor_node.pb_mesh_data, dab[0], Vector3.UP,
+				dab[1], dab[2], dab[3], stain_img)
 
 	# ════════════════════════════════════════════════════════════════ building
 	# South wall with the arched doorway (the door shape IS the wall piece).
@@ -117,11 +131,18 @@ static func build_demo_scene(include_player: bool = false, preset_name: String =
 	root.add_child(stairs)
 
 	# ═══════════════════════════════════════════════════════════════ waterfall
-	# Every water surface SCROLLS (its material carries a UV speed — the retro
-	# export animates it with a texture-coordinate offset). Layering sells it:
-	# a broad blended sheet, a faster blended core in front of it (parallax),
-	# a ripple pool with a foam ribbon spreading from the impact, and one
-	# alpha-cutout spray billboard whose texture climbs.
+	# Every water surface SCROLLS (its material carries a UV speed — PBUv
+	# set_scroll_speed; the retro export writes it into the mesh's uv_scroll
+	# fields, the modern export mirrors it into the material's glTF extras).
+	# The falls is a layered read, back to front:
+	#   a stone LIP it pours from, an APRON crawling across that lip, the
+	#   broad slow SHEET, two narrow side TRICKLES on their own speeds, the
+	#   fast CORE in front (parallax against the sheet sells the depth), a
+	#   ripple POOL under a bright impact-FOAM ribbon and a wide faint swell,
+	#   two climbing SPRAY billboards, and a MIST bank whose emission SPHERE
+	#   spans the sheet's width (spawn_radius rides the retro emitter record,
+	#   so the PSP plays the same full-width footprint) plus a thin wisp
+	#   drifting up the wall face.
 	var fall_wall := PBMesh.new()
 	fall_wall.name = "WaterfallWall"
 	fall_wall.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.6, 4.5, 4.0))
@@ -130,33 +151,80 @@ static func build_demo_scene(include_player: bool = false, preset_name: String =
 	fall_wall.pb_mesh_data.materials = [wet_tiles_material()]
 	root.add_child(fall_wall)
 
-	var sheet := make_water_sheet("Waterfall_Sheet", 2.0, 4.2,
-		Vector3(-7.15, 2.2, -1.0), TEX + "waterfall_sheet.png",
-		Vector2(0.04, -0.75), Vector2(0.6, 0.35))
+	# The lip: a thin cap across the wall top, protruding past the face —
+	# the water has a source to pour from instead of starting mid-wall.
+	var fall_lip := PBMesh.new()
+	fall_lip.name = "WaterfallLip"
+	fall_lip.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.9, 0.2, 3.0))
+	fall_lip.position = Vector3(-7.35, 4.42, -1.0)
+	fall_lip.collider_type = PBMesh.ColliderType.OFF
+	fall_lip.pb_mesh_data.materials = [wet_tiles_material()]
+	root.add_child(fall_lip)
+
+	var apron := make_water_floor("Waterfall_Apron", 0.8, 2.6,
+		Vector3(-7.3, 4.53, -1.0), TEX + "water_pool.png",
+		Vector2(0.55, 0.0), Vector2(0.35, 1.0))
+	root.add_child(apron)
+	# The veil: a full-width bright base of slow moving water (the pool
+	# texture) the streak layers play in front of — without it the streak
+	# textures' transparent-black body reads as a dark smear on the wall.
+	var veil := make_water_sheet("Waterfall_Veil", 2.6, 4.3,
+		Vector3(-7.14, 2.22, -1.0), TEX + "water_pool.png",
+		Vector2(0.02, -0.45), Vector2(0.7, 0.8))
+	root.add_child(veil)
+	var sheet := make_water_sheet("Waterfall_Sheet", 2.4, 4.3,
+		Vector3(-7.12, 2.22, -1.0), TEX + "waterfall_sheet.png",
+		Vector2(0.05, -0.7), Vector2(0.75, 0.4))
 	root.add_child(sheet)
-	var core := make_water_sheet("Waterfall_Core", 0.9, 4.0,
-		Vector3(-7.05, 2.1, -1.0), TEX + "waterfall_core.png",
-		Vector2(0.0, -1.15), Vector2(1.2, 0.5))
+	var trickle_west := make_water_sheet("Waterfall_TrickleW", 0.4, 3.6,
+		Vector3(-7.06, 1.9, -1.95), TEX + "waterfall_core.png",
+		Vector2(0.03, -1.05), Vector2(0.4, 0.9))
+	root.add_child(trickle_west)
+	var trickle_east := make_water_sheet("Waterfall_TrickleE", 0.4, 3.4,
+		Vector3(-7.06, 1.85, -0.1), TEX + "waterfall_core.png",
+		Vector2(-0.02, -0.9), Vector2(0.4, 0.85))
+	root.add_child(trickle_east)
+	var core := make_water_sheet("Waterfall_Core", 1.0, 4.0,
+		Vector3(-7.0, 2.1, -1.0), TEX + "waterfall_core.png",
+		Vector2(0.0, -1.15), Vector2(1.3, 0.55))
 	root.add_child(core)
-	var pool := make_water_floor("Waterfall_Pool", 3.2, 3.0,
-		Vector3(-6.3, 0.04, -1.0), TEX + "water_pool.png",
+	var pool := make_water_floor("Waterfall_Pool", 3.0, 3.2,
+		Vector3(-6.15, 0.04, -1.0), TEX + "water_pool.png",
 		Vector2(0.02, -0.03), Vector2(0.55, 0.55))
 	root.add_child(pool)
-	var foam := make_water_floor("Waterfall_Foam", 2.4, 1.5,
-		Vector3(-6.4, 0.06, -1.0), TEX + "water_foam.png",
-		Vector2(0.0, -0.30), Vector2(0.5, 0.9))
+	var foam := make_water_floor("Waterfall_Foam", 2.2, 1.1,
+		Vector3(-6.6, 0.06, -1.0), TEX + "water_foam.png",
+		Vector2(0.0, -0.5), Vector2(0.5, 1.1))
 	root.add_child(foam)
+	var swell := make_water_floor("Waterfall_Swell", 2.8, 2.4,
+		Vector3(-6.3, 0.05, -1.0), TEX + "water_foam.png",
+		Vector2(0.0, -0.12), Vector2(0.45, 0.85))
+	root.add_child(swell)
 	var spray := TestMapShowcaseBuilder.create_billboard("WaterfallSpray",
-		TEX + "water_spray.png", Vector2(2.0, 1.4), Vector3(-6.35, 0.6, -1.0), false, true)
+		TEX + "water_spray.png", Vector2(2.2, 1.5), Vector3(-6.5, 0.7, -1.0), false, true)
 	PBUv.set_scroll_speed(spray.material_override as Material, Vector2(0.0, 0.35))
 	root.add_child(spray)
+	var spray_fine := TestMapShowcaseBuilder.create_billboard("WaterfallSprayFine",
+		TEX + "water_spray.png", Vector2(1.4, 1.0), Vector3(-6.6, 0.42, -0.25), false, true)
+	PBUv.set_scroll_speed(spray_fine.material_override as Material, Vector2(0.0, 0.55))
+	root.add_child(spray_fine)
 	var fall_lantern := OmniLight3D.new()
 	fall_lantern.name = "WaterfallLantern"
-	fall_lantern.position = Vector3(-7.0, 2.6, -0.4)
+	# Grazing the falls face at mid height: this is the light that makes the
+	# sheet read as water instead of a wet wall.
+	fall_lantern.position = Vector3(-6.5, 3.3, -1.0)
 	fall_lantern.light_color = Color(0.70, 0.90, 1.0)
-	fall_lantern.light_energy = 2.2
-	fall_lantern.omni_range = 7.0
+	fall_lantern.light_energy = 3.5
+	fall_lantern.omni_range = 8.0
 	root.add_child(fall_lantern)
+	# A low teal uplight inside the mist bank: the spray glows from below.
+	var pool_light := OmniLight3D.new()
+	pool_light.name = "WaterfallPoolLight"
+	pool_light.position = Vector3(-6.2, 0.9, -1.0)
+	pool_light.light_color = Color(0.55, 0.8, 1.0)
+	pool_light.light_energy = 1.2
+	pool_light.omni_range = 4.5
+	root.add_child(pool_light)
 
 	# ════════════════════════════════════════════════════════ billboards/trees
 	var pine := TestMapShowcaseBuilder.create_billboard("Tree_Pine",
@@ -197,11 +265,34 @@ static func build_demo_scene(include_player: bool = false, preset_name: String =
 	fire_light.light_energy = 2.0
 	fire_light.omni_range = 6.0
 	root.add_child(fire_light)
-	# Mist at the waterfall's foot (the blended-particle path: RGBA, sorted).
+	# The mist: ONE emitter whose emission SPHERE spans the falls' width, so
+	# the bank reads as wide as the sheet it fronts (a point emitter reads as
+	# a puff no matter the quad size). spawn_radius is part of the retro
+	# emitter record (PBM bytes + glTF extras), so both targets play the same
+	# footprint. Blended path (RGBA, sorted), like the sheet in front of it.
 	var mist := TestMapShowcaseBuilder.create_emitter("Emitter_Mist",
-		Vector3(-6.3, 0.35, -1.0), TEX + "particle_smoke.png",
-		14, 1.7, 1.3, false, true)
+		Vector3(-6.55, 0.8, -1.0), TEX + "particle_smoke.png",
+		40, 2.1, 1.2, false, true)
+	var mist_pm := mist.process_material as ParticleProcessMaterial
+	mist_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	mist_pm.emission_sphere_radius = 1.05
+	mist_pm.initial_velocity_min = 0.2
+	mist_pm.initial_velocity_max = 0.6
+	# Many faint sprites overlap into a bank; fewer opaque ones clump into a
+	# blob. The tint rides the retro emitter record (ramp × tint).
+	mist_pm.color = Color(1.0, 1.0, 1.0, 0.55)
 	root.add_child(mist)
+	# A thin wisp drifting up the wall face ties the bank to the falls.
+	var wisp := TestMapShowcaseBuilder.create_emitter("Emitter_SprayWisp",
+		Vector3(-7.0, 1.7, -1.0), TEX + "particle_smoke.png",
+		8, 2.6, 2.1, false, true)
+	var wisp_pm := wisp.process_material as ParticleProcessMaterial
+	wisp_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	wisp_pm.emission_sphere_radius = 0.45
+	wisp_pm.initial_velocity_min = 0.12
+	wisp_pm.initial_velocity_max = 0.35
+	wisp_pm.gravity = Vector3(0.0, 0.15, 0.0)
+	root.add_child(wisp)
 
 	# ═══════════════════════════════════════════════════════════════ neon room
 	_build_neon_room(root)
@@ -491,7 +582,11 @@ static func make_water_floor(name_str: String, width: float, depth: float,
 static func water_material(name_str: String, tex_path: String, scroll: Vector2) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.resource_name = name_str
-	mat.albedo_color = Color(1.0, 1.0, 1.0, 0.85)
+	# A bright blue-white tint: the falls textures are streaks over
+	# transparent black, and at dusk an unboosted albedo reads as a dark
+	# smear instead of lit water. The near-opaque alpha keeps the layering
+	# (veil under streaks) from muddying out.
+	mat.albedo_color = Color(1.45, 1.6, 1.8, 0.9)
 	mat.roughness = 0.35
 	if ResourceLoader.exists(tex_path):
 		mat.albedo_texture = load(tex_path)

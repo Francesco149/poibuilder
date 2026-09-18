@@ -3,6 +3,57 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.161 — the demo waterfall earns its screenshot; the docs explain scrolling
+
+### The waterfall is now the layer-stack showcase
+
+The alpha demo map's falls was the barebones one: a dark streak smear on a
+bare wall, a point-source mist puff smaller than the water, and a spray
+billboard doing all the work. It is rebuilt as the thing the walkthrough
+preaches — a stack of simple layers, each doing one job, all of it
+retro-exportable:
+
+- a stone **lip** the water pours from (it used to start mid-wall), with a
+  slow **apron** crawling across the top towards the edge,
+- a full-width bright **veil** (the pool texture) under the streak **sheet**
+  — without it the streak textures' transparent-black body reads as a dark
+  smear at dusk — plus two narrow side **trickles** on their own signed
+  speeds and the fast **core** in front (parallax sells the depth),
+- a bigger ripple **pool** with a bright impact-**foam** ribbon and a wide
+  faint **swell** behind it, two climbing **spray** billboards at different
+  rates, and a low teal uplight in the mist,
+- the **mist bank** is one emitter whose EMISSION SPHERE spans the sheet's
+  width (40 faint sprites, tint riding the retro emitter record) — a point
+  emitter reads as a puff no matter the quad size — and a thin **wisp**
+  emitter drifts up the wall face,
+- **wet-stain stamps** ring the pool on the floor (`stamp_wet_stain.png`, a
+  new source texture): a decal used as material, not a sticker.
+
+Device row: the rebuilt map loads and plays on the real PSP at 60 fps
+(149 draws, 3648 tris, GPU 0.10 ms — `./deploy_psp.sh
+project/exports/alpha_demo_retro_baked.pbm`). Emitters total 78 particles
+across 5 emitters, well under the ~256-per-map budget.
+
+### The docs tell the truth about scrolling textures
+
+The old gotcha ("a scrolling face is NOT packed into the retro tile atlas —
+but also do not splat-paint one") read as if the export dropped the
+animation. It doesn't: the SPEED travels as data (per-mesh `uv_scroll_u/v`
+in PBM, `poi_uv_scroll` `[u, v]` extras on the material in BOTH GLB flavors
+— verified in the exported files), and only the one-line consumer recipe
+(`uv(t) = uv(0) + t * speed`) is the player's job. New "Scrolling textures"
+section on the export page (retro points at the reference PSP renderer as
+the proven implementation), rewritten gotchas on the walkthrough, paint and
+materials pages, and the perf page's caveat now names the mechanism and the
+11 verified material records instead of vague "format recipes".
+
+### Bench re-measured on the new map
+
+Same harness, heavier falls (5 emitters, 7 lights): PB scene median
+26.1–26.6 ms, retro GLB 12.0–12.2, modern GLB 10.4–10.5 — the PB-vs-GLB
+ratio moves from ~2.3x to ~2.5x and every page quoting the old number was
+updated.
+
 ## v0.9.160 — the GLB flavors say what they are; the docs say which one to ship
 
 ### The export dialog steers GLB users to the modern optimized bake

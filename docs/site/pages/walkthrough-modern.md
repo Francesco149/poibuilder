@@ -61,18 +61,18 @@ A stamp is a PNG painted INTO the surface (a single click, no drag), and it span
 
 ## 5. The waterfall
 
-A waterfall is LAYERED scrolling textures + particles — no shader graph.
+A waterfall is LAYERED scrolling textures + particles — no shader graph. The demo one stacks, back to front:
 
-1. A wall panel to fall down (a cube).
-2. **Plane** shapes hung on its face, each with a water texture and a **scroll speed** set in the Material dock. The broad sheet scrolls slowly; a narrower core sheet in front scrolls faster (the parallax is what sells depth). Both blended.
-3. A ripple **pool** on the floor plus a **foam** ribbon at the impact point — both scrolling away from the wall.
-4. One **spray billboard** (alpha cutout, texture scrolling upward) at the base, and a mist [emitter](#7-particle-emitters) for the churn.
+1. A wall panel to fall down (a cube), topped by a thin **lip** the water pours from.
+2. **Plane** shapes hung on its face, each with a water texture and a **scroll speed** set in the Material dock (repeats per second, signed — negative V falls down a wall). The stack: a full-width bright **veil** scrolling slowly, the streaky **sheet** over it, two narrow side **trickles** on their own speeds, and a fast **core** in front — the parallax between speeds is what sells depth. All blended alpha.
+3. An **apron** on top of the lip crawling towards the edge, a ripple **pool** on the floor, a bright **foam** ribbon at the impact and a wide faint **swell** behind it — every one just another scrolling plane.
+4. Two **spray billboards** at the base (alpha cutout, texture scrolling upward at different rates), and a mist [emitter](#7-particle-emitters) whose **emission sphere is as wide as the sheet** — a point emitter reads as a puff, the sphere reads as a bank. A second tiny emitter drifts a wisp up the wall face.
 
 :::shot demo-waterfall.png
-Four scrolling surfaces and a mist emitter. The pattern travels; the geometry never moves.
+The layered falls: lip and apron, veil + sheet + trickles + core on four speeds, foam over the pool, and a mist bank as wide as the water.
 :::
 
-> [gotcha] A scrolling face is NOT packed into the retro tile atlas on export — but also do not splat-paint a scrolling face. Paint bakes to a static tile.
+> [gotcha] The scroll speed is DATA that travels with the export — the retro bake writes each mesh's speed into the `.pbm` (`uv_scroll_u/v`), and a modern GLB carries it in the material's glTF `extras`. What does NOT travel is the animation code: a consumer moves the UVs itself (`uv(t) = uv(0) + t · speed`). See [Export & retro](export.html#scrolling-textures) for both recipes. Two authoring rules: the retro bake exempts scrolling faces from the tile atlas (a scrolling face keeps its own texture — that is what slides), and do not splat-paint a scrolling face — paint bakes to a static tile.
 
 ## 6. Billboards
 
@@ -121,7 +121,7 @@ Toolbar **Export...** → **GLB — Modern Bake (lightmap-ready)** — the first
 - **Vertex lighting off** (default) — the bake carries no vertex colors; your realtime lights or a LightmapGI bake stay in charge. (The retro flavors bake light into vertices instead.)
 - **Include splat data** — the alternative paint mode: masks/layers/decals ship as sidecar PNGs with a `poi_splat` record for engines that re-blend at runtime ([recipe](modern-glb-splat.html)).
 
-> [gotcha] Playing the PoiBuilder scene itself is for building, testing and iterating — the live splat shader and decal layers carry a real GPU cost (~2.3× the baked GLB on the [benchmark baseline](performance.html)). When you want to play or share the map, export the GLB and play that.
+> [gotcha] Playing the PoiBuilder scene itself is for building, testing and iterating — the live splat shader and decal layers carry a real GPU cost (~2.5× the baked GLB on the [benchmark baseline](performance.html)). When you want to play or share the map, export the GLB and play that.
 
 Collision ships as `Collider_*` meshes. Emitters are Godot-side GPUParticles3D nodes in your scene — recreate them in the consumer (the format record is documented) or bake the look into the textures you take along.
 

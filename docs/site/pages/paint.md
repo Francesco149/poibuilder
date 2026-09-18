@@ -58,7 +58,7 @@ Covered on [Materials](materials.html). A waterfall is a plane with scroll speed
 Scrolling sheets on a wall panel.
 :::
 
-> [gotcha] A scrolling face is **not** packed into the retro tile atlas — an offset would drag it across the slot. Export keeps it as its own texture. Do not also splat-paint that face; paint is baked to a static tile.
+> [gotcha] The scroll speed exports as data (retro: per-mesh `uv_scroll`; modern GLB: `poi_uv_scroll` in the material's glTF extras) — the consumer applies `uv(t) = uv(0) + t · speed`; the recipes live on [Export & retro](export.html#scrolling-textures). The retro bake exempts a scrolling face from the tile atlas (it keeps its own texture — that is what slides), and a scrolling face must not also be splat-painted: paint bakes to a static tile.
 
 > [gotcha] A modern **.glb export** cannot carry a custom shader. Choose **Modern paint → Bake into textures** (each painted face becomes its own texture — any engine shows your paint) or **Include splat data** (masks and decal channels ship as sidecar PNGs plus a `poi_splat` record in the material extras; see [Splatting in a modern .glb](modern-glb-splat.html) for the consumer recipe). To flatten paint inside Godot itself, run `./bake_splat.sh <scene.tscn>`.
 

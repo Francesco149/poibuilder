@@ -42,7 +42,7 @@ If a ramp still looks stretched, that is a projection job: [UV editor](uv.html).
 
 ## Scroll
 
-A material can carry a UV scroll speed. It plays in the editor viewport and **survives retro export** as per-mesh scroll. Waterfalls are a scrolling plane, not a shader graph.
+A material can carry a UV scroll speed (repeats per second, per axis, signed). It plays in the editor viewport and **survives export as data**: per-mesh `uv_scroll` in the retro formats, `poi_uv_scroll` in a modern GLB material's glTF extras. The animation itself is the consumer's one-liner (`uv(t) = uv(0) + t · speed`) — the recipes are on [Export & retro](export.html#scrolling-textures). Waterfalls are a scrolling plane, not a shader graph.
 
 :::shot paint-scroll.png
 Animated materials — UV scroll in the viewport.
