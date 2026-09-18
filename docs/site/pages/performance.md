@@ -21,6 +21,19 @@ experience, shader compiles and first uploads included) and a **warm** pass
 | **Retro-baked GLB** | The retro bake transported as glTF: baked tile textures, vertex lighting, plain meshes. |
 | **Modern GLB** | The modern export with paint baked into textures: standard materials, realtime lights, colliders. |
 
+## Which one do you ship?
+
+**Export the baked map and play that.** The PoiBuilder scene as-is is the
+*authoring* format — it carries the live splat shader, live decal layers and
+every realtime light, and that is exactly what makes it the most expensive
+way to render the map (~2.3× the baked GLB's median frame time above). So:
+build, test and iterate in the PoiBuilder scene as much as you like, but
+when you want to *play* or share the map, run it through **Export...** and
+play the result — a modern GLB for the modern pipeline (paint baked into
+textures, your own realtime lights or LightmapGI on top), or the PBM/retro
+GLB for retro targets. The exported map looks the same and runs
+dramatically faster.
+
 ## Measured results
 
 Intel UHD 630 (integrated, Mesa), Godot **gl_compatibility**, 1280×720

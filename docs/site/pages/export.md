@@ -3,14 +3,16 @@ title: Export & retro
 lead: PBM is the headline product — a quick export bakes a tile-baked .pbm with vertex light for the PSP. GLB (retro-baked or modern) is one dialog away. Retro textures are sanitized on the way out.
 ---
 
-Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — everything else on the page applies per format.
+Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — the Modern Bake first, the Retro Baked Map second. Everything else on the page applies per format.
 
 For the whole journey on one map, see the [walkthroughs](walkthrough-modern.html):
 build → export → play, once per pipeline.
 
-## Modern GLB
+> [gotcha] The PoiBuilder scene as-is is the *authoring* format — the live splat shader and decal layers carry a significant performance cost (~2.3× the baked GLB's frame time on the [benchmark baseline](performance.html)). It is highly recommended to **export and play the baked map** (GLB for the modern pipeline, PBM for retro); keep the editable scene for building, testing and iterating.
 
-Keeps authored geometry; collision meshes are named `Collider_*`. Paint has its own switch, **Modern paint**:
+## Modern GLB (baked)
+
+The format to play and ship on the modern pipeline — selecting it in the dialog defaults to the optimized bake: **paint baked into textures, no vertex lighting**. Authored geometry is kept; collision meshes are named `Collider_*`; lights are exported as lights, so your realtime lights or a LightmapGI bake stay in charge. Paint has its own switch, **Modern paint**:
 
 - **Bake into textures** (default) — every painted face is composited into its own texture at the same texel density the editor used (256 texels/m), and its UV1 is rewritten into that texture. Self-contained: Godot, Blender, any glTF consumer shows your paint.
 - **Include splat data** — the geometry keeps its mask coordinates (`TEXCOORD_2`), each painted face's material carries a `poi_splat` record in its glTF `extras`, and the masks, layer textures and decal channel ship as PNGs next to the `.glb` under `<map>.splat/`. Use this when the consumer should re-blend at runtime. The recipe (with a reference shader) is in `docs/modern_glb_splat.md`; `PBSplatImport.rebuild_from_extras()` restores live, editable paint after a round trip into Godot.

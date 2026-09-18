@@ -35,7 +35,7 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 | [[icon:panel]] Panel | Pins the overlay so it does not auto-hide. |
 | [[icon:panel_reset]] Reset | Docks the overlay back to the bottom-left. |
 | [[icon:settings]] Settings | Display: grid, wireframe, selection/hover opacity. |
-| Export... | Dialog: PBM (default) or GLB — retro baked / modern live materials. |
+| Export... | Dialog: PBM (default) or GLB — modern bake (lightmap-ready, first) / retro baked map (vertex-lit). |
 | [[icon:docs]] Docs | Opens this site (bundled `docs-site/index.html`). |
 
 **Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth, object state.

@@ -115,10 +115,13 @@ The demo ships its own first-person rig when you use `./run_demo_map.sh --play`.
 
 ## 10. Export the map as GLB
 
-Toolbar **Export...** → **GLB — Modern Engine (live materials)**:
+Toolbar **Export...** → **GLB — Modern Bake (lightmap-ready)** — the first GLB flavor, and the one to play/ship on the modern pipeline. Selecting it defaults the dialog to the optimized bake:
 
-- **Modern paint → Bake into textures** (default) — every painted face becomes its own texture; any consumer shows your paint.
-- **Include splat data** — masks/layers/decals ship as sidecar PNGs with a `poi_splat` record for engines that re-blend at runtime ([recipe](modern-glb-splat.html)).
+- **Modern paint → Bake into textures** (default) — every painted face (splat layers *and* decals) becomes its own texture; any consumer shows your paint.
+- **Vertex lighting off** (default) — the bake carries no vertex colors; your realtime lights or a LightmapGI bake stay in charge. (The retro flavors bake light into vertices instead.)
+- **Include splat data** — the alternative paint mode: masks/layers/decals ship as sidecar PNGs with a `poi_splat` record for engines that re-blend at runtime ([recipe](modern-glb-splat.html)).
+
+> [gotcha] Playing the PoiBuilder scene itself is for building, testing and iterating — the live splat shader and decal layers carry a real GPU cost (~2.3× the baked GLB on the [benchmark baseline](performance.html)). When you want to play or share the map, export the GLB and play that.
 
 Collision ships as `Collider_*` meshes. Emitters are Godot-side GPUParticles3D nodes in your scene — recreate them in the consumer (the format record is documented) or bake the look into the textures you take along.
 

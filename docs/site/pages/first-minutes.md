@@ -46,4 +46,6 @@ Arched doorway, built from its parameters, not from a boolean.
 - [Fix a stretched ramp in the UV editor](uv.html)
 - [Export a retro map](export.html)
 
+> [gotcha] When the level is built, **export it and play the export** — the PoiBuilder scene itself is the authoring format, and rendering it live costs significantly more than the baked map (numbers on [Performance](performance.html)). Build and iterate in the scene; play and share the baked GLB/PBM.
+
 > [gotcha] Clicking another mesh in an element mode edits *that* mesh. Object mode ([[kbd:H]] is vertex; Object is the toolbar button) is how you move several meshes at once.
