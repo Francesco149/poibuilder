@@ -71,6 +71,12 @@ run_guarded() {
     "$GUARD_SCRIPT" exec bash -c 'cd "$1" || exit 70; shift; exec "$@"' _ "$dir" "$@"
   fi
 }
+# GUT colours its output. Pattern-matching the raw log silently fails on
+# anything anchored to the line start (a test line begins with a colour reset,
+# not with "* "), so reporting reads the log through this.
+strip_ansi() {
+  sed 's/\x1b\[[0-9;]*m//g' "$1"
+}
 cleanup_container() {
   if [ "$GUARD" != "off" ] && [ -x "$GUARD_SCRIPT" ]; then
     "$GUARD_SCRIPT" cleanup
@@ -90,11 +96,38 @@ fi
 
 echo "== [2/4] Running GUT suite (hard timeout ${PB_TEST_TIMEOUT}s) =="
 LOG=/tmp/pb_gut.log
-if ! GODOT_DISABLE_LEAK_CHECKS=1 run_guarded "$PROJECT_DIR" timeout "$PB_TEST_TIMEOUT" godot-mono --headless -s addons/gut/gut_cmdln.gd \
-    -gdir=res://tests -ginclude_subdirs -gexit "$@" > "$LOG" 2>&1; then
-  echo "FAIL: GUT exited nonzero (timeout ${PB_TEST_TIMEOUT}s — a hang dies on its own now)" >&2
-  grep -E "\[Failed\]|Failing" "$LOG" | head -30 >&2
+GUT_RC=0
+GODOT_DISABLE_LEAK_CHECKS=1 run_guarded "$PROJECT_DIR" timeout "$PB_TEST_TIMEOUT" godot-mono --headless -s addons/gut/gut_cmdln.gd \
+    -gdir=res://tests -ginclude_subdirs -gexit "$@" > "$LOG" 2>&1 || GUT_RC=$?
+if [ "$GUT_RC" -ne 0 ]; then
   FAIL=1
+  if [ "$GUT_RC" -eq 124 ]; then
+    echo "FAIL: GUT hit the ${PB_TEST_TIMEOUT}s timeout — the suite was killed mid-run." >&2
+  else
+    echo "FAIL: GUT exited with status $GUT_RC." >&2
+  fi
+  if grep -qE "^Tests +[0-9]+" "$LOG"; then
+    # A finished run: say WHICH tests failed (GUT prints the suite path, then
+    # "* test_name", then one line per assertion) instead of making the reader
+    # grep a 20k-line log.
+    {
+      echo "-- failing tests --"
+      strip_ansi "$LOG" | awk '/^res:\/\/tests\//{suite=$0} /^\* /{name=$0} /\[Failed\]/{key=suite" "name; if (!(key in seen)) {seen[key]=1; print suite"  "name}}' | head -25
+    } >&2
+  else
+    # No summary line at all: the process died before GUT could report — a
+    # crash or an OOM inside the guard's memory cap, or a test/addon script
+    # edited while the suite was loading it. Name the stopping point so the
+    # truncated log is not a mystery.
+    {
+      echo "-- the suite did NOT finish (no summary line in the log) --"
+      echo "   last suite: $(strip_ansi "$LOG" | grep '^res://tests/' | tail -1)"
+      echo "   last test:  $(strip_ansi "$LOG" | grep '^\* ' | tail -1)"
+      echo "   likely: a crash/OOM inside the guard's memory cap (GUARD_MEM=${GUARD_MEM:-default 2G}), or a test/addon file changed while the suite ran."
+      echo "   log tail:"
+      tail -6 "$LOG" | sed 's/^/     /'
+    } >&2
+  fi
 fi
 
 echo "== [3/4] Checking for script errors inside the test run =="

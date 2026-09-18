@@ -40,6 +40,39 @@ xvfb-run fallback). A private `Xwayland :99` has no compositor behind it —
 the program renders into a window nobody can see (the entire "no window
 appears" bug).
 
+## The fast loop (and its traps)
+
+- **Iterate with `-gselect`**: `./run_tests.sh -gselect=test_pb_splat_and_stamp.gd`
+  (~15 s) while changing one area; the full suite (~2 min) is for the final
+  claim. The runner names the failing tests on a failure, and when the suite
+  did NOT finish it prints the last suite/test reached plus the likely cause
+  (crash/OOM inside the guard's cap, or a file edited mid-run).
+- **Never edit a test/addon file while a suite is running.** GUT loads the
+  scripts (and the class cache refresh boots the editor over them) as it goes;
+  a save mid-run shows up as a phantom "a test script was skipped / suite count
+  mismatch" failure. Edit, then run.
+- **The guard caps memory** (~2 GB by default; `GUARD_MEM=4G ./run_tests.sh` to
+  raise). A test that allocates huge images (multi-thousand-pixel splat/decal
+  windows, per-growth reallocations) can OOM the run: the symptom is a
+  TRUNCATED log and "did NOT finish", not a failing assertion. Keep test
+  fixtures small and let the feature's own budget tests cover the big cases.
+- **Headless probe scripts** (throwaway investigations, no repo litter):
+  ```bash
+  godot-mono --headless --path project -s /tmp/probe.gd      # logic probes
+  xvfb-run -a godot-mono --rendering-driver opengl3 --path project -s /tmp/rendered.gd   # renders
+  ```
+  An ABSOLUTE path works — the script does not have to live in `res://`. Add
+  `-s` scripts to a SceneTree with `await process_frame` and call `quit()` at
+  the end of the async chain (a `quit()` in `_init` kills the coroutine before
+  it runs).
+- **New image assets need an import pass before a probe can `load()` them**:
+  `godot-mono --headless --path project --editor --quit-after 120`. Without it
+  `load()` hands back a null texture and you debug a phantom (a material with
+  no albedo renders solid white). The runner's step 1 does this for the suite.
+- Rendered probes are how visual claims get evidence: `project/test_scenes/`
+  keeps the durable ones (`decal_probe.gd`, `emitter_probe.gd`), each printing
+  the numbers behind what it drew.
+
 ## Writing tests
 
 - Location `project/tests/test_<feature>.gd`, `extends GutTest`,
