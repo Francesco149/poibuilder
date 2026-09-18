@@ -724,6 +724,10 @@ static func _build_splat_record(mesh_data: PBMeshData, face: PBFace, face_idx: i
 		var decal_file := "%s_decal.png" % base_name
 		_write_png(decal, dir.path_join(decal_file))
 		record["decal"] = "%s/%s" % [dir.get_file(), decal_file]
+		# The decal PNG is a WINDOW inside the face's [0, 1] mask space; the
+		# consumer needs its rect (absent = the whole rect, older exporters).
+		var win: Rect2 = state.get("decal_window", Rect2(0.0, 0.0, 1.0, 1.0))
+		record["decal_rect"] = [win.position.x, win.position.y, win.size.x, win.size.y]
 	for layer in state.get("layers", []):
 		var slot: int = int(layer.get("slot", 0))
 		var entry: Dictionary = {
@@ -1013,10 +1017,41 @@ static func _get_collider_mesh(pb: PBMesh) -> Mesh:
 				return am
 
 	if pb.mesh != null:
-		return pb.mesh
+		return _merge_collider_surfaces(pb.mesh)
 	elif pb.pb_mesh_data != null:
-		return pb.pb_mesh_data.to_array_mesh()
+		return _merge_collider_surfaces(pb.pb_mesh_data.to_array_mesh())
 	return null
+
+## A collider is GEOMETRY, so its material splits must not split the export: a
+## painted face owning its own material used to turn one collider node into
+## several collider entries (the map then carries the same collision twice, and
+## the count moves whenever a face gains a material). Merges every surface into
+## one triangle soup, which is the shape the PBM consumer wants anyway.
+static func _merge_collider_surfaces(mesh: Mesh) -> Mesh:
+	if mesh == null or mesh.get_surface_count() <= 1:
+		return mesh
+	var tris := PackedVector3Array()
+	for s in range(mesh.get_surface_count()):
+		var arrays := mesh.surface_get_arrays(s)
+		var sv: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays[Mesh.ARRAY_VERTEX] != null else PackedVector3Array()
+		if sv.is_empty():
+			continue
+		var si: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+		if si.is_empty():
+			tris.append_array(sv)
+		else:
+			for idx in si:
+				if idx >= 0 and idx < sv.size():
+					tris.append(sv[idx])
+	if tris.is_empty():
+		return null
+	var merged := ArrayMesh.new()
+	var arrs: Array = []
+	arrs.resize(Mesh.ARRAY_MAX)
+	arrs[Mesh.ARRAY_VERTEX] = tris
+	merged.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+	return merged
+
 ## Exports a billboard sprite node with optional vertex lighting.
 static func _export_billboard(mi: MeshInstance3D, parent: Node, lights: Array[Light3D],
 		grid: PBLightBaker.SpatialGrid, settings: ExportSettings) -> void:

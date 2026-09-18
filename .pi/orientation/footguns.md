@@ -166,8 +166,29 @@ vertex attribute** (`PBMeshData.splat_uvs`, flattened to RG floats by
   channel. Do not "restore" UV2's read-only banner — that was the old contract.
 - Decal stamps are PAINTED PIXELS in a per-material decal layer (shader uniforms
   still named `stamp_layer_*` for scene compatibility), not scene nodes. A stamp
-  may span faces and may overhang an edge; erase is the brush in Decal mode.
-  Legacy `PBStamps` node scenes migrate on load.
+  may span faces and may cross an edge; erase is the brush in Decal mode (which
+  now paints a colour as well as the palette image). Legacy `PBStamps` node
+  scenes migrate on load — but nothing may BUILD them any more: the exporter
+  skips `PBStamps` by name, so a node-based stamp never reaches a map (that is
+  how the courtyard demo shipped stamp-less).
+- The decal image is a WINDOW inside the face's mask space (`stamp_layer_uv_offset`
+  / `stamp_layer_uv_scale`), cropped to the painted area and held at 256
+  texels/m (the splat masks' density) so a stamp is equally sharp on a 32 m floor
+  and a 2 m panel. It grows in powers of two, and only past 8 m of painted span
+  does the density drop. **Every** consumer of the decal image must map through
+  `PBSplat.get_decal_window` / `decal_uv_from_mask_uv`: the shader, the UV
+  editor preview, `PBTileBaker` (both the tile and the face-composite bakers),
+  and the modern sidecar (`decal_rect`). Clamp-sampling the image without that
+  mapping smears its edge texels over the whole face.
+- A decal write is in the mesh's LOCAL space: the pick hands over a WORLD
+  normal, and the controller converts it (`local_normal`) before
+  `paste_decal` / `paint_decal_dab`. Passing the world normal worked only while
+  the mesh sat at the origin unrotated — on anything else the decal basis left
+  the face's plane and the stamp smeared into a band.
+- Decal alignment cutoffs (`DECAL_MIN_FACE_ALIGNMENT` 0.35, `DECAL_MIN_DAB_ALIGNMENT`
+  0.25) exist because a near-perpendicular face gets a DEGENERATE projection of
+  the content (a floor stamp down a wall = horizontal streaks). Do not loosen
+  them back toward perpendicular.
 - Paint + lightmap coexistence is locked by
   `test_pb_splat_and_stamp.gd::test_paint_coexists_with_authored_uv2_lightmap_unwrap`
   and `test_pb_lightmap_uv2.gd`, and was verified with a REAL editor LightmapGI

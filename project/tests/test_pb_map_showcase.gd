@@ -10,6 +10,22 @@ func test_build_and_export_showcase_map() -> void:
 	assert_not_null(showcase_root)
 	autofree(showcase_root)
 
+	# The courtyard's signs are painted pixels in the decal layer. They used to
+	# be `PBStamps` node quads, which the exporter skips by name — so the demo
+	# silently shipped a map with no stamps at all.
+	var floor_node := showcase_root.get_node_or_null("CourtyardFloor")
+	assert_not_null(floor_node, "Showcase must build the courtyard floor")
+	if floor_node != null:
+		assert_true(ShowcaseUtil.has_decal_paint(floor_node),
+				"The courtyard floor must carry its painted decal stamp")
+		assert_null(floor_node.get_node_or_null("PBStamps"),
+				"Stamps are decal pixels — no legacy PBStamps node may be built")
+	var ramp_node := showcase_root.get_node_or_null("EastRamp")
+	assert_not_null(ramp_node, "Showcase must build the ramp")
+	if ramp_node != null:
+		assert_true(ShowcaseUtil.has_decal_paint(ramp_node),
+				"The ramp must carry its painted decal stamp")
+
 	# Save showcase scene with player for editor inspection and interactive play
 	var save_err := TestMapShowcaseBuilder.save_showcase_scene("user://test_map_showcase.tscn", true)
 	assert_eq(save_err, OK, "Saving showcase scene with player must succeed")

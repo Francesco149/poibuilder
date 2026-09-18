@@ -135,6 +135,14 @@ static func _build_material(record: Dictionary, base_dir: String) -> ShaderMater
 		mat.set_shader_parameter("stamp_layer_enabled", true)
 		mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(decal_img))
 		PBSplat._set_cached_image(mat, "stamp", decal_img)
+		# Window rect (older records have none: the decal covered the face).
+		var rect = record.get("decal_rect", null)
+		if rect is Array and (rect as Array).size() == 4:
+			var ru := float(rect[2])
+			var rv := float(rect[3])
+			if ru > 0.0 and rv > 0.0:
+				mat.set_shader_parameter("stamp_layer_uv_offset", Vector2(float(rect[0]), float(rect[1])))
+				mat.set_shader_parameter("stamp_layer_uv_scale", Vector2(1.0 / ru, 1.0 / rv))
 	return mat
 
 

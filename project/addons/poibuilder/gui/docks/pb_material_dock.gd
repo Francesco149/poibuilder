@@ -61,6 +61,9 @@ var _file_dialog: EditorFileDialog
 var _uv_and_tint_section: VBoxContainer
 var _paint_tool_section: VBoxContainer
 var _stamp_tool_section: VBoxContainer
+var _opt_brush_source: OptionButton
+var _btn_brush_color: ColorPickerButton
+var _lbl_brush_source_hint: Label
 var _sprite_tool_section: VBoxContainer
 var _shape_tool_section: VBoxContainer
 var _particle_tool_section: VBoxContainer
@@ -196,6 +199,10 @@ func _on_paint_controller_changed() -> void:
 		_spin_paint_layer.editable = paint_controller.paint_target == PBPaintController.PaintTarget.SPLAT
 	if _opt_paint_target != null:
 		_opt_paint_target.selected = int(paint_controller.paint_target)
+	if _opt_brush_source != null:
+		_opt_brush_source.selected = int(paint_controller.brush_source)
+	if _btn_brush_color != null:
+		_btn_brush_color.color = paint_controller.brush_color
 	if _spin_stamp_scale != null:
 		_spin_stamp_scale.value = paint_controller.stamp_scale
 	if _spin_stamp_rotation != null:
@@ -570,6 +577,29 @@ func _build_ui() -> void:
 	)
 	paint_grid.add_child(_opt_paint_target)
 
+	paint_grid.add_child(_make_label("Brush:"))
+	_opt_brush_source = OptionButton.new()
+	_opt_brush_source.name = "BrushSourceSelector"
+	_opt_brush_source.add_item("Color", PBPaintController.BrushSource.COLOR)
+	_opt_brush_source.add_item("Palette image", PBPaintController.BrushSource.IMAGE)
+	_opt_brush_source.tooltip_text = "What the decal brush paints: a flat colour (with the picker below) or the palette image's pixels."
+	_opt_brush_source.item_selected.connect(func(idx: int):
+		if paint_controller != null and not _syncing:
+			paint_controller.brush_source = idx as PBPaintController.BrushSource
+	)
+	paint_grid.add_child(_opt_brush_source)
+
+	_btn_brush_color = ColorPickerButton.new()
+	_btn_brush_color.name = "BrushColorPicker"
+	_btn_brush_color.edit_alpha = true
+	_btn_brush_color.custom_minimum_size = Vector2(0, 20)
+	_btn_brush_color.tooltip_text = "The decal brush's colour"
+	_btn_brush_color.color_changed.connect(func(c: Color):
+		if paint_controller != null and not _syncing:
+			paint_controller.brush_color = c
+	)
+	paint_grid.add_child(_btn_brush_color)
+
 	paint_grid.add_child(_make_label("Radius:"))
 	_spin_brush_radius = _make_spinbox(0.02, 10.0, 0.01, 0.5, "m")
 	_spin_brush_radius.value_changed.connect(func(v):
@@ -620,7 +650,8 @@ func _build_ui() -> void:
 	_paint_tool_section.add_child(paint_action_row)
 
 	var paint_hint := Label.new()
-	paint_hint.text = "LMB drag in the viewport to paint. In Decal mode the brush paints the selected image and Erase fades the decal layer's alpha."
+	paint_hint.text = "LMB drag in the viewport to paint. Target 'Decal layer' paints into the same pixels stamps paste into: the brush colour (or the palette image), Erase fades them back out."
+	_lbl_brush_source_hint = paint_hint
 	paint_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	paint_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_paint_tool_section.add_child(paint_hint)
@@ -716,10 +747,19 @@ func _build_ui() -> void:
 	_stamp_tool_section.add_child(btn_clear_stamps)
 
 	_stamp_hint = Label.new()
-	_stamp_hint.text = "Click to paste the image as a decal (no dragging).\nIt paints across every face it touches — overhanging an edge or wrapping a corner. Erase parts of it with the brush in Decal mode."
+	_stamp_hint.text = "Click to paste the image as a decal (no dragging).\nIt paints across every face it touches — overhanging an edge or wrapping a corner."
 	_stamp_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_stamp_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_stamp_tool_section.add_child(_stamp_hint)
+
+	# Stamps and the brush write into the SAME pixels, so the erase path lives
+	# in the Paint tab — hand the user straight to it instead of describing it.
+	var btn_erase_hint := Button.new()
+	btn_erase_hint.name = "OpenDecalBrushButton"
+	btn_erase_hint.text = "Open Decal Brush (erase / paint)"
+	btn_erase_hint.tooltip_text = "Switches to the Paint tab with the brush pointed at the Decal layer: paint the brush colour, dab the palette image, or erase parts of a stamp."
+	btn_erase_hint.pressed.connect(_on_open_decal_brush_pressed)
+	_stamp_tool_section.add_child(btn_erase_hint)
 
 	# =========================================================================
 	# Section D: Sprite Tool Controls (Visible in SPRITE mode)
@@ -930,7 +970,12 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 
 func _update_tool_labels() -> void:
 	if _active_paint_label != null:
-		if paint_controller != null and paint_controller.paint_texture != null:
+		if paint_controller == null:
+			_active_paint_label.text = "Paint: (Select a palette card)"
+		elif paint_controller.paint_target == PBPaintController.PaintTarget.DECAL \
+				and paint_controller.brush_source == PBPaintController.BrushSource.COLOR:
+			_active_paint_label.text = "Decal brush: colour #%s" % paint_controller.brush_color.to_html(false)
+		elif paint_controller.paint_texture != null:
 			var tex_name := paint_controller.paint_texture.resource_path.get_file()
 			if tex_name.is_empty():
 				tex_name = "Texture"
@@ -1259,16 +1304,34 @@ func _on_clear_layer_pressed() -> void:
 
 	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 	var cleared := false
+	# The button clears whatever the brush is pointed at: the decal layer's
+	# pixels when painting Decal, the active splat mask otherwise.
+	var on_decal: bool = paint_controller.paint_target == PBPaintController.PaintTarget.DECAL
 
 	for face in sel_faces:
 		var mat = mesh.pb_mesh_data.get_face_material(face)
-		if PBSplat.is_splat_material(mat):
+		if not PBSplat.is_splat_material(mat):
+			continue
+		if on_decal:
+			if PBSplat.has_decal_layer(mat as ShaderMaterial):
+				PBSplat.clear_decal_layer(mat as ShaderMaterial)
+				cleared = true
+		else:
 			PBSplat.clear_layer(mat as ShaderMaterial, paint_controller.active_layer_idx)
 			cleared = true
 
 	if cleared:
 		var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
-		_commit_mesh_action(mesh, "Clear Splat Layer", before, after)
+		_commit_mesh_action(mesh, "Clear Decal Layer" if on_decal else "Clear Splat Layer",
+				before, after)
+## Stamp tab -> Paint tab with the decal target armed (the brush paints and
+## erases the same layer stamps paste into).
+func _on_open_decal_brush_pressed() -> void:
+	if paint_controller != null:
+		paint_controller.paint_target = PBPaintController.PaintTarget.DECAL
+	_set_dock_mode(DockMode.PAINT)
+
+
 func _on_clear_all_stamps_pressed() -> void:
 	var mesh: PBMesh = editor.active_mesh if editor != null else null
 	if mesh == null and paint_controller != null:

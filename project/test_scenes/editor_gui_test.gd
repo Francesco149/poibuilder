@@ -105,6 +105,20 @@ func _press_redo() -> void:
 	up.pressed = false
 	Input.parse_input_event(up)
 ## Count pixels whose RGB channels differ by more than 8 between two images.
+## Opaque texel count of a decal/mask image (the harness's robust "is there
+## paint here" probe: a single texel of the woven stamp sources proves nothing).
+static func _count_opaque(img: Image) -> int:
+	if img == null or img.is_empty():
+		return 0
+	var bytes := img.get_data()
+	var n := 0
+	var i := 3
+	while i < bytes.size():
+		if bytes[i] > 128:
+			n += 1
+		i += 4
+	return n
+
 static func _img_diff(a: Image, b: Image) -> int:
 	if a == null or b == null or a.get_size() != b.get_size():
 		return -1
@@ -1291,12 +1305,16 @@ func _run() -> void:
 					_fail("SPLAT-DECAL: a PBStamps container was created for a stamp")
 
 				if PBSplat.has_decal_layer(stamp_mat):
+					# The decal image is a WINDOW around the paint, and the
+					# tapestry source is a fine weave that alternates alpha per
+					# texel — probing the center texel is a coin flip. Count the
+					# opaque ones instead.
 					var decal_img := PBSplat.get_decal_layer_image(stamp_mat)
-					var mid := decal_img.get_width() / 2
-					if decal_img.get_pixel(mid, mid).a > 0.5:
-						_pass("SPLAT-DECAL: stamp pixels landed in the face's decal layer")
+					var opaque := _count_opaque(decal_img)
+					if opaque > decal_img.get_width():
+						_pass("SPLAT-DECAL: stamp pixels landed in the face's decal layer (%d opaque texels)" % opaque)
 					else:
-						_fail("SPLAT-DECAL: decal layer exists but holds no pixels")
+						_fail("SPLAT-DECAL: decal layer exists but holds no pixels (%d opaque)" % opaque)
 				else:
 					_fail("SPLAT-DECAL: stamping did not create a decal layer")
 
@@ -1336,25 +1354,34 @@ func _run() -> void:
 				plugin.paint_controller.brush_opacity = 1.0
 				plugin.paint_controller.set_mode(PBPaintController.Mode.PAINT)
 				plugin.paint_controller.update_cursor(Vector3(3, 0.5, 0), Vector3.UP, target_b, top_face)
+				var opaque_before := _count_opaque(PBSplat.get_decal_layer_image(
+					data_b.get_face_material(data_b.faces[top_face]) as ShaderMaterial))
 				plugin.paint_controller.begin_stroke()
 				plugin.paint_controller.end_stroke()
 				await _frames(2)
-				var erased := PBSplat.get_decal_layer_image(stamp_mat)
-				if erased.get_pixel(erased.get_width() / 2, erased.get_height() / 2).a < 0.5:
-					_pass("SPLAT-DECAL: brush erase faded the painted decal pixels")
+				var opaque_after := _count_opaque(PBSplat.get_decal_layer_image(
+					data_b.get_face_material(data_b.faces[top_face]) as ShaderMaterial))
+				if opaque_after < opaque_before:
+					_pass("SPLAT-DECAL: brush erase faded the painted decal pixels (%d -> %d opaque texels)"
+						% [opaque_before, opaque_after])
 				else:
-					_fail("SPLAT-DECAL: brushing in Decal mode with Erase did not remove pixels")
+					_fail("SPLAT-DECAL: brushing in Decal mode with Erase did not remove pixels (%d -> %d)"
+						% [opaque_before, opaque_after])
 				plugin.paint_controller.erase_mode = false
 				plugin.paint_controller.paint_target = PBPaintController.PaintTarget.SPLAT
 
 				# Clear Decal Layer wipes whatever is left.
 				plugin.material_dock._on_clear_all_stamps_pressed()
 				await _frames(2)
-				var cleared := PBSplat.get_decal_layer_image(stamp_mat)
-				if cleared.get_pixel(cleared.get_width() / 2, cleared.get_height() / 2).a < 0.01:
+				# Read the state off the MESH: the clear goes through the undo
+				# snapshot path, which swaps in cloned materials — a material
+				# reference captured before it is stale afterwards.
+				var live_mat := data_b.get_face_material(data_b.faces[top_face]) as ShaderMaterial
+				var cleared := PBSplat.get_decal_layer_image(live_mat)
+				if _count_opaque(cleared) == 0:
 					_pass("SPLAT-DECAL: Clear Decal Layer erased the layer")
 				else:
-					_fail("SPLAT-DECAL: Clear Decal Layer left pixels behind")
+					_fail("SPLAT-DECAL: Clear Decal Layer left pixels behind (%d)" % _count_opaque(cleared))
 
 				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 				await _frames(2)

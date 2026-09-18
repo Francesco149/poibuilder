@@ -67,9 +67,15 @@ uniform sampler2D layer_8_texture : source_color, filter_linear_mipmap, repeat_e
 uniform sampler2D layer_8_mask : hint_default_black, filter_linear, repeat_disable;
 uniform vec4 layer_8_color : source_color = vec4(1.0);
 uniform float layer_8_roughness : hint_range(0.0, 1.0) = 0.8;
-// Dedicated Stamp Layer (copied 1:1, sits on top of all splat layers)
+// Dedicated Stamp Layer (copied 1:1, sits on top of all splat layers).
+// The image is a WINDOW inside the face's [0, 1] mask space (cropped to the
+// painted area so its texels/m stay uniform on large faces); the two uniforms
+// below map mask uv -> window uv. They default to the identity, which is what
+// a layer painted by an older build covers (the whole face rect).
 uniform bool stamp_layer_enabled = false;
 uniform sampler2D stamp_layer_texture : source_color, filter_linear, repeat_disable;
+uniform vec2 stamp_layer_uv_offset = vec2(0.0, 0.0);
+uniform vec2 stamp_layer_uv_scale = vec2(1.0, 1.0);
 
 // Face-planar mask coordinate, delivered by the CUSTOM0 vertex attribute.
 // .xy carries it; the shader treats values outside [0,1] as "outside the
@@ -158,7 +164,10 @@ void fragment() {
 		cur_roughness = mix(cur_roughness, layer_8_roughness, blend * l_col.a);
 	}
 	if (stamp_layer_enabled) {
-		vec4 stamp_col = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(stamp_layer_texture, splat_uv) : vec4(0.0);
+		// Mask uv -> decal window uv; outside the window there is no decal
+		// (the same [0, 1] guard the masks use).
+		vec2 decal_uv = (splat_uv - stamp_layer_uv_offset) * stamp_layer_uv_scale;
+		vec4 stamp_col = (decal_uv.x >= 0.0 && decal_uv.x <= 1.0 && decal_uv.y >= 0.0 && decal_uv.y <= 1.0) ? texture(stamp_layer_texture, decal_uv) : vec4(0.0);
 		albedo = mix(albedo, stamp_col.rgb, stamp_col.a);
 	}
 

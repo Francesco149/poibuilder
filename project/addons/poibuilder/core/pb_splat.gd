@@ -15,18 +15,33 @@ const SHADER_PATH := "res://addons/poibuilder/materials/shaders/pb_splat_shader.
 const MAX_LAYERS := 8
 const DEFAULT_MASK_RES := 256
 
-## Face-normal alignment cutoffs for decal writes. A face turned more than this
-## far from the decal's normal is skipped: stamps may wrap onto a perpendicular
-## neighbour (a wall's floor), brush dabs stay on surfaces they are facing
-## (otherwise a stroke smears its pattern sideways onto every wall it passes).
 ## Child node name the previous stamp design used for its decal quads.
 const LEGACY_STAMP_CONTAINER := "PBStamps"
-const DECAL_MIN_FACE_ALIGNMENT := -0.2
+## Alignment cutoffs for decal writes, as a dot product against the decal's own
+## normal. A face the decal's plane is not roughly parallel to gets a DEGENERATE
+## projection of the content (a floor stamp smeared into horizontal lines down a
+## perpendicular wall — the "completely broken stamp on the wall"), so the cut
+## is deliberately generous but nowhere near perpendicular:
+##   * stamps/decal pastes: 0.35 (~70°) — a decal may wrap a shallow crease,
+##   * brush dabs: 0.25 (~75°) — a dab is round in the FACE's own plane, so
+##     only the sampled content degenerates, and erase must work anywhere.
+const DECAL_MIN_FACE_ALIGNMENT := 0.35
 const DECAL_MIN_DAB_ALIGNMENT := 0.25
-const DEFAULT_DECAL_LAYER_RES := 512
 const TEXELS_PER_METER := 256
 const MIN_RESOLUTION := 256
 const MAX_RESOLUTION := 2048
+## Decal layer density. The decal image is a WINDOW cropped to the painted area
+## (not the whole face rect), so it can hold this density — the same 256
+## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px
+## wide whether it lands on a 2 m panel or a 60 m floor. The window grows in
+## powers of two as paint spreads; past DECAL_MAX_WINDOW_PX (8 m of painted
+## span) the density drops instead, so one face can never blow up memory.
+const DECAL_TEXELS_PER_M := 256.0
+const DECAL_MIN_WINDOW_PX := 64
+const DECAL_MAX_WINDOW_PX := 2048
+## Slack (window pixels) kept around the written footprint so a stroke that
+## drifts a little does not reallocate the window on every dab.
+const DECAL_WINDOW_PAD_PX := 8
 ## Computes uniform texture resolution (w, h) in pixels for `face` based on its physical size in meters.
 ## Guarantees a consistent texel density across both small and large faces.
 static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFace,
@@ -69,6 +84,16 @@ static var _cpu_image_cache: Dictionary = {}
 ## Bumped whenever any splat layer mask, decal layer, or layer set changes, so
 ## downstream caches (the UV editor's splat composite preview) know when to rebuild.
 static var mask_state_version: int = 0
+
+## Decal source images resampled to a footprint size, keyed "source_key_WxH".
+## A stroke writes the same footprint size on every dab, so the resample (the
+## only per-stamp cost that scales with the source) happens once.
+static var _decal_resample_cache: Dictionary = {}
+
+## Decal sources already decompressed/level-stripped, keyed by image instance
+## id (the palette and stamp images are static, so a stroke hits this every
+## dab instead of copying the pixels again).
+static var _decal_source_cache: Dictionary = {}
 
 static func _get_cached_image(mat: ShaderMaterial, key: String) -> Image:
 	if mat == null:
@@ -336,13 +361,21 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 # Decal Layer (painted image overlay: stamps + free drawing)
 # ==============================================================================
 
-## The decal layer is one RGBA image per material, mapped 1:1 over each face's
-## planar rect (the same [0,1] space as the splat masks) — the pixels ARE the
-## content, so a pasted PNG keeps its own colors and alpha instead of being
-## tinted through a layer texture. Everything that lands here is painted
-## through the same rasterizer: a stamp is one oriented paste, the brush is a
-## run of dabs, and both may span several faces (a stamp can overhang an edge
-## and continue on the neighbouring face).
+## The decal layer is one RGBA image per material — the pixels ARE the content,
+## so a pasted PNG keeps its own colors and alpha instead of being tinted
+## through a layer texture. Everything that lands here is painted through the
+## same rasterizer: a stamp is one oriented paste, the brush is a run of dabs,
+## and both may span several faces (a stamp can cross an edge and continue on
+## the neighbouring face).
+##
+## The image is a WINDOW inside each face's planar [0,1] mask space, cropped to
+## the painted area and held at DECAL_TEXELS_PER_M (see ensure_decal_window), so
+## its density does not fall off with face size the way a whole-face image
+## would. Face-mask uv -> window uv goes through get_decal_window /
+## decal_uv_from_mask_uv — the shader does the same remap with the
+## stamp_layer_uv_offset/scale uniforms, and EVERY other consumer of the image
+## (tile baker, face-composite baker, UV editor preview, modern sidecars) must
+## map through it too.
 ##
 ## Shader uniform names stay `stamp_layer_*` from the previous design so scenes
 ## saved before the rename keep their painted content.
@@ -353,7 +386,30 @@ static func has_decal_layer(mat: ShaderMaterial) -> bool:
 		return false
 	return mat.get_shader_parameter("stamp_layer_enabled") == true
 
-## Returns or initializes the decal layer RGBA Image on `mat`.
+## The decal image's rect in the face's own [0, 1] mask space (the same space
+## as `splat_uv` / CUSTOM0). The image covers this window, not the whole face,
+## which is what keeps the texel density uniform on large faces.
+static func get_decal_window(mat: ShaderMaterial) -> Rect2:
+	if mat == null:
+		return Rect2(0.0, 0.0, 1.0, 1.0)
+	var off = mat.get_shader_parameter("stamp_layer_uv_offset")
+	var sc = mat.get_shader_parameter("stamp_layer_uv_scale")
+	var offset: Vector2 = off if off is Vector2 else Vector2.ZERO
+	var scale: Vector2 = sc if sc is Vector2 else Vector2.ONE
+	if scale.x <= 0.000001 or scale.y <= 0.000001:
+		return Rect2(0.0, 0.0, 1.0, 1.0)
+	return Rect2(offset, Vector2(1.0 / scale.x, 1.0 / scale.y))
+
+## Face-mask uv -> decal-image uv for `mat` (outside [0, 1] = outside the
+## window; the shader discards those fragments the same way).
+static func decal_uv_from_mask_uv(mat: ShaderMaterial, mask_uv: Vector2) -> Vector2:
+	var win := get_decal_window(mat)
+	return Vector2((mask_uv.x - win.position.x) / win.size.x,
+			(mask_uv.y - win.position.y) / win.size.y)
+
+## Returns the decal layer's pixel image (the window), or null when `mat` has
+## no decal layer. `target_res` keeps the historical behaviour for layers
+## created before windows existed (a whole-face image grown to density).
 static func get_decal_layer_image(mat: ShaderMaterial, target_res: Vector2i = Vector2i.ZERO) -> Image:
 	if mat == null:
 		return null
@@ -372,29 +428,107 @@ static func get_decal_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 		if img != null:
 			_set_cached_image(mat, cache_key, img)
 
-	if img != null:
-		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
-			var new_w := maxi(img.get_width(), target_res.x)
-			var new_h := maxi(img.get_height(), target_res.y)
-			img.resize(new_w, new_h, Image.INTERPOLATE_BILINEAR)
-			var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
-			if tex != null:
-				tex.set_image(img)
-			mask_state_version += 1
-		return img
+	if img == null:
+		return null
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
+		# Legacy whole-face layer: grow it to the face's density. Windowed
+		# layers are sized by ensure_decal_window instead.
+		var new_w := maxi(img.get_width(), target_res.x)
+		var new_h := maxi(img.get_height(), target_res.y)
+		img.resize(new_w, new_h, Image.INTERPOLATE_BILINEAR)
+		var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+		if tex != null:
+			tex.set_image(img)
+		mask_state_version += 1
+	return img
 
-	# Create new transparent RGBA8 image with uniform resolution
-	var init_w := target_res.x if target_res.x > 0 else DEFAULT_DECAL_LAYER_RES
-	var init_h := target_res.y if target_res.y > 0 else DEFAULT_DECAL_LAYER_RES
-	var new_img := Image.create(init_w, init_h, false, Image.FORMAT_RGBA8)
-	new_img.fill(Color(0, 0, 0, 0))
-	var new_tex := ImageTexture.create_from_image(new_img)
+## Grows/creates the decal window so it covers `need_uv` (face-mask uv space),
+## at DECAL_TEXELS_PER_M in world units (`face_size_m` = the face rect's size in
+## metres, the scale between uv and metres). Returns the image, ready to write
+## through get_decal_window()'s mapping. Existing pixels are preserved: the
+## window only ever grows, so paint already on the face never moves.
+static func ensure_decal_window(mat: ShaderMaterial, need_uv: Rect2,
+		face_size_m: Vector2, texels_per_m: float = DECAL_TEXELS_PER_M) -> Image:
+	if mat == null:
+		return null
+	var existing := get_decal_layer_image(mat)
+	if existing == null:
+		return _realloc_decal_window(mat, null, Rect2(), need_uv, face_size_m, texels_per_m)
+	if mat.get_shader_parameter("stamp_layer_uv_scale") == null:
+		# A layer created by an older build covers the whole face rect.
+		return existing
+	var win := get_decal_window(mat)
+	if win.encloses(need_uv):
+		return existing
+	return _realloc_decal_window(mat, existing, win, win.merge(need_uv), face_size_m, texels_per_m)
+
+## Allocates a new decal window image covering `want_uv` (padded + rounded up to
+## a power of two per axis) and copies `old_img` (which covered `old_uv`) into
+## it. Density follows the requested texels/m until the window would exceed
+## DECAL_MAX_WINDOW_PX, then the covered span wins and the density drops — the
+## only way a face can hold a very large painted span without unbounded memory.
+static func _realloc_decal_window(mat: ShaderMaterial, old_img: Image, old_uv: Rect2,
+		want_uv: Rect2, face_size_m: Vector2, texels_per_m: float) -> Image:
+	var face_m := Vector2(maxf(face_size_m.x, 0.001), maxf(face_size_m.y, 0.001))
+	var margin := Vector2(float(DECAL_WINDOW_PAD_PX) / (face_m.x * maxf(texels_per_m, 1.0)),
+			float(DECAL_WINDOW_PAD_PX) / (face_m.y * maxf(texels_per_m, 1.0)))
+	var rect := want_uv.grow_individual(margin.x, margin.y, margin.x, margin.y)
+
+	# Density: as requested, until the window would exceed DECAL_MAX_WINDOW_PX.
+	# Past that the DENSITY drops, never the covered area — a window always
+	# covers everything painted through it (dropping the area would silently
+	# move or lose paint).
+	var span_cap := float(DECAL_MAX_WINDOW_PX)
+	var dens := maxf(minf(texels_per_m,
+			minf(span_cap / maxf(rect.size.x * face_m.x, 0.000001),
+					span_cap / maxf(rect.size.y * face_m.y, 0.000001))), 1.0)
+	var px_per_uv := face_m * dens
+	var size_px := Vector2i(
+		clampi(_next_po2(int(ceil(rect.size.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
+		clampi(_next_po2(int(ceil(rect.size.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
+	# Keep the requested rect centred inside the (possibly larger) image.
+	var span_uv := Vector2(float(size_px.x) / px_per_uv.x, float(size_px.y) / px_per_uv.y)
+	if span_uv.x < rect.size.x or span_uv.y < rect.size.y:
+		# _next_po2 rounding can overshoot the cap; grow the span instead.
+		span_uv = Vector2(maxf(span_uv.x, rect.size.x), maxf(span_uv.y, rect.size.y))
+		size_px = Vector2i(
+			clampi(_next_po2(int(ceil(span_uv.x * px_per_uv.x))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX),
+			clampi(_next_po2(int(ceil(span_uv.y * px_per_uv.y))), DECAL_MIN_WINDOW_PX, DECAL_MAX_WINDOW_PX))
+		span_uv = Vector2(float(size_px.x) / px_per_uv.x, float(size_px.y) / px_per_uv.y)
+	rect.position -= (span_uv - rect.size) * 0.5
+
+	var img := Image.create(size_px.x, size_px.y, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	if old_img != null and not old_img.is_empty() and old_uv.size.x > 0.000001 and old_uv.size.y > 0.000001:
+		var want_w := maxi(1, int(round(old_uv.size.x / span_uv.x * float(size_px.x))))
+		var want_h := maxi(1, int(round(old_uv.size.y / span_uv.y * float(size_px.y))))
+		var scaled := old_img
+		if want_w != old_img.get_width() or want_h != old_img.get_height():
+			scaled = old_img.duplicate()
+			scaled.resize(want_w, want_h, Image.INTERPOLATE_TRILINEAR)
+		var dst := Vector2i(
+			int(round((old_uv.position.x - rect.position.x) / span_uv.x * float(size_px.x))),
+			int(round((old_uv.position.y - rect.position.y) / span_uv.y * float(size_px.y))))
+		img.blit_rect(scaled, Rect2i(0, 0, scaled.get_width(), scaled.get_height()), dst)
+
 	mat.set_shader_parameter("stamp_layer_enabled", true)
-	mat.set_shader_parameter("stamp_layer_texture", new_tex)
-	_set_cached_image(mat, cache_key, new_img)
+	mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(img))
+	mat.set_shader_parameter("stamp_layer_uv_offset", rect.position)
+	mat.set_shader_parameter("stamp_layer_uv_scale", Vector2(1.0 / span_uv.x, 1.0 / span_uv.y))
+	_set_cached_image(mat, "stamp", img)
 	mask_state_version += 1
-	return new_img
-## Clears the decal layer to transparent on `mat`.
+	return img
+
+static func _next_po2(v: int) -> int:
+	var out := 1
+	while out < v:
+		out <<= 1
+	return out
+
+## Clears the decal window to transparent on `mat` (the window itself stays, so
+## the mapping the shader holds does not change).
 static func clear_decal_layer(mat: ShaderMaterial) -> void:
 	if mat == null:
 		return
@@ -758,16 +892,19 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 # Decal Rasterizer (stamps and brush dabs share it)
 # ==============================================================================
 
-## Pastes `image` as a decal centred on `center_local` (node-local space),
-## oriented by `normal` + `rotation_deg`, `scale` METRES WIDE (the height
-## follows the image's own aspect ratio — a 4:1 banner lands as a 4:1 banner,
-## never squished into a square). Every face of `mesh_data` the oriented
-## footprint touches receives its own part of the paste, so a stamp can wrap
-## over a face edge or a corner; faces are given their own splat material first
-## (see ensure_face_owned_material). `opacity` scales the source alpha.
-## Returns the number of faces painted.
+## Pastes `image` as a decal centred on `center_local`, oriented by `normal` +
+## `rotation_deg`, `scale` METRES WIDE (the height follows the image's own
+## aspect ratio — a 4:1 banner lands as a 4:1 banner, never squished into a
+## square). `center_local` and `normal` are NODE-LOCAL: converting the point
+## but not the normal (the caller's job) used a basis that is not in the face's
+## plane and smeared the decal. Every face of `mesh_data` the oriented
+## footprint can reach receives its own part of the paste, so a stamp may cross
+## a face edge and continue on the neighbour; faces are given their own splat
+## material first (see ensure_face_owned_material). `opacity` scales the
+## source alpha. Returns the number of faces painted.
 static func paste_decal(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
-		rotation_deg: float, scale: float, opacity: float, image: Image) -> int:
+		rotation_deg: float, scale: float, opacity: float, image: Image,
+		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
 	if mesh_data == null or image == null or scale <= 0.0:
 		return 0
 	var src := _decal_source(image)
@@ -785,20 +922,26 @@ static func paste_decal(mesh_data: PBMeshData, center_local: Vector3, normal: Ve
 	var opacity_b := int(round(clampf(opacity, 0.0, 1.0) * 255.0))
 	var painted := 0
 	for t in targets:
-		if _paste_decal_into(t, src, center_local, basis["right"], basis["up"], ext, opacity_b):
+		if _paste_decal_into(t, src, center_local, basis["right"], basis["up"], ext,
+				opacity_b, texels_per_m):
 			painted += 1
 	return painted
 
 ## One brush dab into the decal layer: the same oriented footprint as a paste,
 ## sized by `radius` and faded by the brush falloff LUT. `erase` fades the
 ## layer's alpha out instead of compositing new pixels in, which is how parts
-## of a stamp get removed again. Returns the number of faces touched.
+## of a stamp get removed again. With `image` = null the dab paints a solid
+## `color` (the basic brush); pass an image to dab the palette texture instead.
+## Returns the number of faces touched.
 static func paint_decal_dab(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
 		rotation_deg: float, radius: float, softness: float, opacity: float,
-		erase: bool, image: Image) -> int:
-	if mesh_data == null or image == null or radius <= 0.0:
+		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
+		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
+	if mesh_data == null or radius <= 0.0:
 		return 0
-	var src := _decal_source(image)
+	if image == null and not erase and color.a <= 0.0:
+		return 0
+	var src := _decal_source(image) if image != null else _decal_solid_source(color)
 	if src.is_empty():
 		return 0
 	var basis := _decal_basis(normal, rotation_deg)
@@ -813,9 +956,21 @@ static func paint_decal_dab(mesh_data: PBMeshData, center_local: Vector3, normal
 	var touched := 0
 	for t in targets:
 		if _brush_decal_into(t, src, center_local, basis["right"], basis["up"],
-				ext, radius, lut, opacity_b, erase):
+				ext, radius, lut, opacity_b, erase, texels_per_m):
 			touched += 1
 	return touched
+
+## A 1x1 source for the solid-colour brush: the pixel loops then run unchanged
+## (every fetch lands on the single texel), so a colour dab costs strictly less
+## than an image dab.
+static func _decal_solid_source(color: Color) -> Dictionary:
+	var b := PackedByteArray()
+	b.resize(4)
+	b[0] = int(round(clampf(color.r, 0.0, 1.0) * 255.0))
+	b[1] = int(round(clampf(color.g, 0.0, 1.0) * 255.0))
+	b[2] = int(round(clampf(color.b, 0.0, 1.0) * 255.0))
+	b[3] = int(round(clampf(color.a, 0.0, 1.0) * 255.0))
+	return {"bytes": b, "w": 1, "h": 1}
 
 ## Footprint extents (metres) for a source image painted `width_m` wide: the
 ## height follows the image's aspect ratio, so nothing is ever squished. Pad
@@ -839,10 +994,10 @@ static func _decal_basis(normal: Vector3, rotation_deg: float) -> Dictionary:
 	}
 
 ## Faces of `mesh_data` whose planar rect the oriented footprint can touch,
-## with everything the pixel loops need (mask image, rect, axis, hit point).
-## `min_alignment` rejects faces turned away from the decal's normal — a stamp
-## on a wall must not bleed onto the wall's far side, while a perpendicular
-## neighbour (a floor meeting that wall) still counts.
+## with everything the pixel loops need (owned material, rect, axes).
+## `min_alignment` rejects faces the decal's plane is not roughly parallel to:
+## on those the paste is a degenerate projection of the content (a floor stamp
+## smeared down a perpendicular wall), not a decal.
 static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_right: Vector3,
 		rot_up: Vector3, normal: Vector3, half_extent: float, min_alignment: float) -> Array:
 	var out: Array = []
@@ -894,101 +1049,162 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		var bounds := get_face_planar_bounds(mesh_data, face)
 		if bounds.is_empty():
 			continue
-		var img := get_decal_layer_image(mat, calculate_uniform_face_resolution(mesh_data, face))
-		if img == null:
-			continue
-		if img.get_format() != Image.FORMAT_RGBA8:
-			img.convert(Image.FORMAT_RGBA8)
+		# The decal window itself is allocated by the writer, which is the
+		# only place that knows the footprint it has to cover.
 		out.append({
 			"face": face,
 			"mat": mat,
-			"img": img,
 			"u_axis": bounds["u"],
 			"v_axis": bounds["v"],
 			"min_u": bounds["min_u"],
 			"min_v": bounds["min_v"],
 			"range_u": bounds["range_u"],
 			"range_v": bounds["range_v"],
-			"hit_u": (bounds["u"] as Vector3).dot(center_local),
-			"hit_v": (bounds["v"] as Vector3).dot(center_local),
 		})
 	return out
 
 ## Source image as raw RGBA8 bytes (decompress + convert once per write, never
-## per pixel: the pixel loops index the byte array directly).
+## per pixel: the pixel loops index the byte array directly). Mipmaps are
+## dropped: get_data() concatenates every level, so a mipmapped source would
+## hand the resampler a buffer larger than the base level it describes.
 static func _decal_source(image: Image) -> Dictionary:
 	if image == null or image.is_empty():
 		return {}
+	var id := image.get_instance_id()
+	if _decal_source_cache.has(id):
+		return _decal_source_cache[id]
 	var img := image
 	if img.is_compressed():
 		img = img.duplicate()
 		img.decompress()
-	if img.get_format() != Image.FORMAT_RGBA8:
-		img = img.duplicate()
-		img.convert(Image.FORMAT_RGBA8)
+	if img.get_format() != Image.FORMAT_RGBA8 or img.has_mipmaps():
+		# Copy the BASE LEVEL into a clean RGBA8 image: get_data() concatenates
+		# every mip level (an imported 256x128 PNG arrives as 174764 bytes
+		# instead of 131072) and get_region() keeps them.
+		var src := img
+		if src.get_format() != Image.FORMAT_RGBA8:
+			src = src.duplicate()
+			src.convert(Image.FORMAT_RGBA8)
+		var base := Image.create(src.get_width(), src.get_height(), false, Image.FORMAT_RGBA8)
+		base.blit_rect(src, Rect2i(0, 0, src.get_width(), src.get_height()), Vector2i.ZERO)
+		img = base
 	if img.is_empty():
 		return {}
-	return {"bytes": img.get_data(), "w": img.get_width(), "h": img.get_height()}
+	var out := {"bytes": img.get_data(), "w": img.get_width(), "h": img.get_height(),
+			"key": "img_%d" % id}
+	if _decal_source_cache.size() >= 8:
+		_decal_source_cache.clear()
+	_decal_source_cache[id] = out
+	return out
 
-## Pixel window of a decal footprint inside one target's mask image.
-static func _decal_pixel_window(t: Dictionary, hit_u: float, hit_v: float, half_extent: float) -> Dictionary:
-	var w: int = t["img"].get_width()
-	var h: int = t["img"].get_height()
-	var u0: float = (hit_u - half_extent - t["min_u"]) / t["range_u"]
-	var u1: float = (hit_u + half_extent - t["min_u"]) / t["range_u"]
-	var v0: float = (hit_v - half_extent - t["min_v"]) / t["range_v"]
-	var v1: float = (hit_v + half_extent - t["min_v"]) / t["range_v"]
-	return {
-		"x0": clampi(int(floor(u0 * (w - 1))), 0, w - 1),
-		"x1": clampi(int(ceil(u1 * (w - 1))), 0, w - 1),
-		"y0": clampi(int(floor(v0 * (h - 1))), 0, h - 1),
-		"y1": clampi(int(ceil(v1 * (h - 1))), 0, h - 1),
-		"w": w, "h": h,
-	}
+## The source resampled to the footprint's own size in the target's pixel grid.
+## The oriented fetch below is then a 1:1 nearest read, which is what keeps a
+## stamp as sharp as its source: nearest-sampling a 256 px PNG into an 85 px
+## footprint (the old behaviour) aliases it into the visible blocks/dropouts
+## the decal layer was reported for. Cached per (source, size) because every
+## dab of a stroke writes the same footprint size.
+static func _resample_source(src: Dictionary, fw: int, fh: int) -> Dictionary:
+	var sw: int = src["w"]
+	var sh: int = src["h"]
+	if (sw == fw and sh == fh) or (sw == 1 and sh == 1):
+		return src
+	var key := "%s_%dx%d" % [src["key"], fw, fh]
+	if _decal_resample_cache.has(key):
+		return _decal_resample_cache[key]
+	var img := Image.create_from_data(sw, sh, false, Image.FORMAT_RGBA8, src["bytes"])
+	var mode := Image.INTERPOLATE_BILINEAR if (fw >= sw and fh >= sh) else Image.INTERPOLATE_TRILINEAR
+	img.resize(fw, fh, mode)
+	var out := {"bytes": img.get_data(), "w": fw, "h": fh, "key": key}
+	if _decal_resample_cache.size() >= 6:
+		_decal_resample_cache.clear()
+	_decal_resample_cache[key] = out
+	return out
 
-## Uploads a target's mask image back to its ImageTexture and bumps the state
+## The pixel bbox of a decal footprint inside a target's window image: the
+## footprint's circumscribed square in face-mask uv, clamped to the window.
+static func _decal_pixel_window(t: Dictionary, win: Rect2, center_u: float,
+		center_v: float, half_extent: float) -> Dictionary:
+	var img: Image = t["img"]
+	var w := img.get_width()
+	var h := img.get_height()
+	var min_u: float = t["min_u"]
+	var min_v: float = t["min_v"]
+	var range_u: float = t["range_u"]
+	var range_v: float = t["range_v"]
+	var fu0: float = (center_u - half_extent - min_u) / range_u
+	var fv0: float = (center_v - half_extent - min_v) / range_v
+	var fu1: float = (center_u + half_extent - min_u) / range_u
+	var fv1: float = (center_v + half_extent - min_v) / range_v
+	var x0 := clampi(int(floor((fu0 - win.position.x) / win.size.x * float(w - 1))), 0, w - 1)
+	var x1 := clampi(int(ceil((fu1 - win.position.x) / win.size.x * float(w - 1))), 0, w - 1)
+	var y0 := clampi(int(floor((fv0 - win.position.y) / win.size.y * float(h - 1))), 0, h - 1)
+	var y1 := clampi(int(ceil((fv1 - win.position.y) / win.size.y * float(h - 1))), 0, h - 1)
+	return {"x0": x0, "x1": x1, "y0": y0, "y1": y1, "w": w, "h": h}
+
+## Uploads a target's image back to its ImageTexture and bumps the state
 ## version so downstream caches (UV editor preview, exporters) refresh.
-static func _commit_decal_target(t: Dictionary) -> void:
-	var mat: ShaderMaterial = t["mat"]
+static func _commit_decal_target(mat: ShaderMaterial, img: Image) -> void:
+	if mat == null or img == null:
+		return
 	var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
 	if tex != null:
-		tex.update(t["img"])
+		tex.update(img)
 	mask_state_version += 1
 
 static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vector3,
-		rot_right: Vector3, rot_up: Vector3, ext: Vector2, opacity_b: int) -> bool:
+		rot_right: Vector3, rot_up: Vector3, ext: Vector2, opacity_b: int,
+		texels_per_m: float) -> bool:
 	# The decal centre projected into THIS face's plane: once a stamp wraps a
 	# corner, every face samples it through its own axes.
-	var center_u: float = (t["u_axis"] as Vector3).dot(center_local)
-	var center_v: float = (t["v_axis"] as Vector3).dot(center_local)
-	var half: float = 0.5 * sqrt(ext.x * ext.x + ext.y * ext.y)
-	var win := _decal_pixel_window(t, center_u, center_v, half)
-	if win["x0"] > win["x1"] or win["y0"] > win["y1"]:
-		return false
-
 	var u_face: Vector3 = t["u_axis"]
 	var v_face: Vector3 = t["v_axis"]
 	var min_u: float = t["min_u"]
 	var min_v: float = t["min_v"]
 	var range_u: float = t["range_u"]
 	var range_v: float = t["range_v"]
-	var w: int = win["w"]
-	var h: int = win["h"]
-	var step_u := range_u / float(maxi(w - 1, 1))
-	var step_v := range_v / float(maxi(h - 1, 1))
+	var center_u: float = u_face.dot(center_local)
+	var center_v: float = v_face.dot(center_local)
+	var half: float = 0.5 * sqrt(ext.x * ext.x + ext.y * ext.y)
 
-	var src_b: PackedByteArray = src["bytes"]
-	var sw: int = src["w"]
-	var sh: int = src["h"]
-	var dst_img: Image = t["img"]
+	var mat: ShaderMaterial = t["mat"]
+	# The footprint (as its circumscribed square) in the face's mask uv, grown
+	# by one pixel so the window always covers the written bbox.
+	var need := Rect2(
+		(center_u - half - min_u) / range_u, (center_v - half - min_v) / range_v,
+		2.0 * half / range_u, 2.0 * half / range_v)
+	var inv_u := 1.0 / maxf(range_u * maxf(texels_per_m, 1.0), 0.001)
+	var inv_v := 1.0 / maxf(range_v * maxf(texels_per_m, 1.0), 0.001)
+	need = need.grow_individual(inv_u, inv_v, inv_u, inv_v)
+	var dst_img := ensure_decal_window(mat, need, Vector2(range_u, range_v), texels_per_m)
+	if dst_img == null:
+		return false
+	t["img"] = dst_img
+	var win := get_decal_window(mat)
+	var px_per_m_u := float(dst_img.get_width() - 1) / maxf(win.size.x * range_u, 0.000001)
+	var px_per_m_v := float(dst_img.get_height() - 1) / maxf(win.size.y * range_v, 0.000001)
+	var win_data := _decal_pixel_window(t, win, center_u, center_v, half)
+	if win_data["x0"] > win_data["x1"] or win_data["y0"] > win_data["y1"]:
+		return false
+
+	# Footprint-sized source: the oriented fetch stays a 1:1 read.
+	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
+			maxi(1, int(round(ext.y * px_per_m_v))))
+
+	var w: int = win_data["w"]
+	var h: int = win_data["h"]
+	var inv_w := 1.0 / float(maxi(w - 1, 1))
+	var inv_h := 1.0 / float(maxi(h - 1, 1))
+	var src_b: PackedByteArray = rsrc["bytes"]
+	var sw: int = rsrc["w"]
+	var sh: int = rsrc["h"]
 	var dst_b := dst_img.get_data()
 
 	var dirty := false
-	for y in range(win["y0"], win["y1"] + 1):
-		var v_coord := min_v + float(y) * step_v
+	for y in range(win_data["y0"], win_data["y1"] + 1):
+		var v_coord := min_v + (win.position.y + float(y) * inv_h * win.size.y) * range_v
 		var row := y * w
-		for x in range(win["x0"], win["x1"] + 1):
-			var u_coord := min_u + float(x) * step_u
+		for x in range(win_data["x0"], win_data["x1"] + 1):
+			var u_coord := min_u + (win.position.x + float(x) * inv_w * win.size.x) * range_u
 			var dp := (u_coord - center_u) * u_face + (v_coord - center_v) * v_face
 			var sx := dp.dot(rot_right) / ext.x + 0.5
 			if sx < 0.0 or sx > 1.0:
@@ -1025,44 +1241,60 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	if not dirty:
 		return false
 	dst_img.set_data(w, h, false, Image.FORMAT_RGBA8, dst_b)
-	_commit_decal_target(t)
+	_commit_decal_target(mat, dst_img)
 	return true
 
 static func _brush_decal_into(t: Dictionary, src: Dictionary, center_local: Vector3,
 		rot_right: Vector3, rot_up: Vector3, ext: Vector2, radius: float,
-		lut: PackedByteArray, opacity_b: int, erase: bool) -> bool:
+		lut: PackedByteArray, opacity_b: int, erase: bool, texels_per_m: float) -> bool:
 	var u_face: Vector3 = t["u_axis"]
 	var v_face: Vector3 = t["v_axis"]
-	var center_u: float = u_face.dot(center_local)
-	var center_v: float = v_face.dot(center_local)
-	var win := _decal_pixel_window(t, center_u, center_v, radius)
-	if win["x0"] > win["x1"] or win["y0"] > win["y1"]:
-		return false
-
 	var min_u: float = t["min_u"]
 	var min_v: float = t["min_v"]
 	var range_u: float = t["range_u"]
 	var range_v: float = t["range_v"]
-	var w: int = win["w"]
-	var h: int = win["h"]
-	var step_u := range_u / float(maxi(w - 1, 1))
-	var step_v := range_v / float(maxi(h - 1, 1))
+	var center_u: float = u_face.dot(center_local)
+	var center_v: float = v_face.dot(center_local)
 
-	var src_b: PackedByteArray = src["bytes"]
-	var sw: int = src["w"]
-	var sh: int = src["h"]
-	var dst_img: Image = t["img"]
+	var mat: ShaderMaterial = t["mat"]
+	var need := Rect2(
+		(center_u - radius - min_u) / range_u, (center_v - radius - min_v) / range_v,
+		2.0 * radius / range_u, 2.0 * radius / range_v)
+	var inv_u := 1.0 / maxf(range_u * maxf(texels_per_m, 1.0), 0.001)
+	var inv_v := 1.0 / maxf(range_v * maxf(texels_per_m, 1.0), 0.001)
+	need = need.grow_individual(inv_u, inv_v, inv_u, inv_v)
+	var dst_img := ensure_decal_window(mat, need, Vector2(range_u, range_v), texels_per_m)
+	if dst_img == null:
+		return false
+	t["img"] = dst_img
+	var win := get_decal_window(mat)
+	var px_per_m_u := float(dst_img.get_width() - 1) / maxf(win.size.x * range_u, 0.000001)
+	var px_per_m_v := float(dst_img.get_height() - 1) / maxf(win.size.y * range_v, 0.000001)
+	var win_data := _decal_pixel_window(t, win, center_u, center_v, radius)
+	if win_data["x0"] > win_data["x1"] or win_data["y0"] > win_data["y1"]:
+		return false
+
+	var rsrc := _resample_source(src, maxi(1, int(round(ext.x * px_per_m_u))),
+			maxi(1, int(round(ext.y * px_per_m_v))))
+
+	var w: int = win_data["w"]
+	var h: int = win_data["h"]
+	var inv_w := 1.0 / float(maxi(w - 1, 1))
+	var inv_h := 1.0 / float(maxi(h - 1, 1))
+	var src_b: PackedByteArray = rsrc["bytes"]
+	var sw: int = rsrc["w"]
+	var sh: int = rsrc["h"]
 	var dst_b := dst_img.get_data()
 	var inv_r_sq := 1.0 / (radius * radius)
 	var lut_max := float(BRUSH_LUT_SIZE - 1)
 
 	var dirty := false
-	for y in range(win["y0"], win["y1"] + 1):
-		var v_coord := min_v + float(y) * step_v
+	for y in range(win_data["y0"], win_data["y1"] + 1):
+		var v_coord := min_v + (win.position.y + float(y) * inv_h * win.size.y) * range_v
 		var dv := v_coord - center_v
 		var row := y * w
-		for x in range(win["x0"], win["x1"] + 1):
-			var u_coord := min_u + float(x) * step_u
+		for x in range(win_data["x0"], win_data["x1"] + 1):
+			var u_coord := min_u + (win.position.x + float(x) * inv_w * win.size.x) * range_u
 			var du := u_coord - center_u
 			var dist_sq := du * du + dv * dv
 			var li := int(dist_sq * inv_r_sq * lut_max)
@@ -1122,7 +1354,7 @@ static func _brush_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	if not dirty:
 		return false
 	dst_img.set_data(w, h, false, Image.FORMAT_RGBA8, dst_b)
-	_commit_decal_target(t)
+	_commit_decal_target(mat, dst_img)
 	return true
 
 ## Records the face's planar rect on first paint: from then on the mask maps to
@@ -1188,6 +1420,14 @@ static func _copy_layer_setup(source: ShaderMaterial, target: ShaderMaterial) ->
 			decal_copy.copy_from(src_decal)
 			target.set_shader_parameter("stamp_layer_enabled", true)
 			target.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(decal_copy))
+			# The window mapping travels WITH the pixels: a copy that dropped
+			# it would render the content stretched over the whole face.
+			var win_off = source.get_shader_parameter("stamp_layer_uv_offset")
+			var win_scale = source.get_shader_parameter("stamp_layer_uv_scale")
+			if win_off is Vector2:
+				target.set_shader_parameter("stamp_layer_uv_offset", win_off)
+			if win_scale is Vector2:
+				target.set_shader_parameter("stamp_layer_uv_scale", win_scale)
 			_set_cached_image(target, "stamp", decal_copy)
 	mask_state_version += 1
 # ==============================================================================
@@ -1285,6 +1525,7 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 		"roughness": sm.get_shader_parameter("roughness"),
 		"layers": [],
 		"decal_layer_image": null,
+		"decal_window": Rect2(0.0, 0.0, 1.0, 1.0),
 		"planar_bounds": get_face_planar_bounds(mesh_data, face),
 	}
 	var base_tex := sm.get_shader_parameter("base_texture") as Texture2D
@@ -1303,6 +1544,7 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 			})
 	if has_decal_layer(sm):
 		out["decal_layer_image"] = get_decal_layer_image(sm)
+		out["decal_window"] = get_decal_window(sm)
 	return out
 
 # ==============================================================================
@@ -1339,7 +1581,7 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 				var cloned_tex := ImageTexture.create_from_image(cloned_img)
 				clone.set_shader_parameter("layer_%d_mask" % i, cloned_tex)
 				_set_cached_image(clone, "layer_%d" % i, cloned_img)
-	# Clone the decal layer if it exists
+	# Clone the decal layer if it exists (window mapping included)
 	if source.get_shader_parameter("stamp_layer_enabled") == true:
 		clone.set_shader_parameter("stamp_layer_enabled", true)
 		var src_stamp_img := get_decal_layer_image(source)
@@ -1349,6 +1591,12 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 			var cloned_stamp_tex := ImageTexture.create_from_image(cloned_stamp_img)
 			clone.set_shader_parameter("stamp_layer_texture", cloned_stamp_tex)
 			_set_cached_image(clone, "stamp", cloned_stamp_img)
+		var clone_off = source.get_shader_parameter("stamp_layer_uv_offset")
+		var clone_scale = source.get_shader_parameter("stamp_layer_uv_scale")
+		if clone_off is Vector2:
+			clone.set_shader_parameter("stamp_layer_uv_offset", clone_off)
+		if clone_scale is Vector2:
+			clone.set_shader_parameter("stamp_layer_uv_scale", clone_scale)
 	return clone
 
 # ==============================================================================
@@ -1395,6 +1643,7 @@ static func build_preview_texture(mat: Material, size: int = 256) -> ImageTextur
 		})
 
 	var stamp_img: Image = null
+	var stamp_win := get_decal_window(smat)
 	if smat.get_shader_parameter("stamp_layer_enabled") == true \
 			and smat.get_shader_parameter("stamp_layer_texture") != null:
 		stamp_img = get_decal_layer_image(smat)
@@ -1415,9 +1664,14 @@ static func build_preview_texture(mat: Material, size: int = 256) -> ImageTextur
 				var a: float = blend * l_col.a
 				col = Color(col.r + (l_col.r - col.r) * a, col.g + (l_col.g - col.g) * a, col.b + (l_col.b - col.b) * a, col.a)
 			if stamp_img != null:
-				var s_col := _sample_image_clamp(stamp_img, u, v)
-				if s_col.a > 0.001:
-					col = Color(col.r + (s_col.r - col.r) * s_col.a, col.g + (s_col.g - col.g) * s_col.a, col.b + (s_col.b - col.b) * s_col.a, col.a)
+				# The decal image is a WINDOW inside the face's [0, 1] space:
+				# outside it there is no decal at all (never an edge smear).
+				var du := (u - stamp_win.position.x) / stamp_win.size.x
+				var dv := (v - stamp_win.position.y) / stamp_win.size.y
+				if du >= 0.0 and du <= 1.0 and dv >= 0.0 and dv <= 1.0:
+					var s_col := _sample_image_clamp(stamp_img, du, dv)
+					if s_col.a > 0.001:
+						col = Color(col.r + (s_col.r - col.r) * s_col.a, col.g + (s_col.g - col.g) * s_col.a, col.b + (s_col.b - col.b) * s_col.a, col.a)
 			img.set_pixel(x, y, col)
 
 	return ImageTexture.create_from_image(img)

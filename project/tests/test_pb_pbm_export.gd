@@ -58,7 +58,12 @@ func test_gdscript_pbm_export_against_oracle() -> void:
 		"A mesh per (surface, 384-vertex chunk) is the worst case; %d meshes is more than the map has geometry for"
 			% num_meshes)
 	var num_colliders := f.get_32()
-	assert_eq(num_colliders, 9, "Collider count must match Oracle (9 colliders)")
+	# One entry per collider NODE. The map has 8 of them; the exporter merges a
+	# node's material surfaces into one collider mesh, so a face that gains its
+	# own material (painting one does) cannot split a collider in two — that is
+	# where the historical 9 came from (the floor's 2 surfaces counted twice).
+	# The Python oracle counts per primitive too, so both agree at 8.
+	assert_eq(num_colliders, 8, "Collider count must match Oracle (8 collider nodes)")
 
 	var num_metadata := f.get_32()
 	assert_eq(num_metadata, 8, "Metadata count must be 8 (map_name, env_preset, spawn, walkable, triggers, rigid_bodies, entities, emitters)")

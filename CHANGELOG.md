@@ -3,6 +3,66 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.152 — decal layer: uniform density, real resampling, a colour brush
+
+Second pass on the stamp/decal layer, driven by "very pixelated on the floor,
+completely broken on the wall".
+
+### The pixelation: nearest-neighbour pastes on a stretched whole-face image
+- The decal image is now a **window cropped to the painted area** at a fixed
+  256 texels/m — the same density the splat masks use — instead of one image
+  stretched over the face's whole planar rect, which collapsed to 64 texels/m
+  on a 32 m floor (a 1 m stamp had a 64 px footprint). The window grows in
+  powers of two as paint spreads and keeps the density until 8 m of painted
+  span, where it gives way rather than allocating unbounded memory. Paint that
+  is already on the face never moves: the window only ever grows.
+- The source image is **resampled to the footprint once per paste** (bilinear
+  up, mip-blended down) instead of nearest-sampled per layer texel: a 256 px
+  PNG landing in an 85 px footprint aliased into exactly the blocks the report
+  showed. Mip level data is stripped from the source first (an imported PNG
+  arrives as 174764 bytes for a 131072-byte base level; the old loop happened
+  to index only the base level).
+
+### The broken wall: a degenerate projection, and a world/local mix-up
+- A decal no longer paints faces its plane is not roughly parallel to
+  (`DECAL_MIN_FACE_ALIGNMENT` -0.2 → 0.35). A floor stamp used to project its
+  middle rows down a perpendicular wall as horizontal streaks.
+- The paint controller now converts the pick's **world** normal into the mesh's
+  local space before a decal write (the point was converted, the normal was
+  not): on any moved or rotated mesh the decal basis was outside the face's
+  plane — the same smear. Brush and stamp sizes, and the decal density, also
+  follow the mesh's own scale now, so a mesh scaled 4x paints at full density.
+- Both are locked by regression tests that fail on the old code paths
+  (rotated-mesh aspect, perpendicular-face bleed).
+
+### The decal layer is properly paintable
+- New **colour brush**: paint a flat colour with the usual radius / softness /
+  opacity / erase controls plus the editor's colour picker, in the Paint tab
+  ("Brush: Color | Palette image" — the palette image still dabs as before).
+- The brush ring wears the colour it paints; "Clear Layer" clears the decal
+  layer when the brush targets Decal; the Stamp tab's "erase parts of it with
+  the brush in Decal mode" hint is now a button that opens that brush (it
+  described a brush the user had no way to find).
+
+### The courtyard demo lost its stamps
+- The showcase builder still built `PBStamps` node quads, which the exporter
+  skips by name: the demo shipped a map with no stamps at all. Both stamps
+  (floor sign, ramp decal) are painted into the decal layer now, and the scene
+  builder flushes painted pixels into their GPU textures before a headless save
+  (an ImageTexture that only saw `update()` serializes stale pixels there).
+- `test_pb_map_showcase.gd` asserts the built map carries decal paint, so the
+  demo cannot silently lose them again.
+
+### Also
+- Modern sidecars (`poi_splat`) write the decal window rect as `decal_rect`;
+  records without it still mean "the whole face rect". The tile baker and the
+  modern face-composite baker map the decal through the window.
+- The shader's decal uniforms default to the identity, so scenes painted by
+  earlier builds render exactly as before.
+- Legacy `pb_decal_shader.gdshader` stays on purpose: scenes saved by older
+  builds reference it by path, and `migrate_legacy_stamps` re-pastes them into
+  the decal layer on load.
+
 ## v0.9.151 — splat/decals: masks off UV2, stamps as painted pixels, modern-GLB paint modes
 
 Three changes that all come from one insight: UV2 was never the right place for

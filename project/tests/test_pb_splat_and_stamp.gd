@@ -383,14 +383,18 @@ func test_clone_splat_material_deep_copies_masks() -> void:
 
 	# Modifying clone should not mutate original
 	mask_clone.set_pixel(10, 10, Color(0.1, 0.1, 0.1, 1.0))
-	# Also test decal layer cloning
-	var stamp_img := PBSplat.get_decal_layer_image(mat)
+	# Also test decal layer cloning (window rect included: a clone that lost
+	# the mapping would draw the pixels across the whole face)
+	var stamp_img := PBSplat.ensure_decal_window(mat, Rect2(0.2, 0.3, 0.1, 0.1), Vector2(2.0, 2.0))
+	assert_not_null(stamp_img)
 	stamp_img.set_pixel(20, 20, Color(0.3, 0.7, 0.1, 0.9))
 	var clone2 := PBSplat.clone_splat_material(mat)
 	assert_true(PBSplat.has_decal_layer(clone2))
 	var clone2_stamp_img := PBSplat.get_decal_layer_image(clone2)
 	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).r, 0.3, 0.01)
 	assert_almost_eq(clone2_stamp_img.get_pixel(20, 20).a, 0.9, 0.01)
+	assert_eq(PBSplat.get_decal_window(clone2), PBSplat.get_decal_window(mat),
+			"The clone must keep the decal window mapping")
 # ==============================================================================
 # 7. Paint Controller Mode & Property Tests
 # ==============================================================================
@@ -437,16 +441,42 @@ func test_uniform_resolution_calculation() -> void:
 	assert_eq(res_8m.x, 2048, "8m face width should be 2048 pixels")
 	assert_eq(res_8m.y, 2048, "8m face height should be 2048 pixels")
 
-func test_dynamic_image_resizing_on_large_faces() -> void:
-	var mat := PBSplat.create_splat_material()
-	# Create initial 256x256 image
-	var img_256 := PBSplat.get_decal_layer_image(mat, Vector2i(256, 256))
-	assert_eq(img_256.get_width(), 256)
+## The decal layer is a WINDOW cropped to the painted area, not a whole-face
+## image: that is what keeps its texels/m uniform on a large face (a 32 m floor
+## used to get a 2048 px layer = 64 texels/m, which read as a pixelated stamp).
+func test_decal_window_crops_to_the_paint_and_keeps_density() -> void:
+	var data := PBShapeGenerators.create_plane(32.0, 32.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var stamp := Image.create(64, 32, false, Image.FORMAT_RGBA8)
+	stamp.fill(Color.WHITE)
 
-	# Request 1024x1024 on the same material (a larger face needs more texels)
-	var img_1024 := PBSplat.get_decal_layer_image(mat, Vector2i(1024, 1024))
-	assert_eq(img_1024.get_width(), 1024, "Stamp layer image should dynamically upscale to 1024")
-	assert_eq(img_1024.get_height(), 1024, "Stamp layer image should dynamically upscale to 1024")
+	assert_eq(PBSplat.paste_decal(data, Vector3.ZERO, Vector3.UP, 0.0, 1.0, 1.0, stamp), 1,
+			"Fixture: the stamp must land on the 32 m face")
+
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var win := PBSplat.get_decal_window(mat)
+	var img := PBSplat.get_decal_layer_image(mat)
+	assert_true(win.size.x < 0.1 and win.size.y < 0.1,
+			"The window must cover the ~1 m stamp, not the 32 m face (got %s)" % win)
+	var density := float(img.get_width()) / maxf(win.size.x * 32.0, 0.001)
+	assert_almost_eq(density, PBSplat.DECAL_TEXELS_PER_M, PBSplat.DECAL_TEXELS_PER_M * 0.05,
+			"The window must hold 256 texels/m — the same density the splat masks use")
+	assert_true(img.get_width() < 1024,
+			"A 1 m stamp must not allocate a whole-face-sized layer (got %d px)" % img.get_width())
+
+	# Paint far away: the window grows and the first stamp's pixels survive.
+	var before := PBSplat.get_decal_layer_image(mat).get_data()
+	assert_eq(PBSplat.paste_decal(data, Vector3(12.0, 0.0, 0.0), Vector3.UP, 0.0, 1.0, 1.0, stamp), 1,
+			"Fixture: the second stamp must land")
+	var grown := PBSplat.get_decal_window(mat)
+	assert_true(grown.size.x > win.size.x, "The window must grow to hold paint at both spots")
+	assert_true(grown.encloses(win), "Growing must keep the original window inside")
+	var pixels := PBSplat.get_decal_layer_image(mat).get_data()
+	assert_eq(pixels.size(), PBSplat.get_decal_layer_image(mat).get_width()
+			* PBSplat.get_decal_layer_image(mat).get_height() * 4)
+	assert_true(pixels.size() != before.size() or pixels != before,
+			"The grown window must hold the new paint")
 
 func test_stamp_mode_paints_the_decal_layer_without_scene_nodes() -> void:
 	var cube := PBMesh.create_cube(2.0)
@@ -469,16 +499,214 @@ func test_stamp_mode_paints_the_decal_layer_without_scene_nodes() -> void:
 	var mid := decal.get_width() / 2
 	assert_almost_eq(decal.get_pixel(mid, mid).a, 1.0, 0.05, "Stamp pixels must be in the middle of the layer")
 
-	# A second stamp at another spot composites into the SAME layer
+	# A second stamp at another spot composites into the SAME layer: the window
+	# may grow to hold both, but the face must not end up with two layers, and
+	# the first stamp's pixels must survive the growth.
 	ctrl.update_cursor(Vector3(0.4, 1.0, 0.0), Vector3.UP, cube, 4)
 	ctrl.apply_stamp()
-	assert_eq(PBSplat.get_decal_layer_image(mat).get_width(), decal.get_width(),
-			"Both stamps live in one per-face decal layer")
+	var decal_layers := 0
+	for m in data.materials:
+		if PBSplat.is_splat_material(m) and PBSplat.has_decal_layer(m as ShaderMaterial):
+			decal_layers += 1
+	assert_eq(decal_layers, 1, "Both stamps live in one per-face decal layer")
+	for spot in [Vector3(0, 1.0, 0.2), Vector3(0.4, 1.0, 0.0)]:
+		assert_gt(_decal_alpha_at(data, mat, face_under(data), spot), 0.5,
+				"Stamp at %s must be painted after the window grew" % spot)
 
 	# Clearing wipes the layer
 	ctrl.clear_decal_layer(cube)
 	assert_almost_eq(PBSplat.get_decal_layer_image(mat).get_pixel(mid, mid).a, 0.0, 0.01,
 			"Clear Decal Layer must erase the painted pixels")
+
+## The reported "very pixelated" stamp: a source SMALLER than its footprint
+## must be resampled smoothly. Nearest-neighbour (the old paste) duplicated
+## source texels into hard blocks, which is what the pixelation was.
+func test_paste_upsamples_the_source_smoothly() -> void:
+	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	# A 2x1 source: one black texel, one white one. Painted 4 m wide it lands
+	# on 1024 layer texels, so the transition must be a gradient, not a step.
+	var src := Image.create(2, 1, false, Image.FORMAT_RGBA8)
+	src.set_pixel(0, 0, Color.BLACK)
+	src.set_pixel(1, 0, Color.WHITE)
+
+	assert_eq(PBSplat.paste_decal(data, Vector3.ZERO, Vector3.UP, 0.0, 4.0, 1.0, src), 1,
+			"Fixture: the two-texel source must land on the 4 m face")
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var img := PBSplat.get_decal_layer_image(mat)
+	var mid_y := img.get_height() / 2
+	var distinct := {}
+	for x in range(img.get_width()):
+		var c := img.get_pixel(x, mid_y)
+		if c.a > 0.5:
+			distinct[snappedf(c.r, 0.01)] = true
+	assert_gt(distinct.size(), 8,
+			"An upscaled source must be interpolated (got %d distinct values)" % distinct.size())
+
+## The reported "completely broken on the wall": a stamp on the floor used to
+## project onto a perpendicular wall as a smear of the image's middle rows.
+func test_stamp_does_not_smear_onto_perpendicular_faces() -> void:
+	var data := PBShapeGenerators.create_plane(8.0, 8.0, 1, 1)
+	var wall := PBShapeGenerators.create_plane(8.0, 3.0, 1, 1)
+	# Stand the second plane up at the floor's +Z edge and merge both into one
+	# mesh data (a floor meeting a wall, the exact reported scene).
+	for i in range(wall.positions.size()):
+		var p: Vector3 = wall.positions[i]
+		wall.positions[i] = Vector3(p.x, p.z + 1.5, 4.0)
+	var floor_face_count := data.faces.size()
+	var wall_offset := data.positions.size()
+	for i in range(wall.positions.size()):
+		data.positions.append(wall.positions[i])
+	for f in wall.faces:
+		var remapped := PackedInt32Array()
+		for idx in f.get_indexes():
+			remapped.append(idx + wall_offset)
+		var nf := PBFace.new(remapped)
+		nf.submesh_index = f.submesh_index
+		data.faces.append(nf)
+	PBUv.refresh_mesh_uvs(data, true)
+
+	var stamp := Image.create(32, 16, false, Image.FORMAT_RGBA8)
+	stamp.fill(Color.WHITE)
+	# 1 m from the wall: the footprint's circumscribed box overlaps it.
+	assert_eq(PBSplat.paste_decal(data, Vector3(0.0, 0.0, 3.0), Vector3.UP, 0.0, 2.0, 1.0, stamp), 1,
+			"Fixture: the stamp must land on the floor only")
+	var wall_faces := 0
+	for fi in range(floor_face_count, data.faces.size()):
+		var mat := data.get_face_material(data.faces[fi])
+		if PBSplat.is_splat_material(mat) and PBSplat.has_decal_layer(mat as ShaderMaterial):
+			wall_faces += 1
+	assert_eq(wall_faces, 0, "A floor stamp must not bleed onto a perpendicular wall")
+
+## A decal write happens in the mesh's LOCAL space, but the pick ray hands the
+## brush a WORLD normal. Mixing the two (the controller used to) puts the decal
+## basis outside the face's plane: on a rotated node every stamp smeared into a
+## band. This drives the real controller path on a rotated mesh.
+func test_stamp_on_a_rotated_mesh_keeps_the_source_aspect() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	cube.rotation = Vector3(PI * 0.5, 0.0, 0.35)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.STAMP)
+	var src := Image.create(64, 16, false, Image.FORMAT_RGBA8)
+	src.fill(Color.WHITE)
+	ctrl.stamp_texture = ImageTexture.create_from_image(src)
+	# 1.5 m wide: the 4:1 source gives a 0.375 m tall footprint.
+	ctrl.stamp_scale = 1.5
+
+	var data := cube.pb_mesh_data
+	var face: PBFace = data.faces[4]
+	var local_centre := _face_center_local(data, face)
+	var world_hit: Vector3 = cube.global_transform * local_centre
+	var world_normal: Vector3 = (cube.global_transform.basis * Vector3.UP).normalized()
+	ctrl.update_cursor(world_hit, world_normal, cube, 4)
+	ctrl.apply_stamp()
+
+	var mat := data.get_face_material(face) as ShaderMaterial
+	assert_true(PBSplat.is_splat_material(mat) and PBSplat.has_decal_layer(mat),
+			"Fixture: the stamp must land on the rotated mesh's top face")
+	if mat == null or not PBSplat.has_decal_layer(mat):
+		return
+	var img := PBSplat.get_decal_layer_image(mat)
+	var min_x := img.get_width()
+	var max_x := -1
+	var min_y := img.get_height()
+	var max_y := -1
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			if img.get_pixel(x, y).a > 0.5:
+				min_x = mini(min_x, x)
+				max_x = maxi(max_x, x)
+				min_y = mini(min_y, y)
+				max_y = maxi(max_y, y)
+	assert_true(max_x > min_x and max_y > min_y, "The stamp must paint a 2D footprint")
+	var ratio := float(max_x - min_x + 1) / float(max_y - min_y + 1)
+	assert_almost_eq(ratio, 4.0, 0.3,
+			"A 4:1 source must stay 4:1 on a rotated mesh (got %.2f)" % ratio)
+
+## The basic brush: a solid colour dab, no palette image involved.
+func test_colour_brush_paints_and_erases_decal_pixels() -> void:
+	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var hit := Vector3(0.5, 0.0, 0.5)
+	assert_gt(PBSplat.paint_decal_dab(data, hit, Vector3.UP, 0.0, 0.5, 0.0, 1.0,
+			false, null, Color(0.1, 0.8, 0.2, 1.0)), 0,
+			"A colour dab must paint without any source image")
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var alpha := _decal_alpha_at(data, mat, face, hit)
+	assert_almost_eq(alpha, 1.0, 0.02, "The dab must be opaque at its centre")
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var mask_uv := Vector2(
+		((bounds["u"] as Vector3).dot(hit) - bounds["min_u"]) / bounds["range_u"],
+		((bounds["v"] as Vector3).dot(hit) - bounds["min_v"]) / bounds["range_v"])
+	var duv := PBSplat.decal_uv_from_mask_uv(mat, mask_uv)
+	var img := PBSplat.get_decal_layer_image(mat)
+	var px := clampi(int(duv.x * img.get_width()), 0, img.get_width() - 1)
+	var py := clampi(int(duv.y * img.get_height()), 0, img.get_height() - 1)
+	var col := img.get_pixel(px, py)
+	assert_almost_eq(col.g, 0.8, 0.05, "The dab must carry the brush colour")
+
+	assert_gt(PBSplat.paint_decal_dab(data, hit, Vector3.UP, 0.0, 0.5, 0.0, 1.0,
+			true, null, Color(0, 0, 0, 0)), 0,
+			"An erase dab needs no source at all")
+	assert_almost_eq(_decal_alpha_at(data, mat, face, hit), 0.0, 0.02,
+			"Erase must fade the painted pixels back out")
+
+## A window that grows must carry the earlier paint with it, texel for texel.
+func test_decal_window_growth_preserves_existing_pixels() -> void:
+	var data := PBShapeGenerators.create_plane(16.0, 16.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var stamp := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	stamp.fill(Color(0.2, 0.4, 0.9, 1.0))
+	var first_hit := Vector3(-4.0, 0.0, -4.0)
+	PBSplat.paste_decal(data, first_hit, Vector3.UP, 0.0, 1.0, 1.0, stamp)
+	var mat := data.get_face_material(face) as ShaderMaterial
+	var before_col := _decal_colour_at(data, mat, face, first_hit)
+	PBSplat.paste_decal(data, Vector3(5.0, 0.0, 5.0), Vector3.UP, 0.0, 1.0, 1.0, stamp)
+	var after_col := _decal_colour_at(data, mat, face, first_hit)
+	assert_almost_eq(after_col.b, before_col.b, 0.02,
+			"The first stamp must survive the window growing for the second")
+	assert_almost_eq(after_col.a, before_col.a, 0.02,
+			"The first stamp must stay opaque after the window grows")
+
+## Decal alpha at a point on a face, sampled the way the shader does (face
+## planar rect -> mask uv -> decal window uv).
+func _decal_alpha_at(data: PBMeshData, mat: ShaderMaterial, face: PBFace, p_local: Vector3) -> float:
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	if bounds.is_empty():
+		return -1.0
+	var mask_uv := Vector2(
+		((bounds["u"] as Vector3).dot(p_local) - bounds["min_u"]) / bounds["range_u"],
+		((bounds["v"] as Vector3).dot(p_local) - bounds["min_v"]) / bounds["range_v"])
+	var duv := PBSplat.decal_uv_from_mask_uv(mat, mask_uv)
+	if duv.x < 0.0 or duv.x > 1.0 or duv.y < 0.0 or duv.y > 1.0:
+		return -1.0
+	var img := PBSplat.get_decal_layer_image(mat)
+	var px := clampi(int(duv.x * img.get_width()), 0, img.get_width() - 1)
+	var py := clampi(int(duv.y * img.get_height()), 0, img.get_height() - 1)
+	return img.get_pixel(px, py).a
+
+## Decal colour at a point on a face (the same mapping the shader uses).
+func _decal_colour_at(data: PBMeshData, mat: ShaderMaterial, face: PBFace, p_local: Vector3) -> Color:
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	if bounds.is_empty():
+		return Color(0, 0, 0, -1)
+	var mask_uv := Vector2(
+		((bounds["u"] as Vector3).dot(p_local) - bounds["min_u"]) / bounds["range_u"],
+		((bounds["v"] as Vector3).dot(p_local) - bounds["min_v"]) / bounds["range_v"])
+	var duv := PBSplat.decal_uv_from_mask_uv(mat, mask_uv)
+	if duv.x < 0.0 or duv.x > 1.0 or duv.y < 0.0 or duv.y > 1.0:
+		return Color(0, 0, 0, -1)
+	var img := PBSplat.get_decal_layer_image(mat)
+	var px := clampi(int(duv.x * img.get_width()), 0, img.get_width() - 1)
+	var py := clampi(int(duv.y * img.get_height()), 0, img.get_height() - 1)
+	return img.get_pixel(px, py)
+
+func face_under(data: PBMeshData) -> PBFace:
+	return data.faces[4]
 
 func test_material_dock_modes_and_sections() -> void:
 	var dock := PBMaterialDock.new()

@@ -61,6 +61,9 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 	var paint_state := PBSplat.collect_face_paint_state(mesh_data, face)
 	var layers_list: Array = paint_state.get("layers", [])
 	var decal_image: Image = paint_state.get("decal_layer_image", null)
+	# The decal image is a WINDOW inside the face's mask rect (uniform density
+	# on large faces), so every decal lookup goes through its rect.
+	var decal_window: Rect2 = paint_state.get("decal_window", Rect2(0.0, 0.0, 1.0, 1.0))
 	var has_paint: bool = not paint_state.is_empty() and (not layers_list.is_empty() or decal_image != null)
 
 	# If this face has no paint at all, every fragment reuses the base material
@@ -95,7 +98,7 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 
 		# Check if the decal layer has pixels in this tile
 		if decal_image != null and splat_bounds.size() == 4 \
-				and _decal_touches_rect(decal_image, splat_bounds, cell_rect_obj):
+				and _decal_touches_rect(decal_image, decal_window, splat_bounds, cell_rect_obj):
 			tile_has_paint = true
 
 		# Check if any splat layer touches this tile
@@ -111,7 +114,8 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 		else:
 			# Painted tile: bake composite texture
 			var composite := _bake_composite_tile(frag.cell_bounds, splat_bounds,
-				base_image, base_color, layer_data, decal_image, tile_resolution, anchor_offset)
+				base_image, base_color, layer_data, decal_image, decal_window,
+				tile_resolution, anchor_offset)
 			var tile_tex := ImageTexture.create_from_image(composite)
 			# The retro engine keys its painted-tile policy off this name: a
 			# texture called "TileAtlas*" is sampled with GU_CLAMP (a tile
@@ -144,7 +148,7 @@ static func bake_face_tiles(mesh_node: Node, mesh_data: PBMeshData, face: PBFace
 
 static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32Array,
 		base_image: Image, base_color: Color, layer_data: Array, decal_image: Image,
-		resolution: int, anchor_offset: Vector2 = Vector2.ZERO) -> Image:
+		decal_window: Rect2, resolution: int, anchor_offset: Vector2 = Vector2.ZERO) -> Image:
 	var out := Image.create(resolution, resolution, false, Image.FORMAT_RGBA8)
 
 	var u0: float = cell_bounds.position.x
@@ -218,12 +222,13 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 					var l_pixel := l_img.get_pixel(lpx, lpy) * l_col
 					c = c.lerp(l_pixel, clampf(weight * l_col.a, 0.0, 1.0))
 			# Step 3: decal layer — pasted stamps and decal painting, stored as
-			# pixels in the same planar [0,1] space as the masks.
+			# pixels in the face's planar [0,1] mask space but IMAGE-CROPPED to
+			# the painted window (decal_window maps one onto the other).
 			if decal_image != null:
 				var dpu := pu + anchor_offset.x
 				var dpv := pv + anchor_offset.y
-				var dmu := (dpu - splat_min_u) / splat_span_u
-				var dmv := (dpv - splat_min_v) / splat_span_v
+				var dmu := ((dpu - splat_min_u) / splat_span_u - decal_window.position.x) / decal_window.size.x
+				var dmv := ((dpv - splat_min_v) / splat_span_v - decal_window.position.y) / decal_window.size.y
 				if dmu >= 0.0 and dmu <= 1.0 and dmv >= 0.0 and dmv <= 1.0:
 					var dw := decal_image.get_width()
 					var dh := decal_image.get_height()
@@ -383,24 +388,29 @@ static func _prepare_layer_data(paint_state: Dictionary) -> Array:
 	return out
 
 ## True when the decal layer has any opaque pixel inside `rect` (object-space
-## tile bounds), sampled through the same planar mapping the baker uses.
-static func _decal_touches_rect(decal: Image, splat_bounds: PackedFloat32Array, rect: Rect2) -> bool:
+## tile bounds), sampled through the same planar + window mapping the baker uses.
+static func _decal_touches_rect(decal: Image, decal_window: Rect2,
+		splat_bounds: PackedFloat32Array, rect: Rect2) -> bool:
 	if decal == null or splat_bounds.size() != 4:
 		return false
 	var su_min: float = splat_bounds[0]
 	var sv_min: float = splat_bounds[2]
 	var span_u: float = maxf(splat_bounds[1] - su_min, 0.0001)
 	var span_v: float = maxf(splat_bounds[3] - sv_min, 0.0001)
-	var splat_rect := Rect2(su_min, sv_min, span_u, span_v)
-	if not splat_rect.intersects(rect):
+	# The decal window in object space; a tile outside it has no decal (the
+	# clamped pixel window below would otherwise sample the window's edge).
+	var win_rect := Rect2(
+		su_min + decal_window.position.x * span_u, sv_min + decal_window.position.y * span_v,
+		decal_window.size.x * span_u, decal_window.size.y * span_v)
+	if not win_rect.intersects(rect):
 		return false
 
 	var w := decal.get_width()
 	var h := decal.get_height()
-	var px0 := clampi(int((rect.position.x - su_min) / span_u * w), 0, w - 1)
-	var px1 := clampi(int((rect.position.x + rect.size.x - su_min) / span_u * w), 0, w - 1)
-	var py0 := clampi(int((rect.position.y - sv_min) / span_v * h), 0, h - 1)
-	var py1 := clampi(int((rect.position.y + rect.size.y - sv_min) / span_v * h), 0, h - 1)
+	var px0 := clampi(int(((rect.position.x - su_min) / span_u - decal_window.position.x) / decal_window.size.x * w), 0, w - 1)
+	var px1 := clampi(int(((rect.position.x + rect.size.x - su_min) / span_u - decal_window.position.x) / decal_window.size.x * w), 0, w - 1)
+	var py0 := clampi(int(((rect.position.y - sv_min) / span_v - decal_window.position.y) / decal_window.size.y * h), 0, h - 1)
+	var py1 := clampi(int(((rect.position.y + rect.size.y - sv_min) / span_v - decal_window.position.y) / decal_window.size.y * h), 0, h - 1)
 	if px0 > px1:
 		var t := px0; px0 = px1; px1 = t
 	if py0 > py1:
@@ -616,6 +626,7 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	var base_color: Color = _extract_base_color(mesh_data.get_face_material(face), paint_state)
 	var layer_data: Array = _prepare_layer_data(paint_state)
 	var decal_image: Image = paint_state.get("decal_layer_image", null)
+	var decal_window: Rect2 = paint_state.get("decal_window", Rect2(0.0, 0.0, 1.0, 1.0))
 	var bounds := PBSplat.get_face_planar_bounds(mesh_data, face)
 	if bounds.is_empty():
 		return null
@@ -695,13 +706,19 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 					c.a)
 
 			if decal_image != null:
-				var d_col := _sample_image_clamp(decal_image, mu, mv)
-				if d_col.a > 0.001:
-					c = Color(
-						c.r + (d_col.r - c.r) * d_col.a,
-						c.g + (d_col.g - c.g) * d_col.a,
-						c.b + (d_col.b - c.b) * d_col.a,
-						maxf(c.a, d_col.a))
+				# The decal image is a WINDOW inside the face's mask space:
+				# clamp-sampling outside it would smear its edge pixels over
+				# the rest of the face.
+				var du := (mu - decal_window.position.x) / decal_window.size.x
+				var dv := (mv - decal_window.position.y) / decal_window.size.y
+				if du >= 0.0 and du <= 1.0 and dv >= 0.0 and dv <= 1.0:
+					var d_col := _sample_image_clamp(decal_image, du, dv)
+					if d_col.a > 0.001:
+						c = Color(
+							c.r + (d_col.r - c.r) * d_col.a,
+							c.g + (d_col.g - c.g) * d_col.a,
+							c.b + (d_col.b - c.b) * d_col.a,
+							maxf(c.a, d_col.a))
 			c.a = maxf(c.a, base_alpha)
 			out.set_pixel(x, y, c)
 	return out

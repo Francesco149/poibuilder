@@ -17,11 +17,18 @@ The brush writes weights, not new geometry.
 
 ## Decal stamps
 
-A stamp is a PNG painted **into the surface**, not a node hovering over it. Click to paste one (no dragging): it lands in the face's **decal layer** at 256 texels/m — the same uniform density as the splat masks — and it keeps its own colors and alpha 1:1.
+A stamp is a PNG painted **into the surface**, not a node hovering over it. Click to paste one (no dragging): it lands in the face's **decal layer** at 256 texels/m — the same uniform density as the splat masks — and it keeps its own colors and alpha 1:1. The layer is cropped to the area you actually paint and grows as you spread out, so a stamp is as crisp on a 32 m courtyard floor as on a 2 m panel; the source image is resampled to the footprint (interpolated up, filtered down) rather than dropped to the nearest texel.
 
-Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, wrap the corner of a wall, cover a whole staircase side. Stamps are projected along the surface normal, so a face nearly perpendicular to the stamp plane (a wall a floor stamp runs into) receives a stretched smear rather than a bend.
+Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, continue onto the neighbouring wall, cover a whole staircase side. It paints only faces its plane is roughly parallel to, so a stamp never smears sideways down a perpendicular wall; stamp and brush sizes are metres on screen, whatever the mesh's own scale.
 
-Erase parts of it with the brush: in the paint panel set **Paint into → Decal layer** and enable **Erase**. The same brush (with **Paint into → Decal layer**, Erase off) paints the selected palette texture as pixels, which is how you touch up or extend a decal by hand. **Clear Decal Layer** wipes all of it at once. Every one of those actions is undoable.
+The decal layer is paintable on its own, and it is the same layer stamps land in:
+
+- **Brush → Color** paints a flat colour with the editor's colour picker (the ring wears the colour).
+- **Brush → Palette image** dabs the selected texture as pixels — how you touch up or extend a decal by hand.
+- **Erase** rubs either back out, including parts of a stamp.
+- Radius, softness and opacity behave as they do for splatting; the Stamp tab's *Open Decal Brush* button jumps straight to these controls.
+
+**Clear Layer** (paint panel) clears the decal layer whenever the brush is pointed at Decal; **Clear Decal Layer** (stamp panel) wipes all of it at once. Every one of those actions is undoable.
 
 Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern_glb_splat.html).
 

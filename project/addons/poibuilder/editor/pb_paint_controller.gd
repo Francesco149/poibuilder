@@ -127,6 +127,21 @@ var stamp_opacity: float = 1.0:
 		_update_preview_material()
 		stamp_changed.emit()
 
+## What the decal brush writes: a solid brush colour, or the palette image.
+enum BrushSource { COLOR, IMAGE }
+
+## Source the decal brush paints with (see BrushSource).
+var brush_source: BrushSource = BrushSource.COLOR:
+	set(v):
+		brush_source = v
+		brush_changed.emit()
+## Colour the decal brush paints (used when brush_source == COLOR).
+var brush_color: Color = Color(0.85, 0.32, 0.24, 1.0):
+	set(v):
+		brush_color = Color(v.r, v.g, v.b, v.a)
+		_update_preview_material()
+		brush_changed.emit()
+
 # Cached CPU Images of the paint / stamp textures (decoded once, sampled per dab)
 var _cached_paint_image: Image = null
 var _cached_stamp_image: Image = null
@@ -275,6 +290,9 @@ func _update_preview_material() -> void:
 		var mat := brush_mesh_instance.material_override as StandardMaterial3D
 		if erase_mode:
 			mat.albedo_color = Color(1.0, 0.35, 0.3, 0.9) # Reddish for erase
+		elif paint_target == PaintTarget.DECAL and brush_source == BrushSource.COLOR:
+			# The ring wears the colour it paints.
+			mat.albedo_color = Color(brush_color.r, brush_color.g, brush_color.b, 0.9)
 		else:
 			mat.albedo_color = Color(0.2, 0.85, 1.0, 0.9) # Cyan for paint
 
@@ -377,6 +395,29 @@ func clear_cursor() -> void:
 	target_face_idx = -1
 	_update_preview_visibility()
 
+## The mesh's own scale as "world metres per local metre" (1.0 for the usual
+## unscaled mesh). Brush and stamp sizes are metres the user reads on screen,
+## and the decal layer's texel density is per WORLD metre too, so both convert
+## through this: a mesh scaled 4x used to paint a quarter-density decal.
+static func decal_world_density(mesh: Node3D) -> float:
+	if mesh == null:
+		return 1.0
+	var s := mesh.global_transform.basis.get_scale()
+	var avg := (s.x + s.y + s.z) / 3.0
+	if avg <= 0.000001:
+		return 1.0
+	return clampf(avg, 0.05, 16.0)
+
+## `cursor_normal` arrives in WORLD space (the pick ray works on the scene) but
+## a decal write happens in the mesh's local space.
+func local_normal(mesh: Node3D) -> Vector3:
+	if mesh == null:
+		return cursor_normal
+	var n := mesh.global_transform.basis.inverse() * cursor_normal
+	if n.length_squared() < 0.000001:
+		return cursor_normal
+	return n.normalized()
+
 # ==============================================================================
 # Paint Stroke Execution
 # ==============================================================================
@@ -432,12 +473,15 @@ func apply_paint_stroke() -> void:
 
 	var modified := false
 	if paint_target == PaintTarget.DECAL:
-		# Decal painting draws IMAGE pixels, so the dab is a paste along the
-		# stroke (erase fades the layer's alpha instead of writing pixels).
-		var decal_img := get_paint_image()
-		if decal_img != null:
-			modified = PBSplat.paint_decal_dab(data, local_hit, cursor_normal, stamp_rotation,
-					brush_radius, brush_softness, brush_opacity, erase_mode, decal_img) > 0
+		# Decal dabs write PIXELS into the layer: either the basic brush's
+		# solid colour or the palette image; erase fades the layer's alpha.
+		var decal_img := get_paint_image() if brush_source == BrushSource.IMAGE else null
+		if decal_img != null or erase_mode or brush_color.a > 0.0:
+			var dens := decal_world_density(target_mesh)
+			modified = PBSplat.paint_decal_dab(data, local_hit, local_normal(target_mesh),
+					stamp_rotation, brush_radius / dens, brush_softness, brush_opacity,
+					erase_mode, decal_img, brush_color,
+					PBSplat.DECAL_TEXELS_PER_M * dens) > 0
 	else:
 		var splat_mat := _ensure_face_splat_material(target_mesh, face)
 		if splat_mat == null:
@@ -501,10 +545,15 @@ func apply_stamp() -> void:
 
 	var before := PBCommand.copy_mesh_data(data)
 	var local_hit: Vector3 = target_mesh.global_transform.affine_inverse() * cursor_point
-	# Paste as pixels: every face the oriented footprint touches receives its
-	# part of the image, so a stamp can overhang an edge or wrap a corner.
-	var painted := PBSplat.paste_decal(data, local_hit, cursor_normal, stamp_rotation,
-			stamp_scale, stamp_opacity, img)
+	# Paste as pixels: every face the oriented footprint reaches receives its
+	# part of the image, so a stamp can cross an edge and continue on the
+	# neighbour. Sizes are given in WORLD metres, the decal density follows the
+	# node's own scale, and the normal is converted to the mesh's space — a
+	# world normal against a local point smeared the decal on any moved or
+	# rotated mesh.
+	var dens := decal_world_density(target_mesh)
+	var painted := PBSplat.paste_decal(data, local_hit, local_normal(target_mesh), stamp_rotation,
+			stamp_scale / dens, stamp_opacity, img, PBSplat.DECAL_TEXELS_PER_M * dens)
 	if painted <= 0:
 		return
 

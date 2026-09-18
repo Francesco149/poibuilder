@@ -100,65 +100,26 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 		else:
 			f.submesh_index = 1 # tiles_mat
 			f.splat_bounds = PackedFloat32Array()
-	# Add Decal Stamp on floor: "HELLO WORLD" text stamp crossing the brick splat boundary
-	var floor_stamps := Node3D.new()
-	floor_stamps.name = "PBStamps"
-	floor_node.add_child(floor_stamps)
-
-	var hello_stamp := MeshInstance3D.new()
-	hello_stamp.name = "Stamp_HelloWorld"
-	var qm := QuadMesh.new()
-	qm.size = Vector2.ONE
-	hello_stamp.mesh = qm
-
-	# Flush on floor top face (+Y normal, pointing up) at X=1.7 (boundary of brick path), Z=1.0
-	# Width = 4.32m, Height = 2.16m. Right-handed unmirrored basis
-	var hello_basis := Basis(
-		Vector3(4.32, 0.0, 0.0),
-		Vector3(0.0, 0.0, -2.16),
-		Vector3(0.0, 1.0, 0.0)
-	)
-	hello_stamp.transform = Transform3D(
-		hello_basis,
-		Vector3(1.7, 0.252, 1.0)
-	)
-
+	# Decal stamp on the floor: "HELLO WORLD" painted INTO the decal layer (the
+	# layer stamps and the decal brush share), not a `PBStamps` scene node. The
+	# exporter skips legacy `PBStamps` containers by name, so a node-based stamp
+	# never reached the map at all — the courtyard lost its signs that way.
+	# Placement: the floor's top face (Y = 0), 4.32 m wide at X = 1.7 / Z = 1.0
+	# (crossing the brick splat boundary); the image's own 2:1 aspect gives the
+	# 2.16 m height.
 	var hello_tex_path := "res://addons/poibuilder/materials/textures/stamp_hello_world.png"
-	var hello_tex: Texture2D = load(hello_tex_path) if ResourceLoader.exists(hello_tex_path) else null
-	var decal_shader_res: Shader = load("res://addons/poibuilder/materials/shaders/pb_decal_shader.gdshader") if ResourceLoader.exists("res://addons/poibuilder/materials/shaders/pb_decal_shader.gdshader") else null
-
-	if decal_shader_res != null:
-		var hello_mat := ShaderMaterial.new()
-		hello_mat.shader = decal_shader_res
-		hello_mat.set_shader_parameter("albedo_texture", hello_tex)
-		hello_mat.set_shader_parameter("albedo_color", Color.WHITE)
-		hello_mat.set_shader_parameter("stamp_to_mesh", hello_stamp.transform)
-		hello_mat.set_shader_parameter("clip_to_face", true)
-		var fb := PBSplat.get_face_planar_bounds(floor_node.pb_mesh_data, top_face, true)
-		hello_mat.set_shader_parameter("face_u", fb["u"])
-		hello_mat.set_shader_parameter("face_v", fb["v"])
-		hello_mat.set_shader_parameter("face_bounds", Vector4(fb["min_u"], fb["max_u"], fb["min_v"], fb["max_v"]))
-		hello_stamp.material_override = hello_mat
+	if ResourceLoader.exists(hello_tex_path):
+		var hello_img: Image = (load(hello_tex_path) as Texture2D).get_image()
+		# The stamp centre must sit ON the face's plane — the box is built
+		# centred on the node's origin, so the top face is at local Y = 0.25
+		# (the node's -0.25 offset puts it on the world floor), not Y = 0.
+		var top_plane_y := PBMath.average(floor_node.pb_mesh_data.positions,
+				top_face.get_distinct_indexes()).y
+		if PBSplat.paste_decal(floor_node.pb_mesh_data,
+				Vector3(1.7, top_plane_y, 1.0), Vector3.UP, 0.0, 4.32, 1.0, hello_img) == 0:
+			PBLogger.new().warn("io", "Showcase: the floor decal stamp did not land")
 	else:
-		var hello_mat := StandardMaterial3D.new()
-		hello_mat.albedo_texture = hello_tex
-		hello_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		hello_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		hello_stamp.material_override = hello_mat
-	hello_stamp.set_meta("face_idx", 4)
-	hello_stamp.set_meta("stamp_texture_path", hello_tex_path)
-	hello_stamp.set_meta("stamp_opacity", 1.0)
-	hello_stamp.set_meta("stamp_scale", 4.32)
-	hello_stamp.set_meta("anchor_u", 1.7)
-	hello_stamp.set_meta("anchor_v", 1.0)
-	hello_stamp.set_meta("anchor_scale_x", 4.32)
-	hello_stamp.set_meta("anchor_scale_y", 2.16)
-	hello_stamp.set_meta("anchor_rot_right", Vector3.RIGHT)
-	hello_stamp.set_meta("anchor_rot_up", Vector3.FORWARD)
-	hello_stamp.set_meta("anchor_center", Vector2((1.7 - (-6.0)) / 12.0, (1.0 - (-6.0)) / 12.0))
-	hello_stamp.set_meta("anchor_du", Vector2((4.32 * 0.5) / 12.0, 0.0))
-	hello_stamp.set_meta("anchor_dv", Vector2(0.0, (2.16 * 0.5) / 12.0))
-	floor_stamps.add_child(hello_stamp)
+		PBLogger.new().warn("io", "Showcase: %s is missing" % hello_tex_path)
 
 	# ==========================================================================
 	# 3. Geometry: North Wall with Arched Doorway
@@ -231,64 +192,20 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 	ramp.pb_mesh_data.materials = [tiles_material()]
 	root.add_child(ramp)
 
-	# Decal stamp on prism slope (face 3), partially cut off at the top ridge
-	var ramp_stamps := Node3D.new()
-	ramp_stamps.name = "PBStamps"
-	ramp.add_child(ramp_stamps)
-
-	var prism_stamp := MeshInstance3D.new()
-	prism_stamp.name = "Stamp_CircularPrism"
-	var prism_qm := QuadMesh.new()
-	prism_qm.size = Vector2.ONE
-	prism_stamp.mesh = prism_qm
-
-	# Face 3 normal = (-0.894427, 0.447214, 0), u = (0, 0, 1), v = (0.447214, 0.894427, 0)
-	# Width = 3.6m, Height = 3.6m
-	var ramp_basis := Basis(
-		Vector3(0.0, 0.0, 3.6),
-		Vector3(0.447214 * 3.6, 0.894427 * 3.6, 0.0),
-		Vector3(-0.894427, 0.447214, 0.0)
-	)
-	prism_stamp.transform = Transform3D(
-		ramp_basis,
-		Vector3(-0.224, 0.559, 0.0)
-	)
-
+	# Decal stamp on the prism's slope (face 3), painted into the decal layer
+	# like the floor's: the slope normal comes from the geometry, so the paste
+	# follows the face if the prism ever changes.
 	var circle_tex_path := "res://addons/poibuilder/materials/textures/circular_square_pattern.png"
-	var circle_tex: Texture2D = load(circle_tex_path) if ResourceLoader.exists(circle_tex_path) else null
-
-	if decal_shader_res != null:
-		var prism_mat := ShaderMaterial.new()
-		prism_mat.shader = decal_shader_res
-		prism_mat.set_shader_parameter("albedo_texture", circle_tex)
-		prism_mat.set_shader_parameter("albedo_color", Color.WHITE)
-		prism_mat.set_shader_parameter("stamp_to_mesh", prism_stamp.transform)
-		prism_mat.set_shader_parameter("clip_to_face", true)
-		var rb := PBSplat.get_face_planar_bounds(ramp.pb_mesh_data, ramp.pb_mesh_data.faces[3], true)
-		prism_mat.set_shader_parameter("face_u", rb["u"])
-		prism_mat.set_shader_parameter("face_v", rb["v"])
-		prism_mat.set_shader_parameter("face_bounds", Vector4(rb["min_u"], rb["max_u"], rb["min_v"], rb["max_v"]))
-		prism_stamp.material_override = prism_mat
+	if ResourceLoader.exists(circle_tex_path):
+		var slope_face: PBFace = ramp.pb_mesh_data.faces[3]
+		var slope_normal := PBMath.normal_from_positions(ramp.pb_mesh_data.positions,
+				slope_face.get_indexes()).normalized()
+		var circle_img: Image = (load(circle_tex_path) as Texture2D).get_image()
+		if PBSplat.paste_decal(ramp.pb_mesh_data, Vector3(-0.224, 0.559, 0.0),
+				slope_normal, 0.0, 3.6, 1.0, circle_img) == 0:
+			PBLogger.new().warn("io", "Showcase: the ramp decal stamp did not land")
 	else:
-		var prism_mat := StandardMaterial3D.new()
-		prism_mat.albedo_texture = circle_tex
-		prism_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		prism_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		prism_stamp.material_override = prism_mat
-	prism_stamp.set_meta("face_idx", 3)
-	prism_stamp.set_meta("stamp_texture_path", circle_tex_path)
-	prism_stamp.set_meta("stamp_opacity", 1.0)
-	prism_stamp.set_meta("stamp_scale", 3.6)
-	prism_stamp.set_meta("anchor_u", 0.0)
-	prism_stamp.set_meta("anchor_v", 0.4)
-	prism_stamp.set_meta("anchor_scale_x", 3.6)
-	prism_stamp.set_meta("anchor_scale_y", 3.6)
-	prism_stamp.set_meta("anchor_rot_right", Vector3(0.0, 0.0, 1.0))
-	prism_stamp.set_meta("anchor_rot_up", Vector3(0.447214, 0.894427, 0.0))
-	prism_stamp.set_meta("anchor_center", Vector2((0.0 - (-2.0)) / 4.0, (0.4 - (-1.3416)) / 2.236))
-	prism_stamp.set_meta("anchor_du", Vector2((3.6 * 0.5) / 4.0, 0.0))
-	prism_stamp.set_meta("anchor_dv", Vector2(0.0, (3.6 * 0.5) / 2.236))
-	ramp_stamps.add_child(prism_stamp)
+		PBLogger.new().warn("io", "Showcase: %s is missing" % circle_tex_path)
 
 	# ==========================================================================
 	# 7. Waterfall: animated (scrolling) textures, retro-exportable
@@ -535,6 +452,10 @@ static func build_showcase_scene(include_player: bool = false, preset_name: Stri
 
 static func save_showcase_scene(file_path: String, include_player: bool = false, preset_name: String = "day") -> Error:
 	var root := build_showcase_scene(include_player, preset_name)
+	# Rebuild every painted mask/decal texture from the CPU images: an
+	# ImageTexture that only saw update() serializes its stale pre-update
+	# pixels in a headless save, which silently dropped the painted stamps.
+	_flush_paint_textures(root)
 	_set_owner_recursive(root, root)
 	var packed := PackedScene.new()
 	var err := packed.pack(root)
@@ -544,6 +465,14 @@ static func save_showcase_scene(file_path: String, include_player: bool = false,
 	err = ResourceSaver.save(packed, file_path)
 	root.free()
 	return err
+
+## Rebuilds the GPU mask/decal textures of every PBMesh under `node` from the
+## CPU image cache (see PBSplat.sync_mesh_mask_textures).
+static func _flush_paint_textures(node: Node) -> void:
+	if node is PBMesh and (node as PBMesh).pb_mesh_data != null:
+		PBSplat.sync_mesh_mask_textures((node as PBMesh).pb_mesh_data)
+	for child in node.get_children():
+		_flush_paint_textures(child)
 
 static func export_showcase_preset(preset_name: String, retro_glb_path: String = "", pbm_path: String = "") -> Error:
 	var norm_name := preset_name.to_lower().strip_edges()
