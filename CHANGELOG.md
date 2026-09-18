@@ -3,6 +3,37 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.158 — free sheet knobs with brief docs, the flame is a 2x2 sheet, and emitter props in object mode
+
+### The sheet knobs are free again; the docs carry the rule instead
+The "rows/cols cut my particles" round ended with a misunderstanding on the
+human's side (they had not registered the knobs as flipbook controls for
+sprite sheets), and v0.9.157's answer — grey the knobs out on non-sheet
+textures — was heavier than the problem. Reverted to plain documentation:
+the knobs stay adjustable on ANY texture, the tooltips say what they are for
+("for sprite sheets with more than 1 frame"), and the properties readout adds
+one brief pointer when a grid is sampling a single-frame image ("…this image
+is a single frame — the grid samples it in slices"). Dock help text, SPEC
+8.6 and RETRO-AUTHORING 4.3 updated to match.
+
+### particle_flame.png is (and always was) a 2x2 sheet — it ships as one now
+`gen_particle_textures.py` drew the original flame as a 2x2 flipbook of
+32x32 frames (the courtyard brazier already walked it at 2 x 2), but the file
+carried no sheet marker and its preset armed no grid. It is now
+`particle_flame_2x2_sheet.png` (same uid, references updated), and a sheet
+may name its own grid: `_<cols>x<rows>_sheet` is parsed when the texture is
+picked, so the flame arms 2 x 2 while the row sheets keep their 4 x 1 default.
+`values_from_node`/`sheet_readout` unchanged; exporter parity pinned by test.
+
+### Edit Emitter Properties works from object mode
+Fine-tuning a placed emitter no longer requires entering particle placement:
+the overlay panel used to hide itself whenever the selection was not a PBMesh
+(`update_visibility` only considered `active_mesh`), which buried the
+Edit Emitter Properties button the moment you selected a bare GPUParticles3D.
+A selected emitter is now content on its own — the panel shows with the
+button, and the session opens from there. The GUI harness selects the emitter
+after leaving the Particles tab and asserts both.
+
 ## v0.9.157 — the sheet knobs only grid declared sheets (the "rows/cols cut my particles" report)
 
 ### The flipbook grid is inert on non-sheet textures

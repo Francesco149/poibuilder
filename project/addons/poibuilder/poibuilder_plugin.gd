@@ -95,7 +95,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.157"
+const VERSION := "0.9.158"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -4260,18 +4260,7 @@ func _on_param_changed(param_name: String, value: float) -> void:
 		# Live preview: rebuild the emitter from the merged values on every
 		# spinner tick; Apply wraps the whole session into ONE undo action.
 		var tex := _emitter_texture(_params_edit_emitter)
-		# Belt-and-braces for the sheet rule (the knobs are greyed out on a
-		# non-sheet texture): if a grid change slips through anyway, snap the
-		# spinners back to the 1x1 that apply_values will render.
-		var snapped_back := false
-		if param_name in ["atlas_cols", "atlas_rows"] \
-				and not PBParticleParams.is_sheet_texture(tex):
-			_params_edit_values["atlas_cols"] = 1.0
-			_params_edit_values["atlas_rows"] = 1.0
-			snapped_back = true
 		PBParticleParams.apply_values(_params_edit_emitter, _params_edit_values, tex)
-		if snapped_back and tool_overlay != null:
-			tool_overlay.set_param_values({"atlas_cols": 1.0, "atlas_rows": 1.0})
 		if tool_overlay != null:
 			tool_overlay.set_params_hint(PBParticleParams.sheet_readout(tex, _params_edit_values))
 	elif _params_session_kind == "edit" and _params_edit_node != null \
@@ -4544,16 +4533,8 @@ func _on_edit_emitter_requested() -> void:
 	_params_edit_values = PBParticleParams.values_from_node(emitter)
 
 	tool_overlay.params_sticky = true
-	var defs := PBParticleParams.get_param_defs()
-	# The sheet knobs are inert on a non-sheet texture (apply_values clamps the
-	# grid to 1x1) — grey them out instead of letting them look broken.
-	var sheetable := PBParticleParams.is_sheet_texture(_emitter_texture(emitter))
-	if not sheetable:
-		for def in defs:
-			if str(def.get("name")) in ["atlas_cols", "atlas_rows"]:
-				def["disabled"] = true
 	tool_overlay.open_params("Emitter Parameters",
-		defs, _params_edit_values)
+		PBParticleParams.get_param_defs(), _params_edit_values)
 	tool_overlay.set_params_hint(PBParticleParams.sheet_readout(
 		_emitter_texture(emitter), _params_edit_values))
 	if logger:
