@@ -42,7 +42,7 @@ How to read it:
   third of the 16.7 ms budget spare; only 3–5% of frames cross the 60 Hz
   line, and the warm passes never dip past 29 ms. The 1% low (~19–20 ms)
   is where the worst sustained moments live — still inside a 50 fps floor.
-- **The PB scene as-is is GPU-bound at ~2.3× the cost** (median 24.5 ms).
+- **The PB scene as-is is GPU-bound at ~2.3× the cost** (median ~25 ms).
   That is the price of what it carries and the GLBs do not: the splat
   shader over the full-screen courtyard, three shadow-casting omnis in the
   closed room, and 4 live emitters. It is completely steady though — cold

@@ -23,13 +23,10 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 
 **Row 2** — modes, space, shapes, docks, export.
 
-**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth, object state.
-
 | Control | What it does |
 |---|---|
 | [[icon:object]] Object / [[icon:vertex]] Vertex / [[icon:edge]] Edge / [[icon:face]] Face / [[icon:texture]] Texture | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
 | [[icon:space]] Space | Cycles Element / Object / World ([[kbd:X]]). |
-| Grid | Opens grid & snap settings. Readout shows the current snap step. Lives on row 3. |
 | [[icon:new_shape]] New Shape | Always enabled. Pick a primitive, then drag. |
 | [[icon:ngon]] N-Gon | Draw a polygon, extrude it. |
 | [[icon:edit_params]] Edit Params | Live only while the selected mesh is a pristine, unedited factory shape. |
@@ -40,6 +37,8 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 | [[icon:settings]] Settings | Display: grid, wireframe, selection/hover opacity. |
 | Export... | Dialog: PBM (default) or GLB — retro baked / modern live materials. |
 | [[icon:docs]] Docs | Opens this site (bundled `docs-site/index.html`). |
+
+**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth, object state.
 
 **Rows 3 & 4** — the [[icon:split_rows]] **Extended Tools** toggle.
 
