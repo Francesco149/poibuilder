@@ -3,6 +3,77 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.155 — decals stop being clipped and blocky, and the PBM export stops dropping geometry
+
+Five reports (plus the emitter question) from the paint/particle round.
+
+### The decal brush cut off at the texture's edge as it grew
+A colour dab is composited as a prebuilt sprite, and that sprite was built at
+the **requested** 256 texels/m while the window's density can be lower — so on a
+face whose window had dropped to ~125 texels/m the sprite was drawn ~2x too
+large in window pixels, its soft falloff ran past the window edge and was
+**clipped mid-fade** (measured: an 11 m stroke's last dabs landed on the
+window's final column at alpha 111/255 instead of fading to 0). The sprite is
+now built at the window's real density. Locked by
+`test_decal_stroke_fades_out_inside_the_window`, which fails on the old code
+with the paint touching the window's last column.
+
+### Big faces: decals were half the density they needed
+The decal window was capped at 2048 px per axis, so a big face's painted span
+collapsed its density — a 60 m floor with a 25 m painted bbox ran at ~70
+texels/m, about half the base texture's density, and every decal on that face
+read blocky next to the surface around it (a splat layer keeps its look because
+the mask only carries blend weights; the decal carries the content). The cap is
+now 4096 px per axis **plus an 8 M texel budget** (32 MB RGBA8 — the same order
+the eight 2048² splat masks already spend), and sizes round to 64 px instead of
+powers of two (a po2 step doubled the budget's texels whenever a span sat just
+past one). A 19 m painted span now keeps ~140 texels/m instead of 100.
+`PBSplat.decal_density()` reports what a face ended up with, and the overlay's
+readout shows it while the Stamp tab hovers: `Decal: 133 texels/m — low for this
+face (the window is capped; a smaller painted span is sharper)`.
+
+### PBM export: geometry was silently dropped past 256 surfaces
+Godot's ArrayMesh refuses a 257th surface and only **logs** it: everything past
+the cap vanished from the map. The retro bake makes one surface per painted
+**tile**, so a large painted floor hit it — the reported errors came with a
+60 m floor whose export tree held one 256-surface node and ~70 "MAX_MESH_
+SURFACES" errors, most of its paint missing on the device. Surfaces now pour
+into as many nodes as it takes (`MAX_SURFACES_PER_EXPORT_MESH` = 128, nodes
+numbered `Floor`, `Floor_2`, …): the same floor exports 325 surfaces across
+three nodes. The modern bake (one surface per painted face) and the light-bake
+re-emit go through the same chunker.
+Found with it: the re-emit passed a bogus `flags` mask, so surfaces carrying a
+float CUSTOM0 (the splat masks) were **dropped** whenever lighting was baked
+over them — `_custom_channel_flags()` now carries each custom channel's real
+type.
+
+### PBM export: no more demo data
+Every export carried a hard-coded "PatrolSphere" entity lump — a leftover test
+of carrying arbitrary binary metadata — in the Godot exporter, the GDScript
+converter and the Python oracle alike. All three no longer emit it (the format
+still supports `entities` for scenes that ask for one with `poi_metadata_tag`);
+the PBM test that pinned the demo lump now asserts its absence.
+
+### The brush ring is built when the tab is entered
+Only the stamp path built its preview mesh on a mode change, so entering the
+Paint tab from the Stamp tab showed **no ring until a size/softness nudge**
+happened to rebuild it. `set_mode()` now builds the mesh for the mode being
+entered. Covered by a unit test and a GUI-harness check that hovers right after
+switching tabs.
+
+### Emitters: the sheet knobs explain themselves
+The properties modal's hint line now states what Sheet Columns/Rows currently
+select — `Sheet 4 x 3 = 12 frames of 16 x 21 px: one cell per particle, one
+cycle per lifetime.` — instead of leaving "why is my glow sliced into squares?"
+to be guessed at. The knobs need a texture that IS a sprite sheet: the flipbook
+shows one cell per particle and walks the cells over the particle's lifetime
+(one full cycle per lifetime, whatever the frame count).
+
+Verified: 1152/1152 headless tests (72 suites; +5 this round) and the GUI
+harness failures=0. The scratch scene from the report exports with **zero
+MAX_MESH_SURFACES errors** and all 325 floor surfaces present (was 256 + 69
+errors).
+
 ## v0.9.154 — a sprite keeps its alpha, stickers keep their shape, emitters keep their cells
 
 Five reports from the paint/particles round.
