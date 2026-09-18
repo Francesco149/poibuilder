@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# run_bench.sh — the Godot-side frame-pacing benchmark for the alpha demo map:
+# the poibuilder scene AS IS vs the retro-baked GLB vs the modern GLB, flown
+# through the same gameplay-like camera path while per-frame times are
+# recorded. The full methodology lives in
+# project/test_scenes/frame_pacing_bench.gd; results and how to read them are
+# documented in docs/site/pages/performance.html.
+#
+# Usage:
+#   ./run_bench.sh                 # export variants if missing, run all three
+#   ./run_bench.sh --reexport      # force re-export the GLBs, then bench
+#   ./run_bench.sh pb              # bench one variant (pb | retro_glb | modern_glb)
+#
+# CONTAINMENT: every Godot run goes through tools/godot_guard.sh — headless
+# exports and the GPU bench alike (the bench needs a display: GUARD_X11).
+# Runs are strictly sequential — ONE Godot at a time — and each bench pass
+# quits itself; the guard's trap cleans up the container on exit.
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUARD="$REPO_DIR/tools/godot_guard.sh"
+export GUARD_X11=1
+export GUARD_ASSETS=1
+
+# The bench renders — it needs a real X display (xwayland-satellite :0 on
+# this workstation), not xvfb: the numbers must come from the GPU.
+source "$REPO_DIR/xdisplay.sh"
+if ! ensure_display; then
+	echo "FAIL: no X display available — the frame-pacing bench renders on a real GPU via xwayland-satellite." >&2
+	exit 1
+fi
+echo "bench display: DISPLAY=$DISPLAY"
+
+VARIANTS=("pb" "retro_glb" "modern_glb")
+REEXPORT=0
+if [ "${1:-}" = "--reexport" ]; then
+	REEXPORT=1
+	shift
+fi
+if [ "${1:-}" != "" ]; then
+	VARIANTS=("$1")
+fi
+
+echo "============================================================"
+echo " PoiBuilder frame-pacing benchmark (alpha demo map)"
+echo " Renderer: gl_compatibility on a real display (vsync off)"
+echo "============================================================"
+
+bench_export() {
+	echo "== [1/2] Exporting the benchmark variants (headless, guarded) ="
+	"$GUARD" exec bash -c 'cd /work/project && timeout 180 godot-mono --headless --editor --quit-after 100' \
+		> /tmp/pb_bench_import.log 2>&1 || true
+	if grep -q "SCRIPT ERROR" /tmp/pb_bench_import.log; then
+		echo "FAIL: script errors during editor boot:" >&2
+		grep -A4 "SCRIPT ERROR" /tmp/pb_bench_import.log >&2
+		exit 1
+	fi
+	"$GUARD" exec bash -c 'cat > /tmp/export_bench.gd << "GDEOF"
+extends SceneTree
+func _init():
+	var results := AlphaDemoMapBuilder.export_bench_variants()
+	for k in results:
+		print("export %s: %s" % [k, error_string(results[k])])
+	var failed := false
+	for k in results:
+		if results[k] != OK:
+			failed = true
+	quit(1 if failed else 0)
+GDEOF
+cd /work/project && godot-mono --headless -s /tmp/export_bench.gd'
+	# The freshly written .glb files need an import pass before a plain run
+	# can load() them (testing.md's import footgun — load() hands back null
+	# and you debug a phantom).
+	"$GUARD" exec bash -c 'cd /work/project && timeout 180 godot-mono --headless --editor --quit-after 100' \
+		> /tmp/pb_bench_import2.log 2>&1 || true
+	if grep -q "SCRIPT ERROR" /tmp/pb_bench_import2.log; then
+		echo "FAIL: script errors during post-export import:" >&2
+		grep -A4 "SCRIPT ERROR" /tmp/pb_bench_import2.log >&2
+		exit 1
+	fi
+}
+
+if [ "$REEXPORT" -eq 1 ] || [ ! -f "$REPO_DIR/project/test_scenes/alpha_demo_retro_baked.glb" ] \
+	|| [ ! -f "$REPO_DIR/project/test_scenes/alpha_demo_modern.glb" ]; then
+	bench_export
+else
+	echo "== [1/2] Variants already exported (--reexport to force) =="
+fi
+
+echo "== [2/2] Flying the bench (${VARIANTS[*]}) =="
+for v in "${VARIANTS[@]}"; do
+	echo "---- $v ----"
+	"$GUARD" exec bash -c "cd /work/project && timeout 300 godot-mono --rendering-driver opengl3 -s res://test_scenes/frame_pacing_bench.gd -- --variant=$v" 2>&1 | grep -E '^\[bench\]|SCRIPT ERROR|ERROR: .*missing' || true
+done
+
+echo ""
+echo "Reports: $REPO_DIR/project/exports/bench/*.json"

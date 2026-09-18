@@ -1959,10 +1959,18 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 	if not is_splat_material(mat):
 		return {}
 	var sm := mat as ShaderMaterial
+	# Hand-authored splat materials may enable a layer without ever setting
+	# its color/roughness params (the shader's own defaults apply). A NIL
+	# shader parameter would then flow into every consumer that does
+	# dict.get("color", Color.WHITE) — the default only covers a MISSING key,
+	# not a present-but-null one — and crash the bakers' typed assignments.
+	# Coalesce to the same defaults the shader declares.
+	var base_color: Color = sm.get_shader_parameter("base_color") if sm.get_shader_parameter("base_color") is Color else Color.WHITE
+	var rough: float = sm.get_shader_parameter("roughness") if sm.get_shader_parameter("roughness") is float else 0.8
 	var out: Dictionary = {
 		"base_texture_path": "",
-		"base_color": sm.get_shader_parameter("base_color"),
-		"roughness": sm.get_shader_parameter("roughness"),
+		"base_color": base_color,
+		"roughness": rough,
 		"layers": [],
 		"decal_layer_image": null,
 		"decal_window": Rect2(0.0, 0.0, 1.0, 1.0),
@@ -1974,12 +1982,14 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 	for i in range(1, MAX_LAYERS + 1):
 		if sm.get_shader_parameter("layer_%d_enabled" % i) == true:
 			var layer_tex := sm.get_shader_parameter("layer_%d_texture" % i) as Texture2D
+			var layer_color: Color = sm.get_shader_parameter("layer_%d_color" % i) if sm.get_shader_parameter("layer_%d_color" % i) is Color else Color.WHITE
+			var layer_rough: float = sm.get_shader_parameter("layer_%d_roughness" % i) if sm.get_shader_parameter("layer_%d_roughness" % i) is float else 0.8
 			out["layers"].append({
 				"slot": i,
 				"texture": layer_tex,
 				"texture_path": layer_tex.resource_path if layer_tex != null else "",
-				"color": sm.get_shader_parameter("layer_%d_color" % i),
-				"roughness": sm.get_shader_parameter("layer_%d_roughness" % i),
+				"color": layer_color,
+				"roughness": layer_rough,
 				"mask_image": get_layer_mask_image(sm, i),
 			})
 	if has_decal_layer(sm):

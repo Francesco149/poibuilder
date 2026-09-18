@@ -1686,3 +1686,34 @@ func test_brush_ring_mesh_exists_on_mode_entry() -> void:
 		"Entering PAINT builds the ring — no size nudge needed")
 	var im := ctrl.brush_mesh_instance.mesh as ImmediateMesh
 	assert_eq(im.get_surface_count(), 2, "The ring carries its band + crosshair surfaces")
+
+# ==============================================================================
+# Paint-state collection with hand-authored (unset) layer params
+# ==============================================================================
+
+## A splat material may enable a layer WITHOUT setting its color/roughness
+## shader params (the shader defaults apply — this is exactly how a scripted
+## floor authored its splat). The paint state must coalesce those nils to the
+## shader's own defaults, not pass them through: every consumer reads the dict
+## with .get("color", Color.WHITE), whose default only covers a MISSING key —
+## a present-but-null one crashed the modern-GLB bake's typed Color assignment.
+func test_collect_paint_state_coalesces_unset_layer_params() -> void:
+	var data := _test_cube.pb_mesh_data
+	var mat := PBSplat.create_splat_material()
+	# Deliberately NOT via add_layer (which initializes color/roughness):
+	# enable the layer and give it texture + mask only.
+	mat.set_shader_parameter("layer_1_enabled", true)
+	mat.set_shader_parameter("layer_1_texture", load("res://addons/poibuilder/materials/textures/brick_path_4x4.png"))
+	var mask := Image.create(8, 8, false, Image.FORMAT_R8)
+	mask.fill(Color(1, 1, 1, 1))
+	mat.set_shader_parameter("layer_1_mask", ImageTexture.create_from_image(mask))
+	data.set_face_material(data.faces[0], mat)
+
+	var state := PBSplat.collect_face_paint_state(data, data.faces[0])
+	assert_not_null(state, "paint state collects for a splat face")
+	assert_eq(state["layers"].size(), 1, "the enabled layer is collected")
+	var layer: Dictionary = state["layers"][0]
+	assert_true(layer["color"] is Color, "nil layer color coalesces to a Color (got nil)")
+	assert_eq(layer["color"], Color.WHITE, "nil layer color defaults to WHITE")
+	assert_true(layer["roughness"] is float, "nil layer roughness coalesces to a float (got nil)")
+	assert_almost_eq(float(layer["roughness"]), 0.8, 0.0001, "nil layer roughness defaults to 0.8")
