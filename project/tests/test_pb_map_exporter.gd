@@ -780,7 +780,8 @@ func test_bake_pb_mesh_in_place_frees_uv2_for_lightmaps() -> void:
 			return
 	for mat in md.materials:
 		assert_false(PBSplat.is_splat_material(mat), "Baked materials must be plain StandardMaterial3D")
-	assert_true(md.textures1.is_empty(), "UV2 must be empty after the bake (free for lightmaps)")
+	assert_true(md.splat_uvs.is_empty(), "Splat mask coordinates must be gone after the bake")
+	assert_true(md.textures1.is_empty(), "Precondition: this fixture had no authored UV2 to begin with")
 	for f in md.faces:
 		if f != null and not f.manual_uv:
 			assert_true(false, "Baked faces must be manual_uv so rebuilds keep tile coordinates")

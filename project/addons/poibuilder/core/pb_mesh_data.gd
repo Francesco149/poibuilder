@@ -15,8 +15,19 @@ extends Resource
 
 ## Per-vertex UV channel 0.
 @export var textures0: PackedVector2Array = PackedVector2Array()
-## Per-vertex UV channel 1 (UV2 / splat mask mapping).
+## Per-vertex UV channel 1 (UV2). AUTHOR-OWNED: the splatting system does not
+## write this (splat masks travel in `splat_uvs`), so a mesh can carry a
+## LightmapGI unwrap and live splat paint at the same time.
 @export var textures1: PackedVector2Array = PackedVector2Array()
+
+## Lightmap atlas size hint written by the UV2 unwrap (0,0 = none).
+@export var lightmap_size_hint: Vector2i = Vector2i.ZERO
+
+## Per-vertex splat mask coordinates (face-planar normalized [0,1]) delivered
+## to the splat shader as the CUSTOM0 vertex attribute. DERIVED, never
+## serialized: `to_array_mesh` regenerates it from the faces' persisted planar
+## bounds whenever the mesh carries splat data (see PBSplat.ensure_mesh_splat_uv).
+var splat_uvs: PackedVector2Array = PackedVector2Array()
 
 ## Per-vertex colors.
 @export var colors: PackedColorArray = PackedColorArray()
@@ -473,6 +484,10 @@ func validate() -> String:
 	# Check textures1 size if present
 	if not textures1.is_empty() and textures1.size() != vc:
 		return "textures1 size %d != vertex count %d" % [textures1.size(), vc]
+	# Check splat mask coordinate size if present (derived, but a mismatch
+	# means a stale array would reach the GPU build)
+	if not splat_uvs.is_empty() and splat_uvs.size() != vc:
+		return "splat_uvs size %d != vertex count %d" % [splat_uvs.size(), vc]
 	# Check colors size if present
 	if not colors.is_empty() and colors.size() != vc:
 		return "colors size %d != vertex count %d" % [colors.size(), vc]
@@ -632,11 +647,13 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 		if needs_uv_refresh:
 			PBUv.refresh_mesh_uvs(self)
 
-	# Ensure UV2 (splat masks) is up-to-date and non-stretching across geometry
-	# edits — but ONLY for meshes that actually carry splat data. textures1 on
-	# a splat-free mesh belongs to the author (e.g. a LightmapGI unwrap) and
-	# must survive rebuilds untouched; the old `not textures1.is_empty()`
-	# trigger clobbered exactly those unwraps.
+	# Splat mask coordinates live in the CUSTOM0 vertex attribute, never in
+	# UV2: UV2 belongs to the author (a LightmapGI unwrap, say), and the old
+	# design clobbered exactly those unwraps because it stored masks there.
+	# The coordinates are regenerated here — from the faces' PERSISTED planar
+	# bounds, so resizing a face re-maps the same object-space area instead of
+	# stretching the paint — but only for meshes that actually carry splat
+	# data; splat-free meshes pay nothing.
 	var has_splat_data := false
 	for face in faces:
 		if face != null and face.splat_bounds.size() == 4:
@@ -648,7 +665,18 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 				has_splat_data = true
 				break
 	if has_splat_data:
-		PBSplat.ensure_mesh_uv2(self)
+		PBSplat.ensure_mesh_splat_uv(self)
+	var use_splat_uvs: bool = has_splat_data and splat_uvs.size() == positions.size()
+	# The engine wants RG_FLOAT custom data as a flat PackedFloat32Array
+	# (2 floats per vertex), while every CPU consumer treats mask coordinates
+	# as Vector2s like the other UV channels — so the flattening happens once,
+	# here, on the way to the GPU.
+	var custom0 := PackedFloat32Array()
+	if use_splat_uvs:
+		custom0.resize(positions.size() * 2)
+		for i in range(positions.size()):
+			custom0[i * 2] = splat_uvs[i].x
+			custom0[i * 2 + 1] = splat_uvs[i].y
 
 
 	if not use_cached_indices or _submesh_indices_cache.is_empty():
@@ -697,6 +725,8 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 			arrays[Mesh.ARRAY_TEX_UV] = textures0
 		if not textures1.is_empty() and textures1.size() == vc:
 			arrays[Mesh.ARRAY_TEX_UV2] = textures1
+		if use_splat_uvs:
+			arrays[Mesh.ARRAY_CUSTOM0] = custom0
 
 		if not colors.is_empty() and colors.size() == vc:
 			arrays[Mesh.ARRAY_COLOR] = colors
@@ -706,7 +736,11 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 
 		arrays[Mesh.ARRAY_INDEX] = indices
 
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		# A custom vertex channel must declare its own format through the
+		# surface flags; RG_FLOAT = two full floats per vertex (the mask UV).
+		var surface_flags: int = (Mesh.ARRAY_CUSTOM_RG_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
+				if use_splat_uvs else 0
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, surface_flags)
 		var surf_idx: int = mesh.get_surface_count() - 1
 		var mat: Material = null
 		if s_idx >= 0 and s_idx < materials.size():
@@ -717,6 +751,11 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 			mat = get_default_material()
 		if mat != null:
 			mesh.surface_set_material(surf_idx, mat)
+
+	# Authored lightmap metadata rides on the generated ArrayMesh: the
+	# LightmapGI baker reads the size hint off the mesh it bakes.
+	if lightmap_size_hint != Vector2i.ZERO:
+		mesh.lightmap_size_hint = lightmap_size_hint
 
 	return mesh
 
@@ -864,6 +903,8 @@ func clear() -> void:
 	positions.clear()
 	textures0.clear()
 	textures1.clear()
+	splat_uvs.clear()
+	lightmap_size_hint = Vector2i.ZERO
 	colors.clear()
 	tangents.clear()
 	faces.clear()

@@ -1,7 +1,7 @@
 ## PBUvEditorPanel — Dedicated UV Editor Panel for PoiBuilder.
 ##
 ## Hosts the 2D UV canvas (PBUvCanvas) inside Godot's bottom panel dock with:
-## - Full toolbar: Element modes (Vertex/Edge/Face/Island), UV Channels (UV1/UV2),
+## - Full toolbar: Element modes (Vertex/Edge/Face/Island), UV Channels (UV1/UV2/splat masks),
 ##   Frame Selection / Frame Unit Quad, Texture underlay & tiling toggles,
 ##   Zoom and Snap step controls, and Pop-out floating window toggle.
 ## - Bidirectional selection synchronization between 2D UV canvas and 3D viewport.
@@ -195,9 +195,10 @@ func _build_ui() -> void:
 	_opt_channel = OptionButton.new()
 	_opt_channel.name = "ChannelSelector"
 	_opt_channel.add_item("UV1 (Texture)", 0)
-	_opt_channel.add_item("UV2 (Splat — read-only)", 1)
+	_opt_channel.add_item("UV2 (Lightmap)", 1)
+	_opt_channel.add_item("Splat masks", 2)
 	_opt_channel.selected = 0
-	_opt_channel.tooltip_text = "UV1: the texture unwrap you edit. UV2: splat-mask debug view — owned by the texture splatting system, edited by viewport painting, never here."
+	_opt_channel.tooltip_text = "UV1: the texture unwrap you edit. UV2: the second channel — where a LightmapGI unwrap lives; the splat system never writes it, so paint and baked lighting coexist. Splat masks: read-only debug view of the mask coordinates, painted in the viewport."
 	_opt_channel.item_selected.connect(_on_channel_selected)
 	_toolbar.add_child(_opt_channel)
 
@@ -492,7 +493,7 @@ func set_active_mesh(mesh: PBMesh) -> void:
 
 ## Splat masks live outside PBMeshData (they are material shader parameters),
 ## so painting never triggers mesh_rebuilt — listen to the paint controller
-## directly and refresh the canvas (incl. the UV2 splat composite) per stroke.
+## directly and refresh the canvas (incl. the splat composite) per stroke.
 func _connect_paint_refresh() -> void:
 	if plugin == null or canvas == null:
 		return
@@ -687,7 +688,7 @@ func _update_status() -> void:
 			var c := canvas.selected_faces.size()
 			sel_text = "%d Faces" % c if c > 0 else "0 Faces"
 
-	if canvas.uv_channel == PBUvCanvas.UvChannel.UV2:
+	if canvas.uv_channel == PBUvCanvas.UvChannel.SPLAT:
 		# The splat view draws the face's mask stretched over the unit square,
 		# so an elongated face shows a square with the paint in the middle —
 		# surface the real-world splat area to make the mapping obvious.
@@ -698,7 +699,7 @@ func _update_status() -> void:
 				var bounds := PBSplat.get_face_planar_bounds(active_mesh.pb_mesh_data, active_mesh.pb_mesh_data.faces[f0])
 				if not bounds.is_empty():
 					splat_info = " | Splat area %.2f × %.2f m" % [bounds["range_u"], bounds["range_v"]]
-		_lbl_status.text = "UV2: splat masks (read-only)%s | %s" % [splat_info, sel_text]
+		_lbl_status.text = "Splat masks (read-only)%s | %s" % [splat_info, sel_text]
 		return
 
 	_lbl_status.text = "Mode: %s | %s selected" % [mode_str, sel_text]
@@ -748,9 +749,9 @@ func _get_target_vertices() -> Array:
 func _execute_uv_op(action_name: String, op_callable: Callable) -> void:
 	if active_mesh == null or active_mesh.pb_mesh_data == null:
 		return
-	if canvas and canvas.uv_channel == PBUvCanvas.UvChannel.UV2:
+	if canvas and canvas.uv_channel == PBUvCanvas.UvChannel.SPLAT:
 		if _lbl_status != null:
-			_lbl_status.text = "UV2 is read-only (splat-managed) — switch to UV1 to edit UVs"
+			_lbl_status.text = "Splat masks are read-only — switch to UV1/UV2 to edit UVs, or paint in the viewport"
 		return
 
 	var cmd := CmdMeshOp.new(active_mesh.pb_mesh_data, action_name, active_mesh)
@@ -845,24 +846,28 @@ func _on_snap_step_selected(index: int) -> void:
 func _on_channel_selected(index: int) -> void:
 	if canvas == null:
 		return
-	canvas.uv_channel = PBUvCanvas.UvChannel.UV2 if index == 1 else PBUvCanvas.UvChannel.UV1
+	match index:
+		1: canvas.uv_channel = PBUvCanvas.UvChannel.UV2
+		2: canvas.uv_channel = PBUvCanvas.UvChannel.SPLAT
+		_: canvas.uv_channel = PBUvCanvas.UvChannel.UV1
 	_update_ops_enabled()
 	_update_status()
 
-## UV2 is the splat system's own coordinate space (per-face planar masks that
-## regenerate on every rebuild) — hand edits would be silently discarded, so
-## the whole operations toolbar goes inert while it is displayed.
+## The splat-mask channel is the splat system's own coordinate space (derived,
+## regenerated on every rebuild): hand edits would be silently discarded, so the
+## operations toolbar goes inert while it is displayed. UV1 and UV2 are both
+## ordinary editable channels (UV2 is where a LightmapGI unwrap lives).
 func _update_ops_enabled() -> void:
 	if _ops_toolbar == null or canvas == null:
 		return
-	var editable := canvas.uv_channel == PBUvCanvas.UvChannel.UV1
+	var editable := canvas.uv_channel != PBUvCanvas.UvChannel.SPLAT
 	for child in _ops_toolbar.get_children():
 		if child is Button:
 			(child as Button).disabled = not editable
 	if _btn_texel_set != null:
 		_btn_texel_set.disabled = not editable
 	_ops_toolbar.tooltip_text = "" if editable \
-			else "UV2 shows splat masks (read-only). UV edits apply to UV1 — switch the channel back, or paint splats in the viewport."
+			else "Splat masks are read-only (painted in the viewport). Switch to UV1 or UV2 to edit UVs."
 
 func _on_canvas_view_changed(zoom: float, pan: Vector2) -> void:
 	pass

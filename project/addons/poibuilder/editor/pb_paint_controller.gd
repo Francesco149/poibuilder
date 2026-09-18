@@ -443,7 +443,7 @@ func _register_stroke_mesh(mesh: PBMesh) -> void:
 			"before": PBCommand.copy_mesh_data(mesh.pb_mesh_data),
 			"dirty": false
 		}
-		PBSplat.ensure_mesh_uv2(mesh.pb_mesh_data)
+		PBSplat.ensure_mesh_splat_uv(mesh.pb_mesh_data)
 
 func begin_stroke() -> void:
 	if mode != Mode.PAINT or target_mesh == null or target_mesh.pb_mesh_data == null:

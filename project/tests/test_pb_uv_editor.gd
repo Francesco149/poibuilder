@@ -213,12 +213,17 @@ func test_preview_texture_survives_splat_face_selection():
 	assert_not_null(canvas.preview_texture, "Face-selecting a splat-painted face must keep the texture underlay")
 	assert_eq(canvas.preview_texture, albedo, "UV1 underlay of a splat face must be its base texture")
 
-	# UV2 (Splat/Mask) channel shows the painted splat composite for that face
+	# UV2 is the author's channel now: it shows the base texture, not paint.
 	canvas.uv_channel = PBUvCanvas.UvChannel.UV2
 	assert_true(canvas.selected_faces.has(4), "Face selection must survive a channel switch")
-	assert_not_null(canvas.preview_texture, "UV2 channel must show the splat composite underlay")
-	assert_ne(canvas.preview_texture, albedo, "UV2 underlay must be the splat composite, not the raw base texture")
-	assert_true(canvas.preview_texture is ImageTexture, "Splat composite underlay must be a generated ImageTexture")
+	assert_eq(canvas.preview_texture, albedo, "UV2 (lightmap channel) shows the albedo underlay, not paint")
+
+	# Splat mask channel shows the painted composite for that face
+	canvas.uv_channel = PBUvCanvas.UvChannel.SPLAT
+	assert_true(canvas.selected_faces.has(4), "Face selection must survive a channel switch")
+	assert_not_null(canvas.preview_texture, "Splat channel must show the composite underlay")
+	assert_ne(canvas.preview_texture, albedo, "Splat underlay must be the composite, not the raw base texture")
+	assert_true(canvas.preview_texture is ImageTexture, "Composite underlay must be a generated ImageTexture")
 
 	# Cached composite is reused until a mask mutation bumps the state version
 	assert_eq(canvas._get_splat_preview(splat_mat), canvas.preview_texture, "Composite preview must be cached per material")
@@ -261,7 +266,7 @@ func test_plugin_paint_stroke_refreshes_canvas():
 
 	panel.free()
 
-func test_uv2_channel_read_only_guards():
+func test_uv2_channel_is_editable_and_splat_channel_is_not():
 	var panel := PBUvEditorPanel.new()
 	var cube := PBMeshData.create_cube(1.0)
 	PBUv.refresh_mesh_uvs(cube, true)
@@ -271,31 +276,37 @@ func test_uv2_channel_read_only_guards():
 
 	assert_false(panel._btn_proj_planar.disabled, "UV1 must keep the operations toolbar enabled")
 
+	# UV2 is the author's channel (a LightmapGI unwrap lives here): editable.
 	panel._on_channel_selected(1)
 	assert_eq(panel.canvas.uv_channel, PBUvCanvas.UvChannel.UV2, "Precondition: UV2 active")
-	assert_true(panel._btn_proj_planar.disabled, "UV2 must disable UV operations")
-	assert_true(panel._btn_sew.disabled, "UV2 must disable seam operations")
-	assert_true(panel._btn_texel_set.disabled, "UV2 must disable texel writes")
-	assert_string_contains(panel._lbl_status.text, "read-only", "Status line must flag UV2 as read-only")
+	assert_false(panel._btn_proj_planar.disabled, "UV2 must be editable — the splat system no longer owns it")
+	assert_false(panel._btn_texel_set.disabled, "UV2 must accept texel writes")
 
-	# An op that slips past the disabled buttons must still be refused
+	# The splat mask channel is derived data: read-only, ops refused.
+	panel._on_channel_selected(2)
+	assert_eq(panel.canvas.uv_channel, PBUvCanvas.UvChannel.SPLAT, "Precondition: splat channel active")
+	assert_true(panel._btn_proj_planar.disabled, "Splat mask view must disable UV operations")
+	assert_true(panel._btn_sew.disabled, "Splat mask view must disable seam operations")
+	assert_true(panel._btn_texel_set.disabled, "Splat mask view must disable texel writes")
+	assert_string_contains(panel._lbl_status.text, "read-only", "Status line must flag the splat view as read-only")
+
 	var ran := [false]
 	panel._execute_uv_op("Should Not Run", func() -> bool:
 		ran[0] = true
 		return true)
-	assert_false(ran[0], "UV operations must be refused while UV2 is active")
+	assert_false(ran[0], "UV operations must be refused while the splat mask view is active")
 
-	# Gizmo transforms never write UV2 (splat coordinates are system-owned)
+	# Gizmo transforms never write splat coordinates (system-owned, derived)
 	var authored := PackedVector2Array()
 	authored.resize(cube.positions.size())
 	authored.fill(Vector2(0.25, 0.5))
-	cube.textures1 = authored
+	cube.splat_uvs = authored
 	for i in range(cube.positions.size()):
 		panel.canvas._gizmo_affected_indices.append(i)
 	panel.canvas._apply_gizmo_transform({"type": "move", "delta": Vector2(0.5, 0.0)})
-	for i in range(cube.textures1.size()):
-		if cube.textures1[i] != authored[i]:
-			assert_true(false, "UV2 must never be modified by canvas gizmo transforms")
+	for i in range(cube.splat_uvs.size()):
+		if cube.splat_uvs[i] != authored[i]:
+			assert_true(false, "Splat mask coordinates must never be modified by canvas gizmo transforms")
 			break
 
 	# Back to UV1: the toolbar re-enables

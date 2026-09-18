@@ -84,33 +84,101 @@ func test_layer_capacity_up_to_max_layers() -> void:
 	assert_eq(overflow, -1, "Adding past MAX_LAYERS should return -1")
 
 # ==============================================================================
-# 3. UV2 Planar Face Mapping Tests
+# 3. Splat mask coordinates (CUSTOM0) — never UV2
 # ==============================================================================
 
-func test_ensure_mesh_uv2_mapping() -> void:
+func test_ensure_mesh_splat_uv_mapping() -> void:
 	var data := _test_cube.pb_mesh_data
 	assert_not_null(data)
 
-	PBSplat.ensure_mesh_uv2(data)
-	assert_eq(data.textures1.size(), data.positions.size(), "textures1 should match vertex count")
+	PBSplat.ensure_mesh_splat_uv(data)
+	assert_eq(data.splat_uvs.size(), data.positions.size(), "splat_uvs should match vertex count")
 
-	for i in range(data.textures1.size()):
-		var uv2 := data.textures1[i]
-		assert_true(uv2.x >= -0.001 and uv2.x <= 1.001, "UV2.x (%f) should be in [0, 1]" % uv2.x)
-		assert_true(uv2.y >= -0.001 and uv2.y <= 1.001, "UV2.y (%f) should be in [0, 1]" % uv2.y)
+	for i in range(data.splat_uvs.size()):
+		var uv := data.splat_uvs[i]
+		assert_true(uv.x >= -0.001 and uv.x <= 1.001, "splat u (%f) should be in [0, 1]" % uv.x)
+		assert_true(uv.y >= -0.001 and uv.y <= 1.001, "splat v (%f) should be in [0, 1]" % uv.y)
 
-func test_to_array_mesh_includes_uv2() -> void:
+func test_to_array_mesh_emits_splat_custom_attribute() -> void:
 	var data := _test_cube.pb_mesh_data
-	PBSplat.ensure_mesh_uv2(data)
+	# Splat evidence (a splat material on any face) is what makes the build
+	# regenerate and emit the mask attribute — same trigger as before.
+	data.set_face_material(data.faces[0], PBSplat.create_splat_material())
 
 	var arr_mesh := data.to_array_mesh()
 	assert_not_null(arr_mesh)
 	assert_true(arr_mesh.get_surface_count() > 0)
+	assert_true((arr_mesh.surface_get_format(0) & Mesh.ARRAY_FORMAT_CUSTOM0) != 0,
+			"splat masks must travel in the CUSTOM0 vertex attribute")
 
 	var arrays := arr_mesh.surface_get_arrays(0)
-	var uv2_arr = arrays[Mesh.ARRAY_TEX_UV2]
-	assert_not_null(uv2_arr, "ArrayMesh surface should contain ARRAY_TEX_UV2")
-	assert_eq(uv2_arr.size(), data.positions.size())
+	var custom: PackedFloat32Array = arrays[Mesh.ARRAY_CUSTOM0]
+	assert_eq(custom.size(), data.splat_uvs.size() * 2, "RG_FLOAT custom attribute holds 2 floats per vertex")
+	for i in range(data.splat_uvs.size()):
+		assert_almost_eq(custom[i * 2], data.splat_uvs[i].x, 0.0001)
+		assert_almost_eq(custom[i * 2 + 1], data.splat_uvs[i].y, 0.0001)
+	assert_true((arr_mesh.surface_get_format(0) & Mesh.ARRAY_FORMAT_TEX_UV2) == 0,
+			"a mesh with no authored UV2 must not get one from the splat system")
+
+## The headline contract: live splat paint and an authored UV2 lightmap
+## unwrap coexist on one mesh. Paint writes mask coordinates into CUSTOM0 and
+## leaves UV2 alone, and the compiled surface carries BOTH channels.
+func test_paint_coexists_with_authored_uv2_lightmap_unwrap() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var data := cube.pb_mesh_data
+
+	# Authored UV2: stands in for a LightmapGI unwrap (per-vertex island UVs)
+	var authored := PackedVector2Array()
+	authored.resize(data.positions.size())
+	for i in range(authored.size()):
+		authored[i] = Vector2(fposmod(0.31 * i, 1.0), fposmod(0.17 * i, 1.0))
+	data.textures1 = authored
+	data.lightmap_size_hint = Vector2i(128, 128)
+
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_texture = ImageTexture.create_from_image(_solid_image(Color.GREEN))
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, 4)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+
+	var am: ArrayMesh = data.to_array_mesh()
+	var painted_surface := -1
+	for s in range(am.get_surface_count()):
+		if PBSplat.is_splat_material(am.surface_get_material(s)):
+			painted_surface = s
+			break
+	assert_true(painted_surface >= 0, "the painted face must own a splat-material surface")
+	if painted_surface < 0:
+		return
+	var fmt: int = am.surface_get_format(painted_surface)
+	assert_true((fmt & Mesh.ARRAY_CUSTOM0) != 0, "painted surface must carry the splat mask attribute")
+	assert_true((fmt & Mesh.ARRAY_TEX_UV2) != 0, "painted surface must keep its authored UV2 (lightmap)")
+	assert_eq(am.lightmap_size_hint, Vector2i(128, 128), "lightmap size hint must reach the built mesh")
+
+	# ... and the unwrap values are untouched by the paint
+	for i in range(authored.size()):
+		if data.textures1[i].distance_squared_to(authored[i]) > 0.000001:
+			assert_true(false, "paint must never rewrite UV2 (vertex %d)" % i)
+			return
+
+func test_decal_layer_default_resolution_scales_with_face_size() -> void:
+	# Uniform texel density: mask resolution must track the face's world size at
+	# 256 texels/m (both for splat masks and for the decal layer), clamped.
+	var small := PBMeshData.create_cube(1.0)
+	var big := PBMeshData.create_cube(8.0)
+	var small_res := PBSplat.calculate_uniform_face_resolution(small, small.faces[0])
+	var big_res := PBSplat.calculate_uniform_face_resolution(big, big.faces[0])
+	assert_true(big_res.x > small_res.x,
+			"a larger face must get a larger mask (%d vs %d) so paint never looks blurrier" % [big_res.x, small_res.x])
+	assert_eq(clampi(small_res.x, PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION), small_res.x,
+			"mask resolution stays inside the documented clamp window")
+
+func _solid_image(col: Color) -> Image:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	img.fill(col)
+	return img
 
 # ==============================================================================
 # 4. Brush Painting Performance & Falloff Tests
@@ -119,7 +187,7 @@ func test_to_array_mesh_includes_uv2() -> void:
 func test_brush_painting_hit_inside_and_outside_radius() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0] # top face or front face
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 
 	var mat := PBSplat.create_splat_material()
 	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
@@ -150,7 +218,7 @@ func test_brush_painting_hit_inside_and_outside_radius() -> void:
 func test_brush_erase_mode_subtracts_alpha() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
@@ -173,7 +241,7 @@ func test_brush_erase_mode_subtracts_alpha() -> void:
 func test_brush_painting_zero_lag_benchmark() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
@@ -201,7 +269,7 @@ func test_brush_painting_zero_lag_benchmark() -> void:
 func test_stamp_face_pasting_with_rotation_and_scale() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 
 	var mat := PBSplat.create_splat_material()
 	var stamp_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
@@ -245,7 +313,7 @@ func test_stamp_basis_upright_on_all_surfaces() -> void:
 func test_stamp_decompresses_compressed_vram_texture() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 	var mat := PBSplat.create_splat_material()
 
 	var pattern_tex := load("res://addons/poibuilder/materials/textures/circular_square_pattern.png") as Texture2D
@@ -487,7 +555,7 @@ func _face_center_local(data: PBMeshData, face: PBFace) -> Vector3:
 func test_paint_lower_opacity_stroke_overwrites_stronger_one() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var layer_idx := PBSplat.add_layer(mat, tex)
@@ -513,7 +581,7 @@ func test_paint_lower_opacity_stroke_overwrites_stronger_one() -> void:
 func test_paint_soft_brush_over_filled_area_has_no_halo_and_erases_towards_opacity() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var layer_idx := PBSplat.add_layer(mat, tex)
@@ -549,7 +617,7 @@ func test_paint_soft_brush_over_filled_area_has_no_halo_and_erases_towards_opaci
 func test_paint_within_stroke_keeps_max() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var layer_idx := PBSplat.add_layer(mat, tex)
@@ -578,7 +646,7 @@ func test_paint_within_stroke_keeps_max() -> void:
 func test_erase_applies_opacity_once_per_stroke() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var layer_idx := PBSplat.add_layer(mat, tex)
@@ -692,10 +760,10 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	assert_eq(face.splat_bounds.size(), 4, "Splat bounds established on first paint")
 	var orig_bounds := [face.splat_bounds[0], face.splat_bounds[1], face.splat_bounds[2], face.splat_bounds[3]]
 
-	# Rebuild mesh and check initial UV2 coordinates
+	# Rebuild mesh and check initial mask coordinates
 	cube.rebuild()
-	var orig_uv2 := data.textures1.duplicate()
-	assert_eq(orig_uv2.size(), data.positions.size())
+	var orig_uv := data.splat_uvs.duplicate()
+	assert_eq(orig_uv.size(), data.positions.size())
 
 	# Resize face: move right vertices +2m outward along u
 	var bounds := PBSplat.get_face_planar_bounds(data, face)
@@ -712,15 +780,17 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	assert_eq(face.splat_bounds[2], orig_bounds[2])
 	assert_eq(face.splat_bounds[3], orig_bounds[3])
 
-	# UV2 at the unmoved vertices must be identical (no sliding):
+	# Mask coordinates at the unmoved vertices must be identical (no sliding):
 	for idx in face.get_distinct_indexes():
 		var p: Vector3 = data.positions[idx]
 		if u_axis.dot(p) < 0.0:
-			assert_almost_eq(data.textures1[idx].x, orig_uv2[idx].x, 0.001)
-			assert_almost_eq(data.textures1[idx].y, orig_uv2[idx].y, 0.001)
+			assert_almost_eq(data.splat_uvs[idx].x, orig_uv[idx].x, 0.001)
+			assert_almost_eq(data.splat_uvs[idx].y, orig_uv[idx].y, 0.001)
 		else:
-			# Moved vertices have UV2 > 1.0 (new geometry outside the original mask):
-			assert_true(data.textures1[idx].x > 1.5, "Moved vertices have UV2 proportionally expanded, not stretched to 1.0")
+			# Moved vertices land outside the original mask rect (u > 1): the
+			# painted area keeps its object-space anchor, the new geometry
+			# simply clips instead of stretching the paint.
+			assert_true(data.splat_uvs[idx].x > 1.5, "Moved vertices map outside the painted rect, not rescaled to 1.0")
 
 ## Moving/raising an object in object mode keeps stamp clipping perfectly aligned (mesh-local clipping).
 func test_stamp_clipping_moves_with_object_in_object_mode() -> void:
@@ -794,7 +864,7 @@ func test_collect_stamp_data_exports_anchors() -> void:
 func test_collect_face_paint_state_exports_layers_and_bounds() -> void:
 	var data := _test_cube.pb_mesh_data
 	var face := data.faces[0]
-	PBSplat.ensure_mesh_uv2(data)
+	PBSplat.ensure_mesh_splat_uv(data)
 
 	# Unpainted face: stock material -> no paint state.
 	assert_true(PBSplat.collect_face_paint_state(data, face).is_empty(),
@@ -1008,27 +1078,37 @@ func test_authored_uv2_survives_rebuild_without_splat_data() -> void:
 			assert_true(false, "Authored UV2 (lightmap unwrap) must survive rebuild without splat data")
 			return
 
-func test_splat_mesh_regenerates_uv2_on_rebuild() -> void:
+func test_splat_uvs_regenerate_without_touching_uv2() -> void:
 	var cube := PBMeshData.create_cube(1.0)
 	PBUv.refresh_mesh_uvs(cube, true)
 	cube.faces[0].splat_bounds = PackedFloat32Array([0.0, 1.0, 0.0, 1.0])
+	# Simulate an authored lightmap unwrap that must survive the rebuild.
+	var authored := PackedVector2Array()
+	authored.resize(cube.positions.size())
+	for i in range(authored.size()):
+		authored[i] = Vector2(fposmod(0.17 * i, 1.0), 0.4)
+	cube.textures1 = authored
 	var garbage := PackedVector2Array()
 	garbage.resize(cube.positions.size())
 	garbage.fill(Vector2(9.0, 9.0))
-	cube.textures1 = garbage
+	cube.splat_uvs = garbage
 
 	cube.to_array_mesh()
 
-	assert_eq(cube.textures1.size(), cube.positions.size(), "Splat meshes regenerate UV2 on rebuild")
-	assert_ne(cube.textures1[0], Vector2(9.0, 9.0), "Stale UV2 values must be replaced by face-planar splat coordinates")
+	assert_eq(cube.splat_uvs.size(), cube.positions.size(), "Splat meshes regenerate mask coordinates on rebuild")
+	assert_ne(cube.splat_uvs[0], Vector2(9.0, 9.0), "Stale mask coordinates must be replaced by face-planar ones")
+	for i in range(authored.size()):
+		if cube.textures1[i].distance_squared_to(authored[i]) > 0.000001:
+			assert_true(false, "Paint must never clobber an authored UV2 (lightmap unwrap)")
+			return
 
-func test_splat_material_assignment_triggers_uv2_generation() -> void:
+func test_splat_material_assignment_triggers_splat_uv_generation() -> void:
 	var cube := PBMeshData.create_cube(1.0)
 	PBUv.refresh_mesh_uvs(cube, true)
-	assert_true(cube.textures1.is_empty(), "Precondition: no UV2 without splat data")
+	assert_true(cube.splat_uvs.is_empty(), "Precondition: no mask coordinates without splat data")
 	cube.set_face_material(cube.faces[2], PBSplat.create_splat_material())
 	cube.to_array_mesh()
-	assert_eq(cube.textures1.size(), cube.positions.size(), "Assigning a splat material must generate UV2 on rebuild")
-	var uv: Vector2 = cube.textures1[0]
+	assert_eq(cube.splat_uvs.size(), cube.positions.size(), "Assigning a splat material must generate mask coordinates on rebuild")
+	var uv: Vector2 = cube.splat_uvs[0]
 	assert_true(uv.x >= 0.0 and uv.x <= 1.0 and uv.y >= 0.0 and uv.y <= 1.0,
-			"Generated UV2 must be normalized face-planar coordinates")
+			"Generated mask coordinates must be normalized face-planar ones")

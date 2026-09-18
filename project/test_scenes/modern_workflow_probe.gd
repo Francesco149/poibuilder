@@ -362,13 +362,23 @@ func _step_lightmap_contract() -> void:
 		_ok("authored UV2 unwrap survives rebuild on splat-free meshes (LightmapGI-ready)")
 	else:
 		_fail("authored UV2 unwrap is clobbered by rebuild on splat-free meshes")
-	# (b) Splat-painted meshes OWN UV2 — mutually exclusive with lightmap UV2.
+	# (b) Splat paint is independent of UV2: masks travel in the CUSTOM0
+	# attribute, so the authored unwrap above must survive painting.
 	cube.faces[0].splat_bounds = PackedFloat32Array([0, 1, 0, 1])
-	cube.to_array_mesh()
-	if cube.textures1[0].distance_squared_to(Vector2(0.25, 0.75)) > 0.000001:
-		_ok("splat-painted meshes regenerate UV2 to face-planar splat coordinates (splat and lightmap UV2 are mutually exclusive per mesh)")
+	var am := cube.to_array_mesh()
+	var kept := true
+	for i in range(authored.size()):
+		if cube.textures1[i].distance_squared_to(authored[i]) > 0.000001:
+			kept = false
+			break
+	if kept:
+		_ok("paint no longer clobbers UV2 — splat masks ride in CUSTOM0, lightmap unwraps survive")
 	else:
-		_fail("splat mesh did not regenerate UV2")
+		_fail("paint clobbered the authored UV2 unwrap")
+	if am.surface_get_count() > 0 and (am.surface_get_format(0) & Mesh.ARRAY_FORMAT_CUSTOM0) != 0:
+		_ok("splat masks are delivered as ARRAY_CUSTOM0 (exported to glTF as TEXCOORD_2)")
+	else:
+		_fail("splat mask custom attribute missing from the compiled mesh")
 
 func _unhandled_key_input(_e) -> void:
 	pass

@@ -51,6 +51,8 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	copy.positions = source.positions.duplicate()
 	copy.textures0 = source.textures0.duplicate()
 	copy.textures1 = source.textures1.duplicate()
+	copy.splat_uvs = source.splat_uvs.duplicate()
+	copy.lightmap_size_hint = source.lightmap_size_hint
 	copy.colors = source.colors.duplicate()
 	copy.tangents = source.tangents.duplicate()
 	var new_mats: Array[Material] = []
@@ -104,6 +106,8 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 	target.positions = snapshot.positions.duplicate()
 	target.textures0 = snapshot.textures0.duplicate()
 	target.textures1 = snapshot.textures1.duplicate()
+	target.splat_uvs = snapshot.splat_uvs.duplicate()
+	target.lightmap_size_hint = snapshot.lightmap_size_hint
 	target.colors = snapshot.colors.duplicate()
 	target.tangents = snapshot.tangents.duplicate()
 	var new_mats: Array[Material] = []

@@ -2,7 +2,9 @@
 //
 // Blends up to 8 texture layers over a face's base texture using painted alpha masks.
 // Each additional layer follows the identical UV tiling as the base texture (UV).
-// The alpha masks are localized per face using normalized face coordinates (UV2).
+// The alpha masks are localized per face using normalized face coordinates, which
+// travel in the CUSTOM0 vertex attribute (NOT UV2 — UV2 is left free for a
+// LightmapGI unwrap, so paint and baked lighting coexist on one surface).
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back;
 
@@ -69,6 +71,14 @@ uniform float layer_8_roughness : hint_range(0.0, 1.0) = 0.8;
 uniform bool stamp_layer_enabled = false;
 uniform sampler2D stamp_layer_texture : source_color, filter_linear, repeat_disable;
 
+// Face-planar mask coordinate, delivered by the CUSTOM0 vertex attribute.
+// .xy carries it; the shader treats values outside [0,1] as "outside the
+// painted area" (base texture shows through).
+varying vec2 splat_uv;
+
+void vertex() {
+	splat_uv = CUSTOM0.xy;
+}
 
 void fragment() {
 	vec4 base_col = texture(base_texture, UV) * base_color;
@@ -77,7 +87,7 @@ void fragment() {
 
 	if (layer_1_enabled) {
 		vec4 l_col = texture(layer_1_texture, UV) * layer_1_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_1_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_1_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_1_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -86,7 +96,7 @@ void fragment() {
 	}
 	if (layer_2_enabled) {
 		vec4 l_col = texture(layer_2_texture, UV) * layer_2_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_2_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_2_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_2_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -95,7 +105,7 @@ void fragment() {
 	}
 	if (layer_3_enabled) {
 		vec4 l_col = texture(layer_3_texture, UV) * layer_3_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_3_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_3_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_3_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -104,7 +114,7 @@ void fragment() {
 	}
 	if (layer_4_enabled) {
 		vec4 l_col = texture(layer_4_texture, UV) * layer_4_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_4_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_4_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_4_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -113,7 +123,7 @@ void fragment() {
 	}
 	if (layer_5_enabled) {
 		vec4 l_col = texture(layer_5_texture, UV) * layer_5_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_5_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_5_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_5_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -122,7 +132,7 @@ void fragment() {
 	}
 	if (layer_6_enabled) {
 		vec4 l_col = texture(layer_6_texture, UV) * layer_6_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_6_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_6_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_6_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -131,7 +141,7 @@ void fragment() {
 	}
 	if (layer_7_enabled) {
 		vec4 l_col = texture(layer_7_texture, UV) * layer_7_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_7_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_7_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_7_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -140,7 +150,7 @@ void fragment() {
 	}
 	if (layer_8_enabled) {
 		vec4 l_col = texture(layer_8_texture, UV) * layer_8_color;
-		float m = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(layer_8_mask, UV2).r : 0.0;
+		float m = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(layer_8_mask, splat_uv).r : 0.0;
 		float fw = max(fwidth(m), 0.0001);
 		float edge_w = mix(max(fw * 2.0, 0.02), 0.48, layer_8_roughness);
 		float blend = smoothstep(0.5 - edge_w, 0.5 + edge_w, m);
@@ -148,7 +158,7 @@ void fragment() {
 		cur_roughness = mix(cur_roughness, layer_8_roughness, blend * l_col.a);
 	}
 	if (stamp_layer_enabled) {
-		vec4 stamp_col = (UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) ? texture(stamp_layer_texture, UV2) : vec4(0.0);
+		vec4 stamp_col = (splat_uv.x >= 0.0 && splat_uv.x <= 1.0 && splat_uv.y >= 0.0 && splat_uv.y <= 1.0) ? texture(stamp_layer_texture, splat_uv) : vec4(0.0);
 		albedo = mix(albedo, stamp_col.rgb, stamp_col.a);
 	}
 

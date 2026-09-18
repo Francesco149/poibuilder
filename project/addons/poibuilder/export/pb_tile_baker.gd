@@ -624,7 +624,10 @@ static func bake_pb_mesh_in_place(pb: PBMesh, grid_size: float = 1.0,
 	# vertex colors no longer line up — drop them; baked tiles are albedo-only.
 	mesh_data.tangents = PackedFloat32Array()
 	mesh_data.colors = PackedColorArray()
-	mesh_data.textures1 = PackedVector2Array()
+	# Only the splat data goes: the mask coordinates are derived and the splat
+	# materials are replaced by baked tiles. UV2 was never the splat system's
+	# to clear — an authored lightmap unwrap survives this bake.
+	mesh_data.splat_uvs = PackedVector2Array()
 	mesh_data.positions = new_positions
 	mesh_data.textures0 = new_uvs
 	mesh_data.faces = new_faces

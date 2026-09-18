@@ -4,7 +4,9 @@
 ## base texture using high-performance alpha mask painting and stamping.
 ##
 ## All layers share the exact same UV tiling as the base texture. Alpha masks are
-## mapped to faces using normalized face-local planar coordinates (UV2).
+## mapped to faces using normalized face-local planar coordinates, carried by
+## the CUSTOM0 vertex attribute (see PBMeshData.splat_uvs) — never UV2, which
+## stays free for an authored LightmapGI unwrap.
 @tool
 class_name PBSplat
 extends RefCounted
@@ -56,8 +58,8 @@ const BRUSH_LUT_SIZE := 1024
 ## which caused .tscn text scenes to explode to 30+ MB.
 static var _cpu_image_cache: Dictionary = {}
 
-## Bumped whenever any splat layer mask, stamp layer, or layer set changes, so
-## downstream caches (the UV editor's UV2 composite preview) know when to rebuild.
+## Bumped whenever any splat layer mask, decal layer, or layer set changes, so
+## downstream caches (the UV editor's splat composite preview) know when to rebuild.
 static var mask_state_version: int = 0
 
 static func _get_cached_image(mat: ShaderMaterial, key: String) -> Image:
@@ -409,7 +411,7 @@ static func remove_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 	mask_state_version += 1
 
 # ==============================================================================
-# UV2 / Planar Coordinate Calculation
+# Planar Mask Coordinates (CUSTOM0)
 # ==============================================================================
 
 ## Calculates face-local planar normalized bounding box coordinates for a face.
@@ -484,14 +486,17 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_ge
 	result["range_v"] = range_v
 	return result
 
-## Ensures that `mesh_data.textures1` (UV2 channel) is populated with clean
-## face-local planar normalized coordinates [0, 1] for all faces.
-static func ensure_mesh_uv2(mesh_data: PBMeshData) -> void:
+## Ensures that `mesh_data.splat_uvs` (the CUSTOM0 splat-mask coordinate
+## attribute) is populated with clean face-local planar normalized [0, 1]
+## coordinates for all faces. This is DERIVED data: it is regenerated on every
+## mesh build from each face's persisted planar bounds, and UV2 (`textures1`)
+## is never touched — the author's lightmap unwrap must survive paint.
+static func ensure_mesh_splat_uv(mesh_data: PBMeshData) -> void:
 	if mesh_data == null:
 		return
 	var vc := mesh_data.positions.size()
-	if mesh_data.textures1.size() != vc:
-		mesh_data.textures1.resize(vc)
+	if mesh_data.splat_uvs.size() != vc:
+		mesh_data.splat_uvs.resize(vc)
 
 	for face in mesh_data.faces:
 		if face == null:
@@ -512,7 +517,7 @@ static func ensure_mesh_uv2(mesh_data: PBMeshData) -> void:
 				var p: Vector3 = mesh_data.positions[idx]
 				var u_norm := (u_axis.dot(p) - min_u) / range_u
 				var v_norm := (v_axis.dot(p) - min_v) / range_v
-				mesh_data.textures1[idx] = Vector2(u_norm, v_norm)
+				mesh_data.splat_uvs[idx] = Vector2(u_norm, v_norm)
 
 # ==============================================================================
 # Brush Painting Engine
@@ -1071,13 +1076,13 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 	return clone
 
 # ==============================================================================
-# UV Editor Splat Preview (UV2 channel underlay)
+# UV Editor Splat Preview (splat-mask channel underlay)
 # ==============================================================================
 
-## Builds a CPU composite of `mat`'s splat stack over the UV2 unit square:
+## Builds a CPU composite of `mat`'s splat stack over the mask unit square:
 ## base texture/color with every enabled layer blended through its painted
 ## mask (mirroring pb_splat_shader's smoothstep), then the stamp layer on top.
-## The UV editor uses this as the underlay for the UV2 (Splat/Mask) channel —
+## The UV editor uses this as the underlay for the splat-mask channel —
 ## masks are authored in face-planar [0, 1] coordinates, which is exactly the
 ## unit square the canvas draws. Returns null for non-splat materials.
 static func build_preview_texture(mat: Material, size: int = 256) -> ImageTexture:
