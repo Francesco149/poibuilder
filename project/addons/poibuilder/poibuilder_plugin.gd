@@ -95,7 +95,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.154"
+const VERSION := "0.9.155"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -4259,8 +4259,10 @@ func _on_param_changed(param_name: String, value: float) -> void:
 		_params_edit_values[param_name] = value
 		# Live preview: rebuild the emitter from the merged values on every
 		# spinner tick; Apply wraps the whole session into ONE undo action.
-		PBParticleParams.apply_values(_params_edit_emitter, _params_edit_values,
-			_emitter_texture(_params_edit_emitter))
+		var tex := _emitter_texture(_params_edit_emitter)
+		PBParticleParams.apply_values(_params_edit_emitter, _params_edit_values, tex)
+		if tool_overlay != null:
+			tool_overlay.set_params_hint(PBParticleParams.sheet_readout(tex, _params_edit_values))
 	elif _params_session_kind == "edit" and _params_edit_node != null \
 			and is_instance_valid(_params_edit_node):
 		_params_edit_values[param_name] = value
@@ -4533,6 +4535,8 @@ func _on_edit_emitter_requested() -> void:
 	tool_overlay.params_sticky = true
 	tool_overlay.open_params("Emitter Parameters",
 		PBParticleParams.get_param_defs(), _params_edit_values)
+	tool_overlay.set_params_hint(PBParticleParams.sheet_readout(
+		_emitter_texture(emitter), _params_edit_values))
 	if logger:
 		logger.info("plugin", "Emitter properties session opened on %s" % emitter.name)
 

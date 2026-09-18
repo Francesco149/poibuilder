@@ -347,3 +347,21 @@ func test_sheet_cells_size_the_quad_by_the_cell_aspect() -> void:
 	var back := PBParticleParams.values_from_node(node_wide)
 	assert_almost_eq(float(back["size"]), 0.5, 0.001)
 	assert_almost_eq(float(back["atlas_cols"]), 2.0, 0.001)
+
+## The sheet knobs are the one emitter feature a preview cannot explain, so the
+## properties modal states what they currently select (the cell size and the
+## cycle) instead of leaving the user to guess why a non-sheet texture comes out
+## in slices.
+func test_sheet_readout_teaches_the_knobs() -> void:
+	var sheet := ImageTexture.create_from_image(Image.create(192, 64, false, Image.FORMAT_RGBA8))
+	var line := PBParticleParams.sheet_readout(sheet, {"atlas_cols": 3.0, "atlas_rows": 1.0})
+	assert_true(line.contains("64 x 64"), "Three cells of a 192x64 sheet are 64x64 px: %s" % line)
+	assert_true(line.contains("3 frames"), "The frame count is stated: %s" % line)
+	assert_true(line.contains("one cycle per lifetime"), "The cycle is stated: %s" % line)
+
+	var single := PBParticleParams.sheet_readout(sheet, {"atlas_cols": 1.0, "atlas_rows": 1.0})
+	assert_true(single.contains("One frame"), "A single frame says so: %s" % single)
+	assert_true(single.contains("192 x 64"), "…and names the image: %s" % single)
+
+	assert_eq(PBParticleParams.sheet_readout(null, {}), "",
+		"Without a texture there is nothing to say")

@@ -101,6 +101,25 @@ static func get_param_defs() -> Array:
 			"tooltip": "Flipbook rows (tex_height / rows per cell). 1 = a single row of frames."},
 	]
 
+## One line describing what the sheet knobs currently select — the flipbook is
+## the one emitter feature a user cannot infer from the preview (a texture that
+## is not a sprite sheet is just sampled in slices), so the properties modal
+## shows the cell size and the cycle instead of leaving it to be guessed at.
+## "" when the texture is unknown.
+static func sheet_readout(texture: Texture2D, values: Dictionary) -> String:
+	if texture == null or texture.get_width() <= 0 or texture.get_height() <= 0:
+		return ""
+	var cols := int(clampf(float(values.get("atlas_cols", 1.0)), 1.0, 8.0))
+	var rows := int(clampf(float(values.get("atlas_rows", 1.0)), 1.0, 8.0))
+	var frames := cols * rows
+	var fw := float(texture.get_width()) / float(cols)
+	var fh := float(texture.get_height()) / float(rows)
+	if frames <= 1:
+		return "One frame: a particle shows the whole %d x %d px image." % [
+			texture.get_width(), texture.get_height()]
+	return "Sheet %d x %d = %d frames of %.0f x %.0f px: one cell per particle, one cycle per lifetime." % [
+		cols, rows, frames, fw, fh]
+
 ## ── Node construction (shared by placement + properties) ────────────────────
 
 ## Builds a complete emitter node. `values` uses get_param_defs()'s names;

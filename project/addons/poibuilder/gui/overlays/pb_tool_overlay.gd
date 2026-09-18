@@ -553,6 +553,15 @@ func has_creation_extents() -> bool:
 # Params session (modal)
 # ==============================================================================
 
+## The line under a params session's grid ("Changes preview live" by default).
+## The emitter session replaces it with what the sheet knobs currently select;
+## open_params() resets it, so a session that does not set one keeps the
+## default.
+func set_params_hint(text: String) -> void:
+	_ensure_ui()
+	if _params_hint != null:
+		_params_hint.text = text if not text.is_empty() else "Changes preview live"
+
 ## Opens a shape-parameter session: one row per `def`
 ## ({name, label, min, max, step, suffix}) seeded from `values`.
 ## Changes emit param_changed live (the plugin rebuilds the preview).
@@ -567,6 +576,8 @@ func open_params(title: String, defs: Array, values: Dictionary) -> void:
 	_param_spinboxes.clear()
 	_param_checkboxes.clear()
 	_current_param_defs.clear()
+	if _params_hint != null:
+		_params_hint.text = "Changes preview live"
 	for def in defs:
 		var caption := _make_row_label(str(def.get("label", def.get("name", "?"))))
 		_params_grid.add_child(caption)
