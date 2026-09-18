@@ -13,6 +13,10 @@ extends VBoxContainer
 
 const ICON_DIR := "res://addons/poibuilder/icons/"
 
+## UV2 unwrap density: metres per lightmap texel (20 texels/m). Lower = sharper
+## lightmaps and bigger atlases.
+const LIGHTMAP_TEXEL_SIZE := 0.05
+
 static func _load_icon(icon_name: String) -> Texture2D:
 	var path := ICON_DIR + icon_name
 	if ResourceLoader.exists(path):
@@ -86,6 +90,7 @@ var _btn_proj_planar: Button
 var _btn_proj_box: Button
 var _btn_proj_fit: Button
 var _btn_proj_unwrap: Button
+var _btn_lightmap: Button
 var _btn_flip_u: Button
 var _btn_flip_v: Button
 var _btn_rot_ccw: Button
@@ -336,6 +341,12 @@ func _build_ui() -> void:
 	_btn_proj_unwrap = _create_icon_btn("BtnProjUnwrap", "icon_uv_unwrap.svg", "Unwrap", "Unwrap selected faces into clean non-overlapping UV layout")
 	_btn_proj_unwrap.pressed.connect(func(): _execute_uv_op("Unwrap UVs", func() -> bool: return PBUvOps.unwrap_box(active_mesh.pb_mesh_data, _get_target_faces(), canvas.uv_channel if canvas else 0)))
 	_ops_toolbar.add_child(_btn_proj_unwrap)
+
+	# Lightmap UV2: whole-mesh xatlas unwrap, independent of any face selection
+	_btn_lightmap = _create_icon_btn("BtnUnwrapLightmap", "icon_uv_lightmap.svg", "Lightmap",
+			"Unwrap UV2 for LightmapGI: per-face islands packed into one atlas, with the atlas size hint. UV2 belongs to you — splat paint travels in its own vertex channel and is untouched.")
+	_btn_lightmap.pressed.connect(_on_lightmap_unwrap_pressed)
+	_ops_toolbar.add_child(_btn_lightmap)
 
 	_ops_toolbar.add_child(_make_vsep())
 
@@ -767,6 +778,34 @@ func _execute_uv_op(action_name: String, op_callable: Callable) -> void:
 			canvas.refresh_from_mesh()
 		_update_status()
 		uv_selection_changed.emit()
+
+## Unwraps UV2 into a lightmap atlas and flips the mesh to GI mode Static so a
+## LightmapGI actually bakes it. UV2 is the author's channel — splat paint is
+## unaffected, which is the whole point of the CUSTOM0 mask split.
+func _on_lightmap_unwrap_pressed() -> void:
+	if active_mesh == null or active_mesh.pb_mesh_data == null:
+		return
+	var cmd := CmdMeshOp.new(active_mesh.pb_mesh_data, "Unwrap UV2 (Lightmap)", active_mesh)
+	var xf: Transform3D = active_mesh.global_transform if active_mesh.is_inside_tree() else Transform3D.IDENTITY
+	var err: int = PBUvOps.unwrap_lightmap_uv2(active_mesh.pb_mesh_data, xf, LIGHTMAP_TEXEL_SIZE)
+	if err != OK:
+		if _lbl_status != null:
+			_lbl_status.text = "UV2 unwrap failed (%s) — the mesh may not be manifold" % error_string(err)
+		return
+	cmd.capture_after()
+	var ur := _get_undo_redo()
+	if ur != null:
+		cmd.add_to_undo_manager(ur)
+	# GI mode Static is what the baker looks for; without it the unwrap would
+	# never be used (GeometryInstance3D defaults to Disabled).
+	active_mesh.gi_mode = GeometryInstance3D.GI_MODE_STATIC
+	active_mesh.rebuild()
+	if canvas:
+		canvas.uv_channel = PBUvCanvas.UvChannel.UV2
+		canvas.refresh_from_mesh()
+	_update_ops_enabled()
+	_update_status()
+	uv_selection_changed.emit()
 
 func _on_stitch_pressed() -> void:
 	if active_mesh == null or active_mesh.pb_mesh_data == null or canvas == null:

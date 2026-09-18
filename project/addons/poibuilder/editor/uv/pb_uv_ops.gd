@@ -5,6 +5,7 @@
 ## - 2D Transformations: Translate, Rotate, Scale, Flip Horizontal/Vertical, Rotate 90° CW/CCW.
 ## - Projections: Planar Project, Box Project, Fit UVs.
 ## - Seams & Topology: Sew UVs, Split UVs, Collapse UVs, Auto-Stitch adjacent edges.
+## - Lightmapping: Unwrap UV2 for LightmapGI (per-face split, atlas-packed).
 ## - Utilities: Sample/Normalize Texel Density, Export UV Template PNG.
 @tool
 class_name PBUvOps
@@ -1088,3 +1089,182 @@ static func _draw_line_on_image(img: Image, p1: Vector2i, p2: Vector2i, col: Col
 		if e2 <= dx:
 			err += dx
 			y0 += sy
+
+
+# ==============================================================================
+# Lightmap UV2 Unwrap
+# ==============================================================================
+
+## Unwraps UV2 for LightmapGI (xatlas through ArrayMesh.lightmap_unwrap).
+##
+## UV2 is the AUTHOR's channel: the splatting system writes mask coordinates to
+## the CUSTOM0 attribute instead, so a mesh can be splat-painted and lightmapped
+## at the same time. This op only ever writes `textures1` + `lightmap_size_hint`.
+##
+## The unwrap needs per-corner vertices (a UV island seam cannot exist on a
+## vertex shared by two triangles), so any index referenced by more than one
+## face is split first — weld groups keep the duplicates moving together, and
+## faces/subelements are otherwise untouched.
+##
+## Returns OK, or the ArrayMesh.lightmap_unwrap error code.
+static func unwrap_lightmap_uv2(mesh_data: PBMeshData, node_xform: Transform3D = Transform3D.IDENTITY,
+		texel_size: float = 0.05) -> Error:
+	if mesh_data == null or mesh_data.positions.is_empty():
+		return ERR_INVALID_PARAMETER
+
+	_split_shared_face_vertices(mesh_data)
+
+	var vc: int = mesh_data.positions.size()
+	var normals: PackedVector3Array = mesh_data.get_normals()
+	var uvs: PackedVector2Array = mesh_data.textures0
+	if uvs.size() != vc:
+		uvs = PackedVector2Array()
+		uvs.resize(vc)
+
+	# One triangle soup: the unwrap is per-vertex, so surface grouping is
+	# irrelevant here and a single surface keeps the vertex order 1:1 with the
+	# mesh data (which is what the write-back below relies on).
+	var indices := PackedInt32Array()
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		var fi: PackedInt32Array = face.get_indexes()
+		# Same winding the renderer sees (internal CCW -> Godot CW front faces).
+		for tri_i in range(0, fi.size() - 2, 3):
+			indices.append(fi[tri_i + 2])
+			indices.append(fi[tri_i + 1])
+			indices.append(fi[tri_i])
+	if indices.is_empty():
+		return ERR_INVALID_PARAMETER
+
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = mesh_data.positions
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	# Each input vertex carries its own index in the COLOR channel. The unwrap
+	# rebuilds its output through SurfaceTool, which merges vertices with
+	# identical attributes: without a unique tag, the per-face duplicates this
+	# op just created (same position, same normal, same UV) would collapse into
+	# one vertex and there would be no way to tell which face's copy received
+	# which island UV. The tag is throwaway — the mesh's own colors are put
+	# back below.
+	var tags := PackedColorArray()
+	tags.resize(vc)
+	for i in range(vc):
+		tags[i] = Color8(i & 0xFF, (i >> 8) & 0xFF, (i >> 16) & 0xFF, 255)
+	arrays[Mesh.ARRAY_COLOR] = tags
+
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var err: Error = am.lightmap_unwrap(node_xform, texel_size)
+	if err != OK:
+		return err
+
+	var back: Array = am.surface_get_arrays(0)
+	var uv2: PackedVector2Array = back[Mesh.ARRAY_TEX_UV2]
+	var tag_colors: PackedColorArray = back[Mesh.ARRAY_COLOR]
+	if uv2.size() != tag_colors.size() or tag_colors.is_empty():
+		return ERR_CANT_CREATE
+
+	# Vertices xatlas dropped (degenerate triangles are skipped on the way in)
+	# keep whatever UV2 they had.
+	var assigned: PackedVector2Array = mesh_data.textures1
+	assigned.resize(vc)
+	for i in range(tag_colors.size()):
+		var src: int = _decode_vertex_tag(tag_colors[i])
+		if src >= 0 and src < vc:
+			assigned[src] = uv2[i]
+	mesh_data.textures1 = assigned
+	mesh_data.lightmap_size_hint = am.lightmap_size_hint
+	return OK
+
+## Decodes the input-vertex tag written into the COLOR channel above.
+static func _decode_vertex_tag(c: Color) -> int:
+	var r := int(round(c.r * 255.0))
+	var g := int(round(c.g * 255.0))
+	var b := int(round(c.b * 255.0))
+	return r | (g << 8) | (b << 16)
+
+## Gives every face its own copy of any vertex it shares with another face.
+## Faces already own their corners on every generator this plugin ships; the
+## split only fires on imported/poibuilderized meshes with a shared vertex pool,
+## where a lightmap seam could otherwise not be represented.
+## Returns the number of duplicated vertices.
+static func _split_shared_face_vertices(mesh_data: PBMeshData) -> int:
+	var use_count: Dictionary = {}
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		# DISTINCT indices: a quad face lists its corner 0 twice (0,1,2,2,3,0)
+		# and that is not sharing — only a SECOND face using the same index is.
+		for idx in face.get_distinct_indexes():
+			use_count[idx] = int(use_count.get(idx, 0)) + 1
+
+	var used: Dictionary = {}
+	var splits := 0
+	var positions: PackedVector3Array = mesh_data.positions
+	## Populated attributes grow with the vertex pool; empty ones stay empty
+	## (an array of a different length than the pool is not a vertex attribute).
+	var has_uvs: bool = mesh_data.textures0.size() == mesh_data.positions.size()
+	var has_colors: bool = mesh_data.colors.size() == mesh_data.positions.size()
+	## dup index -> source index, for the group bookkeeping below
+	var splits_map: Dictionary = {}
+
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		var fi: PackedInt32Array = face.get_indexes()
+		var changed := false
+		for idx in face.get_distinct_indexes():
+			if int(use_count.get(idx, 0)) <= 1:
+				continue
+			if not used.has(idx):
+				used[idx] = true
+				continue
+			# Second and later faces get a private copy of the corner; every
+			# occurrence of the index INSIDE this face moves to the copy (a
+			# quad lists its first corner twice), so the face stays intact.
+			var dup: int = positions.size()
+			positions.append(mesh_data.positions[idx])
+			if has_uvs:
+				mesh_data.textures0.append(mesh_data.textures0[idx])
+			if has_colors:
+				mesh_data.colors.append(mesh_data.colors[idx])
+			for i in range(fi.size()):
+				if fi[i] == idx:
+					fi[i] = dup
+			splits_map[dup] = idx
+			splits += 1
+			changed = true
+		if changed:
+			face.set_indexes(fi)
+
+	if splits > 0:
+		mesh_data.positions = positions
+		_copy_group_membership(mesh_data, splits_map)
+		# Weld groups are position-based, so the duplicates land in their
+		# source's group by construction — no surgery needed.
+		mesh_data.rebuild_welds()
+	return splits
+
+## Keeps UV-continuity groups intact across a vertex split: a duplicate joins
+## every group its source was a member of.
+static func _copy_group_membership(mesh_data: PBMeshData, splits_map: Dictionary) -> void:
+	if mesh_data.shared_textures.is_empty() or splits_map.is_empty():
+		return
+	for group in mesh_data.shared_textures:
+		if group == null:
+			continue
+		var members: PackedInt32Array = group.indices
+		var additions := PackedInt32Array()
+		for dup in splits_map:
+			if members.has(splits_map[dup]):
+				additions.append(dup)
+		if additions.is_empty():
+			continue
+		var merged := members.duplicate()
+		merged.append_array(additions)
+		group.indices = merged
