@@ -95,7 +95,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.163"
+const VERSION := "0.9.164"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1344,6 +1344,17 @@ func _process(delta: float) -> void:
 	grid_view.set_visible(wants)
 	if tool_bridge != null and tool_bridge.is_ready():
 		tool_bridge.set_engine_grid_hidden(wants, cam)
+	# ARMED creation cursor: the gizmo path draws the yellow square on a
+	# PBMesh gizmo — which needs a mesh in the scene. With none (fresh
+	# import, first shape not yet placed) the grid_view renders the square
+	# scenario-side instead; with a host, the gizmo drew it and this hides.
+	var armed := (shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED) \
+		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.State.ARMED)
+	var hover_host: PBMesh = gizmo_plugin.creation_hover_node if gizmo_plugin != null else null
+	var host_drew := hover_host != null and is_instance_valid(hover_host)
+	grid_view.set_creation_cursor(
+		gizmo_plugin.creation_hover_point if gizmo_plugin != null else Vector3.ZERO,
+		armed and not host_drew)
 ## The grid renders while any PoiBuilder context is active (a PBMesh is
 ## selected — object mode included — or shape creation is armed, or drawing
 ## on an elevated/custom grid, or grid settings panel is open).

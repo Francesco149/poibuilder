@@ -262,6 +262,48 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 
+	var cam := vp.get_camera_3d()
+	if cam == null:
+		_fail("no viewport camera")
+		get_tree().quit(1)
+		return
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(1.5, 2.5, 4.0)) \
+		.looking_at(Vector3(1.5, 0, 0), Vector3.UP)
+	await _frames(10)
+
+	# ── Test 0: the ARMED cursor square exists with NO PBMesh in the scene ───
+	# Fresh-import regression: the gizmo path draws that square on a PBMesh's
+	# gizmo, so on an empty scene it needs the grid_view scenario marker.
+	var plugin0 := _find_plugin(iface.get_base_control().get_parent())
+	if plugin0 == null:
+		plugin0 = _find_plugin(iface.get_base_control())
+	if plugin0 == null:
+		_fail("CURSOR-MARKER: PoiBuilder plugin node not found")
+	else:
+		plugin0._on_shape_requested(&"cube")
+		await _frames(10)
+		_mouse_motion(_window_pos(vp, host, Vector3(-1, 0.0, 1.2)))
+		await _frames(6)
+		if plugin0.gizmo_plugin.creation_hover_node != null:
+			_fail("CURSOR-MARKER: fixture has a PBMesh host — empty-scene precondition broken")
+		elif plugin0.gizmo_plugin.creation_hover_point == Vector3.ZERO:
+			_fail("CURSOR-MARKER: armed hover point never settled (motion ray missed the grid?)")
+		elif not plugin0.grid_view._cursor_instance_rid.is_valid():
+			_fail("CURSOR-MARKER: no scenario cursor square while ARMED on an empty scene")
+		else:
+			_pass("CURSOR-MARKER: armed on an empty scene, the scenario cursor square exists")
+		_press_key(KEY_ESCAPE)
+		await _frames(6)
+		if plugin0.shape_creator.is_active():
+			_fail("CURSOR-MARKER: Esc did not disarm creation (state now %d)" % plugin0.shape_creator.state)
+		await _frames(6)
+		if plugin0.grid_view != null and plugin0.grid_view._cursor_instance_rid.is_valid():
+			# The marker hides the moment creation is no longer ARMED.
+			if plugin0.grid_view.cursor_shown:
+				_fail("CURSOR-MARKER: scenario cursor square stayed visible after disarm")
+			else:
+				_pass("CURSOR-MARKER: scenario cursor square hides when creation ends")
+
 	# ── Setup: two cubes, camera framing both ────────────────────────────────
 	var a := PBMesh.create_cube(1.0)
 	a.name = "GuiTestA"
@@ -273,15 +315,6 @@ func _run() -> void:
 	b.position = Vector3(3, 0, 0)
 	root.add_child(b)
 	b.owner = root
-
-	var cam := vp.get_camera_3d()
-	if cam == null:
-		_fail("no viewport camera")
-		get_tree().quit(1)
-		return
-	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(1.5, 2.5, 4.0)) \
-		.looking_at(Vector3(1.5, 0, 0), Vector3.UP)
-	await _frames(10)
 
 	# Initial state: A selected, FACE mode (via the plugin's K hotkey).
 	var sel := iface.get_selection()

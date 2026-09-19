@@ -182,6 +182,7 @@ func detach_scenario() -> void:
 	if _shader_rid.is_valid():
 		RenderingServer.free_rid(_shader_rid)
 		_shader_rid = RID()
+	_free_cursor_resources()
 	_scenario_rid = RID()
 
 func set_visible(visible: bool) -> void:
@@ -242,6 +243,70 @@ func update(cam: Camera3D) -> bool:
 ## Backward-compatible stub (no-op: the grid is drawn via RenderingServer directly).
 func draw_onto(_gizmo, _node: PBMesh, _gizmo_plugin: PBGizmoPlugin) -> void:
 	pass
+
+# ==============================================================================
+# ARMED creation cursor (node-independent hover square)
+# ==============================================================================
+
+## One yellow square (GL point) at the snapped hover point while a creation
+## session is ARMED. The gizmo plugin draws that square on a PBMesh gizmo,
+## which needs a mesh in the scene — on a fresh import (no PBMesh yet) there
+## is no gizmo host, so the plugin routes the marker here instead,
+## scenario-side like the grid itself. `show` arrives false whenever a gizmo
+## host drew the square, so the two paths never double-draw.
+var _cursor_instance_rid: RID = RID()
+var _cursor_mesh_rid: RID = RID()
+## Mirrors the last set_creation_cursor outcome (RID-level visibility is not
+## queryable from script; tests and the harness read this).
+var cursor_shown := false
+## Kept alive because the RID below points into it.
+var _cursor_mat: StandardMaterial3D = null
+
+func set_creation_cursor(point: Vector3, show: bool) -> void:
+	var want := show and point != Vector3.ZERO and _scenario_rid.is_valid()
+	if want:
+		_ensure_cursor_resources()
+		RenderingServer.instance_set_transform(_cursor_instance_rid, Transform3D(Basis(), point))
+	if _cursor_instance_rid.is_valid():
+		RenderingServer.instance_set_visible(_cursor_instance_rid, want)
+	cursor_shown = want
+
+func _ensure_cursor_resources() -> void:
+	if _cursor_instance_rid.is_valid():
+		return
+	if _cursor_mat == null:
+		# Same look as the gizmo's creation squares (_make_point_material
+		# SELECTED_COLOR, 11px): unshaded, on top, alpha-blended.
+		_cursor_mat = StandardMaterial3D.new()
+		_cursor_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_cursor_mat.albedo_color = Color(1.0, 0.9, 0.2, 0.9)
+		_cursor_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_cursor_mat.no_depth_test = true
+		_cursor_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_cursor_mat.use_point_size = true
+		_cursor_mat.point_size = 11.0
+		_cursor_mat.render_priority = RenderingServer.MATERIAL_RENDER_PRIORITY_MAX
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3.ZERO])
+	_cursor_mesh_rid = RenderingServer.mesh_create()
+	RenderingServer.mesh_add_surface_from_arrays(_cursor_mesh_rid, RenderingServer.PRIMITIVE_POINTS, arrays)
+	RenderingServer.mesh_surface_set_material(_cursor_mesh_rid, 0, _cursor_mat.get_rid())
+	_cursor_instance_rid = RenderingServer.instance_create()
+	RenderingServer.instance_set_base(_cursor_instance_rid, _cursor_mesh_rid)
+	RenderingServer.instance_set_layer_mask(_cursor_instance_rid, 1)
+	RenderingServer.instance_geometry_set_cast_shadows_setting(_cursor_instance_rid, RenderingServer.SHADOW_CASTING_SETTING_OFF)
+	RenderingServer.instance_geometry_set_flag(_cursor_instance_rid, RenderingServer.INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, true)
+	if _scenario_rid.is_valid():
+		RenderingServer.instance_set_scenario(_cursor_instance_rid, _scenario_rid)
+
+func _free_cursor_resources() -> void:
+	if _cursor_instance_rid.is_valid():
+		RenderingServer.free_rid(_cursor_instance_rid)
+		_cursor_instance_rid = RID()
+	if _cursor_mesh_rid.is_valid():
+		RenderingServer.free_rid(_cursor_mesh_rid)
+		_cursor_mesh_rid = RID()
 
 # ==============================================================================
 # Internals
