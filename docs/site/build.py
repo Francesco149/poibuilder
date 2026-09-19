@@ -832,9 +832,18 @@ def render_md(src: str, out_dir: Path, strict: bool) -> str:
             cls = "steps" if ordered else ""
             tag = "ol" if ordered else "ul"
             items = []
-            while i < len(lines) and (re.match(r"^[-*]\s+", lines[i]) or re.match(r"^\d+\.\s+", lines[i])):
-                items.append(re.sub(r"^([-*]|\d+\.)\s+", "", lines[i]))
-                i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if re.match(r"^[-*]\s+", nxt) or re.match(r"^\d+\.\s+", nxt):
+                    items.append(re.sub(r"^([-*]|\d+\.)\s+", "", nxt))
+                    i += 1
+                elif nxt[:1] in (" ", "\t") and nxt.strip() and items:
+                    # A hard-wrapped continuation of the previous item: join
+                    # it, or it leaks out of the list as a stray paragraph.
+                    items[-1] += " " + nxt.strip()
+                    i += 1
+                else:
+                    break
             cls_attr = f' class="{cls}"' if cls else ""
             out.append(f"<{tag}{cls_attr}>" + "".join(f"<li>{inline(it)}</li>" for it in items) + f"</{tag}>")
             continue
