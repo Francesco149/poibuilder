@@ -60,7 +60,7 @@ UV2 belongs to *you*: the splat system never writes it, whatever is painted on t
 
 - Unwrap it with the toolbar's **Lightmap** button (it also flips the mesh to *GI Mode: Static*, which is what the LightmapGI baker looks for), or set it up in a DCC, and rebuilds leave it untouched.
 - Paint, decals and geometry edits do not disturb it — you can keep painting on a mesh whose lightmap is already baked.
-- `./bake_splat.sh <scene.tscn>` still exists to flatten paint into plain tile textures (useful when a consumer cannot run the splat shader); it now clears only the splat data and keeps UV2.
+- Paint can also be flattened to plain tile textures outside an export (useful when a consumer cannot run the splat shader): the repository's `bake_splat.sh` script does it in place, clears only the splat data and keeps UV2 — reference it or roll your own equivalent.
 
 ## Use case — a stretched ramp
 

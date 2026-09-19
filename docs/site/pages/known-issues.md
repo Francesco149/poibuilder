@@ -34,8 +34,9 @@ in the editor suggested one.
 
 **Workaround:** turn off **Cast Shadows** for scrolling/transparent planes
 (row 3 toggle — select the plane, uncheck it) before exporting to the retro
-target. Visually verify on the device via `./run_viewer.sh` + PPSSPP
-(look-correctness only), or the hardware loop.
+target. Visually verify with a Godot viewer of the bake (the repository's
+`run_viewer.sh` is the reference — adapt it to your setup as needed) plus
+PPSSPP (look-correctness only), or the hardware loop.
 
 ## A stamp cannot span two objects
 

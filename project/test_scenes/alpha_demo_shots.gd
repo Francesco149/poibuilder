@@ -16,7 +16,10 @@ const SETTLE_FRAMES := 40
 const SHOTS := {
 	"demo-overview": [Vector3(11.5, 8.5, 13.5), Vector3(-1.5, 1.0, -4.0)],
 	"demo-waterfall": [Vector3(-2.6, 1.7, 2.6), Vector3(-7.0, 1.9, -1.2)],
-	"demo-door": [Vector3(-2.0, 1.6, 1.5), Vector3(-2.0, 1.7, -6.75)],
+	# The particle-emitter shot frames the BRAZIER — the big flipbook flame
+	# and its embers on the courtyard pedestal, the most legible emitters in
+	# the map. A camera pointed into the neon room instead shows a dot.
+	"demo-particles": [Vector3(-0.6, 1.5, 5.6), Vector3(-3.5, 1.2, 3.4)],
 	"demo-neon-room": [Vector3(0.9, 1.6, -7.4), Vector3(-4.3, 0.8, -11.3)],
 	"demo-neon-pedestal": [Vector3(-4.4, 1.5, -7.3), Vector3(-0.8, 0.8, -10.7)],
 	"demo-stairs": [Vector3(5.6, 2.1, -1.2), Vector3(2.3, 3.1, -7.8)],

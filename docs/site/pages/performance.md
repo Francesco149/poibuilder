@@ -1,15 +1,17 @@
 ---
 title: Godot-side performance
-lead: The poibuilder scene as-is vs the retro-baked GLB vs the modern GLB, on gl_compatibility and Vulkan, on two machines — a desktop RTX 5060 and a five-year-old integrated Intel GPU as the worst case — with steady-state frame pacing, an ablation profile that says what the cost is made of, and PSP-parity checks that keep the pipelines honest. Numbers are half the loop; the other half is the one-command interactive fly bench.
+lead: The poibuilder scene as-is vs the retro-baked GLB vs the modern GLB, on gl_compatibility and Vulkan, on two machines — a desktop RTX 5060 and a five-year-old integrated Intel GPU as the worst case — with steady-state frame pacing, an ablation profile that says what the frame cost is made of, a one-line profile of what the export's time is made of, and PSP-parity checks that keep the pipelines honest. Numbers are half the loop; the other half is the interactive fly bench.
 ---
 
 A map's feel is decided by frame-time DIPS and pacing, not by the average
-fps a still scene reports. The bundled benchmark
-(`project/test_scenes/frame_pacing_bench.gd`, driven by `./run_bench.sh`)
-flies the [alpha demo map](walkthrough-modern.html) along a gameplay-like
-path — courtyard, through the doorway into the neon room, back out, up the
+fps a still scene reports. The benchmark flies the
+[alpha demo map](walkthrough-modern.html) along a gameplay-like path —
+courtyard, through the doorway into the neon room, back out, up the
 stairs, across the roof — while recording the wall-clock time of every
-frame. Three summaries per variant:
+frame. The reference implementation lives in the plugin's repository
+(`project/test_scenes/frame_pacing_bench.gd`, driven by `./run_bench.sh`
+there) — reference it or roll your own, the recipe is at the bottom of
+this page. Three summaries per variant:
 
 - **cold** — the first-visit pass: shader compiles and first uploads appear
   as hitches. Kept for the hitch column, never the headline.
@@ -17,20 +19,23 @@ frame. Three summaries per variant:
 - **steady** — the warm pass minus its first second: the headline numbers
   describe the run, not the load.
 
-Every variant is also *photographed* at five fixed poses
-(`tools/bench_contact_sheet.py` grids the shots into contact sheets), and
-`./run_bench.sh --profile` ablates the PB scene piece by piece — no
-shadows, no emitters, no splat, no lights — to attribute the cost.
+Every variant is also *photographed* at five fixed poses (the repository's
+`tools/bench_contact_sheet.py` grids the shots into contact sheets), and a
+profile pass ablates the PB scene piece by piece — no shadows, no
+emitters, no splat, no lights — to attribute the cost.
 
-**Fly it yourself.** `./run_fly_bench.sh [pb|retro_glb|modern_glb]` opens
-the same scene assembly (the shared loader in `bench_variants.gd`) with a
-free camera — fly mode only — and a frame-time overlay: a rolling graph
-with the 60/30 fps lines drawn in, plus current / median / **1% low** /
-worst, hitches and draw counts over a 240-frame window and the whole
-session. Keys 1–5 teleport to the exact poses the contact sheets compare,
-so a suspicious dip in the report can be *stood in* — jump to the neon
-room and watch the shadow-casting omnis spike the graph. On the Windows
-box, `./run_fly_bench_win.sh` is the same thing on its GPU.
+**Fly it yourself.** The repository's `./run_fly_bench.sh
+[pb|retro_glb|modern_glb]` opens the same scene assembly with a free
+camera and a frame-time overlay: a rolling graph with the 60/30 fps lines
+drawn in, plus current / median / **1% low** / worst, hitches and draw
+counts over a 240-frame window and the whole session. Keys 1–5 teleport to
+the exact poses the contact sheets compare, so a suspicious dip in the
+report can be *stood in* — jump to the neon room and watch the
+shadow-casting omnis spike the graph. No repository? The same
+inspection is a [fly camera](walkthrough-modern.html#9-play-it) (three
+minutes, one script) plus any frame-time readout — the numbers that matter
+are the median and the 1% low with vsync OFF, not the fps counter. On the
+Windows box, `./run_fly_bench_win.sh` is the same thing on its GPU.
 
 ## Which one do you ship?
 
@@ -48,8 +53,8 @@ GLB for retro targets.
 | Variant | What it is |
 |---|---|
 | **PB scene as-is** | The editable PoiBuilder scene played directly: PBMesh runtime geometry, the splat shader, decal layers, realtime shadowed lights, 5 live GPUParticles3D emitters (including the waterfall's wide mist bank). |
-| **Retro-baked GLB** | The retro bake in Godot: baked tile textures, lighting in vertex colors, **rendered unshaded with zero added lighting** (the consumer contract — see below), preset sky + fog. |
-| **Modern GLB** | The modern export with paint baked into textures: standard materials, realtime lights (shadow flags restored from the export's `poi_shadow` extras), full authored environment, colliders. |
+| **Retro-baked GLB** | The retro bake in Godot: baked tile textures, lighting in vertex colors, **rendered unshaded with zero added lighting** (the consumer contract — see below), preset sky + fog — and the export's 5 particle emitters rebuilt from the `poi_emitter` records the GLB carries. |
+| **Modern GLB** | The modern export with paint baked into textures: standard materials, realtime lights (shadow flags restored from the export's `poi_shadow` extras), full authored environment, and the same rebuilt emitters. |
 
 The consumer contracts are part of the measurement: the retro GLB's
 imported lights are hidden (its lighting lives in vertex colors — live
@@ -76,22 +81,22 @@ carries its machine with it.
 
 | Variant | 5060 median | 5060 1% low | 5060 worst | iGPU median | iGPU 1% low | iGPU worst |
 |---|---|---|---|---|---|---|
-| PB scene as-is | 1.60 ms | 2.00 ms | 2.68 ms | 16.22 ms | 27.43 ms | 35.01 ms |
-| Retro-baked GLB | **0.76 ms** | 0.98 ms | 2.51 ms | **2.24 ms** | 3.42 ms | 13.79 ms |
-| Modern GLB | 1.02 ms | 1.23 ms | 2.58 ms | 14.65 ms | 24.36 ms | 29.81 ms |
+| PB scene as-is | 1.60 ms | 1.90 ms | 5.29 ms | 16.25 ms | 27.26 ms | 31.99 ms |
+| Retro-baked GLB | **1.15 ms** | 1.41 ms | 5.36 ms | **2.29 ms** | 4.21 ms | 9.39 ms |
+| Modern GLB | 1.40 ms | 1.70 ms | 5.46 ms | 14.85 ms | 24.91 ms | 31.30 ms |
 
 - **The retro bake is in a class of its own on both machines** — ~7×
-  faster than the PB scene on the iGPU, ~2× on the 5060, where it renders
-  at ~1300 fps. Unshaded baked geometry is nearly free; that is the whole
-  retro pipeline thesis, measured.
+  faster than the PB scene on the iGPU, ~1.4× on the 5060, where it
+  renders at ~870 fps. Unshaded baked geometry is nearly free; that is
+  the whole retro pipeline thesis, measured.
 - **The modern bake sits close to the PB scene** — by design: this
   comparison is like-for-like, same realtime shadowed lights, same
   environment. What the modern bake buys you is control: lightmap your
   GLB, drop or bake the realtime lights, and it drops toward the retro
   number.
-- **Cold hitches are one-time** first-sight shader compiles: 53 (PB) and
-  24 (retro) on the 5060's NVIDIA GL driver, but the warm pass's worst
-  frame is 2.5 ms. On the iGPU the same cold pass hitches 3 / 47 times.
+- **Cold hitches are one-time** first-sight shader compiles: 40 (PB) and
+  28 (retro) on the 5060's NVIDIA GL driver, but the warm pass's worst
+  frame is ~5 ms. On the iGPU the same cold pass hitches 2 / 45 times.
 
 ## And on Vulkan (forward_plus)?
 
@@ -99,9 +104,9 @@ Same map, same path, `--rendering-method forward_plus`:
 
 | Variant | 5060 median | 5060 1% low | 5060 worst | iGPU median | iGPU 1% low | iGPU worst |
 |---|---|---|---|---|---|---|
-| PB scene as-is | **0.82 ms** | 1.13 ms | 1.53 ms | 22.13 ms | 34.49 ms | 39.87 ms |
-| Retro-baked GLB | **0.34 ms** | 0.52 ms | 1.14 ms | **3.63 ms** | 5.21 ms | 13.72 ms |
-| Modern GLB | **0.63 ms** | 0.92 ms | 1.19 ms | 19.09 ms | 32.55 ms | 36.25 ms |
+| PB scene as-is | **0.83 ms** | 1.14 ms | 2.51 ms | 22.14 ms | 34.56 ms | 38.52 ms |
+| Retro-baked GLB | **0.71 ms** | 0.85 ms | 2.19 ms | **3.69 ms** | 5.93 ms | 10.58 ms |
+| Modern GLB | **0.74 ms** | 0.95 ms | 2.61 ms | 19.38 ms | 29.96 ms | 36.71 ms |
 
 **The renderer ranking flips with the GPU**, and this is why the page
 keeps both columns. On the old integrated chip, gl_compatibility wins for
@@ -109,35 +114,35 @@ every variant (the PB scene by ~40%, the retro bake by ~60%) — if you are
 shipping to players on old or integrated graphics, Compatibility is the
 measured choice, and Vulkan buys features (SDFGI, volumetric fog), not
 speed. On the modern discrete card the order reverses: forward_plus is
-~2× faster everywhere (the PB scene 0.82 vs 1.60 ms, the retro bake 0.34
-vs 0.76 ms). One caveat the cold column tells: NVIDIA's first-visit
-Vulkan shader compiles are heavy — 181 cold hitches on the retro bake —
-so a shipped game wants a warm-up pass or pipeline cache, or the first
-room stutters while the steady state is flawless.
+~1.5–2× faster everywhere (the PB scene 0.83 vs 1.60 ms, the retro bake
+0.71 vs 1.15 ms). One caveat the cold column tells: NVIDIA's first-visit
+Vulkan shader compiles are heavy — 100 cold hitches on the retro bake,
+188 on the PB scene — so a shipped game wants a warm-up pass or pipeline
+cache, or the first room stutters while the steady state is flawless.
 
 ## What is the frame made of? (ablation profile)
 
-`./run_bench.sh --profile` flies the PB scene as-is, then once per
-ablation. The delta is that feature's share of the frame — steady median,
-both GPUs, both renderers (Δ vs base in parens):
+`--profile` flies the PB scene as-is, then once per ablation. The delta
+is that feature's share of the frame — steady median, both GPUs, both
+renderers (Δ vs base in parens):
 
 | Ablation | 5060 GL | iGPU GL | 5060 Vulkan | iGPU Vulkan |
 |---|---|---|---|---|
-| none (base) | 1.62 ms | 16.24 ms | 0.83 ms | 21.99 ms |
-| − shadow-casting lights (4) | 0.67 (−0.95) | 8.89 (−7.35) | 0.56 (−0.27) | 17.39 (−4.60) |
-| − particle emitters (5) | 0.98 (−0.64) | 14.69 (−1.55) | 0.64 (−0.19) | 19.30 (−2.68) |
-| − splat shader (1 material → standard) | 1.59 (−0.04) | 15.79 (−0.44) | 0.81 (−0.01) | 21.53 (−0.46) |
-| − all lights (7) | 0.61 (−1.01) | 4.12 (−12.12) | 0.45 (−0.38) | 8.71 (−13.27) |
+| none (base) | 1.62 ms | 16.09 ms | 0.83 ms | 21.86 ms |
+| − shadow-casting lights (4) | 0.67 (−0.95) | 8.85 (−7.24) | 0.56 (−0.27) | 17.41 (−4.46) |
+| − particle emitters (5) | 0.99 (−0.64) | 14.75 (−1.35) | 0.64 (−0.19) | 19.38 (−2.48) |
+| − splat shader (1 material → standard) | 1.59 (−0.04) | 15.81 (−0.28) | 0.81 (−0.01) | 21.47 (−0.40) |
+| − all lights (7) | 0.61 (−1.02) | 4.11 (−11.99) | 0.45 (−0.38) | 8.65 (−13.22) |
 
 - **Shadows are the biggest single cost on every machine.** Four
   shadow-casting omnis are ~45–60% of the GL frame (draw calls explode
   from 44 to 334) and still the top Vulkan delta. An optimization pass
   that needs a win starts here: fewer shadowed lights, or bake them.
-- **Particles cost ~0.6 ms (5060 GL) / ~1.6 ms (iGPU GL)** for the five
-  emitters, and ~0.2–2.7 ms on Vulkan.
+- **Particles cost ~0.6 ms (5060 GL) / ~1.4 ms (iGPU GL)** for the five
+  emitters, and ~0.2–2.5 ms on Vulkan.
 - **The splat shader is free** on both GPUs and both renderers (−0.01 to
-  −0.46 ms) — paint is not the tax; the lighting rig is.
-- The residue (no-lights floor: 0.61/0.45 ms on the 5060, 4.12/8.71 ms on
+  −0.40 ms) — paint is not the tax; the lighting rig is.
+- The residue (no-lights floor: 0.61/0.45 ms on the 5060, 4.11/8.65 ms on
   the iGPU) is the geometry + fill itself.
 
 ## Pipeline parity (the baked map must not depend on the renderer)
@@ -162,7 +167,35 @@ device's frame budget, fill-rate cliff and per-map budgets live in the
 [PSP Optimization Guide](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/psp/OPTIMIZATION.md);
 the demo map plays the retro bake on the device at 60 fps (137 draws).
 
-## Re-run it
+## Measure your own map
+
+The recipe behind every number on this page — the repository's
+`run_bench.sh` / `run_bench_win.sh` / `run_fly_bench.sh` implement it and
+you can use them as-is, but nothing in it is exclusive to our setup:
+
+1. **One representative per pipeline.** The bench flies exactly THREE
+   variants — the PB scene as-is, ONE retro-baked GLB, ONE modern GLB —
+   and nothing else. Extra flavors are not extra evidence; questions like
+   "what is the frame made of" are what the profile pass (below) answers.
+2. **Fly a path, don't idle a camera.** A gameplay-like flight path
+   (enter, traverse, leave, with the camera swinging like a walking
+   player's) records the dips a static average-fps readout hides.
+3. **Record wall-clock per frame, vsync off**, at a fixed windowed
+   resolution, and summarize cold / warm / steady (trim the warm pass's
+   first second). The percentiles are the message: median and 1% low,
+   not average fps.
+4. **Photograph fixed poses** per variant and eyeball them side by side —
+   a "faster" number that renders the map wrong (missing emitters, lost
+   vertex light) measured nothing.
+5. **Attribute with a profile, not with more variants.** Fly the PB scene
+   once per ablation — shadows off, emitters off, splat off, lights off —
+   and the deltas name the cost. The export side has its own one-line
+   profile now: every export run ends with
+   `[export-profile] … total/split`, attributing the bake's wall time
+   (tile bake vs light bake vs texture work vs serialize/write). On the
+   demo map, for instance, the retro bake's ~44 s is ~79% the imported
+   props' light bake, and the modern GLB's is ~98% paint bake — no
+   stopwatch guessing.
 
 ```bash
 ./run_bench.sh                    # exports the GLB variants if missing, flies all three (GL)

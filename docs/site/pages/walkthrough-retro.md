@@ -3,7 +3,20 @@ title: Walkthrough — export to PSP / retro
 lead: Take a finished map to the retro target: export the .pbm, verify it, and implement the format in your own retro engine from the format spec and the reference renderer.
 ---
 
-The retro pipeline is the reason PoiBuilder exists: build a map with modern editor comfort, then export a map a 2011 handheld can chew. This walkthrough picks up where the [modern walkthrough](walkthrough-modern.html) ended — the same demo map, now headed for the PSP. (PSP performance is hand-confirmed smooth for the reference maps; the rough edges that remain on the device are listed in [Known issues](known-issues.html).)
+The retro pipeline is the reason PoiBuilder exists: build a map with modern editor comfort, then export a map a 2004 handheld can chew. This walkthrough picks up where the [modern walkthrough](walkthrough-modern.html) ended — the same demo map, now headed for the PSP. (PSP performance is hand-confirmed smooth for the reference maps; the rough edges that remain on the device are listed in [Known issues](known-issues.html).)
+
+## About the scripts on this page
+
+The PSP pipeline is the one place this documentation leans on scripts that
+live in the PoiBuilder repository rather than on editor buttons:
+`run_viewer.sh` (the Godot viewer of a bake), `run_psp.sh` (build + run on
+the device over PSPLink), and the hardware measurement loop around them.
+They are reference tooling, written for OUR bench setup — a Linux
+workstation, a real PSP over USB, PSPLink, one specific Godot build. Treat
+them as something to READ and adapt, not as turnkey installers: paths,
+device names and the run loop may well need adjusting to your machine.
+The contract is still the file format (section 3) — the scripts only make
+it convenient to verify and to see the map running.
 
 ## 1. Export the .pbm
 

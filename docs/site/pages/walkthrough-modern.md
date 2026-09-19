@@ -3,7 +3,7 @@ title: Walkthrough — build a map (modern)
 lead: From an empty Godot project to a finished map — architecture, splatting, decals, a waterfall, particles, billboards and a lightmapped neon room — then the same map as a GLB in a fresh project.
 ---
 
-This is the whole pipeline in one pass. Everything you build here is ordinary PoiBuilder work — no scripts — and every screenshot is of the finished demo map that this walkthrough constructs. (The repository builds that same map programmatically with `./run_demo_map.sh` if you want to compare your result against a reference.)
+This is the whole pipeline in one pass. Everything you build here is ordinary PoiBuilder work — no scripts — and every screenshot is of the finished demo map that this walkthrough constructs. (If you want to compare your result against a reference, the finished map is in PoiBuilder's public repository — feel free to dig through how we build it there, or just roll your own.)
 
 ## What you are building
 
@@ -84,8 +84,8 @@ The layered falls: lip and apron, veil + sheet + trickles + core on four speeds,
 2. Click a surface: the emitter appears live. Drag up/down to lift it off the surface, move left/right to tune the particle count, wheel scales the quads, click to commit. Always re-armed, Esc cancels.
 3. To fine-tune one later: select it (object mode is fine) → **⚙ Edit Emitter Properties** on the overlay panel — count, size, speed, spread, additive blending, flipbook grid.
 
-:::shot demo-door.png
-Through the arch: the flipbook flame and embers on the pedestal are the same emitters the retro export plays.
+:::shot demo-particles.png
+The brazier by the waterfall: the flipbook flame and its embers are the same emitters the retro export plays — placed in three clicks, tuned by dragging.
 :::
 
 The retro format caps 64 particles per emitter and ~256 per map — the placement tool's knobs are budget-aware so what you author is what the PSP can play.
@@ -111,7 +111,46 @@ Before the bake the direct light already reads; after it, the bounce fills the c
 
 ## 9. Play it
 
-The demo ships its own first-person rig when you use `./run_demo_map.sh --play`. In your own project: add a **CharacterBody3D** with a capsule and a camera (Godot's template works), and make sure the meshes' **Collider** property is set (Accurate for floors/walls/stairs) — PoiBuilder meshes carry their own collision.
+Your map needs a camera before it plays. Two routes, both minutes:
+
+**A fly camera (the three-minute route).** Add a **Camera3D** to the scene, make it current, and attach a script like this one:
+
+```gdscript
+extends Camera3D
+# Minimal fly camera: click the viewport to capture the mouse,
+# WASD + mouse to fly, E/Q up/down, Shift for speed, Esc to release.
+
+@export var speed := 6.0
+@export var boost := 3.0
+@export var sensitivity := 0.003
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif event is InputEventMouseMotion \
+			and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		rotate_y(-event.relative.x * sensitivity)
+		rotate_object_local(Vector3.RIGHT, -event.relative.y * sensitivity)
+	elif event.is_action_pressed("ui_cancel"):
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _process(delta: float) -> void:
+	var dir := Vector3.ZERO
+	if Input.is_key_pressed(KEY_W): dir -= transform.basis.z
+	if Input.is_key_pressed(KEY_S): dir += transform.basis.z
+	if Input.is_key_pressed(KEY_A): dir -= transform.basis.x
+	if Input.is_key_pressed(KEY_D): dir += transform.basis.x
+	if Input.is_key_pressed(KEY_E): dir += Vector3.UP
+	if Input.is_key_pressed(KEY_Q): dir += Vector3.DOWN
+	if Input.is_key_pressed(KEY_SHIFT): dir *= boost
+	if dir != Vector3.ZERO:
+		global_position += dir.normalized() * speed * delta
+```
+
+Click the viewport, fly. This is usually all a map-in-progress wants.
+
+**A walking player.** Add a **CharacterBody3D** with a capsule and a camera (Godot's first-person template works), and make sure the meshes' **Collider** property is set (Accurate for floors/walls/stairs) — PoiBuilder meshes carry their own collision.
 
 ## 10. Export the map as GLB
 
@@ -123,7 +162,7 @@ Toolbar **Export...** → **GLB — Modern Bake (lightmap-ready)** — the first
 
 > [gotcha] Playing the PoiBuilder scene itself is for building, testing and iterating — the live splat shader and decal layers carry a real GPU cost (~4× the retro bake on the [benchmark baseline](performance.html)). When you want to play or share the map, export the GLB and play that.
 
-Collision ships as `Collider_*` meshes. Emitters are Godot-side GPUParticles3D nodes in your scene — recreate them in the consumer (the format record is documented) or bake the look into the textures you take along.
+Collision ships as `Collider_*` meshes. Particle emitters ride the GLB as DATA: each emitter's node carries a `poi_emitter` record in its glTF extras (count, colors, spread, the whole authoring), so a consumer rebuilds the emitter from it — the reference viewer in the repository does exactly that — or you bake the look into the textures you take along.
 
 ## 11. The GLB in a fresh project
 

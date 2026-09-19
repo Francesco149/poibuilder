@@ -3,6 +3,76 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.163 — the bench sees the whole map: GLB emitters play, the export explains its own cost, docs stop pointing at repo internals
+
+### The benchmark's GLB variants play their particle emitters now
+
+The exporters always wrote each emitter into the GLB — a `poi_emitter`
+record on a hidden `EmitterTex_*` holder node, because glTF has no
+particle concept — but nothing on the bench side READ it: the
+frame-pacing bench and the fly bench flew GLB variants with no flame, no
+embers, no waterfall mist, while the PB variant played all five emitters.
+The contact sheets were comparing a complete map against two amputated
+ones and the numbers called it "the retro bake is fast".
+
+- New shared `EmitterPreview` (test_scenes/emitter_preview.gd): the
+  stateless closed-form particle stream the retro viewer draws, as a
+  self-updating rig any consumer gets via `attach()`. The viewer's copy
+  of the reconstruction moved into it, so viewer, path bench and fly
+  bench draw the SAME preview. Bench census now reports `emitters=5`
+  per GLB and counts the previews as particles, not meshes.
+- Real bug found by the visual pass: an additive emitter round-trips
+  through glTF as plain alpha blend (glTF has no additive), so trusting
+  the holder material's blend mode drew additive glow dots as dark
+  balls. The preview takes blending from the record's
+  `PBM_EMIT_ADDITIVE` flag instead.
+- Portability bug found by the Windows box: an inner class referencing
+  the global class NAME compiles only where the .godot class cache is
+  fresh — a stale cache (every plain `-s` run after dropping a script
+  into a project) breaks it. The rig takes its builder as a Callable
+  assigned from outer scope; no cache dependency.
+- Remultiplied cost, honest now: retro GLB 2.24 → 2.29 ms (iGPU GL),
+  0.76 → 1.15 ms (5060 GL) — emitters are part of what a GLB consumer
+  renders.
+
+### The export explains its own cost
+
+`PBMapExporter` ends every export with one
+`[export-profile] <file> — total … | stage ms (%)` line. On the demo map
+it attributes the ~44 s retro bake to the imported props' light bake
+(79%), tile bake (9%), vertex bake (9%) — and the modern GLB's ~47 s to
+the paint bake (98%). No more stopwatch guessing about where an export
+spends its minutes; the stage buckets cover collect/grid/texture-plan/
+per-node-type work, GLTF serialize + write, and the PBM write.
+
+### The docs face the reader, not the repo
+
+- The walkthrough's particle-emitter screenshot was re-shot: it now
+  frames the BRAZIER — the huge flipbook flame and embers on the
+  courtyard pedestal — instead of a distant dot inside the neon room
+  (`demo-particles.png` replaces `demo-door.png`).
+- End-user pages no longer present repository scripts as THE way to do
+  things: `run_demo_map.sh`, `run_viewer.sh`, `bake_splat.sh`,
+  `run_tests.sh` mentions are reworded to "reference our scripts or roll
+  your own", and the modern walkthrough gained a three-minute MINIMAL FLY
+  CAMERA script (section 9) so playing your map never requires our
+  tooling.
+- The PSP walkthrough is the deliberate exception: it keeps the script
+  references and gained a section saying exactly that — these are
+  reference scripts written for OUR bench setup (Linux workstation,
+  PSPLink over USB), read and adapt them to yours. Also: the PSP is a
+  2004 handheld, not a 2011 one.
+- The performance page re-measured everything on both machines with the
+  emitter-complete GLBs (fresh gl_/vulkan_/win5060_ reports), states the
+  short-run doctrine — exactly ONE GLB per export format plus the PB
+  scene as-is; attribute with the profile, not with more variants — and
+  documents the export profiler alongside the ablation recipe.
+
+Full re-bench, both machines: GL + Vulkan × {pb, retro_glb, modern_glb}
+plus both ablation profiles, every variant photographed and the contact
+sheets eyeballed (emitters verified visible and CORRECT — the additive
+fix came out of that pass).
+
 ## v0.9.162 — the benchmark grows up: steady-state, ablations, Vulkan, PSP parity; the bake gets modulate-2x
 
 ### The baked map has a consumer contract now — and it was being violated everywhere

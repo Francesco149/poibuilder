@@ -93,8 +93,9 @@ The contract is the **file format**, not the demo:
 - The demo engine in the repo is a **reference implementation**: read its
   loader (`retro_engine/psp/pbm_loader.c`) and renderer to see how the format
   is meant to be consumed, then take what you need.
-- `./run_viewer.sh` shows the same bake in Godot (baked / vertex colour /
-  textures / wireframe / colliders + play mode).
+- To eyeball the bake in Godot, reference the repository's viewer script
+  (`run_viewer.sh`) or roll your own: it renders the same bake (baked /
+  vertex colour / textures / wireframe / colliders + play mode).
 
 ## Authoring for the retro target
 
