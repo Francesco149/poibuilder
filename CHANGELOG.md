@@ -3,6 +3,43 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.165 — docs round: three install paths, texture mode gets its page section, stateless emitters documented, the toolbar Export icon stops reading as disabled, and every doc screenshot re-taken on the current UI
+
+### The Export toolbar button no longer LOOKS disabled
+
+Nothing ever set `disabled` on the Export toolbar button — the "greyed out"
+reports (noticed on Godot 4.6) were the icon itself: `icon_export.svg` was
+drawn in the muted blue-grey `#9aa7b8` while every other toolbar icon uses
+the standard `#e0e0e0`, so it read as a disabled control next to its
+neighbors. The icon (and the same-tinted grid icon) now use the standard
+color, and the button's construction carries a comment pinning both rules:
+never gate Export into a disabled path, never tint its icon darker.
+
+### Documentation: install paths, texture mode, emitters, version reality
+
+- Install (README + docs site) now names the THREE ways to install —
+  AssetLib tab → Import (release zip, recommended), copying the
+  `addons/poibuilder/` folder into the project, and searching the Godot
+  Asset Library (a snapshot that can lag bleeding edge and ships no offline
+  docs) — and calls out that the plugin must then be ENABLED BY HAND in
+  Project Settings → Plugins regardless of path.
+- The docs feature coverage gains the texture selection mode ([[kbd:6]]):
+  a dedicated Selecting section (gizmo transforms the selected faces' UVs
+  in the 3D view, manual-UV anchoring, one-drag undo) plus a new
+  `select-texture` screenshot driven by a new `more/texture` showcase beat.
+- Stateless particle emitters get a brief feature-list highlight in the
+  README and a details section on the docs Materials page (closed-form
+  `(t, i, seed)` playback, one draw call, the `emitters` lump /
+  `poi_emitter` glTF extras export contract, retro budgets).
+- The retro map viewer is no longer listed among the ADDON's features in
+  the README — it is repository reference tooling, and the docs keep that
+  framing.
+- Version statements: developed and extensively tested on Godot 4.7
+  (4.7.2); surface-level testing on 4.6 stable passes; older 4.x untested
+  (README, Install, Welcome, walkthrough setup).
+- All doc screenshots re-extracted from freshly rendered showcase sessions
+  on the current four-row toolbar UI.
+
 ## v0.9.164 — polish round: rows 3/4 default on, the ARMED cursor square survives a fresh import, Center Pivot works from Object mode, stamp opacity reaches the pixels, and every doc button gets a locator
 
 ### Extended toolbar (Rows 3 & 4) ships visible

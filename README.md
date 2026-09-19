@@ -108,10 +108,18 @@ real hardware — a reference consumer of the format, not a requirement):
   resize, persistent anchor keeps seams aligned, 45° diagonal tiling.
 - Material & UV dock: palette, per-face assignment, drag-and-drop from the
   FileSystem, tiling/offset/angle controls, face tint.
+- Texture selection mode: the same move/rotate/scale gizmo manipulates the
+  selected faces' UVs directly in the 3D view — slide a texture, spin a
+  floor, scale a repeat without opening any panel.
 - Multi-layer texture splatting (8 blend layers per face) and decal stamping
   with live preview, wheel-rotate and ctrl-wheel scale.
 - Billboard sprite placement: always-armed sprite tab — pick a texture, click
   a surface, raise, scale; texture carousel on drag.
+- Click-to-place **stateless particle emitters**: authored as ordinary
+  `GPUParticles3D`, but particle *i* at time *t* is a closed form of
+  `(t, i, seed)` — no simulation to tick, one draw call per emitter, and the
+  export carries the authoring as data so any consumer replays the exact same
+  fire, smoke or mist (see the retro pipeline above and the docs for details).
 - Dedicated 2D UV editor: pan/zoom canvas, texture underlay, island/face
   selection sync, pop-out window.
 - Animated UV scrolling with live viewport preview.
@@ -125,23 +133,38 @@ real hardware — a reference consumer of the format, not a requirement):
 - Custom infinite cyan grid with adjustable unit/subdivisions/elevation and
   draw-on-grid mode.
 - Export dialog: PBM (direct), retro-baked GLB, or modern GLB.
-- Retro map viewer: 5 display modes, first-person play mode against exported
-  colliders.
 
 ## Status
 
 Experimental but actively developed. Every phase lands with a green headless
 test suite (`./run_tests.sh`), and interaction changes go through human
-sign-off. PoiBuilder targets **Godot 4.7** (the engine it is developed
-against); older 4.x versions are untested.
+sign-off. PoiBuilder is developed and **extensively tested on Godot 4.7**
+(4.7.2, the engine this project is built against). Surface-level testing on
+**Godot 4.6 stable** passes too; anything older is untested.
 
 ### Install
 
-1. Copy `project/addons/poibuilder/` into your project (or open this
-   repository's `project/` directly).
-2. Enable **PoiBuilder** in *Project Settings → Plugins*.
-3. Create a shape via the **New Shape** menu in the toolbar under the 3D
-   viewport and start editing.
+There are three ways to get the plugin into your project — they all end at
+the same `addons/poibuilder/` folder:
+
+1. **AssetLib tab → Import**: download a release zip from
+   [Releases](https://github.com/Francesco149/poibuilder/releases), then in
+   Godot open the **AssetLib** tab, click **Import…**, and pick the zip. This
+   is the recommended path — release zips are cut directly from this
+   repository and include the offline documentation.
+2. **Copy the folder**: extract/copy `addons/poibuilder/` into your project
+   folder (next to `project.godot`) — e.g. from a release zip, or by opening
+   this repository's `project/` directly.
+3. **Asset Library search**: in the **AssetLib** tab, search for
+   **PoiBuilder** and download it. Note that the library listing is a
+   snapshot and is **not guaranteed to be up to date** with bleeding-edge
+   changes (and does not include the offline docs copy).
+
+**Then enable the plugin** (all three ways need this manual step):
+**Project → Project Settings → Plugins → PoiBuilder → Enable**. After
+enabling, the PoiBuilder toolbar appears under the 3D viewport — see the
+[online documentation](https://francesco149.github.io/poibuilder/) or
+press the toolbar **Docs** button for the full manual.
 
 ## How this project is built
 

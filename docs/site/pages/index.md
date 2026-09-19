@@ -26,16 +26,17 @@ The full showcase film: the courtyard built start to finish in the editor, then 
 
 PoiBuilder is a Godot 4 editor plugin. You enable it, and a toolbar appears under the 3D viewport. From there you create `PBMesh` nodes — editable meshes that keep faces, UVs, materials and collision in one place.
 
-It is pure GDScript. It runs on standard Godot and Godot .NET. The target engine is **Godot 4.7**.
+It is pure GDScript. It runs on standard Godot and Godot .NET. Development and heavy testing happen on **Godot 4.7**; surface-level testing on **Godot 4.6 stable** passes (see [Install](install.html)).
 
 Typical work:
 
 1. Drag a floor, walls, stairs, a door.
 2. Pull faces, cut loops, bevel edges, fill holes.
 3. Assign materials, paint blends, stamp a poster, scroll a waterfall.
-4. Place particle emitters and billboards from the dock.
-5. Poibuilderize a GLB prop you dragged in, boolean a hole with CSG.
-6. Export a modern GLB, or a retro `.pbm` with textures sanitized for the PSP.
+4. Nudge how a texture sits on a face from the 3D view itself — texture mode ([[kbd:6]]) moves the face's UVs with the same gizmo.
+5. Place particle emitters and billboards from the dock.
+6. Poibuilderize a GLB prop you dragged in, boolean a hole with CSG.
+7. Export a modern GLB, or a retro `.pbm` with textures sanitized for the PSP.
 
 The [walkthroughs](walkthrough-modern.html) do all of it in one pass on one map —
 with screenshots of the finished result.

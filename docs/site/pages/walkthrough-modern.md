@@ -15,8 +15,8 @@ A courtyard with a painted floor, a waterfall, and a small building: an arched d
 
 ## 0. Empty project
 
-1. New Godot **4.7** project (standard or .NET), any renderer.
-2. Copy `addons/poibuilder/` in, enable it in **Project Settings → Plugins**.
+1. New Godot **4.7** project (standard or .NET), any renderer. (4.6 stable works too — see [Install](install.html).)
+2. Copy `addons/poibuilder/` in, enable it in **Project Settings → Plugins** (that enable tick is always manual).
 3. Open any 3D scene. The PoiBuilder toolbar appears under Godot's.
 
 That is the whole setup — see [Install](install.html) for the release-zip route.

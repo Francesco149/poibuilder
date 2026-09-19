@@ -32,6 +32,20 @@ Select a face, press [[kbd:J]]. You now have that face's edges. This is ProBuild
 
 Object mode moves several meshes. Entering an element mode **narrows editing to the last-clicked mesh**.
 
+## Texture mode — move UVs in the 3D view
+
+Texture mode ([[kbd:6]]) picks faces like face mode, but the move/rotate/scale gizmo transforms the selected faces' **UVs**, not their geometry: slide a texture along a wall, spin a floor's grain, scale a repeating tile — without opening any panel. Face-mode gestures like Shift+move extrude do not fire here; every drag is a pure UV transform, and the whole drag undoes as one step.
+
+Details worth knowing:
+
+- The gizmo acts around the selection's UV centre, so rotate/scale pivot on what you selected.
+- A face you have texture-moved becomes **manual**: auto-UV stops re-anchoring it, so your placement survives edits and resizes. Geometry changes still carry the UVs along.
+- Texture mode is the quick 3D-side tool. For island-level work — projections, seam sewing, texel density — use the [2D UV editor](uv.html).
+
+:::shot select-texture.png
+Texture mode: the gizmo slides the brick texture across the selected wall faces.
+:::
+
 ## Advanced suite (row 3)
 
 :::op grow_selection

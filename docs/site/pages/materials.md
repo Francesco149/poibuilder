@@ -24,7 +24,7 @@ The palette itself:
 - **+ Add** pulls a material or texture from anywhere in the project; the
   scan deduplicates by content so one texture does not appear twice.
 
-Texture mode ([[kbd:6]]) transforms UVs in 3D with the same gizmo. For island work, use the [2D UV editor](uv.html).
+Texture mode ([[kbd:6]]) transforms the selected faces' UVs in 3D with the same gizmo — see [Texture mode](select.html#texture-mode-move-uvs-in-the-3d-view). For island work, use the [2D UV editor](uv.html).
 
 ## Auto-UV
 
@@ -39,6 +39,19 @@ If a ramp still looks stretched, that is a projection job: [UV editor](uv.html).
 ## Smoothing
 
 [[btn:smooth_auto::Auto Smooth]] (row 3) sets smoothing groups from a 45° dihedral. Hard edges stay hard; shallow joins pick up shared normals. Lighting, not geometry.
+
+## Particle emitters
+
+The dock's **Particles** tab places stateless particle emitters: pick a particle texture (flame, smoke, glow presets arm themselves), click a surface, drag to lift and tune, click to commit — the click-by-click lives in the [modern walkthrough](walkthrough-modern.html#7-particle-emitters). Fine-tune any placed emitter by selecting it and opening **⚙ Edit Emitter Properties** on the overlay (count, size, speed, spread, additive blending, flipbook grid).
+
+What "stateless" means, and why it is the headline: an emitter is authored as an ordinary `GPUParticles3D` for the editor, but its playback is a **closed form** — particle *i* at time *t* is a pure function of `(t, i, seed)`. There is no simulation to tick and no per-particle state to keep:
+
+- deterministic — the same emitter always produces the same fire, so what you preview is what every consumer shows;
+- cheap — a runtime re-derives each particle with a few flops, one draw call per emitter, no per-frame CPU cost that grows with age;
+- additive emitters need no depth sorting; blended ones draw back-to-front;
+- exportable as **data** — the retro `.pbm` carries a standard `emitters` lump and a modern `.glb` tags each emitter node with a `poi_emitter` record in its glTF extras (count, colors, spread — the whole authoring), so your engine rebuilds the identical effect instead of eyeballing it.
+
+Placement knobs are budget-aware for the retro target: 64 particles per emitter and roughly 256 per map. See [Export & retro](export.html) for what ships and the [format spec](https://github.com/Francesco149/poibuilder/blob/master/SPEC_RETRO_FORMAT.md) for the lump layout.
 
 ## Scroll
 

@@ -57,7 +57,8 @@ A compact floating panel in the viewport.
 - Drag readout while dragging.
 - Params modal for shape create and bevel.
 - **⚙ Edit Emitter Properties** while a placed particle emitter is in the
-  selection — the fine-tuning surface for [emitters](paint.html#sprite-placer)
+  selection — the fine-tuning surface for
+  [emitters](materials.html#particle-emitters)
   (count, size, speed, spread, blending, flipbook). It works from object
   mode too; the emitter session stays open even while no mesh is selected.
 - Drag it by the header. Pin with [[btn:panel::Panel]]. Recover with [[btn:recover::Reset Panel]].
