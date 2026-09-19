@@ -39,6 +39,13 @@ index, current status, and the process rules that are not area-specific.
 ./bake_splat.sh <scene>     # bake splats down, free UV2 for lightmaps
 ./run_demo_map.sh [--play]  # the alpha demo map (docs walkthroughs + benchmark)
 ./run_bench.sh              # frame-pacing bench: PB scene vs retro GLB vs modern GLB
+./run_bench.sh --profile    # ablation profile: what the PB frame cost is made of
+./run_bench.sh --renderer vulkan   # the bench on forward_plus (GL is the default axis)
+python3 tools/bench_contact_sheet.py   # grid exports/bench/shots/* into per-renderer
+                                       #   contact sheets — ALWAYS eyeball these when
+                                       #   touching the bench or the exporters
+project/test_scenes/retro_bake_iterate.gd   # fast loop for tuning the baked retro
+                                            #   look (~40 s: export retro GLB + 5 poses)
 # Human smoke-test cheat sheet (hand this to the tester): SMOKE-TESTS.md
 
 # Open in editor for interactive testing

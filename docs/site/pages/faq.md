@@ -52,7 +52,7 @@ using the demo engine's loader as a reference. Details on [Export & retro](expor
 
 That is expected — the editable scene is the *authoring* format, not the
 shipping one. It renders the live splat shader, live decal layers and every
-realtime light, which measured ~2.5× the frame cost of the baked map on the
+realtime light, which measured ~4× the retro bake's frame cost on the
 [benchmark baseline](performance.html). Run **Export...** and play the
 baked result instead: a **modern GLB** for the modern pipeline (paint baked
 into textures, your own lights/LightmapGI on top) or **PBM** for retro
