@@ -202,6 +202,53 @@ static func apply_to_sun(sun: DirectionalLight3D, preset_name: String) -> void:
 	sun.light_energy = p["sun_energy"]
 	sun.shadow_enabled = true
 
+## The BAKED-map display environment — the consumer contract for a fully
+## baked map (retro GLB / .pbm shown in Godot): the preset's sky and linear
+## depth fog, and NOT one lumen of added lighting. Every lumen already lives
+## in the baked vertex colors and tile textures; adding Godot ambient on top
+## double-lights the map, and a tonemap re-decides colors the bake already
+## decided. This mirrors the PSP renderer exactly (clear color + linear
+## near/far fog). THE PRESET fog_start/fog_end VALUES ARE KEPT IN SYNC WITH
+## retro_engine/psp/psp_render.c s_env_defs.
+static func apply_retro_display(root: Node3D, preset_name: String) -> void:
+	var p := get_preset(preset_name)
+	var world_env := find_world_environment(root)
+	if world_env == null:
+		world_env = WorldEnvironment.new()
+		world_env.name = "WorldEnvironment"
+		root.add_child(world_env)
+	if world_env.environment == null:
+		world_env.environment = Environment.new()
+	var env := world_env.environment
+	env.background_mode = Environment.BG_SKY
+	var sky := env.sky
+	if sky == null:
+		sky = Sky.new()
+		env.sky = sky
+	var sky_mat := sky.sky_material as ProceduralSkyMaterial
+	if sky_mat == null:
+		sky_mat = ProceduralSkyMaterial.new()
+		sky.sky_material = sky_mat
+	sky_mat.sky_top_color = p["sky_top"]
+	sky_mat.sky_horizon_color = p["sky_horizon"]
+	sky_mat.ground_bottom_color = p["ground_bottom"]
+	sky_mat.ground_horizon_color = p["ground_horizon"]
+	# Zero lighting: black ambient, no reflections, linear tonemap.
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color.BLACK
+	env.ambient_light_energy = 1.0
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.tonemap_exposure = 1.0
+	# The PSP's linear depth-fog ramp.
+	env.fog_enabled = true
+	env.fog_mode = Environment.FOG_MODE_DEPTH
+	env.fog_light_color = p["fog_color"]
+	env.fog_depth_begin = float(p.get("fog_start", 14.0))
+	env.fog_depth_end = float(p.get("fog_end", 48.0))
+	env.fog_depth_curve = 1.0
+	env.fog_sky_affect = 0.0
+
 ## Applies the preset to a scene root, finding or creating WorldEnvironment and Sun nodes.
 ## Returns a Dictionary with {"world_env": WorldEnvironment, "sun": DirectionalLight3D, "preset": String}.
 ## If an EditorUndoRedoManager is provided, records the operation with clean Undo/Redo.

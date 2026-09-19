@@ -886,6 +886,59 @@ func test_modern_glb_bake_embeds_painted_pixels() -> void:
 ## (CUSTOM0 -> TEXCOORD_2 -> CUSTOM0), each painted face's material carries a
 ## `poi_splat` record, and the masks/decal ride as sidecar PNGs. The round trip
 ## must reproduce the painted pixels.
+## Modulate-2x: settings.bake_boost multiplies the baked vertex colors
+## (saturating at 1.0) in the retro export tree — brighter shadows and
+## mid-tones, sunlit areas ride the clamp.
+func test_bake_boost_multiplies_vertex_colors() -> void:
+	var root := Node3D.new()
+	autofree(root)
+	var floor_mesh := PBMesh.create_cube(4.0)
+	floor_mesh.name = "Floor"
+	root.add_child(floor_mesh)
+	var light := OmniLight3D.new()
+	light.position = Vector3(0, 2.5, 0)
+	light.omni_range = 8.0
+	root.add_child(light)
+
+	var baked_colors := func(boost: float) -> PackedColorArray:
+		var settings := PBMapExporter.ExportSettings.new()
+		settings.export_mode = PBMapExporter.ExportMode.RETRO
+		settings.bake_boost = boost
+		settings.export_colliders = false
+		settings.export_billboards = false
+		var tree := PBMapExporter.build_export_tree(root, settings)
+		autofree(tree)
+		var exported := tree.get_node_or_null("Floor") as MeshInstance3D
+		var arrays: Array = exported.mesh.surface_get_arrays(0)
+		return arrays[Mesh.ARRAY_COLOR]
+
+	var plain: PackedColorArray = baked_colors.call(1.0)
+	var boosted: PackedColorArray = baked_colors.call(2.0)
+	assert_eq(plain.size(), boosted.size(), "Same vertex count")
+	var plain_sum := 0.0
+	var expected_boosted_sum := 0.0
+	for i in range(plain.size()):
+		var pcol := plain[i]
+		var pm := (pcol.r + pcol.g + pcol.b) / 3.0
+		plain_sum += pm
+		# The expected boost: per-component multiply with saturate.
+		expected_boosted_sum += (minf(pcol.r * 2.0, 1.0) + minf(pcol.g * 2.0, 1.0) \
+			+ minf(pcol.b * 2.0, 1.0)) / 3.0
+	var plain_mean := plain_sum / plain.size()
+	var expected_mean := expected_boosted_sum / boosted.size()
+	var boosted_mean := 0.0
+	var max_component := 0.0
+	for c in boosted:
+		boosted_mean += (c.r + c.g + c.b) / 3.0
+		max_component = maxf(max_component, maxf(c.r, maxf(c.g, c.b)))
+	boosted_mean /= boosted.size()
+	assert_gt(plain_mean, 0.0, "Fixture: the bake must produce light")
+	assert_almost_eq(boosted_mean, expected_mean, 0.02,
+			"Bake boost must multiply the baked colors per-component (saturating)")
+	assert_true(max_component <= 1.0001, "Boosted colors must stay clamped at 1.0")
+	assert_eq(PBMapExporter.ExportSettings.new().bake_boost, 2.0,
+			"Modulate-2x must be the default")
+
 ## glTF lights cannot carry shadows, so a shadow-casting light tags its export
 ## node with `extras.poi_shadow` — and the tag survives a GLB round trip, so a
 ## consumer (the frame bench, a Godot re-import) can restore the authored look.

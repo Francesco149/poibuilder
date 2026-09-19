@@ -83,6 +83,12 @@ class ExportSettings extends RefCounted:
 	var ao_distance: float = 1.5
 	var ao_intensity: float = 0.4
 	var ambient_color: Color = Color(0.42, 0.42, 0.46)
+	## Modulate-2x, the old-school brightness lift: multiplies the baked
+	## vertex colors by this factor (saturating at 1.0) before they are
+	## packed. Dusk/night bakes sit far below the cap, so 2.0 lifts their
+	## shadows and mid-tones while sunlit areas ride the clamp — what the
+	## modulate stages of retro hardware did. 1.0 disables.
+	var bake_boost: float = 2.0
 	var bake_textures: bool = true
 	var tile_resolution: int = 128
 	var max_texture_size: int = 512
@@ -291,6 +297,16 @@ static func build_export_tree(root: Node, settings: ExportSettings = null) -> No
 
 	var export_root := Node3D.new()
 	export_root.name = "Map"
+	# The environment preset rides the PBM as a lump and the scene as a root
+	# meta; stamp it on the export root too so a GLB consumer (Godot script or
+	# the frame bench) can rebuild the sky/ambient/tonemap look — a bare glTF
+	# scene has no WorldEnvironment and renders with engine defaults, which
+	# reads as "the lighting is wrong". Node meta "extras" is what Godot's
+	# glTF exporter serializes into the node JSON, so it round-trips.
+	if root != null:
+		var preset_name := str(root.get_meta("poi_env_preset", "day"))
+		export_root.set_meta("poi_env_preset", preset_name)
+		export_root.set_meta("extras", {"poi_env_preset": preset_name})
 
 	# Collect scene lights and solid geometry
 	var lights := PBLightBaker.collect_scene_lights(root)
@@ -614,6 +630,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 			node_xf, lights, grid, settings.bake_lighting, settings.bake_shadows,
 			settings.bake_ao, settings.ao_samples, settings.ao_distance,
 			settings.ao_intensity, settings.ambient_color)
+		surf_colors = _boost_baked_colors(surf_colors, settings.bake_boost)
 
 		for ci in range(surf_colors.size()):
 			var tint: Color = surf_tints[ci] if ci < surf_tints.size() else Color.WHITE
@@ -696,6 +713,7 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 				var cols := PBLightBaker.bake_vertex_colors(pos, norm, node_xf, lights, grid,
 					true, settings.bake_shadows, settings.bake_ao, settings.ao_samples,
 					settings.ao_distance, settings.ao_intensity, settings.ambient_color)
+				cols = _boost_baked_colors(cols, settings.bake_boost)
 				# The authored tint (incl. opacity alpha) survives the bake: it
 				# was in ARRAY_COLOR before the bake replaced it.
 				var authored: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
@@ -1253,10 +1271,11 @@ static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[L
 				norm[i] = Vector3.UP
 			arrays[Mesh.ARRAY_NORMAL] = norm
 		if settings.bake_lighting:
-			arrays[Mesh.ARRAY_COLOR] = PBLightBaker.bake_vertex_colors(
+			var prop_cols := PBLightBaker.bake_vertex_colors(
 				pos, norm, node_xf, lights, grid, true, settings.bake_shadows,
 				settings.bake_ao, settings.ao_samples, settings.ao_distance,
 				settings.ao_intensity, settings.ambient_color)
+			arrays[Mesh.ARRAY_COLOR] = _boost_baked_colors(prop_cols, settings.bake_boost)
 		var mat: Material = mi.get_active_material(s)
 		var plan_entry := _texture_plan_entry(texture_plan, mat)
 		arrays = _apply_texture_plan_to_uvs(arrays, plan_entry)
@@ -1299,6 +1318,56 @@ static func _apply_texture_plan_to_uvs(arrays: Array, plan_entry: Dictionary) ->
 		remapped[i] = (uvs[i] - origin) * scale
 	arrays[Mesh.ARRAY_TEX_UV] = remapped
 	return arrays
+
+## Applies settings.bake_boost to a baked color array: multiply + saturate.
+## modulate-2x semantics — values over 1.0 clamp, which is what makes the
+## lift read as "brighter shadows" instead of "brighter everything".
+static func _boost_baked_colors(colors: PackedColorArray, boost: float) -> PackedColorArray:
+	if boost <= 1.0:
+		return colors
+	var out := PackedColorArray()
+	out.resize(colors.size())
+	for i in range(colors.size()):
+		var c := colors[i]
+		out[i] = Color(minf(c.r * boost, 1.0), minf(c.g * boost, 1.0),
+			minf(c.b * boost, 1.0), c.a)
+	return out
+
+## Consumer-side helper for a BAKED retro GLB (the Godot viewer / bench /
+## any spec-correct player): the bake carries its lighting in COLOR_0, and
+## per the glTF spec COLOR_0 always multiplies the base color — but Godot's
+## 4.7 GLTF importer does not enable the material flag that expresses that
+## for JSON-authored materials, so without this helper a fully baked map
+## renders BLACK the moment no live lights remain (the bake's whole point).
+## Walks every MeshInstance3D under `root` and, for each material whose
+## surface carries a COLOR array: enables vertex_color_use_as_albedo (COLOR_0
+## multiplies the albedo) AND switches the material to UNSHADED. Unshaded is
+## the load-bearing half: the bake's vertex colors are PREBADED LIGHT, and a
+## shaded material multiplies its albedo by the scene's (absent) lights —
+## black map. Unshaded outputs tex x COLOR_0 directly, exactly what the PSP
+## renderer does.
+static func apply_baked_vertex_colors(root: Node) -> void:
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			if mi.mesh != null:
+				for s in range(mi.mesh.get_surface_count()):
+					var fmt: int = mi.mesh.surface_get_format(s)
+					if (fmt & Mesh.ARRAY_FORMAT_COLOR) == 0:
+						continue
+					var mat := mi.mesh.surface_get_material(s)
+					if mat is BaseMaterial3D:
+						var bm := mat as BaseMaterial3D
+						bm.vertex_color_use_as_albedo = true
+						bm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+					if mi.material_override is BaseMaterial3D:
+						var om := mi.material_override as BaseMaterial3D
+						om.vertex_color_use_as_albedo = true
+						om.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		for c in node.get_children():
+			stack.append(c)
 
 static func _export_light(light: Light3D, parent: Node) -> void:
 	var dup := light.duplicate() as Light3D

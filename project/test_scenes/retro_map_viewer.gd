@@ -1228,9 +1228,11 @@ func _physics_process(delta: float) -> void:
 		respawn_player()
 func set_environment_preset(preset_name: String, reload_map: bool = true) -> void:
 	current_preset = preset_name.to_lower().strip_edges()
-	var env_node := get_node_or_null("WorldEnvironment") as WorldEnvironment
-	if env_node != null and env_node.environment != null:
-		PBEnvironment.apply_to_environment(env_node.environment, current_preset)
+	# The map on screen is FULLY BAKED: show it the way the consumer is
+	# supposed to — sky + the preset's linear fog, zero added lighting —
+	# not re-lit through the full live preset (that double-lights the
+	# bake and no longer matches the PSP).
+	PBEnvironment.apply_retro_display(self, current_preset)
 	for p_name in _env_buttons:
 		var btn: Button = _env_buttons[p_name]
 		if btn != null:

@@ -72,3 +72,38 @@ func test_apply_preset_to_scene() -> void:
 	assert_eq(sky_mat.sky_top_color, night_p["sky_top"])
 	assert_eq(sun.light_color, night_p["sun_color"])
 	assert_almost_eq(sun.light_energy, night_p["sun_energy"], 0.01)
+
+
+## The baked-map display contract: sky + linear fog, ZERO added lighting.
+## A fully baked map carries every lumen in its vertex colors — a consumer
+## that applied the live preset on top would double-light it (and drift from
+## what the PSP draws).
+func test_apply_retro_display_adds_no_lighting() -> void:
+	var root := Node3D.new()
+	autofree(root)
+	PBEnvironment.apply_retro_display(root, "dusk")
+
+	assert_eq(root.get_meta("poi_env_preset", ""), "",
+			"Retro display must not restamp the authoring preset meta")
+	var world_env := PBEnvironment.find_world_environment(root)
+	assert_not_null(world_env, "Must create a WorldEnvironment")
+	if world_env == null:
+		return
+	var env: Environment = world_env.environment
+	assert_not_null(env)
+	assert_true(env.fog_enabled, "The preset's linear fog must be on")
+	assert_eq(env.fog_mode, Environment.FOG_MODE_DEPTH, "Fog must be the PSP's linear depth ramp")
+	var dusk_p := PBEnvironment.get_preset("dusk")
+	assert_almost_eq(env.fog_depth_begin, dusk_p["fog_start"], 0.01, "Fog near must match the PSP table")
+	assert_almost_eq(env.fog_depth_end, dusk_p["fog_end"], 0.01, "Fog far must match the PSP table")
+	assert_eq(env.fog_light_color, dusk_p["fog_color"])
+	assert_eq(env.ambient_light_source, Environment.AMBIENT_SOURCE_COLOR)
+	assert_eq(env.ambient_light_color, Color.BLACK, "The display env must add no ambient")
+	assert_eq(env.reflected_light_source, Environment.REFLECTION_SOURCE_DISABLED,
+			"Sky reflections must be off — the PSP has none")
+	assert_eq(env.tonemap_mode, Environment.TONE_MAPPER_LINEAR,
+			"The bake already decided the colors; no tonemap may re-decide them")
+	var sky_mat := env.sky.sky_material as ProceduralSkyMaterial
+	assert_not_null(sky_mat, "The preset sky must be present")
+	if sky_mat != null:
+		assert_eq(sky_mat.sky_top_color, dusk_p["sky_top"])
