@@ -410,11 +410,19 @@ static func _build_neon_room(root: Node3D) -> void:
 	# Barrel props (PSX Modular Medieval by valsekamerplant). Deliberately left
 	# as plain imported MeshInstance3D nodes — the "dropped a GLB in the scene"
 	# case — marked GI-Dynamic so they receive the baked lightmap via probes.
+	# The library lives outside the repo (/mnt/ephemeral on the dev machine);
+	# a machine without it builds a map MISSING THE PROPS — that must be loud,
+	# not a silent census drift between machines' bench exports.
 	var barrels := [
 		{"f": "barrel.glb", "n": "Prop_Barrel", "pos": Vector3(-4.6, 0.06, -11.7), "yaw": 0.4},
 		{"f": "barrel_open.glb", "n": "Prop_BarrelOpen", "pos": Vector3(-3.75, 0.06, -11.95), "yaw": -0.6},
 		{"f": "barrel_apples.glb", "n": "Prop_BarrelApples", "pos": Vector3(-4.35, 0.06, -10.9), "yaw": 2.4},
 	]
+	if not DirAccess.dir_exists_absolute(PROP_LIBRARY_DIR):
+		push_error("prop library missing: %s — the map builds WITHOUT the %d pack props (barrels); exports on this machine are not comparable to ones from the dev machine" % [
+			PROP_LIBRARY_DIR, barrels.size()])
+		print("[demo-map] ERROR: prop library missing (%s) — building without the %d barrels" % [
+			PROP_LIBRARY_DIR, barrels.size()])
 	for b in barrels:
 		var prop := TestMapShowcaseBuilder.load_prop_glb(PROP_LIBRARY_DIR.path_join(b["f"]))
 		if prop == null:
