@@ -357,15 +357,18 @@ static func _build_neon_room(root: Node3D) -> void:
 		root.add_child(strip)
 
 	# Coloured static lights: the direct light you see before baking, and the
-	# input the lightmapper turns into bounce. Kept LOW on purpose — a closed
-	# room concentrates them, and "neon" reads dark with hot accents.
+	# input the lightmapper turns into bounce. Energies are sized for the
+	# retro bake (whose vertex colors cap at 1.0 — the bake needs headroom to
+	# reach it) and RANGES are sized to stay inside the room: an omni whose
+	# range crosses the walls paints neon onto the courtyard outside through
+	# shadow-map bias.
 	var lights := [
 		{"n": "NeonLight_Cyan", "pos": Vector3(0.5, 2.8, -11.5),
-			"col": Color(0.35, 0.85, 1.0), "e": 1.7, "r": 9.0},
+			"col": Color(0.35, 0.85, 1.0), "e": 2.4, "r": 6.5},
 		{"n": "NeonLight_Magenta", "pos": Vector3(-4.5, 1.8, -8.0),
-			"col": Color(1.0, 0.3, 0.8), "e": 1.5, "r": 8.0},
+			"col": Color(1.0, 0.3, 0.8), "e": 2.1, "r": 5.5},
 		{"n": "NeonLight_Warm", "pos": Vector3(-4.2, 2.3, -11.6),
-			"col": Color(1.0, 0.65, 0.35), "e": 1.2, "r": 4.5},
+			"col": Color(1.0, 0.65, 0.35), "e": 1.7, "r": 3.8},
 	]
 	for l in lights:
 		var omni := OmniLight3D.new()
@@ -619,10 +622,13 @@ static func dark_interior_material() -> StandardMaterial3D:
 	mat.resource_name = "DarkInteriorMaterial"
 	if ResourceLoader.exists(TEX + "tiles_wet_4x4.png"):
 		mat.albedo_texture = load(TEX + "tiles_wet_4x4.png")
-	# Dark, not crushed: a near-black albedo MULTIPLIER hides the texture
-	# entirely and the room reads untextured. ~40% keeps the tile pattern
-	# visible while the neon pools carry the colour.
-	mat.albedo_color = Color(0.42, 0.42, 0.5)
+	# "Dark" is RELATIVE, and the retro pipeline is the reason this is not
+	# darker: a retro surface's brightness is albedo x baked vertex color,
+	# and vertex color is hard-capped at 1.0 — a 40% albedo wall can never
+	# render brighter than 40%, and the baked neon room came out black. ~62%
+	# still reads as the dark envelope under dusk ambient, and lets the
+	# capped bake carry the neon.
+	mat.albedo_color = Color(0.62, 0.62, 0.72)
 	mat.roughness = 0.35
 	mat.metallic = 0.15
 	return mat
