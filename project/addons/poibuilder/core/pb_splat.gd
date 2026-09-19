@@ -1153,7 +1153,7 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 ## across the whole sprite.
 static func _aligned_stamp_sprite(src: Dictionary, ext: Vector2, center_u: float,
 		center_v: float, u_face: Vector3, v_face: Vector3, rot_right: Vector3,
-		rot_up: Vector3, px_per_m_u: float, px_per_m_v: float) -> Image:
+		rot_up: Vector3, px_per_m_u: float, px_per_m_v: float, opacity_b: int) -> Image:
 	if src.is_empty():
 		return null
 	var sw: int = src["w"]
@@ -1189,6 +1189,14 @@ static func _aligned_stamp_sprite(src: Dictionary, ext: Vector2, center_u: float
 		crop.flip_x()
 	if e < 0.0:
 		crop.flip_y()
+	if opacity_b < 255:
+		# The aligned fast path bypasses the pixel-walk compositor (where
+		# opacity is applied), so the stamp opacity must be baked into the
+		# sprite's alpha here or it silently never applies.
+		var ab := crop.get_data()
+		for i in range(3, ab.size(), 4):
+			ab[i] = (int(ab[i]) * opacity_b + 127) / 255
+		crop.set_data(crop.get_width(), crop.get_height(), false, Image.FORMAT_RGBA8, ab)
 	return crop
 
 ## The flat-colour brush's falloff disc as an image: `color` (with the brush's
@@ -1312,6 +1320,11 @@ static func _oriented_sprite(src: Dictionary, u_face: Vector3, v_face: Vector3,
 				if w255 <= 0:
 					continue
 				weight = (w255 * opacity_b + 127) / 255
+				if weight <= 0:
+					continue
+			else:
+				# A stamp has no falloff; its opacity IS the weight.
+				weight = opacity_b
 				if weight <= 0:
 					continue
 			var dp := du * u_face + dv * v_face
@@ -1480,7 +1493,7 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	# is the normal case — the sprite is a crop + resize (+ flip), and the paste
 	# is one Image.blend_rect() call.
 	var sprite := _aligned_stamp_sprite(src, ext, center_u, center_v, u_face, v_face,
-			rot_right, rot_up, px_per_m_u, px_per_m_v)
+			rot_right, rot_up, px_per_m_u, px_per_m_v, opacity_b)
 	if sprite != null:
 		var half_px := Vector2(sprite.get_width() * 0.5, sprite.get_height() * 0.5)
 		var centre_px := Vector2(
@@ -1498,7 +1511,7 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 	# blend. Stamps placed repeatedly (a tile pattern across a floor) are the
 	# normal case.
 	var osprite := _oriented_sprite(src, u_face, v_face, rot_right, rot_up, ext,
-			px_per_m_u, px_per_m_v, PackedByteArray(), 255, 0.0)
+			px_per_m_u, px_per_m_v, PackedByteArray(), opacity_b, 0.0)
 	if osprite != null:
 		var ohalf := Vector2(osprite.get_width() * 0.5, osprite.get_height() * 0.5)
 		var ocentre := Vector2(

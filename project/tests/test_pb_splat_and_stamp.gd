@@ -295,6 +295,29 @@ func test_paste_decal_paints_pixels_with_rotation_and_scale() -> void:
 	assert_almost_eq(px.b, 0.9, 0.05, "Decal pixel must keep the stamp's own color (1:1 copy)")
 	assert_almost_eq(px.a, 1.0, 0.05, "Decal pixel must be opaque at the stamp center")
 
+## Stamp opacity must reach the PAINTED pixels on every write path. The
+## aligned fast path (rotation 0, axis-aligned face) and the oriented-sprite
+## path (rotated) both used to composite at full source alpha — only the
+## rarely-reached pixel-walk fallback respected the setting — so the dock's
+## opacity spinner visibly did nothing while the preview obeyed it.
+func test_stamp_opacity_applies_on_every_paste_path() -> void:
+	for rot: float in [0.0, 45.0]:
+		var data: PBMeshData = PBShapeGenerators.create_plane(2.0, 2.0, 1, 1)
+		PBUv.refresh_mesh_uvs(data, true)
+		var face := data.faces[0]
+		PBSplat.ensure_mesh_splat_uv(data)
+		var stamp := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+		stamp.fill(Color(1.0, 0.0, 0.0, 1.0))
+		var painted := PBSplat.paste_decal(data, _face_center_local(data, face),
+				Vector3.UP, rot, 1.0, 0.5, stamp)
+		assert_eq(painted, 1, "Fixture: the stamp must land (rot=%.1f)" % rot)
+		var mat := data.get_face_material(face) as ShaderMaterial
+		var decal := PBSplat.get_decal_layer_image(mat)
+		assert_not_null(decal, "A paste must create the decal layer (rot=%.1f)" % rot)
+		var px := decal.get_pixel(decal.get_width() / 2, decal.get_height() / 2)
+		assert_almost_eq(px.a, 0.5, 0.06,
+				"Opacity 0.5 must halve the painted alpha (rot=%.1f, got %.2f)" % [rot, px.a])
+
 ## A wide stamp must LAND wide: the footprint follows the image's aspect ratio.
 ## (The old decal system pasted onto a square quad, so a 4:1 banner like the
 ## hello-world one came out horizontally squished.)
