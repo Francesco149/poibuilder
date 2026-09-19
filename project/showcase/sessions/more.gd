@@ -28,9 +28,13 @@ func run(dr: ShowcaseDirector) -> void:
 	bench = ShowcaseUtil.floor_slab(root, 28.0, ShowcaseUtil.mat(root, "ink"))
 	await d.grid_show(false)
 	await d.frames(12)
-	# Row 3/4 hold CSG, Poibuilderize, Trim Walls, V-Snap.
+	# Row 3/4 hold CSG, Poibuilderize, Trim Walls, V-Snap. They ship VISIBLE
+	# and pre-pressed since v0.9.164, so a blind toggle click now FOLDS them
+	# and every row-3/4 button click below silently hits the viewport —
+	# only toggle when the rows are actually hidden.
 	await d.off(func():
-		await d.click_button("split", 10))
+		if not d.plugin.toolbar._extended_visible:
+			await d.click_button("split", 10))
 	if d.only.is_empty() or d.only.has("more/uv"):
 		await d.shot("more/uv", _uv)
 	if d.only.is_empty() or d.only.has("more/bevel"):
@@ -43,6 +47,8 @@ func run(dr: ShowcaseDirector) -> void:
 		await d.shot("more/csg", _csg)
 	if d.only.is_empty() or d.only.has("more/select_snap"):
 		await d.shot("more/select_snap", _select_snap)
+	if d.only.is_empty() or d.only.has("more/texture"):
+		await d.shot("more/texture", _texture_mode)
 	if d.only.is_empty() or d.only.has("more/poibuilderize"):
 		await d.shot("more/poibuilderize", _poibuilderize)
 	d.snapshot_regions()
@@ -399,6 +405,59 @@ func _select_snap() -> void:
 	
 	# Camera swing showcasing the smart selection
 	await d.cam_swing(f["center"], 34.0, 78.0, 22.0, 30.0, f["dist"] * 0.95, 36, 1, f["aim"])
+## Texture mode ([[kbd:6]]-equivalent toolbar button): the move gizmo slides
+## the selected faces' UVs across the material while the geometry stays put.
+## A directional texture (wood planks) makes the slide legible in a still.
+func _texture_mode() -> void:
+	obj = await _fresh("TextureModeCube", PBMeshData.create_cube(2.0), "steel",
+		Vector3.ZERO, 0.44, 32.0, 20.0)
+	await d.off(func():
+		ShowcaseUtil.dress(obj, "res://materials/textures/wood_planks.png"))
+	await d.frames(8)
+
+	# Select the camera-facing (+Z) face — by computed id, not by hoping the
+	# click lands. The mode switch into TEXTURE re-applies the engine's
+	# subgizmo selection, so the ids are asserted again after it too.
+	var front := _front_face_id()
+	await d.click_button("face", 14)
+	await d.glide_world_track(Vector3(0.0, 1.0, 1.05), 16)
+	await d.click()
+	await d.apply_selection_ids(PackedInt32Array([front]))
+	await d.frames(8)
+	await d.click_button("texture", 16)
+	await d.frames(6)
+	if not d.has_element_selection():
+		await d.apply_selection_ids(PackedInt32Array([front]))
+		await d.frames(6)
+	d.check(d.has_element_selection(), "a face is selected in texture mode")
+
+	# Drag the move gizmo sideways: the TEXTURE slides, the geometry stays put.
+	var uv_before: PackedVector2Array = obj.pb_mesh_data.textures0.duplicate()
+	await d.move_selection(Vector3(0.8, 0.0, 0.0), 36)
+	await d.frames(14)
+	d.check(obj.pb_mesh_data.textures0 != uv_before,
+		"the texture-mode drag moved the UVs, not the geometry")
+	d.check(obj.pb_mesh_data.faces.size() == 6, "the cube still has its 6 faces")
+
+	# A slow swing so the slide reads from a second angle.
+	var f := d.framing_node(obj, 0.44, 32.0, 20.0)
+	await d.cam_swing(f["center"], 32.0, 54.0, 20.0, 24.0, f["dist"], 30, 1, f["aim"])
+
+## The id of the face whose centroid is the most +Z in world space.
+func _front_face_id() -> int:
+	var best := 0
+	var best_z := -INF
+	for fi in range(obj.pb_mesh_data.faces.size()):
+		var acc := Vector3.ZERO
+		var idxs: PackedInt32Array = obj.pb_mesh_data.faces[fi].get_indexes()
+		for i in idxs:
+			acc += obj.to_global(obj.pb_mesh_data.positions[i])
+		var cz := acc.z / float(idxs.size())
+		if cz > best_z:
+			best_z = cz
+			best = fi
+	return best
+
 func _poibuilderize() -> void:
 	var prop: MeshInstance3D = await d.off(func():
 		_clear()

@@ -126,6 +126,16 @@ func _scroll() -> void:
 	var built: Array = await d.off(func():
 		_clear()
 		EditorInterface.get_selection().clear()
+		# Leave the stamp beat BEHIND: its hello-world pixels ride the BENCH's
+		# decal layer into this beat's framing, and the stamp placement banner
+		# is still armed. Swap in a clean slab and switch the dock back to
+		# Material & UV (which disarms placement).
+		if bench != null:
+			bench.visible = false
+			bench.position += Vector3(0.0, -400.0, 0.0)
+		bench = ShowcaseUtil.floor_slab(root, 44.0, ShowcaseUtil.mat(root, "ink"))
+		if d.plugin.material_dock != null:
+			d.plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 		var wall_mat := PBMeshData.load_material_or_texture(BASE)
 		var wall_node := ShowcaseUtil.mesh(root, "FallWall",
 			PBShapeGenerators.create_box(Vector3(7.0, 5.0, 0.6)), Vector3(0, 2.5, 0), wall_mat)

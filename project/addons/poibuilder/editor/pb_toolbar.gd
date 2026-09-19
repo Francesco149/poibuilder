@@ -485,6 +485,10 @@ func _build_ui() -> void:
 	# GLB modern bake or retro vertex-lit).
 	_sep_export = _make_sep()
 
+	# Export is context-independent (it always has something to say about the
+	# current scene), so nothing here may gate it: keep it out of every
+	# disabled path and keep its icon at the standard #e0e0e0 — a dimmer tint
+	# reads as "disabled" against the rest of the row.
 	_btn_export_more = Button.new()
 	_btn_export_more.name = "ExportDialogButton"
 	_btn_export_more.icon = _load_icon("icon_export.svg")

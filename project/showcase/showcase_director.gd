@@ -828,7 +828,8 @@ func toolbar_button(name: String) -> Button:
 	var map := {
 		"move": tb._btn_move, "rotate": tb._btn_rotate, "scale": tb._btn_scale,
 		"object": tb._btn_object, "vertex": tb._btn_vertex,
-		"edge": tb._btn_edge, "face": tb._btn_face, "space": tb._btn_space,
+		"edge": tb._btn_edge, "face": tb._btn_face, "texture": tb._btn_texture,
+		"space": tb._btn_space,
 		"new_shape": tb._btn_new_shape, "ngon": tb._btn_ngon,
 		"edit_params": tb._btn_edit_params, "overlay": tb._btn_overlay,
 		"recover": tb._btn_recover_overlay, "materials": tb._btn_materials,

@@ -41,7 +41,10 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "csg-booleans": ("more", "more_csg", 120, (287, 80, 1266, 712)),
     # Smart select: dark charcoal cube with yellow coplanar face highlight
     "select-smart": ("more", "more_select_snap", 360, (287, 80, 1266, 712)),
-    
+    # Texture mode: wood-plank cube, front face selected, UVs slid sideways —
+    # the gizmo still hovers and the planks visibly no longer align the cube.
+    "select-texture": ("more", "more_texture", 140, (287, 80, 1266, 712)),
+
     # Creation beats
     "create-floor": ("create", "create_surfaces", 140, (287, 80, 1266, 712)),
     "create-wall": ("create", "create_surfaces", 380, (287, 80, 1266, 712)),
@@ -73,6 +76,8 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     # Paint: wide crop showing 3D viewport AND the Material & UV dock on the right
     "paint-splat": ("paint", "paint_splat", 160, (287, 44, 1620, 740)),
     "paint-stamp": ("paint", "paint_stamp", 140, (287, 44, 1620, 740)),
+    # UV scroll: the sheet mid-slide on the wall panel (mid-swing, wide)
+    "paint-scroll": ("paint", "paint_scroll", 60, (287, 80, 1266, 712)),
     
     # Map
     "hero-courtyard": ("map", "map_night", 180, (287, 44, 1266, 712)),
