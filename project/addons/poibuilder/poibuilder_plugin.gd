@@ -1865,6 +1865,25 @@ func _on_operation_requested(op_name: String) -> void:
 	if op_name == "csg_intersect":
 		_perform_csg_boolean(PBCsg.BooleanOp.INTERSECT)
 		return
+	# Whole-object tools (Row 4 + Auto Smooth): they act on the active mesh,
+	# not the element selection, so they must ALSO run in OBJECT mode — the
+	# editing gate below would swallow the click (Center Pivot was reported
+	# dead: its button enables on has_mesh, which OBJECT mode satisfies).
+	if op_name == "merge_objects":
+		_perform_merge_objects()
+		return
+	if op_name == "mirror_object":
+		_perform_mirror_object()
+		return
+	if op_name == "center_pivot":
+		_perform_center_pivot()
+		return
+	if op_name == "freeze_transform":
+		_perform_freeze_transform()
+		return
+	if op_name == "smooth_auto":
+		_perform_auto_smooth()
+		return
 	if not editor.is_editing() or editor.active_mesh == null:
 		return
 	# Extrude is ONE action: face mode extrudes faces, edge mode extrudes
@@ -1921,21 +1940,6 @@ func _on_operation_requested(op_name: String) -> void:
 				gizmo_plugin.element_editor.vertex_snap_enabled,
 				gizmo_plugin.element_editor.proportional_enabled,
 				gizmo_plugin.element_editor.proportional_radius)
-		return
-	if op_name == "merge_objects":
-		_perform_merge_objects()
-		return
-	if op_name == "mirror_object":
-		_perform_mirror_object()
-		return
-	if op_name == "center_pivot":
-		_perform_center_pivot()
-		return
-	if op_name == "freeze_transform":
-		_perform_freeze_transform()
-		return
-	if op_name == "smooth_auto":
-		_perform_auto_smooth()
 		return
 
 	var cmd := CmdMeshOp.new(mesh_data, OP_ACTION_NAMES.get(op_name, "Mesh Operation"), mesh)
@@ -2264,6 +2268,10 @@ func _perform_center_pivot() -> void:
 		mesh.update_gizmos()
 		if logger:
 			logger.info("plugin", "Centered pivot of %s" % mesh.name)
+	elif logger:
+		# Factory shapes are built origin-centered: say so instead of the
+		# click looking dead.
+		logger.info("plugin", "Center Pivot: %s pivot is already at its bounding-box center" % mesh.name)
 
 func _perform_freeze_transform() -> void:
 	var mesh := editor.active_mesh
