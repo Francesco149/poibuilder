@@ -269,6 +269,11 @@ static func attach(root: Node) -> Rig:
 		return null
 	var rig := Rig.new()
 	rig.name = "EmitterPreviewRig"
+	# The outer static as a Callable, assigned from outer scope: an inner class
+	# referencing the global class NAME would need the .godot class cache to be
+	# fresh (a plain -s run after dropping this script into a project has a
+	# stale cache — the Windows bench box hit exactly that).
+	rig.builder = build_mesh
 	root.add_child(rig)
 	for holder in holders:
 		rig.previews.append(make_preview(holder, rig))
@@ -291,15 +296,24 @@ static func tick(previews: Array, t: float, cam: Camera3D) -> void:
 ## The per-map node EmitterPreview.attach() leaves behind: a self-contained
 ## clock + camera tracker that keeps the billboard meshes current. Lives as a
 ## child of the map root, so freeing the map frees the previews too.
+## `builder` is the outer class's static build_mesh(), set by attach() — see
+## the note there on why it is a Callable and not a name lookup.
 class Rig extends Node:
 	var previews: Array[Dictionary] = []
 	var emit_time: float = 0.0
+	var builder: Callable = Callable()
 
 	func _process(delta: float) -> void:
-		if previews.is_empty():
+		if previews.is_empty() or not builder.is_valid():
 			return
 		emit_time += delta
 		var cam := get_viewport().get_camera_3d()
 		if cam == null:
 			return
-		EmitterPreview.tick(previews, emit_time, cam)
+		var right := cam.global_transform.basis.x
+		var up := cam.global_transform.basis.y
+		for ep in previews:
+			var mi: MeshInstance3D = ep["mi"]
+			if mi == null or not is_instance_valid(mi):
+				continue
+			mi.mesh = builder.call(ep["rec"], ep["parts"], emit_time, right, up)
