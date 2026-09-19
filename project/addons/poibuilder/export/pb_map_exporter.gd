@@ -162,6 +162,39 @@ static func _cleanup_intermediate_in_dir(dir_path: String, base_name: String) ->
 	dir.list_dir_end()
 	return cleaned
 
+## ── Export profiler ──────────────────────────────────────────────────────────
+## Coarse stage timing for one export run, accumulated into `export_profile`
+## (stage name → microseconds) by _prof_add and printed by _prof_print when
+## export_map / export_retro_pbm finishes. This is how a session answers
+## "what consumes the export's time" without re-measuring by hand: the
+## bench's retro bake of the demo map is minutes of wall time and the split
+## (tile bake vs light bake vs GLTF serialize vs PBM write) decides what is
+## worth optimizing. Static because every export path is static and
+## single-threaded.
+static var export_profile: Dictionary = {}
+
+static func _prof_start() -> int:
+	return Time.get_ticks_usec()
+
+static func _prof_add(stage: String, t0: int) -> void:
+	export_profile[stage] = int(export_profile.get(stage, 0)) + (Time.get_ticks_usec() - t0)
+
+static func _prof_print(file_path: String) -> void:
+	var total := int(export_profile.get("total", 0))
+	if total <= 0:
+		return
+	var stages: Array = export_profile.keys()
+	stages.sort_custom(func(a, b): return export_profile[a] > export_profile[b])
+	var parts: Array[String] = []
+	for stage in stages:
+		if stage == "total":
+			continue
+		var us: int = export_profile[stage]
+		if us >= 1000:
+			parts.append("%s %.0f ms (%d%%)" % [stage, us / 1000.0, us * 100 / total])
+	print("[export-profile] %s — total %.1f s | %s" % [
+		file_path.get_file(), total / 1000000.0, " + ".join(parts)])
+
 ## Exports the given scene root to a .glb or .gltf file on disk synchronously.
 static func export_map(root: Node, file_path: String, settings: ExportSettings = null) -> Error:
 	if root == null or file_path.is_empty():
@@ -174,20 +207,30 @@ static func export_map(root: Node, file_path: String, settings: ExportSettings =
 	settings.export_path = file_path
 
 	ensure_export_dir(file_path)
+	export_profile.clear()
+	var t_total := _prof_start()
 
+	var t0 := _prof_start()
 	var export_tree := build_export_tree(root, settings)
+	_prof_add("build export tree", t0)
 	if export_tree == null:
 		return ERR_CANT_CREATE
 
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
 
+	t0 = _prof_start()
 	var err := doc.append_from_scene(export_tree, state)
+	_prof_add("gltf serialize", t0)
 	if err != OK:
 		export_tree.free()
 		return err
 
+	t0 = _prof_start()
 	err = doc.write_to_filesystem(state, file_path)
+	_prof_add("gltf write", t0)
+	_prof_add("total", t_total)
+	_prof_print(file_path)
 	export_tree.free()
 
 	var should_cleanup: bool = settings.cleanup_intermediate_files if settings != null else true
@@ -309,14 +352,23 @@ static func build_export_tree(root: Node, settings: ExportSettings = null) -> No
 		export_root.set_meta("extras", {"poi_env_preset": preset_name})
 
 	# Collect scene lights and solid geometry
+	var t0 := _prof_start()
 	var lights := PBLightBaker.collect_scene_lights(root)
+	_prof_add("collect lights", t0)
+	t0 = _prof_start()
 	var grid := PBLightBaker.build_spatial_grid(root)
+	_prof_add("spatial grid", t0)
 
 	var base_material_cache: Dictionary = {}
 
 	# Process nodes recursively
+	t0 = _prof_start()
+	var texture_plan := plan_imported_textures(root, settings)
+	_prof_add("texture plan (props)", t0)
+	t0 = _prof_start()
 	_export_node_recursive(root, export_root, lights, grid, base_material_cache, settings,
-		plan_imported_textures(root, settings))
+		texture_plan)
+	_prof_add("mesh walk (bakes incl.)", t0)
 
 	# Set owner recursively so GLTFDocument in editor mode exports all descendant nodes
 	_set_owner_recursive(export_root, export_root)
@@ -482,11 +534,25 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 			_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
 		return
 
+	var t_node := _prof_start()
 	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
+	_prof_add(_export_stage_name(source_node), t_node)
 
 
 	for child in source_node.get_children():
 		_export_node_recursive(child, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
+
+## The profiler bucket a source node's export cost lands in (see export_profile).
+static func _export_stage_name(source_node: Node) -> String:
+	if source_node is PBMesh:
+		return "pb meshes (non-bake work)"
+	if source_node is MeshInstance3D:
+		if _is_billboard(source_node):
+			return "billboards"
+		return "plain meshes (props)"
+	if source_node is Light3D or source_node is GPUParticles3D:
+		return "lights + emitters"
+	return "other nodes"
 
 ## Godot's ArrayMesh refuses a 257th surface — and it only LOGS the refusal:
 ## every surface past the cap was silently dropped from the exported map. The
@@ -573,6 +639,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 	var all_fragments: Array[PBFaceSubdivider.TileFragment] = []
 	var frag_materials: Dictionary = {} # TileFragment -> Material
 
+	var t_tiles := _prof_start()
 	for fi in range(mesh_data.faces.size()):
 		var face: PBFace = mesh_data.faces[fi]
 		if face == null or face.get_indexes().is_empty():
@@ -587,6 +654,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 			if mat == null:
 				mat = PBTileBaker._get_or_create_base_material(mesh_data.get_face_material(face), base_material_cache, settings.max_texture_size)
 			frag_materials[frag] = mat
+	_prof_add("subdivide + tile bake", t_tiles)
 
 	if all_fragments.is_empty():
 		return
@@ -600,6 +668,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 		mat_groups[mat].append(frag)
 
 	var chunker := SurfaceChunker.new()
+	var t_assemble := _prof_start()
 	for mat: Material in mat_groups:
 		var group_frags: Array = mat_groups[mat]
 		var surf_positions := PackedVector3Array()
@@ -626,10 +695,12 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 				surf_indices.append(base_idx + idx)
 
 		# Bake vertex colors for this surface
+		var t_bake := _prof_start()
 		var surf_colors := PBLightBaker.bake_vertex_colors(surf_positions, surf_normals,
 			node_xf, lights, grid, settings.bake_lighting, settings.bake_shadows,
 			settings.bake_ao, settings.ao_samples, settings.ao_distance,
 			settings.ao_intensity, settings.ambient_color)
+		_prof_add("vertex light bake", t_bake)
 		surf_colors = _boost_baked_colors(surf_colors, settings.bake_boost)
 
 		for ci in range(surf_colors.size()):
@@ -649,6 +720,7 @@ static func _export_retro_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light3
 
 	chunker.flush()
 	_attach_meshes(parent, pb.name, _get_world_transform(pb), chunker.meshes)
+	_prof_add("surface assembly + attach", t_assemble)
 
 	# Export separate collider mesh if enabled
 	if settings.export_colliders and pb.collider_type != PBMesh.ColliderType.OFF:
@@ -690,7 +762,9 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 
 	var meshes: Array[ArrayMesh] = []
 	if has_splat and settings.splat_mode == ExportSettings.SplatMode.BAKE:
+		var t_splat := _prof_start()
 		meshes = _build_modern_baked_splat_mesh(mesh_data, settings)
+		_prof_add("modern paint bake", t_splat)
 	if meshes.is_empty():
 		var am := mesh_data.to_array_mesh()
 		# glTF has no representation for custom ShaderMaterials: a splat material
@@ -703,6 +777,7 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 
 	# If bake lighting is toggled on, bake vertex colors directly onto the ArrayMesh surfaces
 	if settings.bake_lighting:
+		var t_bake := _prof_start()
 		var baked_meshes: Array[ArrayMesh] = []
 		for chunk in meshes:
 			var new_am := ArrayMesh.new()
@@ -727,6 +802,7 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 				new_am.surface_set_material(s, chunk.surface_get_material(s))
 			baked_meshes.append(new_am)
 		meshes = baked_meshes
+		_prof_add("vertex light bake", t_bake)
 
 	_attach_meshes(parent, pb.name, node_xf, meshes)
 
@@ -1271,16 +1347,20 @@ static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[L
 				norm[i] = Vector3.UP
 			arrays[Mesh.ARRAY_NORMAL] = norm
 		if settings.bake_lighting:
+			var t_prop_bake := _prof_start()
 			var prop_cols := PBLightBaker.bake_vertex_colors(
 				pos, norm, node_xf, lights, grid, true, settings.bake_shadows,
 				settings.bake_ao, settings.ao_samples, settings.ao_distance,
 				settings.ao_intensity, settings.ambient_color)
+			_prof_add("prop light bake", t_prop_bake)
 			arrays[Mesh.ARRAY_COLOR] = _boost_baked_colors(prop_cols, settings.bake_boost)
 		var mat: Material = mi.get_active_material(s)
 		var plan_entry := _texture_plan_entry(texture_plan, mat)
 		arrays = _apply_texture_plan_to_uvs(arrays, plan_entry)
+		var t_prop_mat := _prof_start()
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		am.surface_set_material(am.get_surface_count() - 1, _sanitize_material_for_retro(mat, settings, plan_entry))
+		_prof_add("prop material sanitize", t_prop_mat)
 	if am.get_surface_count() == 0:
 		export_mi.free()
 		return
@@ -1416,12 +1496,20 @@ static func export_retro_pbm(root: Node, file_path: String, settings: ExportSett
 	settings.export_path = file_path
 
 	ensure_export_dir(file_path)
+	export_profile.clear()
+	var t_total := _prof_start()
 
+	var t0 := _prof_start()
 	var export_tree := build_export_tree(root, settings)
+	_prof_add("build export tree", t0)
 	if export_tree == null:
 		return ERR_CANT_CREATE
 
+	t0 = _prof_start()
 	var err := _write_pbm_from_tree(root, export_tree, file_path, settings)
+	_prof_add("pbm write", t0)
+	_prof_add("total", t_total)
+	_prof_print(file_path)
 	export_tree.free()
 	return err
 

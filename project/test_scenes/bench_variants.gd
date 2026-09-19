@@ -15,8 +15,15 @@
 ## double-light) and its materials get albedo-from-COLOR_0 + unshaded via
 ## PBMapExporter.apply_baked_vertex_colors(); the modern GLB's shadow flags
 ## are RESTORED from the poi_shadow node extras (glTF lights cannot carry
-## them); both get the display environment the export's extras name.
+## them); both get the display environment the export's extras name; and the
+## export's particle emitters — poi_emitter records on EmitterTex_* holder
+## nodes — are REBUILT as billboards by the shared EmitterPreview, the same
+## reconstruction the retro viewer draws. A GLB without its emitters is not
+## the map the PB variant plays: the flame, the embers and the waterfall's
+## mist bank are exactly what the retro bake exists to carry.
 class_name BenchVariants
+
+const EmitterPreviewT := preload("res://test_scenes/emitter_preview.gd")
 
 const VARIANT_NAMES := ["pb", "retro_glb", "modern_glb"]
 
@@ -122,6 +129,12 @@ static func load_variant(variant: String) -> Node3D:
 		else:
 			PBEnvironment.apply_preset(generated as Node3D, preset)
 			note += " [env preset: %s]" % preset
+	# The GLB carries the particle emitters as poi_emitter records on hidden
+	# EmitterTex_* holders; a consumer rebuilds them. The rig keeps the
+	# billboard meshes current against the active camera for the whole session.
+	var rig := EmitterPreviewT.attach(generated)
+	if rig != null:
+		note += " [emitters rebuilt: %d]" % rig.previews.size()
 	var census2 := {"mesh": 0, "particles": 0, "lights": 0}
 	census(generated, census2)
 	print("[bench] variant=%s meshes=%d emitters=%d lights=%d%s" % [
@@ -136,7 +149,14 @@ static func apply_to_lights(node: Node, fn: Callable) -> void:
 
 static func census(node: Node, out: Dictionary) -> void:
 	if node is MeshInstance3D:
-		out["mesh"] += 1
+		# Emitter transport (EmitterTex_* holders) and the rebuilt billboard
+		# previews are not geometry: the holder is the poi_emitter record's
+		# ride, the preview IS the emitter — count previews as particles.
+		var n := String(node.name)
+		if n.begins_with("EmitterPreview_"):
+			out["particles"] += 1
+		elif not n.begins_with("EmitterTex_"):
+			out["mesh"] += 1
 	elif node is GPUParticles3D:
 		out["particles"] += 1
 	elif node is Light3D:
