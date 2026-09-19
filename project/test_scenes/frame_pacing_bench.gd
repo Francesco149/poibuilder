@@ -21,12 +21,43 @@
 ## Reports land in project/exports/bench/ (gitignored).
 ##
 ## Caveats carried in the report: first-sight shader compiles are real user
-## experience and NOT smoothed away (the 3 s warmup only covers the spawn
-## view); vsync is off so the numbers are render-side, not compositor-cadence.
+## experience and NOT smoothed away — the COLD pass keeps them, while the
+## STEADY summary (the headline) trims the warm pass's first second so the
+## numbers describe the run, not the load. vsync is off so the numbers are
+## render-side, not compositor-cadence.
+##
+## Variant handling that keeps the comparison honest: the retro GLB's
+## imported Light3D nodes are HIDDEN (the retro bake carries its lighting in
+## vertex colors — live lights would double-light; this is the reference
+## viewer's vertex-color mode), and the modern GLB's shadow flags are
+## RESTORED from the poi_shadow node extras the exporter writes (glTF
+## lights cannot carry them).
+##
+## Ablation profiling (--ablate, pb variant only): the PB scene is flown
+## once as-is, then once per ablation — no_shadows / no_emitters / no_splat
+## / no_lights — each on a fresh instantiate, warm pass only. The deltas
+## attribute the frame cost to its sources (shadow passes, particle fill,
+## the splat shader, dynamic lighting) so an optimization pass knows where
+## to dig. Render counters (draw calls / primitives / objects per frame)
+## ride along in every summary.
 extends SceneTree
 
 const WARMUP_SECONDS := 3.0
+const STEADY_TRIM_SECONDS := 1.0 # headline numbers exclude the load tail
 const CAMERA_FOV := 70.0
+const ABLATIONS := ["no_shadows", "no_emitters", "no_splat", "no_lights"]
+
+## Visual-parity poses: every variant x renderer is photographed here and the
+## frames assembled into contact sheets (tools/bench_contact_sheet.py), so a
+## lighting regression is SEEN next to its siblings, not just measured.
+const SHOT_POSES := {
+	"plaza": [Vector3(0.0, 1.6, 6.5), Vector3(-2.0, 1.4, -6.0)],
+	"waterfall": [Vector3(-2.6, 1.7, 2.6), Vector3(-7.0, 1.9, -1.2)],
+	"doorway": [Vector3(-1.6, 1.6, 1.0), Vector3(-2.0, 1.3, -9.8)],
+	"neon": [Vector3(-1.6, 1.6, -9.2), Vector3(-4.3, 1.0, -11.3)],
+	"roof": [Vector3(2.75, 4.1, -6.6), Vector3(-2.0, 2.5, -9.7)],
+}
+const SHOT_SETTLE_FRAMES := 40
 
 ## The gameplay-like camera path. Each leg: [from_pos, to_pos, look_at, seconds]
 ## — position lerps (smoothstep) from->to while KEEPING the look-at fixed, so
@@ -55,6 +86,10 @@ func _run() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 
+	if opts["ablate"] != "":
+		await _run_ablation(opts)
+		return
+
 	var map := _load_variant(opts["variant"])
 	if map == null:
 		quit(1)
@@ -72,45 +107,73 @@ func _run() -> void:
 	# ── recording: two passes over the same path. PASS 1 is "cold" — the
 	# first-visit experience where mid-path shader compiles and first texture
 	# uploads show up as hitches, exactly what a player walking in for the
-	# first time hits. PASS 2 is "warm" steady-state. ──
-	var passes: Array = [[], []]
-	for pass_idx in range(passes.size()):
-		var frames := PackedFloat64Array()
-		var elapsed := 0.0
-		var leg_idx := 0
-		var leg_t := 0.0
-		var total := _path_seconds()
-		while elapsed < total:
-			var t0 := Time.get_ticks_usec()
-			await process_frame
-			var dt_ms := float(Time.get_ticks_usec() - t0) / 1000.0
-			frames.append(dt_ms)
-			elapsed += dt_ms / 1000.0
-			leg_t += dt_ms / 1000.0
-			var leg: Array = PATH[leg_idx]
-			var leg_dur := float(leg[3])
-			if leg_t >= leg_dur and leg_idx < PATH.size() - 1:
-				leg_t = 0.0
-				leg_idx += 1
-				leg = PATH[leg_idx]
-			var k := clampf(leg_t / leg_dur, 0.0, 1.0)
-			k = k * k * (3.0 - 2.0 * k) # smoothstep: game-like accelerate/decelerate
-			cam.position = (leg[0] as Vector3).lerp(leg[1] as Vector3, k)
-			cam.look_at(leg[2] as Vector3)
-		passes[pass_idx] = _summarize(opts["variant"], frames, elapsed, map,
+	# first time hits. PASS 2 is "warm" steady-state; its STEADY summary
+	# (trimmed by STEADY_TRIM_SECONDS) is the headline — perf data from the
+	# run, not the load. ──
+	var summaries: Array = [[], []]
+	var warm_frames := PackedFloat64Array()
+	for pass_idx in range(summaries.size()):
+		var flown := await _fly_pass(cam)
+		summaries[pass_idx] = _summarize(opts["variant"], flown["frames"], map,
 			"cold" if pass_idx == 0 else "warm")
+		if pass_idx == 1:
+			warm_frames = flown["frames"]
+	var steady_frames := warm_frames.slice(_frames_after_trim(warm_frames))
+	var steady := _summarize(opts["variant"], steady_frames, map, "steady")
 
 	var report := {
 		"variant": opts["variant"],
-		"census": passes[0]["census"],
-		"cold": passes[0],
-		"warm": passes[1],
+		"renderer": RenderingServer.get_current_rendering_method(),
+		"census": summaries[0]["census"],
+		"cold": summaries[0],
+		"warm": summaries[1],
+		"steady": steady,
+		"steady_trim_seconds": STEADY_TRIM_SECONDS,
 	}
 	_write_report(report, opts["out"])
 	_print_summary(report["cold"])
 	_print_summary(report["warm"])
+	_print_summary(report["steady"])
+	await _capture_shots(cam, opts["variant"])
 	map.free()
 	quit(0)
+
+## Flies the whole path once, recording every frame's wall-clock ms.
+func _fly_pass(cam: Camera3D) -> Dictionary:
+	var frames := PackedFloat64Array()
+	var draws := PackedInt64Array()
+	var elapsed := 0.0
+	var leg_idx := 0
+	var leg_t := 0.0
+	var total := _path_seconds()
+	while elapsed < total:
+		var t0 := Time.get_ticks_usec()
+		await process_frame
+		var dt_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+		frames.append(dt_ms)
+		elapsed += dt_ms / 1000.0
+		leg_t += dt_ms / 1000.0
+		var leg: Array = PATH[leg_idx]
+		var leg_dur := float(leg[3])
+		if leg_t >= leg_dur and leg_idx < PATH.size() - 1:
+			leg_t = 0.0
+			leg_idx += 1
+			leg = PATH[leg_idx]
+		var k := clampf(leg_t / leg_dur, 0.0, 1.0)
+		k = k * k * (3.0 - 2.0 * k) # smoothstep: game-like accelerate/decelerate
+		cam.position = (leg[0] as Vector3).lerp(leg[1] as Vector3, k)
+		cam.look_at(leg[2] as Vector3)
+	return {"frames": frames, "elapsed": elapsed}
+
+## Index of the first frame whose cumulative time is past the trim: everything
+## before it is load/spawn tail, not run.
+func _frames_after_trim(frames: PackedFloat64Array) -> int:
+	var acc := 0.0
+	for i in range(frames.size()):
+		acc += frames[i] / 1000.0
+		if acc >= STEADY_TRIM_SECONDS:
+			return i + 1
+	return frames.size()
 
 func _path_seconds() -> float:
 	var total := 0.0
@@ -167,11 +230,81 @@ func _load_variant(variant: String) -> Node3D:
 	if generated == null:
 		push_error("%s produced no scene" % path)
 		return null
+	if variant == "retro_glb":
+		# The bake's lighting lives in COLOR_0; Godot's importer does not
+		# enable the albedo-from-vertex-color flag for JSON-authored
+		# materials, so without this the baked map renders black once the
+		# (double-lighting) imported lights are hidden.
+		PBMapExporter.apply_baked_vertex_colors(generated)
+	var note := ""
+	if variant == "retro_glb":
+		# Viewer parity: the retro bake carries its lighting in VERTEX COLORS.
+		# The GLB also transports the light nodes (a consumer may want them for
+		# dynamic objects), but leaving them live here double-lights every
+		# surface — the reference viewer hides them in its vertex-color mode,
+		# and so does the bench.
+		var hidden := [0] # lambdas capture locals by value: count in a cell
+		_apply_to_lights(generated, func(l: Light3D) -> void:
+			l.visible = false
+			hidden[0] += 1)
+		note = " (import lights hidden: %d — vertex-lit scene)" % hidden[0]
+	else:
+		# glTF lights carry no shadow flags; the exporter tags shadow-casting
+		# lights with poi_shadow node extras. Restore the authored look.
+		var restored := [0]
+		_apply_to_lights(generated, func(l: Light3D) -> void:
+			if l.has_meta("extras") and (l.get_meta("extras") as Dictionary).get("poi_shadow", false):
+				l.shadow_enabled = true
+				restored[0] += 1)
+		note = " (shadows restored from poi_shadow extras: %d)" % restored[0]
+	# The display environment a consumer should show. The retro GLB is FULLY
+	# BAKED — its lighting lives in the vertex colors, so the consumer adds
+	# NOTHING (no ambient, linear tonemap): sky + the preset's linear fog,
+	# exactly what the PSP draws (apply_retro_display). The modern GLB keeps
+	# live materials, so it gets the full authored environment back. The
+	# preset name rides the export root's extras either way.
+	var preset := "day"
+	if generated.has_meta("extras"):
+		preset = str((generated.get_meta("extras") as Dictionary).get("poi_env_preset", preset))
+	elif generated.has_meta("poi_env_preset"):
+		preset = str(generated.get_meta("poi_env_preset"))
+	if generated is Node3D:
+		if variant == "retro_glb":
+			PBEnvironment.apply_retro_display(generated as Node3D, preset)
+			note += " [retro display env: %s]" % preset
+		else:
+			PBEnvironment.apply_preset(generated as Node3D, preset)
+			note += " [env preset: %s]" % preset
 	var census2 := {"mesh": 0, "particles": 0, "lights": 0}
 	_census(generated, census2)
-	print("[bench] variant=%s meshes=%d emitters=%d lights=%d" % [
-		variant, census2["mesh"], census2["particles"], census2["lights"]])
+	print("[bench] variant=%s meshes=%d emitters=%d lights=%d%s" % [
+		variant, census2["mesh"], census2["particles"], census2["lights"], note])
 	return generated
+
+func _apply_to_lights(node: Node, fn: Callable) -> void:
+	if node is Light3D:
+		fn.call(node)
+	for c in node.get_children():
+		_apply_to_lights(c, fn)
+
+## Photographs SHOT_POSES (or a given subset) into exports/bench/shots/ named
+## <renderer>_<variant>_<pose>.png — tools/bench_contact_sheet.py grids them.
+func _capture_shots(cam: Camera3D, variant: String, poses: Array = []) -> void:
+	var dir := ProjectSettings.globalize_path("res://exports/bench/shots")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var method := RenderingServer.get_current_rendering_method()
+	var tag := "vulkan" if method.contains("forward") else "gl"
+	var wanted: Array = poses if not poses.is_empty() else SHOT_POSES.keys()
+	for pose_name: String in wanted:
+		var pose: Array = SHOT_POSES[pose_name]
+		cam.position = pose[0]
+		cam.look_at(pose[1])
+		for i in range(SHOT_SETTLE_FRAMES):
+			await process_frame
+		var img := root.get_viewport().get_texture().get_image()
+		var path := dir.path_join("%s_%s_%s.png" % [tag, variant, pose_name])
+		var err := img.save_png(path)
+		print("[bench] shot %s (%s)" % [path, error_string(err)])
 
 func _census(node: Node, out: Dictionary) -> void:
 	if node is MeshInstance3D:
@@ -197,15 +330,122 @@ func _fly_leg(cam: Camera3D, leg: Array, seconds_scale: float) -> void:
 		cam.look_at(leg[2] as Vector3)
 
 func _parse_args() -> Dictionary:
-	var opts := {"variant": "pb", "seconds": "0", "out": ""}
+	var opts := {"variant": "pb", "seconds": "0", "out": "", "ablate": ""}
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--variant="):
 			opts["variant"] = arg.get_slice("=", 1)
 		elif arg.begins_with("--out="):
 			opts["out"] = arg.get_slice("=", 1)
+		elif arg.begins_with("--ablate"):
+			opts["ablate"] = arg.get_slice("=", 1) if "=" in arg else ",".join(ABLATIONS)
 	return opts
 
-func _summarize(variant: String, frames: PackedFloat64Array, elapsed: float, map: Node3D,
+## ── ablation profiling ───────────────────────────────────────────────────────
+## One process, one camera path, several scenes: the PB scene flown as-is,
+## then once per ablation on a fresh instantiate. The DELTA of each row against
+## the base is that feature's share of the frame — the "where to optimize" map.
+func _run_ablation(opts: Dictionary) -> void:
+	var cam := Camera3D.new()
+	cam.fov = CAMERA_FOV
+	cam.current = true
+	root.add_child(cam)
+
+	var rows: Array = []
+	var ablations: Array = ABLATIONS if opts["ablate"] == "" \
+			else Array(String(opts["ablate"]).split(","))
+	for ablation in ["base"] + ablations:
+		var map := _load_variant("pb")
+		if map == null:
+			quit(1)
+			return
+		root.add_child(map)
+		var applied := _apply_ablation(map, ablation)
+		# Warmup at the spawn view (shader compiles are not what we measure),
+		# then ONE warm pass — the steady question is "what does the run cost".
+		await _fly_leg(cam, PATH[0], WARMUP_SECONDS / float(PATH[0][3]))
+		var flown := await _fly_pass(cam)
+		var steady_frames: PackedFloat64Array = (flown["frames"] as PackedFloat64Array) \
+			.slice(_frames_after_trim(flown["frames"]))
+		var summary := _summarize(ablation, steady_frames, map, "steady")
+		summary["ablation_removed"] = applied
+		rows.append(summary)
+		print("[profile] %-11s median %6.2f ms | 1%% low %6.2f | jitter %4.2f | draws %d | removed: %s" % [
+			ablation, summary["median_ms"], summary["p99_ms"], summary["jitter_ms"],
+			summary["avg_draw_calls"], applied])
+		await _capture_shots(cam, "ablation_" + ablation, ["plaza", "neon"])
+		map.free()
+	var base: Dictionary = rows[0]
+	for row: Dictionary in rows:
+		row["delta_ms_vs_base"] = row["median_ms"] - base["median_ms"]
+	_print_profile(rows)
+	_write_report({"variant": "pb", "profile": "ablation", "rows": rows},
+		"res://exports/bench/pb_profile.json")
+	quit(0)
+
+## Applies one ablation to the live PB scene and returns what was removed.
+func _apply_ablation(map: Node3D, ablation: String) -> String:
+	match ablation:
+		"base":
+			return "nothing (reference)"
+		"no_shadows":
+			var n := [0]
+			_apply_to_lights(map, func(l: Light3D) -> void:
+				if l.shadow_enabled:
+					l.shadow_enabled = false
+					n[0] += 1)
+			return "%d shadow-casting lights" % n[0]
+		"no_emitters":
+			var n := _free_emitters(map)
+			return "%d particle emitters" % n
+		"no_splat":
+			var n := 0
+			var stack: Array[Node] = [map]
+			while not stack.is_empty():
+				var node: Node = stack.pop_back()
+				if node is PBMesh and (node as PBMesh).pb_mesh_data != null:
+					var pb := node as PBMesh
+					var swapped := false
+					for mi in range(pb.pb_mesh_data.materials.size()):
+						var mat := pb.pb_mesh_data.materials[mi]
+						if mat != null and PBSplat.is_splat_material(mat):
+							pb.pb_mesh_data.materials[mi] = PBMapExporter._standard_from_splat(mat)
+							swapped = true
+							n += 1
+					if swapped:
+						pb.rebuild()
+				for c in node.get_children():
+					stack.append(c)
+			return "%d splat materials -> standard" % n
+		"no_lights":
+			var n := [0]
+			_apply_to_lights(map, func(l: Light3D) -> void:
+				if l.visible:
+					l.visible = false
+					n[0] += 1)
+			return "%d lights" % n[0]
+	push_error("unknown ablation '%s' (%s)" % [ablation, ", ".join(ABLATIONS)])
+	return "UNKNOWN"
+
+func _free_emitters(node: Node) -> int:
+	var n := 0
+	for c in node.get_children():
+		if c is GPUParticles3D:
+			c.visible = false
+			c.emitting = false
+			n += 1
+		n += _free_emitters(c)
+	return n
+
+func _print_profile(rows: Array) -> void:
+	var base: Dictionary = rows[0]
+	print("[profile] base median %.2f ms; deltas attribute the frame cost:" % base["median_ms"])
+	for row: Dictionary in rows:
+		if row == base:
+			continue
+		print("[profile]   without %-12s %6.2f ms  (%+.2f vs base)" % [
+			row["ablation"], row["median_ms"], row["delta_ms_vs_base"]])
+
+func _summarize(variant: String, frames: PackedFloat64Array, map: Node3D,
 		pass_name: String) -> Dictionary:
 	var sorted := Array(frames)
 	sorted.sort()
@@ -213,6 +453,7 @@ func _summarize(variant: String, frames: PackedFloat64Array, elapsed: float, map
 	var sum := 0.0
 	for v in sorted:
 		sum += v
+	var elapsed := sum / 1000.0
 	var avg := sum / float(n)
 	var median: float = sorted[n / 2]
 	var p95: float = sorted[int(n * 0.95)]
@@ -249,6 +490,9 @@ func _summarize(variant: String, frames: PackedFloat64Array, elapsed: float, map
 		"pct_over_16_7ms": 100.0 * over_167 / n,
 		"pct_over_33_3ms": 100.0 * over_333 / n,
 		"hitches_2x_median": hitches,
+		"avg_draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+		"avg_primitives": Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME),
+		"objects_in_frame": Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
 		"census": census,
 		"frames_ms": Array(frames),
 	}
@@ -266,7 +510,7 @@ func _write_report(report: Dictionary, out_path: String) -> void:
 	print("[bench] report -> %s" % ProjectSettings.globalize_path(out_path))
 
 func _print_summary(r: Dictionary) -> void:
-	print("[bench] %-10s avg %5.1f fps (%5.2f ms) | median %5.2f | 1%% low %5.2f | worst %6.2f ms | jitter %4.2f | >16.7ms %4.1f%% | >33.3ms %3.1f%% | hitches %d" % [
+	print("[bench] %-10s avg %5.1f fps (%5.2f ms) | median %5.2f | 1%% low %5.2f | worst %6.2f ms | jitter %4.2f | >16.7ms %4.1f%% | >33.3ms %3.1f%% | hitches %d | draws %d" % [
 		r["variant"], r["avg_fps"], r["avg_ms"], r["median_ms"], r["p99_ms"],
 		r["worst_ms"], r["jitter_ms"], r["pct_over_16_7ms"], r["pct_over_33_3ms"],
-		r["hitches_2x_median"]])
+		r["hitches_2x_median"], r["avg_draw_calls"]])

@@ -5,8 +5,13 @@
 # exactly like a native run. Built once by tools/godot_guard.sh --podman;
 # afterwards every guarded run gets a hard memory cap, CPU limit, and a
 # container that is force-removed on exit.
+#
+# vulkan-icd-loader + vulkan-intel: the frame-pacing bench has a Vulkan
+# (forward_plus) axis, and with GUARD_X11=1 the container gets /dev/dri —
+# without the ANV ICD inside the image the forward_plus run cannot create a
+# device and the Vulkan numbers cannot exist.
 FROM docker.io/library/archlinux:latest
-RUN pacman -Sy --noconfirm archlinux-keyring && pacman -Su --noconfirm --noconfirm glibc gcc-libs fontconfig && rm -rf /var/cache/pacman/pkg/*
+RUN pacman -Sy --noconfirm archlinux-keyring && pacman -Su --noconfirm --noconfirm glibc gcc-libs fontconfig vulkan-icd-loader vulkan-intel && rm -rf /var/cache/pacman/pkg/*
 COPY godot-mono/ /usr/lib/godot-mono/
 COPY dotnet/ /usr/share/dotnet/
 COPY godot-wrapper /usr/local/bin/godot-mono

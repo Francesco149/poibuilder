@@ -10,6 +10,10 @@
 #   ./run_bench.sh                 # export variants if missing, run all three
 #   ./run_bench.sh --reexport      # force re-export the GLBs, then bench
 #   ./run_bench.sh pb              # bench one variant (pb | retro_glb | modern_glb)
+#   ./run_bench.sh --renderer vulkan          # forward_plus/Vulkan instead of GL
+#   ./run_bench.sh --profile                  # ablation profile of the PB scene
+#                                             #   (what is bottlenecking)
+#   ./run_bench.sh --profile --renderer vulkan  # the same profile on Vulkan
 #
 # CONTAINMENT: every Godot run goes through tools/godot_guard.sh — headless
 # exports and the GPU bench alike (the bench needs a display: GUARD_X11).
@@ -33,17 +37,32 @@ echo "bench display: DISPLAY=$DISPLAY"
 
 VARIANTS=("pb" "retro_glb" "modern_glb")
 REEXPORT=0
-if [ "${1:-}" = "--reexport" ]; then
-	REEXPORT=1
+RENDERER="gl"
+PROFILE=0
+while [ "${1:-}" != "" ]; do
+	case "$1" in
+		--reexport) REEXPORT=1 ;;
+		--renderer) RENDERER="$2"; shift ;;
+		gl|gl_compatibility|compatibility) RENDERER="gl" ;;
+		vulkan|forward_plus|forward) RENDERER="vulkan" ;;
+		--profile) PROFILE=1 ;;
+		*) VARIANTS=("$1") ;;
+	esac
 	shift
-fi
-if [ "${1:-}" != "" ]; then
-	VARIANTS=("$1")
+done
+if [ "$RENDERER" = "vulkan" ]; then
+	DRIVER_ARGS=(--rendering-method forward_plus --rendering-driver vulkan)
+	RENDERER_NAME="forward_plus (Vulkan)"
+	TAG="vulkan"
+else
+	DRIVER_ARGS=(--rendering-driver opengl3)
+	RENDERER_NAME="gl_compatibility"
+	TAG="gl"
 fi
 
 echo "============================================================"
 echo " PoiBuilder frame-pacing benchmark (alpha demo map)"
-echo " Renderer: gl_compatibility on a real display (vsync off)"
+echo " Renderer: $RENDERER_NAME on a real display (vsync off)"
 echo "============================================================"
 
 bench_export() {
@@ -87,10 +106,18 @@ else
 	echo "== [1/2] Variants already exported (--reexport to force) =="
 fi
 
+if [ "$PROFILE" -eq 1 ]; then
+	echo "== [2/2] Ablation profile of the PB scene ($RENDERER_NAME) =="
+	"$GUARD" exec bash -c "cd /work/project && timeout 600 godot-mono ${DRIVER_ARGS[*]} -s res://test_scenes/frame_pacing_bench.gd -- --ablate --out=res://exports/bench/pb_profile.${TAG}.json" 2>&1 | grep -E '^\[bench\]|^\[profile\]|SCRIPT ERROR|ERROR: .*missing' || true
+	echo ""
+	echo "Reports: $REPO_DIR/project/exports/bench/*.json"
+	exit 0
+fi
+
 echo "== [2/2] Flying the bench (${VARIANTS[*]}) =="
 for v in "${VARIANTS[@]}"; do
 	echo "---- $v ----"
-	"$GUARD" exec bash -c "cd /work/project && timeout 300 godot-mono --rendering-driver opengl3 -s res://test_scenes/frame_pacing_bench.gd -- --variant=$v" 2>&1 | grep -E '^\[bench\]|SCRIPT ERROR|ERROR: .*missing' || true
+	"$GUARD" exec bash -c "cd /work/project && timeout 300 godot-mono ${DRIVER_ARGS[*]} -s res://test_scenes/frame_pacing_bench.gd -- --variant=$v --out=res://exports/bench/${TAG}_${v}.json" 2>&1 | grep -E '^\[bench\]|SCRIPT ERROR|ERROR: .*missing' || true
 done
 
 echo ""
