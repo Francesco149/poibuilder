@@ -33,242 +33,378 @@ ICONS_SRC = REPO / "project" / "addons" / "poibuilder" / "icons"
 
 # Complete catalog of operations, modes, and tools with toolbar location metadata.
 OPS_CATALOG: dict[str, dict] = {
-    # Row 1: Mesh Operations
-    "export": {
-        "label": "Export...", "icon": "icon_export.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "—", "req": "Nothing (always enabled)",
-        "desc": "Opens the export dialog: PBM (the retro .pbm map) or GLB — retro baked or modern live materials — with the bake options."
+    # ── Row 1 ────────────────────────────────────────────────────────────────
+    "split_rows": {
+        "label": "Extended Tools", "icon": "icon_split_rows.svg", "row": 1, "group": "header",
+        "row_name": "Row 1 · Header", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Shows or folds Rows 3 & 4 (extended tools). The state is remembered across sessions."
     },
-    "grid": {
-        "label": "Grid", "icon": "icon_grid.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
-        "key": "= / - subdivisions, [ / ] elevation, Y snap, G draw-on-grid", "req": "Nothing (always enabled)",
-        "desc": "Opens the grid & snapping settings (unit, subdivisions, elevation, draw-on-grid); the readout beside it shows the current snap step."
+    "move": {
+        "label": "Move", "icon": "icon_move.svg", "row": 1, "group": "tools",
+        "row_name": "Row 1 · Tools", "key": "W", "req": "A selection",
+        "desc": "The plugin's own move tool: drag elements or the whole object on the gizmo axes."
     },
-    "obj_lit": {
-        "label": "Lit", "icon": "icon_lit.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
-        "key": "Rebindable (Object: Toggle Lit)", "req": "Selected objects",
-        "desc": "Shading on/off for every selected object (PBMesh, MeshInstance3D, CSG). Mixed selections render unchecked; checking synchronizes all of them."
+    "rotate": {
+        "label": "Rotate", "icon": "icon_rotate.svg", "row": 1, "group": "tools",
+        "row_name": "Row 1 · Tools", "key": "E", "req": "A selection",
+        "desc": "Rotate the selection around the gizmo rings; orientation space follows the Space button."
     },
-    "obj_shadow": {
-        "label": "Cast Shadows", "icon": "icon_shadow.svg", "row": 3, "row_name": "Row 3 · Grid, Selection & Object State",
-        "key": "Rebindable (Object: Toggle Cast Shadows)", "req": "Selected objects",
-        "desc": "Shadow casting on/off for every selected object. Same mixed-checkbox semantics as Lit."
+    "scale": {
+        "label": "Scale", "icon": "icon_scale.svg", "row": 1, "group": "tools",
+        "row_name": "Row 1 · Tools", "key": "R", "req": "A selection",
+        "desc": "Axis handles scale freely; the CENTER square scales all axes together (Shift + center on faces insets)."
+    },
+    "env": {
+        "label": "Time of Day", "icon": "icon_env.svg", "row": 1, "group": "env",
+        "row_name": "Row 1 · Environment", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Quick environment presets: Dawn, Day, Dusk, Night. Export stores the preset name."
     },
     "extrude": {
-        "label": "Extrude", "icon": "icon_extrude.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Shift + Move / Alt + E", "req": "Face or Edge selection",
-        "desc": "Extrude selected faces outward along normals, or pull edge fins to extend boundaries."
+        "label": "Extrude", "icon": "icon_extrude.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Alt + E / Shift + Move", "req": "Face or edge selection",
+        "desc": "Extrudes selected faces along their normal; in edge mode it pulls edge fins. Shift+Move does it live."
     },
     "inset": {
-        "label": "Inset", "icon": "icon_inset.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Shift + Scale / I", "req": "Face selection",
-        "desc": "Insets selected faces, creating an outer border and shrinking the inner face."
+        "label": "Inset", "icon": "icon_inset.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Alt + I / Shift + Scale", "req": "Face selection",
+        "desc": "Insets the selected faces (an outer border around a shrunken copy). Shift+Scale does it live."
     },
     "bevel": {
-        "label": "Bevel", "icon": "icon_bevel.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Ctrl + B", "req": "Face or Edge selection",
-        "desc": "Chamfer or fillet selected edges or face perimeters into smooth rounded bands."
+        "label": "Bevel", "icon": "icon_bevel.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Ctrl + B", "req": "Edge or face selection",
+        "desc": "Chamfers or fillets selected edges (or face perimeters) with a live distance/segments modal."
     },
     "bridge": {
-        "label": "Bridge", "icon": "icon_bridge.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + B", "req": "2 open boundary edges",
-        "desc": "Connects two open boundary edges with bridging quad faces."
+        "label": "Bridge", "icon": "icon_bridge.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Alt + B", "req": "2 open boundary edges",
+        "desc": "Connects two open boundary edges with a face."
     },
     "connect": {
-        "label": "Connect", "icon": "icon_connect.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + E", "req": "2+ vertices or edges",
-        "desc": "Inserts an edge connecting selected vertices or edge midpoints."
+        "label": "Connect", "icon": "icon_connect.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Edges or vertices",
+        "desc": "Inserts an edge connecting edge midpoints (or selected vertices)."
     },
     "collapse": {
-        "label": "Collapse", "icon": "icon_collapse.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + C", "req": "Vertices, edges, or faces",
-        "desc": "Collapses selected vertices, edges, or faces to a single geometric center."
+        "label": "Collapse", "icon": "icon_collapse.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Vertices, edges, or faces",
+        "desc": "Collapses the selected elements to a single point."
     },
     "fill_hole": {
-        "label": "Fill Hole", "icon": "icon_fill_hole.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + F", "req": "Open boundary edge loop",
-        "desc": "Fills open mesh holes and perimeter loops with a new polygon face."
+        "label": "Fill Hole", "icon": "icon_fill_hole.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "An open boundary",
+        "desc": "Caps open boundary loops with a new face."
     },
     "knife": {
-        "label": "Knife Tool", "icon": "icon_knife.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "K", "req": "Face selection",
-        "desc": "Cuts across faces along an interactive clicked path, splitting geometry."
+        "label": "Knife", "icon": "icon_knife.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "A face to cut",
+        "desc": "Cuts faces by placing vertices; Enter completes the cut."
     },
     "loopcut": {
-        "label": "Insert Edge Loop", "icon": "icon_loop_cut.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + R", "req": "Edge selection",
-        "desc": "Inserts a continuous edge loop that turns all four corners of a quad mesh."
+        "label": "Loop Cut", "icon": "icon_loop_cut.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "An edge crossing a quad ring",
+        "desc": "Inserts an edge loop through the ring of quads crossed by the selected edge."
     },
     "merge": {
-        "label": "Merge Faces", "icon": "icon_merge.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + M", "req": "Coplanar faces",
-        "desc": "Merges adjacent coplanar faces into a single flat n-gon."
+        "label": "Merge", "icon": "icon_merge.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Edge-adjacent faces",
+        "desc": "Merges edge-adjacent selected faces into one n-gon."
     },
     "subdivide": {
-        "label": "Subdivide", "icon": "icon_subdivide.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + S", "req": "Face or edge selection",
-        "desc": "Splits selected faces or edges into smaller subdivisions."
+        "label": "Subdiv", "icon": "icon_subdivide.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Quad faces",
+        "desc": "Subdivides the selected quads into four."
     },
     "weld": {
-        "label": "Weld Vertices", "icon": "icon_weld.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + V", "req": "2+ vertices",
-        "desc": "Welds coincident vertices together within a distance threshold."
+        "label": "Weld", "icon": "icon_weld.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "2+ vertices",
+        "desc": "Welds the selected vertices together at their centroid."
     },
     "detach": {
-        "label": "Detach Faces", "icon": "icon_detach.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Alt + D", "req": "Face selection",
-        "desc": "Detaches selected faces into a separate new PBMesh object."
+        "label": "Detach", "icon": "icon_detach.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Face selection",
+        "desc": "Detaches the selected faces into a new PBMesh node."
     },
     "delete": {
-        "label": "Delete Elements", "icon": "icon_delete.svg", "row": 1, "row_name": "Row 1 · Mesh Operations",
-        "key": "Delete", "req": "Selected elements",
-        "desc": "Deletes selected faces, edges, or vertices from the mesh."
+        "label": "Del", "icon": "icon_delete.svg", "row": 1, "group": "ops",
+        "row_name": "Row 1 · Mesh Operations", "key": "Unbound (rebindable)", "req": "Face selection",
+        "desc": "Deletes the selected faces."
     },
-    # Row 2: Modes & Docks
+    # ── Row 2 ────────────────────────────────────────────────────────────────
     "object": {
-        "label": "Object Mode", "icon": "icon_object.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "Click empty / Esc", "req": "Node selection",
-        "desc": "Transforms whole PBMesh nodes with the engine transform gizmo."
+        "label": "Object", "icon": "icon_object.svg", "row": 2, "group": "modes",
+        "row_name": "Row 2 · Selection Modes", "key": "Unbound (rebindable)", "req": "Nothing",
+        "desc": "Object mode: whole-object transforms; clicking selects other nodes natively."
     },
     "vertex": {
-        "label": "Vertex Mode", "icon": "icon_vertex.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "H", "req": "PBMesh active",
-        "desc": "Picks and transforms shared vertices with hold-V vertex snapping."
+        "label": "Vertex", "icon": "icon_vertex.svg", "row": 2, "group": "modes",
+        "row_name": "Row 2 · Selection Modes", "key": "H", "req": "A PBMesh",
+        "desc": "Vertex mode: pick and move shared vertices; hold V to snap to nearby mesh vertices."
     },
     "edge": {
-        "label": "Edge Mode", "icon": "icon_edge.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "J", "req": "PBMesh active",
-        "desc": "Picks and transforms common edges; supports Alt-click loop and Shift-Alt ring."
+        "label": "Edge", "icon": "icon_edge.svg", "row": 2, "group": "modes",
+        "row_name": "Row 2 · Selection Modes", "key": "J", "req": "A PBMesh",
+        "desc": "Edge mode: pick and move edges; Alt-click walks a loop, Shift-Alt-click a ring."
     },
     "face": {
-        "label": "Face Mode", "icon": "icon_face.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "K", "req": "PBMesh active",
-        "desc": "Picks and transforms faces; Shift-move extrudes and Shift-scale insets live."
+        "label": "Face", "icon": "icon_face.svg", "row": 2, "group": "modes",
+        "row_name": "Row 2 · Selection Modes", "key": "K", "req": "A PBMesh",
+        "desc": "Face mode: pick and move faces; Shift+Move extrudes and Shift+Scale insets live."
     },
     "texture": {
-        "label": "Texture Mode", "icon": "icon_texture_mode.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "6", "req": "Face selection",
-        "desc": "In-scene 3D viewport planar gizmo to slide, rotate, and scale face UVs live."
+        "label": "Texture", "icon": "icon_texture_mode.svg", "row": 2, "group": "modes",
+        "row_name": "Row 2 · Selection Modes", "key": "6", "req": "Face selection",
+        "desc": "Texture/material mode: transform UVs directly on the 3D geometry."
     },
-    "uv": {
-        "label": "UV Editor", "icon": "icon_uv_unwrap.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "Toolbar UV", "req": "PBMesh active",
-        "desc": "Opens the dedicated 2D UV canvas panel or floating window with full 2D/3D sync."
+    "space": {
+        "label": "Space", "icon": "icon_space.svg", "row": 2, "group": "space",
+        "row_name": "Row 2 · Orientation", "key": "X", "req": "Nothing",
+        "desc": "Cycles the gizmo orientation space: Element, Object, World."
     },
-    "materials": {
-        "label": "Material Dock", "icon": "icon_materials.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "Toolbar Material", "req": "PBMesh active",
-        "desc": "Opens the material palette dock for texture assignment, texture splatting, and decals."
+    "new_shape": {
+        "label": "New Shape", "icon": "icon_new_shape.svg", "row": 2, "group": "shapes",
+        "row_name": "Row 2 · Shapes", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Arms primitive creation: drag the base on any surface, set the height, click to confirm."
     },
     "ngon": {
-        "label": "N-Gon Tool", "icon": "icon_ngon.svg", "row": 2, "row_name": "Row 2 · Modes & Docks",
-        "key": "Toolbar N-Gon", "req": "None",
-        "desc": "Click points on any surface to draw a custom polygon base, Enter to extrude height."
+        "label": "N-Gon", "icon": "icon_ngon.svg", "row": 2, "group": "shapes",
+        "row_name": "Row 2 · Shapes", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Draws a custom polygon, then extrudes it into 3D (Enter sizes the height)."
     },
-    # Row 3: Selection Suite
+    "edit_params": {
+        "label": "Edit Params", "icon": "icon_edit_params.svg", "row": 2, "group": "shapes",
+        "row_name": "Row 2 · Shapes", "key": "—", "req": "A pristine factory shape",
+        "desc": "Re-opens the creation parameters of the selected shape (until it is hand-edited)."
+    },
+    "materials": {
+        "label": "Material & UV", "icon": "icon_materials.svg", "row": 2, "group": "docks",
+        "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
+        "desc": "Focuses the Material & UV dock: palette, splat painting, stamps, sprites, particles."
+    },
+    "uv": {
+        "label": "UV", "icon": "icon_uv_unwrap.svg", "row": 2, "group": "docks",
+        "row_name": "Row 2 · Docks", "key": "—", "req": "A PBMesh",
+        "desc": "Opens the dedicated 2D UV editor panel in the bottom dock."
+    },
+    "panel": {
+        "label": "Panel", "icon": "icon_panel.svg", "row": 2, "group": "docks",
+        "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
+        "desc": "Pins the floating overlay panel on (it otherwise auto-hides when nothing is selected)."
+    },
+    "recover": {
+        "label": "Reset Panel", "icon": "icon_panel_reset.svg", "row": 2, "group": "docks",
+        "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
+        "desc": "Recovers the overlay panel and dock to the bottom-left corner if they were dragged away."
+    },
+    "settings": {
+        "label": "Settings", "icon": "icon_settings.svg", "row": 2, "group": "docks",
+        "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
+        "desc": "Display settings: grid, wireframe, selection and hover opacity."
+    },
+    "export": {
+        "label": "Export...", "icon": "icon_export.svg", "row": 2, "group": "exportgrp",
+        "row_name": "Row 2 · Export", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Opens the export dialog: PBM (the retro .pbm map, default) or GLB — modern bake (lightmap-ready) or retro baked (vertex-lit) — with the bake options."
+    },
+    "docs": {
+        "label": "Docs", "icon": "icon_docs.svg", "row": 2, "group": "exportgrp",
+        "row_name": "Row 2 · Export", "key": "—", "req": "Nothing (always enabled)",
+        "desc": "Opens the bundled offline documentation (the site you are reading)."
+    },
+    # ── Row 3 ────────────────────────────────────────────────────────────────
+    "grid": {
+        "label": "Grid", "icon": "icon_grid.svg", "row": 3, "group": "grid",
+        "row_name": "Row 3 · Grid", "key": "= / - subdiv · [ / ] elevation · Y snap · G draw-on-grid", "req": "Nothing (always enabled)",
+        "desc": "Opens the grid & snapping settings; the readout beside it shows the current snap step."
+    },
     "select_all": {
-        "label": "Select All", "icon": "icon_select_all.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Ctrl + A", "req": "Active mode",
-        "desc": "Selects all elements of the current mode on the active mesh."
+        "label": "All", "icon": "icon_select_all.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Unbound (rebindable)", "req": "An element mode",
+        "desc": "Selects all elements of the current mode."
     },
     "invert_selection": {
-        "label": "Invert Selection", "icon": "icon_invert_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Ctrl + I", "req": "Active selection",
-        "desc": "Inverts selection between unselected and selected elements."
+        "label": "Invert", "icon": "icon_invert_selection.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Ctrl + I", "req": "A selection",
+        "desc": "Inverts the element selection."
     },
     "grow_selection": {
-        "label": "Grow Selection", "icon": "icon_grow_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Alt + G", "req": "Active selection",
-        "desc": "Expands the current selection outward by one ring of adjacent elements."
+        "label": "Grow", "icon": "icon_grow_selection.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Alt + G", "req": "A selection",
+        "desc": "Grows the selection by one ring of adjacent elements."
     },
     "shrink_selection": {
-        "label": "Shrink Selection", "icon": "icon_shrink_selection.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Shift + Alt + G", "req": "Active selection",
-        "desc": "Contracts the current selection by peeling away boundary elements."
+        "label": "Shrink", "icon": "icon_shrink_selection.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Shift + Alt + G", "req": "A selection",
+        "desc": "Shrinks the selection to its boundary."
     },
     "select_coplanar": {
-        "label": "Select Coplanar", "icon": "icon_select_coplanar.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Alt + C", "req": "Face selection",
-        "desc": "Flood-selects all adjacent coplanar faces sharing the same geometric plane."
+        "label": "Coplanar", "icon": "icon_select_coplanar.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Alt + C", "req": "Face selection",
+        "desc": "Selects all adjacent coplanar faces."
+    },
+    "select_similar": {
+        "label": "Similar", "icon": "icon_select_similar.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Unbound (rebindable)", "req": "Face selection",
+        "desc": "Selects faces with matching material."
+    },
+    "select_boundary": {
+        "label": "Boundary", "icon": "icon_select_boundary.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Unbound (rebindable)", "req": "A PBMesh",
+        "desc": "Selects the open boundary edges."
     },
     "face_loop": {
-        "label": "Select Face Loop", "icon": "icon_face_loop.svg", "row": 3, "row_name": "Row 3 · Selection Suite",
-        "key": "Alt + L", "req": "Face selection",
-        "desc": "Selects the full quad-strip face loop passing through the selected face."
+        "label": "Loop", "icon": "icon_face_loop.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Alt + L", "req": "Face selection",
+        "desc": "Selects the quad strip face loop through the selection."
     },
-    # Row 4: Objects, CSG & Trims
+    "face_ring": {
+        "label": "Ring", "icon": "icon_face_ring.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Alt + R", "req": "Face selection",
+        "desc": "Selects the perpendicular quad face ring."
+    },
+    "smooth_auto": {
+        "label": "Auto Smooth", "icon": "icon_auto_smooth.svg", "row": 3, "group": "selection",
+        "row_name": "Row 3 · Selection Suite", "key": "Unbound (rebindable)", "req": "A PBMesh",
+        "desc": "Auto-smooths faces by dihedral angle (45°)."
+    },
+    "obj_lit": {
+        "label": "Lit", "icon": "icon_lit.svg", "row": 3, "group": "state",
+        "row_name": "Row 3 · Object State", "key": "Unbound (rebindable)", "req": "Selected objects",
+        "desc": "Shading on/off for every selected object. Mixed selections render unchecked; checking synchronizes all of them."
+    },
+    "obj_shadow": {
+        "label": "Cast Shadows", "icon": "icon_shadow.svg", "row": 3, "group": "state",
+        "row_name": "Row 3 · Object State", "key": "Unbound (rebindable)", "req": "Selected objects",
+        "desc": "Shadow casting on/off for every selected object. Same mixed-checkbox semantics as Lit."
+    },
+    # ── Row 4 ────────────────────────────────────────────────────────────────
+    "vertex_snap": {
+        "label": "V-Snap", "icon": None, "row": 4, "group": "snap",
+        "row_name": "Row 4 · Snapping", "key": "Hold V (toggle available)", "req": "A drag",
+        "desc": "Snaps dragged elements to the nearest mesh vertex (or hold V during a drag)."
+    },
+    "proportional": {
+        "label": "Soft", "icon": None, "row": 4, "group": "snap",
+        "row_name": "Row 4 · Snapping", "key": "Unbound (rebindable)", "req": "A selection",
+        "desc": "Proportional editing: a move also drags nearby unselected vertices with a smooth falloff (radius beside the toggle)."
+    },
+    "merge_objects": {
+        "label": "Merge Objs", "icon": "icon_merge_objects.svg", "row": 4, "group": "objtools",
+        "row_name": "Row 4 · Object Tools", "key": "Unbound (rebindable)", "req": "2+ selected PBMeshes",
+        "desc": "Merges the selected PBMesh nodes into one."
+    },
+    "mirror": {
+        "label": "Mirror", "icon": "icon_mirror.svg", "row": 4, "group": "objtools",
+        "row_name": "Row 4 · Object Tools", "key": "Unbound (rebindable)", "req": "A PBMesh",
+        "desc": "Mirrors the object's geometry across local X (winding corrected)."
+    },
+    "center_pivot": {
+        "label": "Center Pivot", "icon": "icon_center_pivot.svg", "row": 4, "group": "objtools",
+        "row_name": "Row 4 · Object Tools", "key": "Unbound (rebindable)", "req": "A PBMesh",
+        "desc": "Moves the pivot to the bounding-box center: the geometry stays put, the node origin moves (works in Object mode)."
+    },
+    "freeze_transform": {
+        "label": "Freeze Xform", "icon": "icon_freeze_transform.svg", "row": 4, "group": "objtools",
+        "row_name": "Row 4 · Object Tools", "key": "Unbound (rebindable)", "req": "A transformed PBMesh",
+        "desc": "Bakes the node transform into vertex positions and resets the transform to identity."
+    },
     "poibuilderize": {
-        "label": "Poibuilderize", "icon": "icon_poibuilderize.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
-        "key": "Toolbar Poibuilderize", "req": "MeshInstance3D or CSG selected",
-        "desc": "Converts any standard MeshInstance3D or CSGShape3D into an editable native PBMesh."
-    },
-    "csg_subtract": {
-        "label": "CSG Subtract", "icon": "icon_csg_subtract.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
-        "key": "Toolbar Subtract", "req": "Target mesh + cutter mesh",
-        "desc": "Boolean subtract: cuts the second mesh out of the first mesh with full undo/redo."
+        "label": "Poibuilderize", "icon": "icon_poibuilderize.svg", "row": 4, "group": "objtools",
+        "row_name": "Row 4 · Object Tools", "key": "Unbound (rebindable)", "req": "A MeshInstance3D or CSG node",
+        "desc": "Converts any MeshInstance3D or CSG shape (including CSGCombiner3D) into an editable PBMesh."
     },
     "csg_union": {
-        "label": "CSG Union", "icon": "icon_csg_union.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
-        "key": "Toolbar Union", "req": "2 selected meshes",
-        "desc": "Boolean union: merges two meshes into a single solid watertight volume."
+        "label": "CSG Union", "icon": "icon_csg_union.svg", "row": 4, "group": "csg",
+        "row_name": "Row 4 · CSG Booleans", "key": "Unbound (rebindable)", "req": "2+ selected meshes",
+        "desc": "Solid union of the selected meshes (select target first, cutter last)."
+    },
+    "csg_subtract": {
+        "label": "CSG Subtract", "icon": "icon_csg_subtract.svg", "row": 4, "group": "csg",
+        "row_name": "Row 4 · CSG Booleans", "key": "Unbound (rebindable)", "req": "Target + cutter selected",
+        "desc": "Subtracts the LAST-selected mesh from the FIRST-selected mesh."
     },
     "csg_intersect": {
-        "label": "CSG Intersect", "icon": "icon_csg_intersect.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
-        "key": "Toolbar Intersect", "req": "2 selected meshes",
-        "desc": "Boolean intersection: retains only the overlapping volume of two meshes."
+        "label": "CSG Intersect", "icon": "icon_csg_intersect.svg", "row": 4, "group": "csg",
+        "row_name": "Row 4 · CSG Booleans", "key": "Unbound (rebindable)", "req": "2+ selected meshes",
+        "desc": "Solid intersection of the selected meshes."
     },
     "trim_walls": {
-        "label": "Trim Walls", "icon": "icon_trim_walls.svg", "row": 4, "row_name": "Row 4 · Objects & CSG",
-        "key": "Toolbar Trim Walls", "req": "Wall face clicks",
-        "desc": "Interactive wall-clicking tool that generates continuous mitred skirting and cornices."
+        "label": "Trim Walls", "icon": "icon_trim_walls.svg", "row": 4, "group": "trimwalls",
+        "row_name": "Row 4 · Trim Walls", "key": "Enter applies · Esc cancels", "req": "Wall faces to click",
+        "desc": "Click wall faces to sweep mitred trim along them (teal hover, amber chosen)."
     },
 }
 
-ROW_BUTTON_LISTS = {
-    1: [
-        ("move", "icon_move.svg", "Move"), ("rotate", "icon_rotate.svg", "Rotate"), ("scale", "icon_scale.svg", "Scale"),
+# Toolbar button groups, mirroring `_update_row_layout` in editor/pb_toolbar.gd.
+# (op_id, icon-or-None, short label) — text-only toolbar buttons carry None
+# and render as their label in the locator strips.
+GROUP_BUTTON_LISTS: dict[str, list] = {
+    "header": [("split_rows", "icon_split_rows.svg", "Extended Tools")],
+    "tools": [
+        ("move", "icon_move.svg", "Move"), ("rotate", "icon_rotate.svg", "Rotate"),
+        ("scale", "icon_scale.svg", "Scale"),
+    ],
+    "ops": [
         ("extrude", "icon_extrude.svg", "Extrude"), ("inset", "icon_inset.svg", "Inset"),
         ("bevel", "icon_bevel.svg", "Bevel"), ("bridge", "icon_bridge.svg", "Bridge"),
         ("connect", "icon_connect.svg", "Connect"), ("collapse", "icon_collapse.svg", "Collapse"),
         ("fill_hole", "icon_fill_hole.svg", "Fill Hole"), ("knife", "icon_knife.svg", "Knife"),
         ("loopcut", "icon_loop_cut.svg", "Loop Cut"), ("merge", "icon_merge.svg", "Merge"),
-        ("subdivide", "icon_subdivide.svg", "Subdivide"), ("weld", "icon_weld.svg", "Weld"),
-        ("detach", "icon_detach.svg", "Detach"), ("delete", "icon_delete.svg", "Delete")
+        ("subdivide", "icon_subdivide.svg", "Subdiv"), ("weld", "icon_weld.svg", "Weld"),
+        ("detach", "icon_detach.svg", "Detach"), ("delete", "icon_delete.svg", "Del"),
     ],
-    2: [
+    "env": [("env", "icon_env.svg", "Time of Day")],
+    "modes": [
         ("object", "icon_object.svg", "Object"), ("vertex", "icon_vertex.svg", "Vertex"),
         ("edge", "icon_edge.svg", "Edge"), ("face", "icon_face.svg", "Face"),
-        ("texture", "icon_texture_mode.svg", "Texture"), ("new_shape", "icon_new_shape.svg", "New Shape"),
-        ("ngon", "icon_ngon.svg", "N-Gon"), ("edit_params", "icon_edit_params.svg", "Edit Params"),
-        ("materials", "icon_materials.svg", "Materials"), ("uv", "icon_uv_unwrap.svg", "UV Editor"),
-        ("export", "icon_export.svg", "Export...")
+        ("texture", "icon_texture_mode.svg", "Texture"),
     ],
-    3: [
-        ("grid", "icon_grid.svg", "Grid"), ("select_all", "icon_select_all.svg", "All"), ("invert_selection", "icon_invert_selection.svg", "Invert"),
+    "space": [("space", "icon_space.svg", "Element")],
+    "shapes": [
+        ("new_shape", "icon_new_shape.svg", "New Shape"), ("ngon", "icon_ngon.svg", "N-Gon"),
+        ("edit_params", "icon_edit_params.svg", "Edit Params"),
+    ],
+    "docks": [
+        ("materials", "icon_materials.svg", "Material & UV"), ("uv", "icon_uv_unwrap.svg", "UV"),
+        ("panel", "icon_panel.svg", "Panel"), ("recover", "icon_panel_reset.svg", "Reset Panel"),
+        ("settings", "icon_settings.svg", "Settings"),
+    ],
+    "exportgrp": [
+        ("export", "icon_export.svg", "Export..."), ("docs", "icon_docs.svg", "Docs"),
+    ],
+    "grid": [("grid", "icon_grid.svg", "Grid")],
+    "selection": [
+        ("select_all", "icon_select_all.svg", "All"), ("invert_selection", "icon_invert_selection.svg", "Invert"),
         ("grow_selection", "icon_grow_selection.svg", "Grow"), ("shrink_selection", "icon_shrink_selection.svg", "Shrink"),
         ("select_coplanar", "icon_select_coplanar.svg", "Coplanar"), ("select_similar", "icon_select_similar.svg", "Similar"),
         ("select_boundary", "icon_select_boundary.svg", "Boundary"), ("face_loop", "icon_face_loop.svg", "Loop"),
-        ("face_ring", "icon_face_ring.svg", "Ring"), ("smooth_auto", "icon_auto_smooth.svg", "Smooth"),
-        ("obj_lit", "icon_lit.svg", "Lit"), ("obj_shadow", "icon_shadow.svg", "Cast Shadows")
+        ("face_ring", "icon_face_ring.svg", "Ring"), ("smooth_auto", "icon_auto_smooth.svg", "Auto Smooth"),
     ],
-    4: [
-        ("merge_objects", "icon_merge_objects.svg", "Merge"), ("mirror", "icon_mirror.svg", "Mirror"),
-        ("center_pivot", "icon_center_pivot.svg", "Center"), ("freeze_transform", "icon_freeze_transform.svg", "Freeze"),
-        ("poibuilderize", "icon_poibuilderize.svg", "Poibuilderize"), ("csg_union", "icon_csg_union.svg", "Union"),
-        ("csg_subtract", "icon_csg_subtract.svg", "Subtract"), ("csg_intersect", "icon_csg_intersect.svg", "Intersect"),
-        ("trim_walls", "icon_trim_walls.svg", "Trim Walls")
-    ]
+    "state": [("obj_lit", "icon_lit.svg", "Lit"), ("obj_shadow", "icon_shadow.svg", "Cast Shadows")],
+    "snap": [("vertex_snap", None, "V-Snap"), ("proportional", None, "Soft")],
+    "objtools": [
+        ("merge_objects", "icon_merge_objects.svg", "Merge Objs"), ("mirror", "icon_mirror.svg", "Mirror"),
+        ("center_pivot", "icon_center_pivot.svg", "Center Pivot"), ("freeze_transform", "icon_freeze_transform.svg", "Freeze Xform"),
+        ("poibuilderize", "icon_poibuilderize.svg", "Poibuilderize"),
+    ],
+    "csg": [
+        ("csg_union", "icon_csg_union.svg", "CSG Union"), ("csg_subtract", "icon_csg_subtract.svg", "CSG Subtract"),
+        ("csg_intersect", "icon_csg_intersect.svg", "CSG Intersect"),
+    ],
+    "trimwalls": [("trim_walls", "icon_trim_walls.svg", "Trim Walls")],
 }
 
+# Legacy row strips (kept for any catalog entry without a group).
+ROW_BUTTON_LISTS = {}
+for _entries in GROUP_BUTTON_LISTS.values():
+    for _bid, _icon, _label in _entries:
+        _row = OPS_CATALOG.get(_bid, {}).get("row")
+        ROW_BUTTON_LISTS.setdefault(_row, [])
+        if all(b[0] != _bid for b in ROW_BUTTON_LISTS[_row]):
+            ROW_BUTTON_LISTS[_row].append((_bid, _icon, _label))
 
-def render_toolbar_locator(op_id: str, custom_desc: str = "") -> str:
-    info = OPS_CATALOG.get(op_id)
-    if not info:
-        return f"<!-- unknown operation: {html.escape(op_id)} -->"
 
-    row_num = info["row"]
-    buttons = ROW_BUTTON_LISTS.get(row_num, [])
-    
+def _locator_strip(buttons: list, op_id: str) -> tuple[str, int]:
+    """Renders one toolbar group's buttons as mini tiles; returns (html, target_index)."""
     btn_html = []
     target_idx = 0
     for idx, (bid, icon_name, name) in enumerate(buttons):
@@ -277,13 +413,30 @@ def render_toolbar_locator(op_id: str, custom_desc: str = "") -> str:
             target_idx = idx
         cls = "tl-btn tl-target" if is_target else "tl-btn"
         ring = '<span class="tl-target-ring"></span>' if is_target else ""
-        btn_html.append(
-            f'<div class="{cls}" title="{html.escape(name)}">'
-            f'<img src="assets/icons/{icon_name}" width="16" height="16" alt="{html.escape(name)}">'
-            f'{ring}</div>'
-        )
+        if icon_name:
+            inner = (f'<img src="assets/icons/{html.escape(icon_name)}" width="16" height="16" '
+                     f'alt="{html.escape(name)}" title="{html.escape(name)}">')
+        else:
+            inner = f'<span class="tl-btn-text">{html.escape(name)}</span>'
+        # SPAN, not div: these tiles ride inside inline button-reference
+        # tooltips (inside <p>), where a div would get the paragraph — and
+        # this markup — auto-closed by the HTML parser.
+        btn_html.append(f'<span class="{cls}" title="{html.escape(name)}">{inner}{ring}</span>')
+    return "".join(btn_html), target_idx
 
-    strip_markup = "".join(btn_html)
+
+def render_toolbar_locator(op_id: str, custom_desc: str = "") -> str:
+    info = OPS_CATALOG.get(op_id)
+    if not info:
+        return f"<!-- unknown operation: {html.escape(op_id)} -->"
+
+    group_id = info.get("group")
+    if group_id and group_id in GROUP_BUTTON_LISTS:
+        buttons = GROUP_BUTTON_LISTS[group_id]
+    else:
+        buttons = ROW_BUTTON_LISTS.get(info["row"], [])
+    
+    strip_markup, target_idx = _locator_strip(buttons, op_id)
     # Button is 28px wide with 3px gap = 31px pitch; padding is ~10px
     target_x = 24 + target_idx * 31
 
@@ -334,6 +487,38 @@ def render_toolbar_locator(op_id: str, custom_desc: str = "") -> str:
     </div>
   </div>
 </div>'''
+def render_btn_ref(op_id: str, label: str = "") -> str:
+    """Inline button reference: the button word carries a hover/click tooltip
+    holding a mini locator — its toolbar group strip with the button ringed,
+    its row, key, requirement and one-line description. CSS-only (no JS):
+    opens on :hover and :focus (the word is keyboard-focusable)."""
+    info = OPS_CATALOG.get(op_id)
+    if not info:
+        return f'<!-- unknown button: {html.escape(op_id)} -->'
+    word = label if label else info["label"]
+    group_id = info.get("group")
+    buttons = GROUP_BUTTON_LISTS.get(group_id, []) if group_id else []
+    strip_markup, _ = _locator_strip(buttons, op_id)
+    icon_img = ""
+    if info.get("icon"):
+        icon_img = (f'<img class="br-ico" src="assets/icons/{html.escape(info["icon"])}" '
+                    f'width="13" height="13" alt="">')
+    pop_icon = (f'<img src="assets/icons/{html.escape(info["icon"])}" width="26" height="26" alt="">'
+                if info.get("icon") else "")
+    key_badge = f'<kbd class="br-key">{html.escape(info["key"])}</kbd>' if info.get("key") and info["key"] != "—" else ""
+    row_name = info.get("row_name", "")
+    return (
+        f'<span class="btnref" tabindex="0">{icon_img}{html.escape(word)}'
+        f'<span class="br-pop">'
+        f'<span class="br-strip">{strip_markup}</span>'
+        f'<span class="br-row">{html.escape(row_name)}</span>'
+        f'<span class="br-head">{pop_icon}<span class="br-title">{html.escape(info["label"])}</span>{key_badge}</span>'
+        f'<span class="br-desc">{inline(info["desc"])}</span>'
+        f'<span class="br-req">Needs: {html.escape(info["req"])}</span>'
+        f'</span></span>'
+    )
+
+
 def plugin_version() -> str:
     text = PLUGIN_CFG.read_text(encoding="utf-8")
     m = re.search(r'^version="([^"]+)"', text, re.M)
@@ -480,6 +665,12 @@ def inline(s: str) -> str:
     )
     s = re.sub(r"\[\[kbd:(.+?)\]\]", lambda m: _format_kbd(m.group(1)), s)
     s = re.sub(r"\[\[icon:(.+?)\]\]", lambda m: _format_icon(m.group(1)), s)
+    s = re.sub(r"\[\[btn:([a-z_0-9]+)\]\]",
+               lambda m: render_btn_ref(m.group(1)), s)
+    # Label separator is :: (NOT |): table rows split cells on |, so a
+    # |-label inside a table would shatter into raw-text cells.
+    s = re.sub(r"\[\[btn:([a-z_0-9]+)::([^\]]+)\]\]",
+               lambda m: render_btn_ref(m.group(1), m.group(2).strip()), s)
     return s
 
 

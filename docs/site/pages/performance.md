@@ -44,7 +44,7 @@ Windows box, `./run_fly_bench_win.sh` is the same thing on its GPU.
 and every realtime light with shadows, and it is the most expensive way to
 play the map on every renderer measured here. Build, test and iterate in it
 as much as you like — but when you want to *play* or share, run it through
-**Export...**: a modern GLB for the modern pipeline (paint baked into
+[[btn:export]]: a modern GLB for the modern pipeline (paint baked into
 textures, your own realtime lights or LightmapGI on top), or the PBM/retro
 GLB for retro targets.
 

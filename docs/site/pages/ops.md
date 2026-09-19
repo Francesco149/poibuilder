@@ -48,7 +48,7 @@ The ring it leaves, then the face lifted out of it.
 Inserts an edge loop crossing a selected quad strip, turning corners cleanly.
 :::
 
-Select an edge that **crosses** a quad strip (a ring edge). **Loop Cut** inserts a loop through that ring. Faces with only one ring edge (fans, boundaries) stay unsplit — a T-junction is expected. Corner turns that cannot walk fail cleanly.
+Select an edge that **crosses** a quad strip (a ring edge). [[btn:loopcut]] inserts a loop through that ring. Faces with only one ring edge (fans, boundaries) stay unsplit — a T-junction is expected. Corner turns that cannot walk fail cleanly.
 
 :::shot edit-loopcut.png
 The loop turns all four corners of the box.
@@ -96,7 +96,7 @@ Cut a face along a drawn path.
 Click points on any surface to draw a custom polygon base, Enter to extrude height.
 :::
 
-Toolbar **N-Gon**: click a polygon on a surface, [[kbd:Enter]], drag height. Any floor plan becomes a volume.
+Toolbar [[btn:ngon]]: click a polygon on a surface, [[kbd:Enter]], drag height. Any floor plan becomes a volume.
 
 :::shot edit-ngon.png
 Draw any polygon and extrude it.

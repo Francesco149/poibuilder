@@ -5,7 +5,7 @@ lead: Per-face materials, auto-UV that does not stretch on resize, and a dock th
 
 ## The dock
 
-Toolbar **Material** focuses the Material & UV dock. It is six modes on one segmented row:
+Toolbar [[btn:materials::Material]] focuses the Material & UV dock. It is six modes on one segmented row:
 
 | Mode | What it does |
 |---|---|
@@ -38,7 +38,7 @@ If a ramp still looks stretched, that is a projection job: [UV editor](uv.html).
 
 ## Smoothing
 
-**Auto Smooth** (row 3) sets smoothing groups from a 45° dihedral. Hard edges stay hard; shallow joins pick up shared normals. Lighting, not geometry.
+[[btn:smooth_auto::Auto Smooth]] (row 3) sets smoothing groups from a 45° dihedral. Hard edges stay hard; shallow joins pick up shared normals. Lighting, not geometry.
 
 ## Scroll
 

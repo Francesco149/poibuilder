@@ -20,7 +20,7 @@ it convenient to verify and to see the map running.
 
 ## 1. Export the .pbm
 
-Toolbar **Export...** → **PBM — PoiBuilder Retro Map (PSP)** → Export. One click writes `res://exports/exported_map.pbm` (and you can write a retro-baked `.glb` of the same bake alongside it for previewing in Godot).
+Toolbar [[btn:export]] → **PBM — PoiBuilder Retro Map (PSP)** → Export. One click writes `res://exports/exported_map.pbm` (and you can write a retro-baked `.glb` of the same bake alongside it for previewing in Godot).
 
 What the export does to your map — all automatic:
 

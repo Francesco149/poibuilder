@@ -7,7 +7,7 @@ Work in the 3D viewport. The PoiBuilder toolbar sits directly under Godot's.
 
 ## 1. Make a cube
 
-1. Click **New Shape** and pick **Cube**.
+1. Click [[btn:new_shape]] and pick **Cube**.
 2. Press on the grid (or on any `PBMesh` face). Drag a rectangle. The base stays coplanar with the surface you pressed.
 3. Release. Move the mouse to set height. Click to confirm.
 4. [[kbd:Esc]] before that confirming click creates nothing.
@@ -20,9 +20,9 @@ A `PBMesh` node appears in the scene tree. Edit Params stays live until you chan
 
 ## 2. Pull a face
 
-1. Click the cube. Face mode is [[kbd:K]] (toolbar **Face**).
+1. Click the cube. Face mode is [[kbd:K]] (toolbar [[btn:face]]).
 2. Click a side. Hover is cyan; selection is yellow.
-3. Hold [[kbd:Shift]] and drag the move gizmo — that is live extrude. Or click **Extrude** on the toolbar ([[kbd:Alt]]+[[kbd:E]]).
+3. Hold [[kbd:Shift]] and drag the move gizmo — that is live extrude. Or click [[btn:extrude]] on the toolbar ([[kbd:Alt]]+[[kbd:E]]).
 
 :::shot edit-extrude.png
 Shift + drag extrudes. The original face is replaced by the cap and the sides.

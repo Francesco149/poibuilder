@@ -7,7 +7,7 @@ lead: Five modes. Cyan hover, yellow selection. Switching modes converts the sel
 
 | Mode | Default key | What you pick |
 |---|---|---|
-| Object | toolbar (unbound) | Whole `PBMesh` nodes |
+| [[btn:object]] | toolbar (unbound) | Whole `PBMesh` nodes |
 | Vertex | [[kbd:H]] | Shared vertices (welded corners move together) |
 | Edge | [[kbd:J]] | Common edges |
 | Face | [[kbd:K]] | Faces, including n-gons |
@@ -66,14 +66,14 @@ Smart selection helpers: face loops, grow, shrink, coplanar, and invert.
 
 ### Retexture one wall
 
-Face mode. Click one wall face. **Coplanar**. The whole plane selects, even if it is several quads. Assign a material from the dock.
+Face mode. Click one wall face. [[btn:select_coplanar::Coplanar]]. The whole plane selects, even if it is several quads. Assign a material from the dock.
 
 ### Find a leak in a floor
 
-Select a floor face. **Grow** repeatedly. If the selection crawls up a wall, that edge is connected — a hole or a T-junction you did not mean.
+Select a floor face. [[btn:grow_selection::Grow]] repeatedly. If the selection crawls up a wall, that edge is connected — a hole or a T-junction you did not mean.
 
 ### Fill a hole
 
-**Boundary** in edge mode, or select the open loop, then [Fill Hole](ops-joins.html).
+[[btn:select_boundary::Boundary]] in edge mode, or select the open loop, then [Fill Hole](ops-joins.html).
 
 > [gotcha] After multi-selecting objects, an element-mode click edits the last-clicked mesh only. Switch to Object if you meant to move both.

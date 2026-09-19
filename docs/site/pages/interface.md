@@ -15,9 +15,9 @@ The bar is a sibling *below* Godot's 3D toolbar. It stays visible with nothing s
 
 | Group | Buttons | Notes |
 |---|---|---|
-| Tools | [[icon:move]] Move, [[icon:rotate]] Rotate, [[icon:scale]] Scale | The plugin's own tool. While editing, Godot's Q/V buttons are disabled. Shortcuts [[kbd:W]] [[kbd:E]] [[kbd:R]] still work. |
-| Ops | [[icon:extrude]] Extrude, [[icon:inset]] Inset, [[icon:bevel]] Bevel, [[icon:bridge]] Bridge, [[icon:connect]] Connect, [[icon:collapse]] Collapse, [[icon:fill_hole]] Fill Hole, [[icon:knife]] Knife, [[icon:loop_cut]] Loop Cut, [[icon:merge]] Merge, [[icon:subdivide]] Subdiv, [[icon:weld]] Weld, [[icon:detach]] Detach, [[icon:delete]] Del | Grey = wrong selection. Tooltip says what it needs. |
-| Env | [[icon:env]] Dawn / Day / Dusk / Night | Relights the edited scene. |
+| Tools | [[btn:move]], [[btn:rotate]], [[btn:scale]] | The plugin's own tool. While editing, Godot's Q/V buttons are disabled. Shortcuts [[kbd:W]] [[kbd:E]] [[kbd:R]] still work. |
+| Ops | [[btn:extrude]], [[btn:inset]], [[btn:bevel]], [[btn:bridge]], [[btn:connect]], [[btn:collapse]], [[btn:fill_hole]], [[btn:knife]], [[btn:loopcut]], [[btn:merge]], [[btn:subdivide]], [[btn:weld]], [[btn:detach]], [[btn:delete]] | Grey = wrong selection. Tooltip says what it needs. |
+| Env | [[btn:env::Dawn / Day / Dusk / Night]] | Relights the edited scene. |
 
 Scale tooltip, verbatim: axis handles scale freely; the **center square** scales all axes together (Shift + center on faces insets).
 
@@ -25,32 +25,30 @@ Scale tooltip, verbatim: axis handles scale freely; the **center square** scales
 
 | Control | What it does |
 |---|---|
-| [[icon:object]] Object / [[icon:vertex]] Vertex / [[icon:edge]] Edge / [[icon:face]] Face / [[icon:texture]] Texture | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
-| [[icon:space]] Space | Cycles Element / Object / World ([[kbd:X]]). |
-| [[icon:new_shape]] New Shape | Always enabled. Pick a primitive, then drag. |
-| [[icon:ngon]] N-Gon | Draw a polygon, extrude it. |
-| [[icon:edit_params]] Edit Params | Live only while the selected mesh is a pristine, unedited factory shape. |
-| [[icon:materials]] Material | Focuses the Material & UV dock. |
-| [[icon:uv]] UV | Opens the 2D UV editor bottom panel. |
-| [[icon:panel]] Panel | Pins the overlay so it does not auto-hide. |
-| [[icon:panel_reset]] Reset | Docks the overlay back to the bottom-left. |
-| [[icon:settings]] Settings | Display: grid, wireframe, selection/hover opacity. |
-| Export... | Dialog: PBM (default) or GLB — modern bake (lightmap-ready, first) / retro baked map (vertex-lit). |
-| [[icon:docs]] Docs | Opens this site (bundled `docs-site/index.html`). |
+| [[btn:object]] / [[btn:vertex]] / [[btn:edge]] / [[btn:face]] / [[btn:texture]] | Selection mode. Vertex [[kbd:H]], Edge [[kbd:J]], Face [[kbd:K]], Texture [[kbd:6]]. Object is the toolbar button (unbound by default). |
+| [[btn:space]] | Cycles Element / Object / World ([[kbd:X]]). |
+| [[btn:new_shape]] | Always enabled. Pick a primitive, then drag. |
+| [[btn:ngon]] | Draw a polygon, extrude it. |
+| [[btn:edit_params]] | Live only while the selected mesh is a pristine, unedited factory shape. |
+| [[btn:materials::Material]] | Focuses the Material & UV dock. |
+| [[btn:uv::UV]] | Opens the 2D UV editor bottom panel. |
+| [[btn:panel::Panel]] | Pins the overlay so it does not auto-hide. |
+| [[btn:recover::Reset]] | Docks the overlay back to the bottom-left. |
+| [[btn:settings]] | Display: grid, wireframe, selection/hover opacity. |
+| [[btn:export]] | Dialog: PBM (default) or GLB — modern bake (lightmap-ready, first) / retro baked map (vertex-lit). |
+| [[btn:docs]] | Opens this site (bundled `docs-site/index.html`). |
 
-**Row 3** (extended tools toggle) — grid & snapping settings, selection suite, auto-smooth, object state.
-
-**Rows 3 & 4** — the [[icon:split_rows]] **Extended Tools** toggle.
+**Rows 3 & 4** (extended tools) — grid & snapping settings, selection suite, auto-smooth, object state, snapping toggles, object tools, CSG booleans, Trim Walls. They ship **visible**; fold them with the [[btn:split_rows::Extended Tools]] toggle — the state is remembered across sessions.
 
 | Group | Controls | What it does |
 |---|---|---|
 | Grid & snapping | Grid, snap-step readout | Grid settings moved here when row 3 exists — it has the room for the readout. |
-| Selection | [[icon:all]] All, [[icon:invert]] Invert, [[icon:grow]] Grow, [[icon:shrink]] Shrink, [[icon:coplanar]] Coplanar, [[icon:similar]] Similar, [[icon:boundary]] Boundary, [[icon:loop]] Loop, [[icon:ring]] Ring | Advanced selection suite. Invert [[kbd:Ctrl]]+[[kbd:I]], Grow [[kbd:Alt]]+[[kbd:G]], Shrink [[kbd:Shift]]+[[kbd:Alt]]+[[kbd:G]], Coplanar [[kbd:Alt]]+[[kbd:C]], Loop [[kbd:Alt]]+[[kbd:L]], Ring [[kbd:Alt]]+[[kbd:R]]. |
-| Object state | [[icon:lit]] Lit, [[icon:shadow]] Cast Shadows | Shading and shadow casting for every selected object (PBMesh, MeshInstance3D, CSG). Mixed-checkbox semantics: all on = checked, all off / mixed = unchecked, and checking synchronizes the whole selection. Rebindable as *Object: Toggle Lit / Cast Shadows*. |
-| Objects | [[icon:merge_objects]] Merge Objs, [[icon:mirror]] Mirror, [[icon:center_pivot]] Center Pivot, [[icon:freeze]] Freeze Xform, [[icon:poibuilderize]] Poibuilderize | Combine meshes, mirror across X, recenter pivot to bounds, bake transform into vertices, convert MeshInstance3D/CSG to PBMesh. |
-| CSG | [[icon:csg_union]] CSG Union, [[icon:csg_subtract]] CSG Subtract, [[icon:csg_intersect]] CSG Intersect | Real-time CSG booleans with full undo. Select target first, cutter last. |
-| Smoothing | [[icon:auto_smooth]] Auto Smooth | Recalculate smoothing groups by dihedral angle (45° threshold). |
-| Snapping & Tools | V-Snap, Soft (proportional) + radius spinner, [[icon:trim_walls]] Trim Walls | Snapping to vertices, proportional editing with smooth falloff, and interactive wall-clicking trim. |
+| Selection | [[btn:select_all::All]], [[btn:invert_selection::Invert]], [[btn:grow_selection::Grow]], [[btn:shrink_selection::Shrink]], [[btn:select_coplanar::Coplanar]], [[btn:select_similar::Similar]], [[btn:select_boundary::Boundary]], [[btn:face_loop::Loop]], [[btn:face_ring::Ring]] | Advanced selection suite. Invert [[kbd:Ctrl]]+[[kbd:I]], Grow [[kbd:Alt]]+[[kbd:G]], Shrink [[kbd:Shift]]+[[kbd:Alt]]+[[kbd:G]], Coplanar [[kbd:Alt]]+[[kbd:C]], Loop [[kbd:Alt]]+[[kbd:L]], Ring [[kbd:Alt]]+[[kbd:R]]. |
+| Object state | [[btn:obj_lit::Lit]], [[btn:obj_shadow::Cast Shadows]] | Shading and shadow casting for every selected object (PBMesh, MeshInstance3D, CSG). Mixed-checkbox semantics: all on = checked, all off / mixed = unchecked, and checking synchronizes the whole selection. Rebindable as *Object: Toggle Lit / Cast Shadows*. |
+| Objects | [[btn:merge_objects]], [[btn:mirror]], [[btn:center_pivot]], [[btn:freeze_transform::Freeze Xform]], [[btn:poibuilderize]] | Combine meshes, mirror across X, recenter pivot to bounds, bake transform into vertices, convert MeshInstance3D/CSG to PBMesh. |
+| CSG | [[btn:csg_union]], [[btn:csg_subtract]], [[btn:csg_intersect]] | Real-time CSG booleans with full undo. Select target first, cutter last. |
+| Smoothing | [[btn:smooth_auto::Auto Smooth]] | Recalculate smoothing groups by dihedral angle (45° threshold). |
+| Snapping & Tools | [[btn:vertex_snap::V-Snap]], [[btn:proportional::Soft]] (proportional) + radius spinner, [[btn:trim_walls]] | Snapping to vertices, proportional editing with smooth falloff, and interactive wall-clicking trim. |
 ## Overlay
 
 A compact floating panel in the viewport.
@@ -62,7 +60,7 @@ A compact floating panel in the viewport.
   selection — the fine-tuning surface for [emitters](paint.html#sprite-placer)
   (count, size, speed, spread, blending, flipbook). It works from object
   mode too; the emitter session stays open even while no mesh is selected.
-- Drag it by the header. Pin with **Panel**. Recover with the reset button.
+- Drag it by the header. Pin with [[btn:panel::Panel]]. Recover with [[btn:recover::Reset Panel]].
 
 Params modal rules (do not mix these up):
 

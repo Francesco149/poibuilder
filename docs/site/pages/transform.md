@@ -5,7 +5,7 @@ lead: The element gizmo is Godot's own manipulator, aimed at the selection. Shif
 
 ## Tools
 
-Move / Rotate / Scale on the toolbar, or [[kbd:W]] [[kbd:E]] [[kbd:R]]. These are the plugin's tools. While a `PBMesh` is being edited the engine's Transform (Q) and Select (V) buttons are disabled so they cannot fight.
+[[btn:move]] / [[btn:rotate]] / [[btn:scale]] on the toolbar, or [[kbd:W]] [[kbd:E]] [[kbd:R]]. These are the plugin's tools. While a `PBMesh` is being edited the engine's Transform (Q) and Select (V) buttons are disabled so they cannot fight.
 
 ## Orientation space — [[kbd:X]]
 
@@ -33,8 +33,8 @@ Move a side quad, then the whole arched face.
 | Control | Default | Effect |
 |---|---|---|
 | Snap toggle | [[kbd:Y]] | Snap element drags to the PoiBuilder grid |
-| V-Snap | toolbar (row 4) | Snap the drag pivot to the nearest vertex, including other meshes |
-| Soft | toolbar | Proportional editing — unselected vertices within the radius follow with falloff |
+| [[btn:vertex_snap::V-Snap]] | toolbar (row 4) | Snap the drag pivot to the nearest vertex, including other meshes |
+| [[btn:proportional::Soft]] | toolbar | Proportional editing — unselected vertices within the radius follow with falloff |
 | r: spinner | 2.0 m | Influence radius |
 
 V-Snap is a **toggle**, not a hold. (The engine's Select tool is V, and is disabled while editing.)

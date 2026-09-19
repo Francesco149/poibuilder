@@ -33,7 +33,7 @@ Trim Parameters modal on a live skirting run — profile, height, depth, and cor
 Interactive wall-clicking tool that generates continuous mitred skirting and cornices.
 :::
 
-Toolbar **Trim Walls** (row 4). Parameters appear immediately. Then click wall faces on any PoiBuilder mesh, in any order.
+Toolbar [[btn:trim_walls]] (row 4). Parameters appear immediately. Then click wall faces on any PoiBuilder mesh, in any order.
 
 - Hover: teal. Chosen: amber.
 - Click again to drop a face. [[kbd:Backspace]] drops the last.

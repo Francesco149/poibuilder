@@ -3,7 +3,7 @@ title: Export & retro
 lead: PBM is the headline product — a quick export bakes a tile-baked .pbm with vertex light for the PSP. GLB (retro-baked or modern) is one dialog away. Retro textures are sanitized on the way out.
 ---
 
-Toolbar **Export...** opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — the Modern Bake first, the Retro Baked Map second. Everything else on the page applies per format.
+Toolbar [[btn:export]] opens the dialog: **Format** defaults to PBM (`res://exports/exported_map.pbm`), with two GLB flavors below it — the Modern Bake first, the Retro Baked Map second. Everything else on the page applies per format.
 
 For the whole journey on one map, see the [walkthroughs](walkthrough-modern.html):
 build → export → play, once per pipeline.

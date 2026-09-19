@@ -35,7 +35,7 @@ Selected vertices, edges or faces collapse to a single point.
 Cap an open boundary loop with a new polygon face.
 :::
 
-Cap an open boundary loop with a new face. Select the loop (or use **Boundary**) first.
+Cap an open boundary loop with a new face. Select the loop (or use [[btn:select_boundary::Boundary]]) first.
 
 ## Weld
 
@@ -77,7 +77,7 @@ Detach faces into a new object — and move it away.
 
 ### Close a subtracted doorway that went too far
 
-Edge mode → **Boundary** → **Fill Hole**. Then inset and extrude if you still want a recess.
+Edge mode → [[btn:select_boundary::Boundary]] → [[btn:fill_hole]]. Then inset and extrude if you still want a recess.
 
 ### Split a building into chunks
 

@@ -32,7 +32,7 @@ shows. The editor renders the plane as transparent; the retro bake can
 treat its silhouette as an occluder, so a dark patch appears where nothing
 in the editor suggested one.
 
-**Workaround:** turn off **Cast Shadows** for scrolling/transparent planes
+**Workaround:** turn off [[btn:obj_shadow::Cast Shadows]] for scrolling/transparent planes
 (row 3 toggle — select the plane, uncheck it) before exporting to the retro
 target. Visually verify with a Godot viewer of the bake (the repository's
 `run_viewer.sh` is the reference — adapt it to your setup as needed) plus
@@ -53,16 +53,22 @@ Duplicate the stamp per object as a last resort.
 
 ## Painting small faces is laggy
 
-**Where:** splat/decal painting in the editor.
+**Where:** splat/decal painting in the editor — **old / integrated GPUs
+only**. On the machines used for the current benchmark baseline (an RTX
+5060 desktop) this is NOT observable: small faces paint as smoothly as big
+ones at any brush size. It shows up on the five-year-old integrated-GPU
+laptop that serves as the worst-case machine in the
+[performance](performance.html) table.
 
 Brushing over a small face (a 0.5 m tile, a trim strip) runs noticeably
 below the smoothness of big faces — the per-stroke cost is dominated by
-fixed work (mask texture sync) that does not scale down with the face.
+fixed work (mask texture sync) that does not scale down with the face,
+and the weak iGPU is where that fixed cost starts to show.
 
 **Workaround:** paint the small faces in one continuous pass rather than
 many separate dabs; where possible, paint detail on a larger face and let
 the UV tiling carry it. Fix queued — the paint pipeline is being reworked
-towards incremental stroke upload.
+towards incremental stroke upload (when it lands, this note retires).
 
 ## Paint stroke rate is not uniform (dotted lines at speed)
 
@@ -81,7 +87,7 @@ lag above.
 
 **Where:** retro export, after Poibuilderize.
 
-A mesh converted with **Poibuilderize** (for example a barrel GLB whose top
+A mesh converted with [[btn:poibuilderize]] (for example a barrel GLB whose top
 you extruded) can look correct in the Godot editor — right materials, right
 UVs, right tiling — and still export with mangled UVs to the `.pbm` on some
 parts (reported on a barrel's metal rim: the hoops sample the wrong atlas

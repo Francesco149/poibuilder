@@ -24,9 +24,9 @@ Combines multiple selected PBMesh nodes into one, baking relative transforms.
 Row 3 (Extended Tools) carries two toggles that apply to the whole scene
 selection — any `PBMesh`, `MeshInstance3D` or CSG node:
 
-- **Lit** — shading on/off. Unlit objects render at full brightness and
+- [[btn:obj_lit::Lit]] — shading on/off. Unlit objects render at full brightness and
   ignore scene lights.
-- **Cast Shadows** — shadow casting on/off.
+- [[btn:obj_shadow::Cast Shadows]] — shadow casting on/off.
 
 Both follow mixed-checkbox semantics: all selected objects on = checked,
 all off (or mixed) = unchecked, and checking it synchronizes every selected
@@ -46,7 +46,7 @@ Imported GLBs and Godot primitives are not editable as faces until you convert t
 
 1. Instance the GLB. Make the instance local / editable children.
 2. Select the `MeshInstance3D` (or a CSG node).
-3. **Poibuilderize**. A new `PBMesh` appears with per-triangle corners, welds rebuilt, materials copied.
+3. [[btn:poibuilderize]]. A new `PBMesh` appears with per-triangle corners, welds rebuilt, materials copied.
 4. Pull a face. It is a PoiBuilder mesh now.
 
 
@@ -81,7 +81,7 @@ CSG boolean subtraction with real undo — non-destructive and reversible.
 
 1. Wall cube (target). Cylinder through it (cutter).
 2. Select the wall, Shift-select the cylinder.
-3. **CSG Subtract**. Hole. Ctrl+Z — the cylinder returns.
+3. [[btn:csg_subtract]]. Hole. Ctrl+Z — the cylinder returns.
 
 > [gotcha] CSG did nothing? Read the Output log. Open boundaries abort the op. Fill Hole / weld the mesh, or Poibuilderize a CSG primitive that is already closed.
 

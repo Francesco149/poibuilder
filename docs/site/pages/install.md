@@ -27,8 +27,8 @@ If you installed from a release zip **or** through the AssetLib tab, there is
 nothing else to download. Just check it is enabled:
 
 1. **Project → Project Settings → Plugins** → **PoiBuilder** must show a check.
-2. Open a 3D scene. A second toolbar row appears under the engine's 3D toolbar.
-3. The **Docs** button at the right end of that toolbar opens the manual —
+2. Open a 3D scene. PoiBuilder's toolbar rows appear under the engine's 3D toolbar.
+3. The [[btn:docs]] button at the right end of that toolbar opens the manual —
    offline from the copy bundled inside the plugin, or these online pages when
    no local copy exists.
 
@@ -43,9 +43,22 @@ If the toolbar row never appears: the plugin is disabled, or the scene is not
 2. Extract it into your Godot project folder — the zip contains
    `addons/poibuilder/`, so extracting at the project root puts it next to
    `project.godot`.
-3. **Project → Project Settings → Plugins** → enable **PoiBuilder**.
-4. Open a 3D scene. The toolbar row appears; the **Docs** button opens this
+3. Wait for Godot to finish its first import of the addon (the spinner in
+   the bottom-right; on a fresh project it imports the addon's icons and
+   shaders).
+4. **Project → Project Settings → Plugins** → enable **PoiBuilder**.
+5. Open a 3D scene. The toolbar rows appear; the [[btn:docs]] button opens this
    manual offline from `addons/poibuilder/docs-site/`.
+
+> [tip] On a fresh import you may see console messages like
+> `Condition "p_enabled && addon_name_to_plugin.has(addon_path)" is true`,
+> `!tasks.has(p_task)` from `progress_dialog.cpp`, or
+> `Task 'reimport' already exists`. These come from Godot 4.7's own
+> first-import machinery when a plugin is enabled while that first scan is
+> still running — they are benign: the import completes and the plugin ends
+> up enabled exactly once. Waiting for the first import to finish before
+> enabling (step 3 above) avoids them entirely, and the messages are
+> largely fixed in newer Godot versions.
 
 ## Installing from the Godot Asset Library
 
@@ -72,10 +85,12 @@ is the bleeding edge — nightly-quality, untested between commits.
 
 ## What appears
 
-- A persistent toolbar row under the 3D toolbar. It never hides. Buttons disable outside a PoiBuilder context.
-- A floating overlay in the viewport (selection readout, params modal). Pin it with **Panel**; recover it with the reset button if it leaves the screen.
+- Persistent toolbar rows under the 3D toolbar (four rows; the extended
+  Rows 3 & 4 ship visible and can be folded with the **Extended Tools**
+  toggle). They never hide. Buttons disable outside a PoiBuilder context.
+- A floating overlay in the viewport (selection readout, params modal). Pin it with [[btn:panel::Panel]]; recover it with [[btn:recover::Reset Panel]] if it leaves the screen.
 - A **Material & UV** dock on the right.
-- A **UV Editor** bottom panel, opened from the toolbar **UV** button.
+- A **UV Editor** bottom panel, opened from the toolbar [[btn:uv::UV]] button.
 - An **Export** dialog.
 
 The overlay title reads `PoiBuilder vX.Y.Z`. If the version does not match the docs you are reading, you are on a different build.

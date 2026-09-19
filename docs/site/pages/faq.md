@@ -25,7 +25,7 @@ It comes back. CSG undo restores the cutter node. If it renders but does not pic
 
 ## The overlay disappeared
 
-**Panel** toggle pins it. The reset button docks it to the bottom-left. It auto-hides when nothing is selected and it is not pinned.
+[[btn:panel::Panel]] toggle pins it. [[btn:recover::Reset Panel]] docks it to the bottom-left. It auto-hides when nothing is selected and it is not pinned.
 
 ## Textures stretch
 
@@ -53,7 +53,7 @@ using the demo engine's loader as a reference. Details on [Export & retro](expor
 That is expected — the editable scene is the *authoring* format, not the
 shipping one. It renders the live splat shader, live decal layers and every
 realtime light, which measured ~4× the retro bake's frame cost on the
-[benchmark baseline](performance.html). Run **Export...** and play the
+[benchmark baseline](performance.html). Run [[btn:export]] and play the
 baked result instead: a **modern GLB** for the modern pipeline (paint baked
 into textures, your own lights/LightmapGI on top) or **PBM** for retro
 targets. Keep the PoiBuilder scene for building, testing and iterating;

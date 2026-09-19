@@ -51,7 +51,7 @@ The film of the plugin building a courtyard (and the same map on a PSP) is the R
 
 These pages are static HTML. No CDN. They work offline.
 
-- Bundled with the addon at `addons/poibuilder/docs-site/index.html` — the toolbar **Docs** button opens them.
+- Bundled with the addon at `addons/poibuilder/docs-site/index.html` — the toolbar [[btn:docs]] button opens them.
 - GitHub Pages, built from the same Markdown.
 
 > [gotcha] A greyed-out toolbar button is not broken. It is the wrong selection for that op; the tooltip names the context it wants.

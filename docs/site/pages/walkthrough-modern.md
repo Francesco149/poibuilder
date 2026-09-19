@@ -154,7 +154,7 @@ Click the viewport, fly. This is usually all a map-in-progress wants.
 
 ## 10. Export the map as GLB
 
-Toolbar **Export...** → **GLB — Modern Bake (lightmap-ready)** — the first GLB flavor, and the one to play/ship on the modern pipeline. Selecting it defaults the dialog to the optimized bake:
+Toolbar [[btn:export]] → **GLB — Modern Bake (lightmap-ready)** — the first GLB flavor, and the one to play/ship on the modern pipeline. Selecting it defaults the dialog to the optimized bake:
 
 - **Modern paint → Bake into textures** (default) — every painted face (splat layers *and* decals) becomes its own texture; any consumer shows your paint.
 - **Vertex lighting off** (default) — the bake carries no vertex colors; your realtime lights or a LightmapGI bake stay in charge. (The retro flavors bake light into vertices instead.)

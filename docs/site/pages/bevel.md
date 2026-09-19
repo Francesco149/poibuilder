@@ -3,7 +3,7 @@ title: Bevel
 lead: Chamfer or fillet selected edges or faces. Distance and segments live in a modal. The new band stays selected.
 ---
 
-Toolbar **Bevel**. Key [[kbd:Ctrl]]+[[kbd:B]].
+Toolbar [[btn:bevel]]. Key [[kbd:Ctrl]]+[[kbd:B]].
 
 :::op bevel
 Chamfer or fillet selected edges or face perimeters into smooth rounded bands.

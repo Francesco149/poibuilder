@@ -20,7 +20,7 @@ While any PoiBuilder context is active (mesh selected, creation armed, draw-on-g
 | [[kbd:Shift]]+[[kbd:-]] [[kbd:Shift]]+[[kbd:=]] | Unit ÷2 / ×2 |
 | [[kbd:\\]] | Reset elevation |
 
-The toolbar Grid button opens the settings panel (unit, subdivisions, elevation, draw-on-grid). The readout shows the current snap step, and the elevation when it is not zero.
+The toolbar [[btn:grid]] button opens the settings panel (unit, subdivisions, elevation, draw-on-grid). The readout shows the current snap step, and the elevation when it is not zero.
 
 Object mode can sync engine snap to this grid. Element mode always uses the plugin grid.
 

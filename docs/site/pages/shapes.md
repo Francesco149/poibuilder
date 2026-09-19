@@ -5,7 +5,7 @@ lead: Press on any surface, drag a base, set the height. Fifteen primitives shar
 
 ## The drag
 
-1. **New Shape** → pick a type. Nothing is created yet.
+1. [[btn:new_shape]] → pick a type. Nothing is created yet.
 2. Press on a `PBMesh` face or on the grid. Drag the base **in that plane**.
 3. The first motion **locks the drag axis** on axis-aligned surfaces.
 4. Release. Move to set height along the face normal (negative grows below).
@@ -29,7 +29,7 @@ Floor, then wall, then a slope — one gesture, three planes.
 
 Shapes with parameters the drag cannot express (step count, arch, sides…) open a live-preview modal after the click. **Apply** keeps them, **Cancel** restores the placement values. Either way the node is selected.
 
-**Edit Params** reopens that modal. It is enabled only while the mesh still has a `shape_id` and has not been topology-edited. Extrude, knife, delete — anything that rewrites faces — marks it edited, and the factory parameters no longer describe the mesh.
+[[btn:edit_params]] reopens that modal. It is enabled only while the mesh still has a `shape_id` and has not been topology-edited. Extrude, knife, delete — anything that rewrites faces — marks it edited, and the factory parameters no longer describe the mesh.
 
 :::shot create-params.png
 Live parameter modal — adjusting step count updates the preview mesh in real time.
@@ -86,7 +86,7 @@ Directional shapes like **Door** and **Stair** display a solid orange arrow on t
 
 If you want a doorway facing **North** (along -Z) in an East-West wall:
 
-1. Pick **New Shape** → **Door**, then click on the floor where you want the doorway.
+1. Pick [[btn:new_shape]] → **Door**, then click on the floor where you want the doorway.
 2. Drag a short distance in the direction you want it to face (pull slightly **North**). The orange arrow immediately appears, pointing North along the short axis.
 3. Press and hold **[[kbd:Ctrl]]** to lock that facing direction.
 4. While still holding [[kbd:Ctrl]], drag laterally (**East or West**) to pull out the full doorway width (e.g. 2.5 m). Because [[kbd:Ctrl]] is held, the arrow stays locked pointing North instead of flipping sideways.

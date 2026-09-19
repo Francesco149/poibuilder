@@ -3,7 +3,7 @@ title: UV editor
 lead: A dedicated 2D canvas. Click a face in 3D, the island lights up. Drag in 2D, the 3D face updates.
 ---
 
-Toolbar **UV** opens the bottom panel. Pop-out detaches it to a floating window.
+Toolbar [[btn:uv::UV]] opens the bottom panel. Pop-out detaches it to a floating window.
 
 :::op uv
 Opens the dedicated 2D UV canvas panel in the bottom dock or a floating window.

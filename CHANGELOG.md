@@ -3,6 +3,81 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.164 — polish round: rows 3/4 default on, the ARMED cursor square survives a fresh import, Center Pivot works from Object mode, stamp opacity reaches the pixels, and every doc button gets a locator
+
+### Extended toolbar (Rows 3 & 4) ships visible
+
+A fresh import now shows the full four-row toolbar: `_extended_visible`
+defaults to true, Row 3/Row 4 start visible, and the **Extended Tools**
+toggle starts pre-pressed to match. Folding the rows persists as before
+(`poibuilder/toolbar/two_rows`).
+
+### The ARMED creation cursor square no longer needs a mesh to exist
+
+The yellow snap square under the cursor while a shape placement is armed
+is drawn by the gizmo plugin ON a PBMesh's gizmo — so on a fresh import,
+before the first shape existed, there was no host to draw it and the
+square was missing until the first click (snapping itself always worked;
+it is pure math in the hover update). `PBGridView` now owns a
+scenario-side cursor marker (same yellow point square, on top, no depth
+test) that the plugin shows only when no gizmo host drew the square — the
+two paths never double-draw, and the marker appears the moment creation
+is armed on any project, empty or not.
+
+### Center Pivot (and Mirror / Freeze / Merge Objs / Auto Smooth) work in Object mode
+
+`_on_operation_requested` gates element ops behind `editor.is_editing()`,
+which is FALSE in Object mode — so the whole-object tools that sit after
+that gate were dead buttons exactly where a user naturally clicks them
+(the button enables on `has_mesh`, which Object mode satisfies). Center
+Pivot was the report: extend a cube's faces, click Center Pivot, nothing.
+They now dispatch before the gate, next to poibuilderize/CSG which moved
+there for the same reason. Center Pivot also logs when the pivot is
+already centered (every factory shape is built origin-centered, so a
+pristine shape is a legitimate no-op — previously it looked broken).
+Known gap, unchanged this round: these object ops still register no undo.
+
+### Stamp opacity reaches the painted pixels
+
+`paste_decal` always took `opacity`, but only the rarely-reached
+pixel-walk fallback applied it: the axis-aligned fast path built its
+sprite with full source alpha, and the oriented-sprite path applied the
+falloff LUT only for dabs (stamps hardcoded weight 255). The dock's
+opacity spinner visibly changed only the preview while the landed stamp
+ignored it. Both sprite paths now bake `opacity` into the sprite alpha
+(the oriented sprite's cache key already carried it), locked by
+`test_stamp_opacity_applies_on_every_paste_path` (rotation 0 and 45°).
+
+### Docs: inline button locators, current export screenshot, install note
+
+- Every toolbar button word in the docs is now an inline locator: hover
+  (or keyboard-focus) the word and a mini card opens showing the button's
+  toolbar GROUP strip with the button ringed, its row, key, requirement
+  and one-line description — CSS-only, no JS. The `[[btn:id]]` /
+  `[[btn:id|Label]]` directive is wired into the builder next to
+  `[[kbd:]]`/`[[icon:]]`, backed by an OPS_CATALOG extended to every
+  toolbar control (group strips mirror `pb_toolbar.gd::_update_row_layout`)
+  with keys cross-checked against `pb_actions.gd`; `:::op` blocks use the
+  same group strips now (fixes `:::op merge_objects`, which previously
+  rendered an "unknown operation" comment). Pages swept: interface,
+  install, first-minutes, shapes, export, transform, select, ops,
+  ops-joins, bevel, materials, paint-adjacent pages, uv, grid, objects,
+  trims, faq, known-issues, index, both walkthroughs.
+- `map-export.png` re-shot through the showcase pipeline: the export
+  dialog it showed ("Target Engine Mode") predates the Format dialog and
+  the 4-row toolbar.
+- install.md documents the fresh-import console noise
+  (`p_enabled && addon_name_to_plugin.has(addon_path)`,
+  `!tasks.has(p_task)`, `Task 'reimport' already exists`) as Godot 4.7
+  first-import machinery, benign, avoidable by enabling the plugin after
+  the first import finishes — the plugin provably triggers no reimports
+  itself (no EditorFileSystem calls; the bundled docs-site already ships
+  `.gdignore`d).
+- known-issues: the small-face paint lag note now says it is
+  iGPU-only — not observable on the 5060 baseline machine, visible on the
+  five-year-old integrated-GPU worst case — and points at the
+  performance page.
+
 ## v0.9.163 — the bench sees the whole map: GLB emitters play, the export explains its own cost, docs stop pointing at repo internals
 
 ### The benchmark's GLB variants play their particle emitters now
