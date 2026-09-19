@@ -3,6 +3,73 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.162 — the benchmark grows up: steady-state, ablations, Vulkan, PSP parity; the bake gets modulate-2x
+
+### The baked map has a consumer contract now — and it was being violated everywhere
+
+The retro bake carries its lighting in COLOR_0. Three things followed from
+taking that seriously:
+
+- **Shadow flags travel.** glTF's KHR_lights_punctual has no shadow field,
+  so a shadow-casting light tags its export node with `poi_shadow` extras
+  and a consumer restores `shadow_enabled` from them. The modern GLB's
+  "wrong lighting" in the benchmark was exactly this gap.
+- **The retro GLB consumer adds ZERO lighting.** `PBEnvironment.
+  apply_retro_display(root, preset)` is the display contract: preset sky +
+  the PSP's linear depth fog (fog_start/fog_end now mirror the device
+  table), black ambient, linear tonemap. Applying the live preset on top
+  double-lights the bake (+54% mean luminance at day, measured). The frame
+  bench and the reference viewer follow it.
+- **Vertex colors need two flags to render.** Godot's importer neither
+  enables albedo-from-vertex-color for JSON-authored materials nor shades
+  the bake — and the bake's vertex colors are PREBADED LIGHT, so a shaded
+  material renders the map black the moment no live lights remain (the
+  black-scene regression). `PBMapExporter.apply_baked_vertex_colors(root)`
+  sets unshaded + albedo-from-color for the consumer; the parity tool
+  proves it: alpha demo dusk mean luminance PSP 0.122 vs Godot 0.123,
+  courtyard day 0.450 vs 0.447.
+
+### The benchmark tells the truth about the run, the load, and the cost
+
+- **steady** summary: the warm pass minus its first second — the headline
+  numbers are the run, not loading spikes; the cold pass survives for
+  hitch counts.
+- **Ablation profile** (`./run_bench.sh --profile`): the PB scene flown
+  base / no_shadows / no_emitters / no_splat / no_lights. On the Intel UHD
+  630 baseline, shadows are HALF the frame (−11.6 ms GL, −10.8 Vulkan;
+  draw calls 44 -> 334), particles ~3 ms, the splat shader ~free.
+- **Renderer axis** (`--renderer vulkan`): forward_plus measured SLOWER
+  than gl_compatibility for every variant on this integrated GPU (PB 35.4
+  vs 25.2 ms) — Compatibility is the measured choice for low-end graphics.
+- **Visual parity shots**: five fixed poses per variant per renderer,
+  gridded by `tools/bench_contact_sheet.py` into contact sheets — a
+  lighting regression is now SEEN, not just inferred from numbers
+  (run_bench.sh re-exports through the new poi_env_preset root extras;
+  reports land in `exports/bench/<renderer>_<variant>.json`).
+
+Headlines (steady): GL — PB 25.2 ms, retro GLB **5.7 ms** (unshaded bakes
+are nearly free; 4.4x the PB scene), modern GLB 21.7 ms. Vulkan — 35.4 /
+7.6 / 27.7 ms.
+
+### Modulate-2x: ExportSettings.bake_boost, default 2.0
+
+The old-school lift, exactly as retro hardware's modulate stage did it:
+baked vertex colors are multiplied by `bake_boost` (default 2.0, saturating
+at 1.0) in the retro GLB, modern vertex-light bake, and the .pbm bytes —
+brighter shadows and mid-tones for dusk/night bakes while sunlit areas
+ride the clamp. The demo map's retro output plays on the device at 60 fps
+with it (137 draws). Dialog knob: "Bake Boost".
+
+### The demo map's neon room was un-shippable dark — twice
+
+The closed room's interior albedo (0.42 sRGB = 0.15 linear) could never
+read brighter than 0.15 in the retro pipeline, where surface brightness is
+albedo x vertex color capped at 1.0 — the bake came out black with no
+shadow silhouettes no matter how much light it computed. The envelope is
+now ~0.62 sRGB (still the dark look), the neon omnis run hotter with
+ranges that stay INSIDE the room (their old 8-9 m ranges also leaked neon
+onto the courtyard through shadow-map bias — visible in the modern GLB).
+
 ## v0.9.161 — the demo waterfall earns its screenshot; the docs explain scrolling
 
 ### The waterfall is now the layer-stack showcase
