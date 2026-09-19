@@ -99,7 +99,10 @@ var _row2: HBoxContainer
 var _row3: HBoxContainer
 var _row4: HBoxContainer
 var _two_rows: bool = true
-var _extended_visible: bool = false
+## Rows 3 & 4 (Extended Tools) ship VISIBLE: a fresh import must show the
+## whole toolset (the user can still fold them with the Split Rows toggle,
+## which persists via poibuilder/toolbar/two_rows).
+var _extended_visible: bool = true
 var _btn_split_rows: Button
 var _btn_vertex_snap: Button
 var _btn_proportional: Button
@@ -194,14 +197,14 @@ func _build_ui() -> void:
 	_row3.name = "Row3"
 	_row3.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
 	_row3.add_theme_constant_override("separation", 4)
-	_row3.visible = false
+	_row3.visible = true
 	add_child(_row3)
 
 	_row4 = HBoxContainer.new()
 	_row4.name = "Row4"
 	_row4.size_flags_horizontal = Control.SIZE_EXPAND | Control.SIZE_FILL
 	_row4.add_theme_constant_override("separation", 4)
-	_row4.visible = false
+	_row4.visible = true
 	add_child(_row4)
 
 	# Header: Logo + Split Rows button (placed on the left so it's never cut off)
@@ -220,7 +223,8 @@ func _build_ui() -> void:
 		_btn_split_rows.text = "☷"
 	_btn_split_rows.flat = true
 	_btn_split_rows.toggle_mode = true
-	_btn_split_rows.button_pressed = false
+	# Pre-pressed to match the shipped-visible rows 3 & 4 (fresh imports).
+	_btn_split_rows.button_pressed = true
 	_btn_split_rows.tooltip_text = "Extended Tools (Row 3): Advanced Selection, Object Tools, CSG Booleans, Smoothing"
 	_btn_split_rows.toggled.connect(_on_split_rows_button_toggled)
 	_btn_split_rows.gui_input.connect(_on_split_rows_button_gui_input)

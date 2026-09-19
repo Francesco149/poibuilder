@@ -216,7 +216,9 @@ func test_toolbar_initial_state():
 	# sep, Material button, UV button, Settings button, sep, Export button.
 	assert_true(tb._row1.visible, "Row 1 should be visible")
 	assert_true(tb._row2.visible, "Row 2 should be visible by default")
-	assert_false(tb._row3.visible, "Row 3 (extended tools) should be hidden by default")
+	assert_true(tb._row3.visible, "Row 3 (extended tools) ships visible by default")
+	assert_true(tb._row4.visible, "Row 4 (extended tools) ships visible by default")
+	assert_true(tb._btn_split_rows.button_pressed, "Extended Tools toggle starts pressed to match the visible rows")
 	assert_not_null(tb._btn_export_more, "Export dialog button should exist")
 	assert_not_null(tb._op_buttons.get("bevel_edges"), "Bevel op button should exist")
 	assert_not_null(tb._op_buttons.get("bridge_edges"), "Bridge op button should exist")
@@ -233,29 +235,33 @@ func test_toolbar_extended_row_toggle():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
 
-	# Initially Row 1 & 2 visible, Row 3 hidden
+	# Rows ship visible (v0.9.164); the toggle folds both extended rows.
 	assert_true(tb._row1.visible)
 	assert_true(tb._row2.visible)
-	assert_false(tb._row3.visible)
+	assert_true(tb._row3.visible)
+	assert_true(tb._row4.visible)
 
 	var received: Array = []
 	tb.split_rows_toggled.connect(func(val): received.append(val))
 
-	# Toggle Row 3 on
-	tb._btn_split_rows.button_pressed = true
-	assert_true(tb._row3.visible, "Row 3 should be visible when toggled on")
-	assert_not_null(tb._op_buttons.get("select_all"), "Select all button exists in Row 3")
-	assert_not_null(tb._op_buttons.get("merge_objects"), "Merge objects button exists in Row 3")
-	assert_not_null(tb._op_buttons.get("csg_union"), "CSG Union button exists in Row 3")
-	assert_not_null(tb._op_buttons.get("smooth_auto"), "Auto smooth button exists in Row 3")
-	assert_eq(received.size(), 1)
-	assert_true(received[0])
-
-	# Toggle Row 3 off
+	# Toggle the extended rows off
 	tb._btn_split_rows.button_pressed = false
 	assert_false(tb._row3.visible, "Row 3 should be hidden when toggled off")
+	assert_false(tb._row4.visible, "Row 4 should be hidden when toggled off")
 	assert_true(tb._row1.visible, "Row 1 stays visible")
 	assert_true(tb._row2.visible, "Row 2 stays visible")
+
+	# Toggle the extended rows back on
+	tb._btn_split_rows.button_pressed = true
+	assert_true(tb._row3.visible, "Row 3 should be visible when toggled on")
+	assert_true(tb._row4.visible, "Row 4 should be visible when toggled on")
+	assert_not_null(tb._op_buttons.get("select_all"), "Select all button exists in Row 3")
+	assert_not_null(tb._op_buttons.get("merge_objects"), "Merge objects button exists in Row 4")
+	assert_not_null(tb._op_buttons.get("csg_union"), "CSG Union button exists in Row 4")
+	assert_not_null(tb._op_buttons.get("smooth_auto"), "Auto smooth button exists in Row 3")
+	assert_eq(received.size(), 2)
+	assert_false(received[0])
+	assert_true(received[1])
 func test_toolbar_icons_present():
 	var tb := PBToolbar.new()
 	add_child_autofree(tb)
