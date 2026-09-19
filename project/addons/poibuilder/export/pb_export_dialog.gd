@@ -19,6 +19,7 @@ var _chk_bake_lighting: CheckBox
 var _chk_bake_shadows: CheckBox
 var _chk_bake_ao: CheckBox
 var _spin_ao_samples: SpinBox
+var _spin_bake_boost: SpinBox
 var _spin_ao_distance: SpinBox
 var _chk_bake_textures: CheckBox
 var _opt_splat_mode: OptionButton
@@ -183,6 +184,18 @@ func _build_ui() -> void:
 	_spin_ao_samples.max_value = 64
 	_spin_ao_samples.value = 16
 	hb_light_ops.add_child(_spin_ao_samples)
+
+	var lbl_boost := Label.new()
+	lbl_boost.text = "Bake Boost:"
+	lbl_boost.tooltip_text = "Modulate-2x: baked vertex colors are multiplied by this (saturating at 1.0). Lifts shadows and mid-tones of dusk/night bakes the way retro hardware's modulate stages did; sunlit areas ride the clamp. 1.0 disables."
+	hb_light_ops.add_child(lbl_boost)
+	_spin_bake_boost = SpinBox.new()
+	_spin_bake_boost.min_value = 1.0
+	_spin_bake_boost.max_value = 4.0
+	_spin_bake_boost.step = 0.5
+	_spin_bake_boost.value = 2.0
+	_spin_bake_boost.tooltip_text = lbl_boost.tooltip_text
+	hb_light_ops.add_child(_spin_bake_boost)
 	root_vb.add_child(hb_light_ops)
 
 	root_vb.add_child(HSeparator.new())
@@ -348,6 +361,7 @@ func _on_confirmed() -> void:
 	settings.bake_shadows = _chk_bake_shadows.button_pressed
 	settings.bake_ao = _chk_bake_ao.button_pressed
 	settings.ao_samples = int(_spin_ao_samples.value)
+	settings.bake_boost = _spin_bake_boost.value
 	settings.bake_textures = _chk_bake_textures.button_pressed
 	if _opt_splat_mode != null:
 		settings.splat_mode = _opt_splat_mode.get_selected_id() as PBMapExporter.ExportSettings.SplatMode
