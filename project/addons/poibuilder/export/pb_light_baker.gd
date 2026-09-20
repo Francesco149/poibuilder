@@ -531,6 +531,14 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_ca
 		var md := pb.pb_mesh_data
 		for face in md.faces:
 			if face != null:
+				# A transparent (blended/cutout) face must not occlude the bake:
+				# the editor draws it see-through, so its silhouette may not
+				# darken anything either (the "waterfall shadow" known issue —
+				# it used to bite only when the material sat on the override
+				# slot; a PBMesh's face materials were never checked). The
+				# is_water opt-in still gets its soft 0.5-transmission shadow.
+				if not is_water and _is_transparent_material(md.get_face_material(face)):
+					continue
 				var fi := face.get_indexes()
 				for i in range(0, fi.size() - 2, 3):
 					var p0: Vector3 = xf * md.positions[fi[i]]
@@ -538,17 +546,29 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_ca
 					var p2: Vector3 = xf * md.positions[fi[i + 2]]
 					grid.add_triangle(p0, p1, p2, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, null, 0.5, is_water)
 	elif node is MeshInstance3D:
-		_add_mesh_instance_triangles(node as MeshInstance3D, grid, null, 0.5, is_water)
+		_add_mesh_instance_triangles(node as MeshInstance3D, grid, null, 0.5, is_water, not is_water)
 	for child in node.get_children():
 		_collect_triangles_recursive(child, grid, image_cache)
 
 static func _add_mesh_instance_triangles(mi: MeshInstance3D, grid: SpatialGrid,
-		alpha_image: Image = null, alpha_scissor: float = 0.5, is_water: bool = false) -> void:
+		alpha_image: Image = null, alpha_scissor: float = 0.5, is_water: bool = false,
+		skip_transparent_surfaces: bool = false) -> void:
 	var m := mi.mesh
 	if m == null:
 		return
 	var xf := _get_world_transform(mi)
 	for s in range(m.get_surface_count()):
+		# The transparency exclusion for plain meshes works per SURFACE, not
+		# only on material_override: an imported glTF plane whose blended
+		# material lives in the surface slot used to enter the grid as a full
+		# opaque occluder (the "waterfall shadow" known issue). The billboard
+		# path calls this with its own alpha handling and must not be skipped.
+		if skip_transparent_surfaces:
+			var surf_mat: Material = mi.material_override
+			if surf_mat == null and m != null:
+				surf_mat = m.surface_get_material(s)
+			if _is_transparent_material(surf_mat):
+				continue
 		var arrays := m.surface_get_arrays(s)
 		if arrays.size() > Mesh.ARRAY_VERTEX:
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -577,6 +597,14 @@ static func _add_mesh_instance_triangles(mi: MeshInstance3D, grid: SpatialGrid,
 					var uv1 := uvs[i + 1] if has_uvs else Vector2.ZERO
 					var uv2 := uvs[i + 2] if has_uvs else Vector2.ZERO
 					grid.add_triangle(p0, p1, p2, uv0, uv1, uv2, alpha_image, alpha_scissor, is_water)
+## True when `mat` draws with any transparency (blend or cutout). Such a
+## surface must not occlude the light bake: the editor renders it see-through,
+## so the baked shadows have to let light through it as well. Cutout billboards
+## are the exception — they cast alpha-silhouette shadows via their own path.
+static func _is_transparent_material(mat: Material) -> bool:
+	return mat is StandardMaterial3D \
+		and (mat as StandardMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
+
 static func _get_world_transform(node: Node3D) -> Transform3D:
 	if node == null:
 		return Transform3D.IDENTITY

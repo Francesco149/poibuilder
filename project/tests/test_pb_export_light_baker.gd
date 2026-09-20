@@ -101,6 +101,85 @@ func test_billboard_lighting() -> void:
 	assert_ne(lit_cols[0], Color.WHITE, "Lit billboard must have baked lighting colors")
 	assert_gt(lit_cols[0].r, 0.3, "Lit billboard should receive light")
 
+## A quad PBMesh named nothing sprite-like, carrying `mat`, standing at y=1.
+## The floor is an opaque cube whose top sits at y=0, so a shadow ray from just
+## above the floor straight up crosses exactly the quad.
+func _shadow_scene_with_quad(mat: Material, quad_name: String) -> PBLightBaker.SpatialGrid:
+	var root := Node3D.new()
+	autofree(root)
+	var floor_box := PBMesh.create_cube(4.0)
+	floor_box.name = "Floor"
+	floor_box.position = Vector3(0, -2, 0)
+	root.add_child(floor_box)
+
+	var quad := PBMesh.new()
+	quad.name = quad_name
+	quad.pb_mesh_data = PBShapeGenerators.create_sprite(2.0, 2.0)
+	quad.pb_mesh_data.materials = [mat]
+	quad.position = Vector3(0, 1, 0)
+	# Lay the quad horizontal (a ceiling over the floor point): the sprite
+	# generator builds a VERTICAL quad in the X-Y plane, and a vertical shadow
+	# ray would travel IN that plane and never cross it.
+	quad.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(quad)
+	quad.rebuild()
+
+	return PBLightBaker.build_spatial_grid(root)
+
+func test_blended_plane_does_not_occlude_shadow_bake() -> void:
+	# The "waterfall shadow" known issue: a blended scrolling plane must let
+	# the bake's light through. It used to enter the shadow grid as a full
+	# opaque occluder whenever its material was NOT on material_override —
+	# a PBMesh's face materials were never checked at all.
+	var blended := StandardMaterial3D.new()
+	blended.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var grid := _shadow_scene_with_quad(blended, "SmokePlane")
+	var trans := grid.get_shadow_transmission(Vector3(0, 0.05, 0), Vector3.UP, 10.0)
+	assert_eq(trans, 1.0, "A blended plane must not darken the bake under it")
+
+func test_opaque_plane_still_occludes_shadow_bake() -> void:
+	# Control for the blended case: the same quad with an opaque material is a
+	# real occluder.
+	var opaque := StandardMaterial3D.new()
+	var grid := _shadow_scene_with_quad(opaque, "Wall")
+	var trans := grid.get_shadow_transmission(Vector3(0, 0.05, 0), Vector3.UP, 10.0)
+	assert_eq(trans, 0.0, "An opaque plane must still occlude the bake")
+
+func test_waterfall_named_blended_plane_keeps_soft_transmission() -> void:
+	# The is_water opt-in deliberately lets half the light through per plane.
+	var blended := StandardMaterial3D.new()
+	blended.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var grid := _shadow_scene_with_quad(blended, "WaterfallSheet")
+	var trans := grid.get_shadow_transmission(Vector3(0, 0.05, 0), Vector3.UP, 10.0)
+	assert_almost_eq(trans, 0.5, 0.01, "A Waterfall-named plane keeps its 0.5 transmission")
+
+func test_plain_mesh_blended_surface_material_does_not_occlude() -> void:
+	# An imported glTF-style plane: the blended material lives in the mesh
+	# SURFACE slot, not material_override — the old override-only check never
+	# saw it and the plane baked a full opaque shadow.
+	var root := Node3D.new()
+	autofree(root)
+	var floor_box := PBMesh.create_cube(4.0)
+	floor_box.name = "Floor"
+	floor_box.position = Vector3(0, -2, 0)
+	root.add_child(floor_box)
+
+	var mi := MeshInstance3D.new()
+	mi.name = "MistPlane"
+	var qm := QuadMesh.new()
+	qm.size = Vector2(2, 2)
+	mi.mesh = qm
+	var blended := StandardMaterial3D.new()
+	blended.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	qm.material = blended
+	mi.position = Vector3(0, 1, 0)
+	mi.rotation_degrees = Vector3(90, 0, 0)
+	root.add_child(mi)
+
+	var grid := PBLightBaker.build_spatial_grid(root)
+	var trans := grid.get_shadow_transmission(Vector3(0, 0.05, 0), Vector3.UP, 10.0)
+	assert_eq(trans, 1.0, "A blended surface-material plane must not darken the bake under it")
+
 func test_placed_sprite_bakes_silhouette_shadow_triangles() -> void:
 	# A placed sprite (PBMesh, shape_id "sprite") must enter the shadow grid as
 	# an ALPHA-SILHOUETTE occluder sampled from its texture — not as an opaque
