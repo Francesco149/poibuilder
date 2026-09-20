@@ -79,6 +79,18 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 
 	var face_bounds := Rect2(min_u, min_v, maxf(max_u - min_u, 0.001), maxf(max_v - min_v, 0.001))
 
+	# A MANUAL-UV face carries an authored unwrap (a Poibuilderized glTF prop,
+	# a UV-editor projection). Its fragments must sample THAT unwrap: the
+	# planar projection below is the auto-UV model and reproduces it only for
+	# native faces. The old behaviour rebuilt every fragment's UVs from the
+	# planar projection, so a converted barrel exported with its metal hoops
+	# sampling metres-wide coordinates of their pack atlas — right in the
+	# editor, mangled on the retro target (the known "mangled UVs" issue).
+	# The mapper is the exact per-triangle affine map planar -> authored UV.
+	var uv_mapper := {}
+	if face.manual_uv:
+		uv_mapper = _build_authored_uv_mapper(mesh_data, face, face_indices, planar_points)
+
 	# If subdivision is disabled, return the full face as a single fragment
 	if not subdivide:
 		var frag := TileFragment.new()
@@ -91,7 +103,10 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 			var vi: int = face_indices[i]
 			frag.positions.append(mesh_data.positions[vi])
 			frag.normals.append(normal)
-			frag.uvs.append(face_uvs.get(vi, Vector2.ZERO))
+			if not uv_mapper.is_empty() and vi >= 0 and vi < mesh_data.textures0.size():
+				frag.uvs.append(mesh_data.textures0[vi])
+			else:
+				frag.uvs.append(face_uvs.get(vi, Vector2.ZERO))
 			# Local tile UV mapped to face bounds
 			var pu: float = planar_points[i].x
 			var pv: float = planar_points[i].y
@@ -176,7 +191,7 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 				if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v0, true)
 				if not poly.is_empty(): poly = _clip_polygon_axis(poly, false, v1, false)
 				if poly.size() >= 3:
-					_triangulate_cell_polygon(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+					_triangulate_cell_polygon(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 			else:
 				var cell_polys: Array[Array] = []
 				for t in range(tri_count):
@@ -201,11 +216,11 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 						cell_polys.append(poly)
 
 				if cell_polys.size() == 1:
-					_append_polygon_triangles(cell_polys[0], u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+					_append_polygon_triangles(cell_polys[0], u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 				elif cell_polys.size() > 1:
 					var merged_loops := _merge_cell_polygons(cell_polys)
 					for loop in merged_loops:
-						_append_polygon_triangles(loop, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+						_append_polygon_triangles(loop, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 			if not cell_indices.is_empty():
 				var frag := TileFragment.new()
 				frag.cell_coord = Vector2i(k, m)
@@ -222,7 +237,8 @@ static func subdivide_face(mesh_data: PBMeshData, face: PBFace, face_idx: int,
 static func _triangulate_cell_polygon(poly: Array, u0: float, u1: float, v0: float, v1: float,
 		anchor: Vector3, u_axis: Vector3, v_axis: Vector3, plane_dist: float, normal: Vector3,
 		face: PBFace, cell_positions: PackedVector3Array, cell_normals: PackedVector3Array,
-		cell_uvs: PackedVector2Array, cell_tile_uvs: PackedVector2Array, cell_indices: PackedInt32Array) -> void:
+		cell_uvs: PackedVector2Array, cell_tile_uvs: PackedVector2Array, cell_indices: PackedInt32Array,
+		uv_mapper: Dictionary = {}) -> void:
 	if poly.size() < 3:
 		return
 
@@ -262,17 +278,18 @@ static func _triangulate_cell_polygon(poly: Array, u0: float, u1: float, v0: flo
 						var box: Array = _clip_polygon_axis(strip, false, va, true)
 						box = _clip_polygon_axis(box, false, vb, false)
 						if box.size() >= 3:
-							_append_polygon_triangles(box, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+							_append_polygon_triangles(box, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 				else:
-					_append_polygon_triangles(strip, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+					_append_polygon_triangles(strip, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 			return
 
-	_append_polygon_triangles(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices)
+	_append_polygon_triangles(poly, u0, u1, v0, v1, anchor, u_axis, v_axis, plane_dist, normal, face, cell_positions, cell_normals, cell_uvs, cell_tile_uvs, cell_indices, uv_mapper)
 
 static func _append_polygon_triangles(poly: Array, u0: float, u1: float, v0: float, v1: float,
 		anchor: Vector3, u_axis: Vector3, v_axis: Vector3, plane_dist: float, normal: Vector3,
 		face: PBFace, cell_positions: PackedVector3Array, cell_normals: PackedVector3Array,
-		cell_uvs: PackedVector2Array, cell_tile_uvs: PackedVector2Array, cell_indices: PackedInt32Array) -> void:
+		cell_uvs: PackedVector2Array, cell_tile_uvs: PackedVector2Array, cell_indices: PackedInt32Array,
+		uv_mapper: Dictionary = {}) -> void:
 	var area := 0.0
 	for vi in range(poly.size()):
 		var p1: Vector2 = poly[vi]
@@ -287,7 +304,7 @@ static func _append_polygon_triangles(poly: Array, u0: float, u1: float, v0: flo
 		var pos3d := anchor + pt2d.x * u_axis + pt2d.y * v_axis + plane_dist * normal
 		cell_positions.append(pos3d)
 		cell_normals.append(normal)
-		cell_uvs.append(_compute_planar_uv(pt2d, face))
+		cell_uvs.append(_map_face_uv(pt2d, face, uv_mapper))
 
 		var tu := (pt2d.x - u0) / maxf(u1 - u0, 0.0001)
 		var tv := (pt2d.y - v0) / maxf(v1 - v0, 0.0001)
@@ -574,6 +591,73 @@ static func _clip_polygon_axis(poly: Array, is_u: bool, threshold: float, greate
 static func _append_distinct_pt(arr: Array, pt: Vector2) -> void:
 	if arr.is_empty() or arr[arr.size() - 1].distance_squared_to(pt) > 0.000001:
 		arr.append(pt)
+
+## Builds the per-triangle affine maps planar (u, v) -> authored UV for a
+## MANUAL-UV face. Every triangle's map is exact (both planar coordinates and
+## a barycentric UV interpolation are affine in the 3D point, so their
+## composition per triangle is affine); a clipped cell vertex resolves through
+## the triangle that contains it. Returns {} when the face carries no usable
+## authored data — the caller then keeps the planar projection.
+static func _build_authored_uv_mapper(mesh_data: PBMeshData, face: PBFace,
+		face_indices: PackedInt32Array, planar_points: Array[Vector2]) -> Dictionary:
+	if mesh_data.textures0.size() != mesh_data.positions.size():
+		return {}
+	var tris: Array = []
+	var tri_count := face_indices.size() / 3
+	for t in range(tri_count):
+		var ia := face_indices[t * 3]
+		var ib := face_indices[t * 3 + 1]
+		var ic := face_indices[t * 3 + 2]
+		if ia < 0 or ib < 0 or ic < 0 \
+				or ia >= mesh_data.textures0.size() or ib >= mesh_data.textures0.size() \
+				or ic >= mesh_data.textures0.size():
+			continue
+		var p0: Vector2 = planar_points[t * 3]
+		var p1: Vector2 = planar_points[t * 3 + 1]
+		var p2: Vector2 = planar_points[t * 3 + 2]
+		var det := (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y)
+		if absf(det) < 0.0000001:
+			continue
+		var uv0: Vector2 = mesh_data.textures0[ia]
+		var uv1: Vector2 = mesh_data.textures0[ib]
+		var uv2: Vector2 = mesh_data.textures0[ic]
+		# uv(pt) = (a.x*pt.x + b.x*pt.y + c.x, a.y*pt.x + b.y*pt.y + c.y)
+		var inv_det := 1.0 / det
+		var d1 := p1 - p0
+		var d2 := p2 - p0
+		var du := uv1 - uv0
+		var dv := uv2 - uv0
+		var a := Vector2((d2.y * du.x - d1.y * dv.x) * inv_det,
+			(d2.y * du.y - d1.y * dv.y) * inv_det)
+		var b := Vector2((-d2.x * du.x + d1.x * dv.x) * inv_det,
+			(-d2.x * du.y + d1.x * dv.y) * inv_det)
+		tris.append({
+			"p0": p0, "p1": p1, "p2": p2,
+			"a": a, "b": b, "c": uv0 - a * p0.x - b * p0.y,
+		})
+	if tris.is_empty():
+		return {}
+	return {"tris": tris}
+
+## Fragment UV for a clipped 2D point: the authored unwrap through the mapper
+## when the face is manual-UV, the face's planar projection otherwise.
+static func _map_face_uv(pt: Vector2, face: PBFace, uv_mapper: Dictionary) -> Vector2:
+	if uv_mapper.is_empty():
+		return _compute_planar_uv(pt, face)
+	var tris: Array = uv_mapper["tris"]
+	for t in tris:
+		if _point_in_tri_2d(pt, t["p0"], t["p1"], t["p2"]):
+			return t["a"] * pt.x + t["b"] * pt.y + t["c"]
+	# Off every triangle (numerical edge): nearest centroid wins.
+	var best: Dictionary = tris[0]
+	var best_d := INF
+	for t in tris:
+		var centroid: Vector2 = (t["p0"] + t["p1"] + t["p2"]) / 3.0
+		var d := centroid.distance_squared_to(pt)
+		if d < best_d:
+			best_d = d
+			best = t
+	return best["a"] * pt.x + best["b"] * pt.y + best["c"]
 
 ## Computes face UV coordinate from a 2D planar position (u, v).
 static func _compute_planar_uv(pt: Vector2, face: PBFace) -> Vector2:
