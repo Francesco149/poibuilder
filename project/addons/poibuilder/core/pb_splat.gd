@@ -926,17 +926,35 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
-	var bytes := mask_img.get_data()
-	if PBPaintProfile.hooks():
-		_prof_bytes += w * h
-
+	# ── Stroke-cached byte buffer ─────────────────────────────────────────
+	# Image.get_data() copies the ENTIRE mask (256 KB for a 512x512 R8) on
+	# every call.  A stroke that visits the same face 60-150 times (one dab
+	# per rendered frame) was spending 30-75 MB of memcpy on data it already
+	# held: the bytes are modified in place by every previous dab of the
+	# same stroke.  Caching the buffer in stroke_ctx and calling get_data()
+	# once — on the first dab that touches each mask — eliminates the
+	# per-dab copy.  set_data() still runs when the loop dirties a pixel
+	# (the Image must be current for the queued texture upload), but only
+	# one set_data per dab vs one get+set was the dominant fixed overhead
+	# on small-footprint dabs (the iGPU trace: 0.43 ms per 845-px dab,
+	# ~40 % of which was the two 256 KB copies).
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
 	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
-		var base := bytes.duplicate()
+		var bytes_init := mask_img.get_data()
+		var base := bytes_init.duplicate()
 		var wmax := PackedByteArray()
 		wmax.resize(w * h)
-		stroke = {"w": w, "h": h, "base": base, "wmax": wmax}
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init}
 		stroke_ctx[mask_img.get_instance_id()] = stroke
+	# Detach the buffer from the dict so the local var is the sole owner —
+	# GDScript's PackedByteArray is COW; without this, the first bytes[i]=
+	# write would copy the entire 256 KB buffer to separate from the dict's
+	# reference.  Replacing the dict entry with an empty array costs one tiny
+	# allocation, not a 256 KB memcpy.
+	var bytes: PackedByteArray = stroke["bytes"]
+	stroke["bytes"] = PackedByteArray()
+	if PBPaintProfile.hooks():
+		_prof_bytes += w * h
 	var base: PackedByteArray = stroke["base"]
 	var wmax: PackedByteArray = stroke["wmax"]
 
@@ -1038,6 +1056,8 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 					if int(bytes[i]) != p_new:
 						bytes[i] = p_new
 						dirty = true
+	# Restore the (possibly modified) buffer into stroke_ctx for the next dab.
+	stroke["bytes"] = bytes
 	if dirty:
 		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
@@ -1172,17 +1192,20 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
-	var bytes := mask_img.get_data()
-	if PBPaintProfile.hooks():
-		_prof_bytes += w * h
-
+	# Stroke-cached byte buffer — see the disc dab walk for the rationale.
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
 	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
-		var base := bytes.duplicate()
+		var bytes_init := mask_img.get_data()
+		var base := bytes_init.duplicate()
 		var wmax := PackedByteArray()
 		wmax.resize(w * h)
-		stroke = {"w": w, "h": h, "base": base, "wmax": wmax}
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init}
 		stroke_ctx[mask_img.get_instance_id()] = stroke
+	# COW detach — see the disc dab walk for the rationale.
+	var bytes: PackedByteArray = stroke["bytes"]
+	stroke["bytes"] = PackedByteArray()
+	if PBPaintProfile.hooks():
+		_prof_bytes += w * h
 	var base: PackedByteArray = stroke["base"]
 	var wmax: PackedByteArray = stroke["wmax"]
 
@@ -1414,6 +1437,8 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 						if int(bytes[i]) != p_new:
 							bytes[i] = p_new
 							dirty = true
+		# Restore buffer and flush if dirty.
+		stroke["bytes"] = bytes
 		if dirty:
 			mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 			var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
@@ -1527,6 +1552,8 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 					if int(bytes[i]) != p_new:
 						bytes[i] = p_new
 						dirty = true
+	# Restore buffer and flush if dirty.
+	stroke["bytes"] = bytes
 	if dirty:
 		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
