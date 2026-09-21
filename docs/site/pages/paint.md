@@ -74,4 +74,4 @@ Scrolling sheets on a wall panel.
 
 To see what a face's paint looks like up close, the UV editor's **Splat masks** channel shows the composited paint for the selected face (read-only — that space is written by painting, not by hand). **UV1 (Texture)** and **UV2 (Lightmap)** are both editable channels — see [UV editor](uv.html).
 
-Two brush behaviours to know while this is in alpha: painting small faces runs noticeably laggier than big ones, and fast drags come out dotted — dab spacing follows stroke events, not distance. Both have workarounds and a planned fix on [Known issues](known-issues.html).
+One brush behaviour to know while this is in alpha: on old / integrated GPUs, painting small faces runs noticeably laggier than big ones — the per-dab cost is dominated by fixed mask-sync work that does not scale down with the face (fast drags are no longer dotted: dabs follow the cursor's path by distance, v0.9.168). Workarounds and status on [Known issues](known-issues.html).

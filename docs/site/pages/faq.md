@@ -72,7 +72,5 @@ dialog whenever you need it.
 ## Something looks wrong and it is not the tooltip's fault
 
 Check [Known issues](known-issues.html) — the confirmed alpha rough edges
-(PSP billboards rendering unlit, unexpected PSP shadows on transparent
-scrolling planes, stamps not spanning two objects, paint lag and dotted
-strokes, mangled retro UVs after Poibuilderize) are documented there with
-workarounds.
+(stamps not spanning two objects; paint lag on old integrated GPUs) are
+documented there with workarounds.

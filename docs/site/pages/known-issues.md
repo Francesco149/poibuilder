@@ -8,36 +8,6 @@ fixes after the alpha — each says where it bites and what to do in the
 meantime. If you hit something not on this page, check the
 [FAQ](faq.html) first, then file it.
 
-## Billboards render unlit on the PSP, even when set to lit
-
-**Where:** retro export on the device.
-
-A billboard placed with the sprite placer (or a `sprite*`-named
-MeshInstance3D) carries its lit flag, and the editor honours it — but the
-PSP build currently draws every billboard UNLIT, so foliage and other lit
-billboards stay at full brightness in dusk/night scenes while everything
-around them darkens.
-
-**Workaround:** light billboards' surroundings so full brightness reads as
-intentional, or prefer emissive-style art on the retro target. The modern
-GLB and the live Godot scene are not affected.
-
-## A transparent scrolling plane can cast an unexpected shadow on the PSP
-
-**Where:** retro export on the device.
-
-A plane with a transparent (blended) scrolling texture — a waterfall sheet,
-a smoke plane — can generate a shadow on the device that the editor never
-shows. The editor renders the plane as transparent; the retro bake can
-treat its silhouette as an occluder, so a dark patch appears where nothing
-in the editor suggested one.
-
-**Workaround:** turn off [[btn:obj_shadow::Cast Shadows]] for scrolling/transparent planes
-(row 3 toggle — select the plane, uncheck it) before exporting to the retro
-target. Visually verify with a Godot viewer of the bake (the repository's
-`run_viewer.sh` is the reference — adapt it to your setup as needed) plus
-PPSSPP (look-correctness only), or the hardware loop.
-
 ## A stamp cannot span two objects
 
 **Where:** decal stamps (all targets).
@@ -67,44 +37,10 @@ and the weak iGPU is where that fixed cost starts to show.
 
 **Workaround:** paint the small faces in one continuous pass rather than
 many separate dabs; where possible, paint detail on a larger face and let
-the UV tiling carry it. Fix queued — the paint pipeline is being reworked
-towards incremental stroke upload (when it lands, this note retires).
+the UV tiling carry it.
 
-## Paint stroke rate is not uniform (dotted lines at speed)
-
-**Where:** splat/decal brush.
-
-Dab spacing is tied to stroke events, not to distance travelled, and the
-rate is not adjustable — drag quickly and the stroke comes out DOTTED, like
-a series of stamps, instead of a continuous line.
-
-**Workaround:** drag slowly, or paint the line in overlapping dabs.
-Interpolation-by-distance (which makes fast drags continuous) and a
-stroke-rate control are planned for the same paint rework as the small-face
-lag above.
-
-## A poibuilderized mesh can export with mangled UVs to the PSP
-
-**Where:** retro export, after Poibuilderize.
-
-A mesh converted with [[btn:poibuilderize]] (for example a barrel GLB whose top
-you extruded) can look correct in the Godot editor — right materials, right
-UVs, right tiling — and still export with mangled UVs to the `.pbm` on some
-parts (reported on a barrel's metal rim: the hoops sample the wrong atlas
-region on the device while the body is fine).
-
-The cause is in the conversion of multi-mesh/multi-material glTF subtrees:
-face corners are rebuilt from triangles, and a UV island that spans a
-material boundary can survive in the editor but lose its per-region mapping
-during the retro tile bake.
-
-**Workaround (either):**
-- Leave props you do not need to face-edit UNCONVERTED — plain
-  MeshInstance3D nodes export with their textures sanitized and place
-  correctly (that is what the demo map's barrels do).
-- If you must edit it, re-assign the affected faces a dedicated material
-  (Texture mode + [UV editor](uv.html) planar re-projection) before
-  exporting.
-
-Until this is fixed, verify a converted prop's retro bake in the viewer
-before committing to it.
+**Status:** the first step of the paint rework shipped (v0.9.168) — mask
+and decal uploads now coalesce per rendered frame instead of running once
+per dab, which removes the redundant sync a stroke used to pay on every
+mouse event. The note stays until the whole pipeline has been re-measured
+on the reference iGPU machine.

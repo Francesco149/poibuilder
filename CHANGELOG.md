@@ -3,6 +3,115 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.168 — the known-issues sweep: four of the six alpha rough edges fixed (one verified on the device), the paint pipeline's first rework step, and a Hold-switch camera fix found on the device
+
+The session worked through docs/site/pages/known-issues.md. Four entries
+retired, one updated, one stays.
+
+### Fixed: a transparent scrolling plane no longer casts a shadow the bake never showed
+The shadow bake skipped a transparent mesh only when its material sat on
+`material_override`, and never checked PBMesh face materials at all — a
+waterfall sheet authored as a PBMesh, or an imported glTF plane with the
+blended material in its surface slot, went into the shadow grid as a full
+opaque occluder and baked a dark patch the editor never showed. The
+exclusion now works per face and per surface through one predicate
+(`_is_transparent_material`): any StandardMaterial3D with transparency
+other than DISABLED lets the bake's light through, whichever slot the
+material sits in. The `is_water` opt-in keeps its deliberate soft 0.5
+transmission per plane; cutout billboards keep their alpha-silhouette
+shadows. Four new light-baker tests pin blended PBMesh faces, the opaque
+control, the Waterfall transmission, and the surface-slot case.
+
+### Fixed: a poibuilderized mesh keeps its authored UVs through the retro tile bake
+`subdivide_face` rebuilt EVERY fragment's UVs from the planar metres
+projection — the auto-UV model native faces are built around. A
+Poibuilderized glTF prop stores its authored unwrap in textures0 with
+`manual_uv = true` (what `to_array_mesh` honours — which is why the
+editor looked right), so the retro bake silently replaced it: the
+barrel's metal hoops, whose UV island samples a region of a pack atlas,
+exported sampling metres-wide coordinates of that atlas while the body
+happened to survive. Manual-UV faces now carry an exact per-triangle
+affine map from planar coordinates to the authored UVs (a poibuilderized
+face IS one triangle, so the common case is exact; clipped cell vertices
+resolve through the triangle that contains them), and the non-subdivided
+path reads textures0 directly. Painted tiles are unaffected — the atlas
+path overrides fragment UVs anyway. Pinned by
+`test_manual_uv_face_subdivides_with_authored_uvs` plus a planar control.
+
+### Fixed: fast paint strokes are continuous (dabs follow distance, not events)
+Dab spacing is a WORLD distance (a fraction of the brush radius), but
+dabs were delivered per mouse MOTION event: a fast drag crossed several
+spacings inside one event and landed a single dab at its end — the
+stroke came out dotted. The plugin now walks the straight cursor path
+between the previous and the current event in screen space (the pick's
+own domain), one re-pick per spacing step; the controller's spacing gate
+stays authoritative, so nothing paints twice, and interpolation is
+deliberately confined to one mesh (across a seam the straight segment
+means nothing). The GUI harness gains STROKE-CONTINUITY: press → ONE
+0.6 m motion (30 spacings) → release through the real input path, then
+five decal-pixel probes along the path — 5/5 painted with the fix, 2/5
+(endpoints only) with the call disabled, so the case demonstrably pins
+the fix. `test_stroke_interpolation_accessors` pins the controller half
+(spacing = radius fraction; last-dab query is mesh-scoped and reports
+WORLD coordinates).
+
+### Improved: mask/decal uploads coalesce per rendered frame (the small-face lag's first rework step)
+A dab used to push its whole mask/decal image to the GPU the moment its
+pixel loop finished — and a stroke writes the SAME image many times,
+every dab of one fast (now interpolated) stroke landing inside a single
+rendered frame, so all but the last upload was redundant texture sync:
+the fixed per-dab cost the known issue names. Dab-path uploads are queued
+and flushed once per rendered frame (`RenderingServer.frame_pre_draw`);
+the CPU-side cached image stays the source of truth (all pixel readers go
+through the cache), and the two cold-cache getters prefer a queued
+(fresher) image over the texture's stale pixels. Once-per-click actions
+(clear layer, window resize) keep their synchronous uploads. HONESTY
+NOTE: the iGPU machine that shows the original lag was not available, so
+the perceptual win is UNMEASURED — the known-issues note stays until
+re-measured there.
+`test_dab_uploads_coalesce_per_frame` pins the queue, the flush, and the
+cold-read freshness.
+
+### Verified on the device, then retired: "billboards render unlit on the PSP"
+The page claimed the PSP build draws every billboard UNLIT. It does not —
+and demonstrably never did in the current build: the exporter bakes the
+lit flag into vertex colours (probe-exported .pbm: lit billboard
+r=g=b=124..198, unlit = 255), the PSP renderer has no billboard colour
+override (every mesh draws with GU_COLOR_8888 under TFX_MODULATE), and
+the alpha demo map's dusk trees carry baked dark colours and render dark
+on the device. The decisive experiment: a controlled map (white albedo,
+dusk ambient 0.13, one LIT billboard + one UNLIT beside it) loaded on
+the real PSP over PSPLink — the framebuffer capture reads the lit
+billboard at ~129 per channel (its baked dusk light) against the unlit
+one at ~243 (full white), on two consecutive loads. The known-issues
+entry is retired; RETRO-AUTHORING's is_lit contract stands as documented.
+
+### Fixed on the device: the Hold switch now freezes the interactive camera
+Found during that hardware session: the interactive app honored every
+input except Hold. The switch zeroes the BUTTONS but the STICK still
+reports its rest value — and this device's stick rests at Lx=151, three
+ticks past the dead zone, so an unattended app run flew the camera
+sideways at ~1.7 m/s until picked up. With `pad_hold` the whole movement
+block is skipped for the frame; Home/Select stay live above it. Verified
+on hardware: rebuild, reload over PSPLink, 59.9 fps with identical draw
+counts and a pixel-identical boot frame.
+
+### Also fixed: psp_link.sh called its own daemon-start helper by the wrong name
+`psp_ensure_daemon`/`psp_restart_daemon` called `psp_start_daemon`, which
+does not exist (`_psp_start_daemon` does) — any run that needed to
+(re)start the daemon died with "command not found".
+
+### Docs
+The Known issues page drops the four retired entries and keeps stamps-not-
+spanning-two-objects (queued, workaround: merge first) and the small-face
+lag (workaround + the coalescing status). faq, paint and the retro
+walkthrough updated to match; the walkthrough now records that the
+device-side alpha issues are fixed and verified.
+
+Version bump 0.9.168 (all three files). Tests: 1167/1167 across 72
+suites (21.7k assertions) via ./run_tests.sh; GUI harness failures=0
+including the new STROKE-CONTINUITY case.
+
 ## v0.9.167 — the PBM format spec lives on the docs site, corrected against both implementations
 
 The website gains a "PBM format" reference page: the full normative

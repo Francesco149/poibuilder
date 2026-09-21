@@ -69,6 +69,6 @@ That map, that camera, that build: 60 fps, 1618 tris, 20 draws, measured on the 
 
 ## 5. If something looks wrong on the PSP
 
-Known rough edges are collected in [Known issues](known-issues.html) — the ones specific to the device: billboards render unlit regardless of their lit flag, a transparent scrolling plane can cast an unexpected shadow, and a poibuilderized mesh can export with mangled UVs while looking fine in the editor. Check there before filing a bug.
+Known rough edges are collected in [Known issues](known-issues.html). The device-side ones from the alpha sweep have all been fixed and verified (v0.9.168): lit billboards bake and render lit on the device, a transparent scrolling plane no longer casts a shadow the editor never showed, and a poibuilderized mesh keeps its authored UVs through the retro tile bake. Check the page before filing a bug anyway.
 
 For the modern-side equivalent of this page — exporting a GLB into a fresh Godot project — see the [modern walkthrough's export steps](walkthrough-modern.html#10-export-the-map-as-glb).
