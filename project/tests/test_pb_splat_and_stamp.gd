@@ -166,14 +166,12 @@ func test_paint_coexists_with_authored_uv2_lightmap_unwrap() -> void:
 func test_decal_layer_default_resolution_scales_with_face_size() -> void:
 	# Uniform texel density: mask resolution must track the face's world size at
 	# 256 texels/m (both for splat masks and for the decal layer), clamped.
-	# The 256 mask ceiling means faces > 1 m all land at 256; a tiny face
-	# still gets MIN_RESOLUTION.
-	var small := PBMeshData.create_cube(0.4)
-	var big := PBMeshData.create_cube(1.0)
+	var small := PBMeshData.create_cube(1.0)
+	var big := PBMeshData.create_cube(8.0)
 	var small_res := PBSplat.calculate_uniform_face_resolution(small, small.faces[0])
 	var big_res := PBSplat.calculate_uniform_face_resolution(big, big.faces[0])
-	assert_true(big_res.x >= small_res.x,
-			"a larger face must get an equal-or-larger mask (%d vs %d)" % [big_res.x, small_res.x])
+	assert_true(big_res.x > small_res.x,
+			"a larger face must get a larger mask (%d vs %d) so paint never looks blurrier" % [big_res.x, small_res.x])
 	assert_eq(clampi(small_res.x, PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION), small_res.x,
 			"mask resolution stays inside the documented clamp window")
 
@@ -456,15 +454,15 @@ func test_paint_controller_modes_and_properties() -> void:
 func test_uniform_resolution_calculation() -> void:
 	var cube_2m := PBMeshData.create_cube(2.0)
 	var res_2m := PBSplat.calculate_uniform_face_resolution(cube_2m, cube_2m.faces[0])
-	# 2m * 256 texels/m = 512 texels → clamped to MAX_RESOLUTION (256)
-	assert_eq(res_2m.x, 256, "2m face width must hit the 256 ceiling")
-	assert_eq(res_2m.y, 256, "2m face height must hit the 256 ceiling")
+	# 2m * 256 texels/m = 512 texels
+	assert_eq(res_2m.x, 512, "2m face width should be 512 pixels")
+	assert_eq(res_2m.y, 512, "2m face height should be 512 pixels")
 
 	var cube_8m := PBMeshData.create_cube(8.0)
 	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
-	# 8m would want 2048 → clamped to 256.
-	assert_eq(res_8m.x, 256, "8m face must hit the 256 ceiling")
-	assert_eq(res_8m.y, 256, "8m face must hit the 256 ceiling")
+	# The 512 ceiling: 8m would want 2048, clamped to 512.
+	assert_eq(res_8m.x, 512, "8m face must hit the 512 ceiling")
+	assert_eq(res_8m.y, 512, "8m face must hit the 512 ceiling")
 
 ## The decal layer is a WINDOW cropped to the painted area, not a whole-face
 ## image: that is what keeps its texels/m uniform on a large face (a 32 m floor

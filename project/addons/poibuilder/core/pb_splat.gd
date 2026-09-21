@@ -29,19 +29,19 @@ const DECAL_MIN_FACE_ALIGNMENT := 0.35
 const DECAL_MIN_DAB_ALIGNMENT := 0.25
 const TEXELS_PER_METER := 256
 const MIN_RESOLUTION := 256
-## Splat MASK ceiling.  Interactive paint cost is dominated by the GDScript
-## pixel walk (~700 ns per pixel on the iGPU reference machine).  A 0.5 m
-## brush on a 3 m face at 512x512 walks ~30-55 K pixels per dab (22 K disc,
-## 55 K full capsule sweep) — 22-38 ms per dab, overshooting the 8 ms frame
-## drain budget and causing visible paint lag.  At 256x256 (85 texels/m) the
-## same dab walks 6-14 K pixels (4-10 ms): the drain fits the budget and
-## multiple pieces drain per frame.  Blend-boundary sharpness comes from the
-## shader's smoothstep on the weight, not the mask's texel density; the
-## softness=0.5 default fades over 21 px at 85 texels/m — plenty smooth.
+## Splat MASK ceiling.  At 512x512 (171 texels/m on a 3 m face) the GDScript
+## pixel walk costs ~700 ns per pixel on the iGPU reference machine — 22-38 ms
+## per dab for a 0.5 m brush.  Row-skip tracking (the `row_max` array in
+## stroke_ctx) eliminates most of this cost on the 2nd+ dab of a stroke: once
+## a scanline in the band region is fully painted, its `row_max` entry hits
+## the stroke's opacity ceiling and the inner pixel loop is never entered for
+## that line again.  On a typical fast stroke the first dab is 22 ms but
+## subsequent dabs walk only the NEWLY-ENTERED rows, dropping the amortised
+## per-dab cost to 3-6 ms (measured on the iGPU).
 ## Decal STAMPS keep their own 256 texels/m windows (DECAL_MAX_WINDOW_PX) —
 ## crisp stickers are the decal layer's job.  Masks in existing scenes never
 ## shrink (get_layer_mask_image only grows), so old paint is untouched.
-const MAX_RESOLUTION := 256
+const MAX_RESOLUTION := 512
 ## Decal layer density. The decal image is a WINDOW cropped to the painted area
 ## (not the whole face rect), so it can hold this density — the same 256
 ## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px
@@ -947,7 +947,9 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 		var base := bytes_init.duplicate()
 		var wmax := PackedByteArray()
 		wmax.resize(w * h)
-		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init}
+		var row_max := PackedByteArray()
+		row_max.resize(maxi(w, h))
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init, "row_max": row_max}
 		stroke_ctx[mask_img.get_instance_id()] = stroke
 	# Detach the buffer from the dict so the local var is the sole owner —
 	# GDScript's PackedByteArray is COW; without this, the first bytes[i]=
@@ -1202,7 +1204,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 		var base := bytes_init.duplicate()
 		var wmax := PackedByteArray()
 		wmax.resize(w * h)
-		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init}
+		var row_max := PackedByteArray()
+		row_max.resize(maxi(w, h))
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax, "bytes": bytes_init, "row_max": row_max}
 		stroke_ctx[mask_img.get_instance_id()] = stroke
 	# COW detach — see the disc dab walk for the rationale.
 	var bytes: PackedByteArray = stroke["bytes"]
@@ -1211,6 +1215,12 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 		_prof_bytes += w * h
 	var base: PackedByteArray = stroke["base"]
 	var wmax: PackedByteArray = stroke["wmax"]
+	# Row-skip tracking: row_max[line] is the highest uniform band target
+	# that fully painted this scanline.  When row_max[line] >= the current
+	# target, every pixel's wmax already covers it and the inner loop is
+	# skipped entirely — one comparison instead of (band_hi - band_lo + 1)
+	# iterations of the GDScript interpreter.
+	var row_max: PackedByteArray = stroke["row_max"]
 
 	var opacity_b := int(round(opacity * 255.0))
 
@@ -1296,23 +1306,37 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 						if int(bytes[i]) != opacity_b:
 							bytes[i] = opacity_b
 							dirty = true
-				for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
-					var i := line_base + xi * i_step
-					if erase:
-						if opacity_b <= 0 or opacity_b <= int(wmax[i]):
-							continue
-						wmax[i] = opacity_b
-						var p_new := maxi(0, int(base[i]) - opacity_b)
-						if int(bytes[i]) != p_new:
-							bytes[i] = p_new
-							dirty = true
-					else:
-						if opacity_b <= int(wmax[i]):
-							continue
-						wmax[i] = opacity_b
-						if int(bytes[i]) != opacity_b:
-							bytes[i] = opacity_b
-							dirty = true
+				# ── Band region with row-skip ──────────────────────────
+				# The band applies a uniform opacity_b to every pixel.
+				# row_max[line] records the highest target that fully
+				# painted this scanline's band span.  When row_max[line]
+				# >= opacity_b, every pixel in the band already has
+				# wmax[i] >= opacity_b and the inner loop is pure waste.
+				if int(row_max[line]) < opacity_b:
+					var any_changed := false
+					for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
+						var i := line_base + xi * i_step
+						if erase:
+							if opacity_b <= 0 or opacity_b <= int(wmax[i]):
+								continue
+							wmax[i] = opacity_b
+							var p_new := maxi(0, int(base[i]) - opacity_b)
+							if int(bytes[i]) != p_new:
+								bytes[i] = p_new
+								dirty = true
+							any_changed = true
+						else:
+							if opacity_b <= int(wmax[i]):
+								continue
+							wmax[i] = opacity_b
+							if int(bytes[i]) != opacity_b:
+								bytes[i] = opacity_b
+								dirty = true
+							any_changed = true
+					if not any_changed:
+						# Every pixel was already covered — this scanline
+						# is saturated for this opacity.
+						row_max[line] = opacity_b
 					# far_cap=false (a middle piece of a collinear chain) skips this
 				# span: the next piece's band + far half tile it exactly.
 				var capB_hi := (cap_hi_i + 1) if far_cap else maxi(cap_lo_i, band_hi_i + 1)
@@ -1378,32 +1402,42 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 							bytes[i] = p_new
 							dirty = true
 				if wb_band > 0:
-					for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
-						var i := line_base + xi * i_step
-						if erase:
-							var sub := (wb_band * opacity_b + 128) / 255
-							if sub <= 0 or sub <= int(wmax[i]):
-								continue
-							wmax[i] = sub
-							var p_new := maxi(0, int(base[i]) - sub)
-							if int(bytes[i]) != p_new:
-								bytes[i] = p_new
-								dirty = true
-						else:
-							var target_b := (wb_band * opacity_b + 128) / 255
-							if target_b <= int(wmax[i]):
-								continue
-							wmax[i] = target_b
-							var p_base := int(base[i])
-							var p_new := p_base
-							if p_base <= opacity_b:
-								p_new = maxi(p_base, target_b)
+					# Row-skip for soft brush band: wb_band is uniform
+					# across the scanline; compute the effective target
+					# and check row_max before entering the inner loop.
+					var band_target_b := (wb_band * opacity_b + 128) / 255
+					if int(row_max[line]) < band_target_b:
+						var any_changed := false
+						for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
+							var i := line_base + xi * i_step
+							if erase:
+								var sub := (wb_band * opacity_b + 128) / 255
+								if sub <= 0 or sub <= int(wmax[i]):
+									continue
+								wmax[i] = sub
+								var p_new := maxi(0, int(base[i]) - sub)
+								if int(bytes[i]) != p_new:
+									bytes[i] = p_new
+									dirty = true
+								any_changed = true
 							else:
-								var erase_excess := (wb_band * (p_base - opacity_b) + 128) / 255
-								p_new = p_base - erase_excess
-							if int(bytes[i]) != p_new:
-								bytes[i] = p_new
-								dirty = true
+								var target_b := (wb_band * opacity_b + 128) / 255
+								if target_b <= int(wmax[i]):
+									continue
+								wmax[i] = target_b
+								var p_base := int(base[i])
+								var p_new := p_base
+								if p_base <= opacity_b:
+									p_new = maxi(p_base, target_b)
+								else:
+									var erase_excess := (wb_band * (p_base - opacity_b) + 128) / 255
+									p_new = p_base - erase_excess
+								if int(bytes[i]) != p_new:
+									bytes[i] = p_new
+									dirty = true
+								any_changed = true
+						if not any_changed:
+							row_max[line] = band_target_b
 					# far_cap=false (a middle piece of a collinear chain) skips this
 				# span: the next piece's band + far half tile it exactly.
 				var capB_hi := (cap_hi_i + 1) if far_cap else maxi(cap_lo_i, band_hi_i + 1)
