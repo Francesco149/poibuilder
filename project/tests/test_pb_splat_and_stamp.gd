@@ -460,9 +460,12 @@ func test_uniform_resolution_calculation() -> void:
 
 	var cube_8m := PBMeshData.create_cube(8.0)
 	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
-	# 8m * 256 texels/m = 2048 texels
-	assert_eq(res_8m.x, 2048, "8m face width should be 2048 pixels")
-	assert_eq(res_8m.y, 2048, "8m face height should be 2048 pixels")
+	# The 512 ceiling: 8m would want 2048, but interactive paint cost scales
+	# with mask pixels, and a blend mask's smoothstep boundary reads the same
+	# at 64 texels/m on an 8m face (the old 2048 cap already let a 20m face
+	# fall to 102 texels/m).
+	assert_eq(res_8m.x, 512, "8m face must hit the 512 ceiling")
+	assert_eq(res_8m.y, 512, "8m face must hit the 512 ceiling")
 
 ## The decal layer is a WINDOW cropped to the painted area, not a whole-face
 ## image: that is what keeps its texels/m uniform on a large face (a 32 m floor

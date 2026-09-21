@@ -29,7 +29,16 @@ const DECAL_MIN_FACE_ALIGNMENT := 0.35
 const DECAL_MIN_DAB_ALIGNMENT := 0.25
 const TEXELS_PER_METER := 256
 const MIN_RESOLUTION := 256
-const MAX_RESOLUTION := 2048
+## Splat MASK ceiling. Interactive paint cost scales with mask pixels (the
+## GDScript walk does ~3 M px/s; the iGPU traces showed the 3x3 m faces at
+## 1024x1024 were by far the laggiest), and a blend mask's sharpness is
+## about the smoothstep boundary, not texel density — at 512 the 3 m face
+## still holds 171 texels/m. The old 2048 cap already let density fall
+## (a 20 m face painted at 102 texels/m); this moves that knee to 2 m.
+## Decal STAMPS keep their own 256 texels/m windows (DECAL_MAX_WINDOW_PX) —
+## crisp stickers are the decal layer's job. Masks in existing scenes never
+## shrink (get_layer_mask_image only grows), so old paint is untouched.
+const MAX_RESOLUTION := 512
 ## Decal layer density. The decal image is a WINDOW cropped to the painted area
 ## (not the whole face rect), so it can hold this density — the same 256
 ## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px

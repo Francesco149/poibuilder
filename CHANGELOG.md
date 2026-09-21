@@ -3,6 +3,36 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.173 — the mask ceiling: the user's own observation closes the loop
+
+The third trace (after time-slicing) showed the queue working — input
+handler at 0.5 ms — but two remaining truths: the drain frames still ran
+130-180 ms because each queued sweep had grown to a long accumulated
+chord, and end_stroke's synchronous flush dumped a 26-entry queue into a
+1.8 s release frame. And the painter's own report nailed the underlying
+scaling: the 3x3 m faces were by far the laggiest while the 1x3x1 face
+painted noticeably better — per-sweep cost is mask texels, and the 3 m
+face carried a 1024x1024 mask (po2-rounded ~341 texels/m).
+
+### Changed: splat mask resolution caps at 512
+MAX_RESOLUTION 2048 -> 512. A 3 m face now paints on 512x512 (171
+texels/m) — 4x fewer pixels per sweep; the old cap already let density
+fall (a 20 m face painted at 102 texels/m), this moves the knee to
+2 m. Blend-boundary sharpness is a smoothstep in mask space, not texel
+density; decal STAMPS keep their 256 texels/m windows (crisp stickers
+are the decal layer's job). Existing scenes never shrink (masks only
+grow), so old paint is untouched. Pinned by a 3 m-face test.
+
+### Fixed: the sweep queue cannot accumulate into a release dump
+Consecutive same-face brush-matched pending entries MERGE into one
+chord (continuations only — a fresh disc or a real gap appends, so
+nothing outside the stroked path appears). The queue now stays a couple
+of entries deep, and end_stroke's flush is bounded instead of dumping
+26 sweeps.
+
+Pinned by: chained-sweeps-stay-shallow and 3 m-face-cap tests. Full
+headless suite, GUI harness and the iGPU paint bench re-run green.
+
 ## v0.9.172 — time-sliced painting: the stroke sweep queue
 
 The second interactive trace (after the pick + near-cap-trim fixes)

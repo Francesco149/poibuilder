@@ -37,20 +37,18 @@ below the smoothness of big faces.
 many separate dabs; where possible, paint detail on a larger face and let
 the UV tiling carry it.
 
-**Status:** measured on the reference iGPU at last (v0.9.169, the
-`./run_paint_perf.sh` bench: fast strokes driven through the real input
-path on the Intel UHD 630). The v0.9.168 upload coalescing was real but
-not the story: the profiled cost was the per-dab pixel walk itself —
-stamping a disc per spacing step re-walked the same mask pixels up to ten
-times each (1.59 M pixel visits, ~0.5 s of frozen editor for one fast
-2.4 m stroke on a 3 m face at the default brush). The splat brush now
-sweeps the cursor path as one capsule per motion event (weights by
-distance-to-segment; identical falloff, replace and erase semantics,
-pinned against dense disc stamping in `test_pb_splat_segment.gd`), with a
-constant-weight band fast path for the axis-aligned strokes that dominate
-builder maps. Same worst-case stroke: ~0.16 s — a 3–4x cut, and normal
-fast drags (~10–30 cm per motion event) land at roughly 30–45 ms per
-event on the same machine. The note stays: a pathological flick still
-costs a couple of frames, and the decal brush's stamp rhythm is untouched
-by design. The remaining lever (time-slicing the stroke across frames) is
-queued behind correctness work.
+**Status:** three measured rounds on the reference iGPU (v0.9.169 to
+v0.9.173, driven by `./run_paint_perf.sh` and the interactive
+`./trace_paint.sh`). What the traces found, in order: the per-dab disc
+stamping re-walked every mask pixel up to ten times (fixed: the brush
+sweeps the cursor path as one capsule); picks and cap re-walks were the
+next costs (fixed: allocation-free picking; near-cap trim on continuing
+sweeps); one input event painted the whole accumulated path in a single
+frame (fixed: sweeps queue and drain under a per-frame budget); and the
+underlying scaler — reported by the painter themself — is face size:
+per-sweep cost is mask texels, and a 3 m face carried a 1024x1024 mask.
+Splat masks now cap at 512x512 (a 3 m face paints at 171 texels/m, 4x
+less work; decal stamps keep their 256 texels/m windows, and masks in
+existing scenes never shrink). The note stays until the reference laptop
+re-runs the interactive trace, but the queue bounds any remaining hitch
+to roughly one sweep.

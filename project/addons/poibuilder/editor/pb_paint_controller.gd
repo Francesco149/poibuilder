@@ -674,12 +674,34 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 			trim = true
 		elif gap_sq < snap_r * snap_r:
 			sweep_from = prev_point
-	_pending_sweeps.append({
-		"mesh": mesh, "data": data, "face": face, "mat": splat_mat,
-		"layer": active_layer_idx, "from": sweep_from, "to": to_local,
-		"trim": trim, "radius": brush_radius, "softness": brush_softness,
-		"opacity": brush_opacity, "erase": erase_mode,
-	})
+	# Backpressure: the drain budget can lose ground during a burst (each
+	# sweep is atomic and can overshoot), and end_stroke flushes the queue
+	# synchronously — an unbounded queue once dumped 26 sweeps into one
+	# 1.8 s release frame. Merge into the previous entry when it is the same
+	# face and brush: the chord paints (near-enough) what the two segments
+	# painted, and the queue stays a couple of entries deep.
+	var cfg := _brush_cfg()
+	var merged := false
+	if not _pending_sweeps.is_empty():
+		var last: Dictionary = _pending_sweeps.back()
+		if last["mesh"] == mesh and last["face"] == face and String(last["cfg"]) == cfg:
+			var chains := sweep_from != Vector3.INF \
+					and (last["to"] as Vector3).distance_squared_to(sweep_from) \
+						< (0.25 * brush_radius) * (0.25 * brush_radius)
+			if chains or trim:
+				# Continues the pending chord: just move its far end (trim or
+				# snap guarantees the joined segment paints what both painted;
+				# a re-entry with a real gap or a fresh disc never merges —
+				# those append, so nothing outside the stroked path appears).
+				last["to"] = to_local
+				merged = true
+	if not merged:
+		_pending_sweeps.append({
+			"mesh": mesh, "data": data, "face": face, "mat": splat_mat,
+			"layer": active_layer_idx, "from": sweep_from, "to": to_local,
+			"trim": trim, "radius": brush_radius, "softness": brush_softness,
+			"opacity": brush_opacity, "erase": erase_mode, "cfg": cfg,
+		})
 	_remember_dab(mesh, face_idx, to_local)
 	_connect_drain()
 

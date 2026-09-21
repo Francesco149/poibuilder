@@ -241,6 +241,34 @@ static func _mask_painted(mesh: PBMesh) -> int:
 							total += 1
 	return total
 
+## Backpressure: consecutive same-face continuations MERGE into the pending
+## chord, so a long fast stroke cannot pile up a queue that end_stroke would
+## dump in one frame (the trace's 26-entry, 1.8 s release flush).
+func test_pending_queue_stays_shallow_under_a_stroke() -> void:
+	var cube := _test_cube
+	var fi := _top_face(cube.pb_mesh_data)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, fi)
+	ctrl.begin_stroke()
+	for i in range(10):
+		var x := -0.4 + 0.08 * float(i)
+		ctrl.apply_paint_stroke_splat(cube, fi, Vector3(x + 0.04, 1.0, 0.0),
+				Vector3(x, 1.0, 0.0))
+	# 2 = the press disc (which must NOT chain-merge into a streak the user
+	# never stroked) + the one merged chord of all ten continuations.
+	assert_eq(ctrl._pending_sweeps.size(), 2,
+			"chained same-face sweeps must merge; only the press disc stays apart")
+	ctrl.end_stroke()
+
+func test_face_mask_resolution_is_capped_for_big_faces() -> void:
+	# The 3x3 face the user reported as the laggiest: its mask must not
+	# exceed the 512 ceiling (1024x1024 made every sweep walk 4x the pixels).
+	var data := PBMeshData.create_cube(3.0)
+	var res := PBSplat.calculate_uniform_face_resolution(data, data.faces[0])
+	assert_eq(res, Vector2i(512, 512), "a 3m face's splat mask must be capped at 512")
+
 ## Time-slicing: sweeps queue on push (nothing painted), end_stroke flushes
 ## them synchronously BEFORE committing, and the drain paints at least one
 ## entry per call.
