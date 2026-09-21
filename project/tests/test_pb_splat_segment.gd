@@ -269,6 +269,42 @@ func test_face_mask_resolution_is_capped_for_big_faces() -> void:
 	var res := PBSplat.calculate_uniform_face_resolution(data, data.faces[0])
 	assert_eq(res, Vector2i(512, 512), "a 3m face's splat mask must be capped at 512")
 
+## Splitting a sweep into collinear pieces (what the time-slice queue does)
+## must byte-match the single unsplit sweep in every brush mode: middle
+## pieces skip both caps and the caps tile exactly along a straight chain.
+func test_split_sweep_matches_unsplit() -> void:
+	var data := _test_cube.pb_mesh_data
+	var fi := _top_face(data)
+	var a := Vector3(-0.6, 1.0, 0.4)
+	var c := Vector3(0.6, 1.0, 0.4)
+	var m := a.lerp(c, 0.45)
+	for v in [[0.5, false, "soft paint"], [0.0, false, "hard paint"], [0.35, true, "erase"]]:
+		var radius: float = v[0]
+		var erase: bool = v[1]
+		var label: String = v[2]
+		var split_mat := PBSplat.create_splat_material()
+		var split_layer := _layer(split_mat)
+		var one_mat := PBSplat.create_splat_material()
+		var one_layer := _layer(one_mat)
+		if erase:
+			# Base coat, each with its OWN stroke ctx (a separate stroke).
+			PBSplat.paint_face_splat_segment(data, data.faces[fi], split_mat, split_layer,
+					a, c, radius + 0.1, 0.0, 1.0, false, {})
+			PBSplat.paint_face_splat_segment(data, data.faces[fi], one_mat, one_layer,
+					a, c, radius + 0.1, 0.0, 1.0, false, {})
+		var ctx := {}
+		PBSplat.paint_face_splat_segment(data, data.faces[fi], split_mat, split_layer,
+				a, m, radius, 0.5, 1.0, erase, ctx, false, false)
+		PBSplat.paint_face_splat_segment(data, data.faces[fi], split_mat, split_layer,
+				m, c, radius, 0.5, 1.0, erase, ctx, true, true)
+		var ctx2 := {}
+		PBSplat.paint_face_splat_segment(data, data.faces[fi], one_mat, one_layer,
+				a, c, radius, 0.5, 1.0, erase, ctx2)
+		# Bool compare: GUT formats megabyte arrays into assert messages.
+		assert_true(PBSplat.get_layer_mask_image(split_mat, split_layer).get_data()
+				== PBSplat.get_layer_mask_image(one_mat, one_layer).get_data(),
+				"a collinear split sweep must byte-match the unsplit one (%s)" % label)
+
 ## Time-slicing: sweeps queue on push (nothing painted), end_stroke flushes
 ## them synchronously BEFORE committing, and the drain paints at least one
 ## entry per call.

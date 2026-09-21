@@ -7,6 +7,14 @@ lead: Up to eight splat layers per face, a paintable decal layer for stamps, and
 
 The Material dock's paint mode. Up to **8 layers** per face. Brush the blend between two (or more) albedos — grass into rock, dirt into tile.
 
+**Which object gets painted:** the brush prioritises the **selected object** —
+if the selected mesh is under the cursor, its face wins even when another mesh
+sits in front of it. Whatever the selection, any other mesh under the cursor
+still paints when the selected one is not hit. So with a cube selected you can
+paint the cube *and* a neighbouring floor (choose the cube by aiming at it);
+with the floor selected, aiming where the floor is in front simply paints the
+floor. Select the object you want to win ambiguous, overlapping spots.
+
 :::shot paint-splat.png
 Multi-layer texture splatting.
 :::

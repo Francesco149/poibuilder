@@ -685,9 +685,18 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 	if not _pending_sweeps.is_empty():
 		var last: Dictionary = _pending_sweeps.back()
 		if last["mesh"] == mesh and last["face"] == face and String(last["cfg"]) == cfg:
-			var chains := sweep_from != Vector3.INF \
-					and (last["to"] as Vector3).distance_squared_to(sweep_from) \
-						< (0.25 * brush_radius) * (0.25 * brush_radius)
+			var chains := false
+			if sweep_from != Vector3.INF and last["from"] != Vector3.INF:
+				var last_dir: Vector3 = (last["to"] as Vector3) - (last["from"] as Vector3)
+				var new_dir: Vector3 = to_local - sweep_from
+				# Near-parallel only: extending ROTATES the last piece, and the
+				# collinear cap-tiling between pieces (why middle pieces are
+				# cheap) needs the chain straight. Sharp turns append instead.
+				chains = last_dir.length_squared() > 0.0 \
+						and new_dir.length_squared() > 0.0 \
+						and last_dir.normalized().dot(new_dir.normalized()) > 0.85 \
+						and (last["to"] as Vector3).distance_squared_to(sweep_from) \
+							< (0.25 * brush_radius) * (0.25 * brush_radius)
 			if chains or trim:
 				# Continues the pending chord: just move its far end (trim or
 				# snap guarantees the joined segment paints what both painted;
@@ -696,12 +705,27 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 				last["to"] = to_local
 				merged = true
 	if not merged:
-		_pending_sweeps.append({
-			"mesh": mesh, "data": data, "face": face, "mat": splat_mat,
-			"layer": active_layer_idx, "from": sweep_from, "to": to_local,
-			"trim": trim, "radius": brush_radius, "softness": brush_softness,
-			"opacity": brush_opacity, "erase": erase_mode, "cfg": cfg,
-		})
+		# Split into collinear pieces so each queued entry is band-cheap: a
+		# middle piece skips BOTH caps (piece i's far half is exactly tiled
+		# by piece i+1's band + far half along a straight chain), so the
+		# 8 ms drain budget holds several pieces per frame and the frame
+		# ceiling stops depending on how far the cursor travelled since the
+		# last drain.
+		var piece_len := PBSplat.sweep_piece_length(brush_radius, data, face)
+		var count := 1
+		if sweep_from != Vector3.INF:
+			count = clampi(int(ceil(sweep_from.distance_to(to_local) / piece_len)), 1, 64)
+		for k in range(count):
+			var p_from: Vector3 = sweep_from if k == 0 else sweep_from.lerp(to_local, float(k) / count)
+			var p_to: Vector3 = to_local if k == count - 1 else sweep_from.lerp(to_local, float(k + 1) / count)
+			_pending_sweeps.append({
+				"mesh": mesh, "data": data, "face": face, "mat": splat_mat,
+				"layer": active_layer_idx, "from": p_from, "to": p_to,
+				"trim_near": trim or k > 0, # chained middle pieces skip their near cap
+				"far_cap": k == count - 1,
+				"radius": brush_radius, "softness": brush_softness,
+				"opacity": brush_opacity, "erase": erase_mode, "cfg": cfg,
+			})
 	_remember_dab(mesh, face_idx, to_local)
 	_connect_drain()
 
@@ -733,7 +757,7 @@ func _paint_pending_entry(entry: Dictionary) -> void:
 		modified = PBSplat.paint_face_splat_segment(entry["data"], entry["face"],
 				entry["mat"], entry["layer"], sweep_from, entry["to"],
 				entry["radius"], entry["softness"], entry["opacity"],
-				entry["erase"], _stroke_ctx, entry["trim"])
+				entry["erase"], _stroke_ctx, entry["trim_near"], entry["far_cap"])
 	else:
 		modified = PBSplat.paint_face_splat(entry["data"], entry["face"],
 				entry["mat"], entry["layer"], entry["to"], entry["radius"],

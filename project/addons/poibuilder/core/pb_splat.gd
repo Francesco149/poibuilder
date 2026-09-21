@@ -1077,15 +1077,15 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
 		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {},
-		trim_near: bool = false) -> bool:
+		trim_near: bool = false, far_cap: bool = true) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 	if not PBPaintProfile.hooks():
 		return _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
-				hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near)
+				hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near, far_cap)
 	var t0 := Time.get_ticks_usec()
 	var res := _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
-			hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near)
+			hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near, far_cap)
 	PBPaintProfile.add(&"splat_dab", Time.get_ticks_usec() - t0, 1, _prof_bytes, _prof_pixels)
 	_prof_bytes = 0
 	_prof_pixels = 0
@@ -1094,7 +1094,7 @@ static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_
 static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
 		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {},
-		trim_near: bool = false) -> bool:
+		trim_near: bool = false, far_cap: bool = true) -> bool:
 	# Trim is exact for PAINT only: erase's wmax accounting takes the max sub
 	# over visits, so the result depends on visit ORDER — a trimmed (near cap
 	# skipped) erase continuation can land a different total sub on rim
@@ -1287,7 +1287,10 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 						if int(bytes[i]) != opacity_b:
 							bytes[i] = opacity_b
 							dirty = true
-				for xi in range(maxi(cap_lo_i, band_hi_i + 1), cap_hi_i + 1):
+					# far_cap=false (a middle piece of a collinear chain) skips this
+				# span: the next piece's band + far half tile it exactly.
+				var capB_hi := (cap_hi_i + 1) if far_cap else maxi(cap_lo_i, band_hi_i + 1)
+				for xi in range(maxi(cap_lo_i, band_hi_i + 1), capB_hi):
 					var i := line_base + xi * i_step
 					var da := (min_a + float(xi) * step_a) - a_end_hi
 					if da * da + dy_sq > r_plane_sq:
@@ -1375,7 +1378,10 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 							if int(bytes[i]) != p_new:
 								bytes[i] = p_new
 								dirty = true
-				for xi in range(maxi(cap_lo_i, band_hi_i + 1), cap_hi_i + 1):
+					# far_cap=false (a middle piece of a collinear chain) skips this
+				# span: the next piece's band + far half tile it exactly.
+				var capB_hi := (cap_hi_i + 1) if far_cap else maxi(cap_lo_i, band_hi_i + 1)
+				for xi in range(maxi(cap_lo_i, band_hi_i + 1), capB_hi):
 					var i := line_base + xi * i_step
 					var da := (min_a + float(xi) * step_a) - a_end_hi
 					var li := int((da * da + dy_sq) * li_scale)
@@ -1432,6 +1438,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 						continue
 					t = 0.0
 				elif t > 1.0:
+					if not far_cap:
+						u_at += step_u
+						continue
 					t = 1.0
 				var dxp := u_at - t * seg_du
 				var dyp := v_rel - t * seg_dv
@@ -1479,6 +1488,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 						continue
 					t = 0.0
 				elif t > 1.0:
+					if not far_cap:
+						u_at += step_u
+						continue
 					t = 1.0
 				var dxp := u_at - t * seg_du
 				var dyp := v_rel - t * seg_dv
@@ -1522,6 +1534,19 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 		mask_state_version += 1
 
 	return dirty
+
+## Queue-piece length (face-local metres) for time-sliced sweeps: middle
+## pieces of a collinear chain cost ~band pixels only (length x brush width),
+## so target ~20k walked pixels per queued piece — a few milliseconds of the
+## drain budget regardless of brush size or mask density.
+static func sweep_piece_length(radius: float, mesh_data: PBMeshData, face: PBFace) -> float:
+	var res := calculate_uniform_face_resolution(mesh_data, face)
+	var bounds := get_face_planar_bounds(mesh_data, face)
+	if bounds.is_empty():
+		return 0.15
+	var density := float(res.x) / maxf(float(bounds["range_u"]), 0.001)
+	var width_px := 2.0 * radius * density
+	return clampf(20000.0 / maxf(width_px, 1.0), 0.05, 0.5)
 
 # ==============================================================================
 # Decal Rasterizer (stamps and brush dabs share it)

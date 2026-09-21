@@ -3,6 +3,32 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.174 — sweeps split into budget-sized pieces: drain frames stop scaling with the stroke
+
+The fourth trace: hitch frames down to a 74 ms maximum (from 228) and
+picks long gone, but every remaining paint hitch was a DRAIN frame
+overshooting its 8 ms budget 4-6x — one queued sweep had grown into a
+long merged chord, and a sweep is atomic, so the budget could not hold
+it. (The verdict also flipped to render/editor-side for the majority of
+remaining hitches: the editor's own viewport redraw on the iGPU, which
+no paint-path change can shrink.)
+
+### Improved: sweeps enqueue as collinear budget-sized pieces
+A queued sweep now splits at enqueue into pieces of ~20k walked pixels
+(sweep_piece_length: budget target / brush width in mask pixels). Middle
+pieces skip BOTH caps — along a straight chain, piece i's far half is
+exactly tiled by piece i+1's band + far half — so pieces cost band-only
+pixels and the drain paints several per frame. The first piece keeps the
+continuity/trim rules; only the last walks its far half. Byte-equality
+pinned for soft paint, hard paint and erase (collinear split == unsplit
+mask). The backpressure merge gained a near-parallel direction check:
+extending a piece rotates it, and rotating breaks the collinear tiling —
+sharp turns append a fresh piece chain instead.
+
+Also documented in the paint page: the brush prioritises the selected
+object (its face wins under the cursor even when another mesh is in
+front), with other meshes still painting via the fallback.
+
 ## v0.9.173 — the mask ceiling: the user's own observation closes the loop
 
 The third trace (after time-slicing) showed the queue working — input
