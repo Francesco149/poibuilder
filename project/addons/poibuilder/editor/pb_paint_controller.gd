@@ -181,6 +181,11 @@ var _stroke_ctx: Dictionary = {}
 # motion event re-walks thousands of mask pixels per event at 256 texels/m —
 # spacing dabs keeps strokes continuous while capping the CPU cost per second.
 const DAB_SPACING_FRACTION := 0.2
+## Per-frame paint budget for the sweep queue: drain at least ONE pending
+## sweep, then stop once this budget is spent (a sweep is atomic — splitting
+## one would re-introduce per-piece cap overhead). At the observed ~0.3 us
+## per mask pixel the budget holds roughly one 0.1 m-advance sweep.
+const PAINT_FRAME_BUDGET_US := 8000
 var _stroke_last_dab_local: Vector3 = Vector3.INF
 var _stroke_last_dab_mesh: PBMesh = null
 var _stroke_last_dab_face: int = -1
@@ -188,6 +193,18 @@ var _stroke_last_dab_face: int = -1
 ## previous sweep's far-cap guarantee, so a trimmed continuation is only
 ## allowed while this matches.
 var _stroke_last_dab_cfg: String = ""
+## Last dab PER FACE: the near-cap trim is valid only against the sweep that
+## ended at the same face's endpoint, and on multi-face strokes the runs
+## interleave, so the overall last dab is the wrong key.
+var _stroke_last_dab_on_face: Dictionary = {}
+## Time-sliced painting: swept segments queue here and drain under a frame
+## budget (see PAINT_FRAME_BUDGET_US) instead of painting the whole
+## accumulated path synchronously inside one input event — the interactive
+## trace showed one frame eating the entire backlog (100-245 ms hitches);
+## bounded work per frame is the structural fix. FIFO: the trim chain and
+## the stroke_ctx wmax bookkeeping are order-dependent.
+var _pending_sweeps: Array = []
+var _drain_connected: bool = false
 
 # Visual preview nodes
 var preview_root: Node3D = null
@@ -237,6 +254,8 @@ func reset() -> void:
 	paintable = true
 	blocked_reason = ""
 	_update_preview_visibility()
+	_pending_sweeps.clear()
+	_stroke_last_dab_on_face.clear()
 	PBPaintTrace.set_session_active(false)
 	mode_changed.emit(mode)
 
@@ -523,6 +542,8 @@ func begin_stroke() -> void:
 	_stroke_last_dab_mesh = null
 	_stroke_last_dab_face = -1
 	_stroke_last_dab_cfg = ""
+	_stroke_last_dab_on_face.clear()
+	_pending_sweeps.clear()
 	PBPaintProfile.begin_stroke()
 	apply_paint_stroke()
 
@@ -580,24 +601,14 @@ func _apply_paint_stroke_body() -> void:
 			if layer > 0:
 				active_layer_idx = layer
 		# Paint on target face under cursor — swept from the stroke's last dab
-		# when it was on this same face (the segment is the planar limit of
+		# on this face when there is one (the segment is the planar limit of
 		# stamping discs down the cursor path; see
-		# PBSplat.paint_face_splat_segment), a plain disc otherwise (first dab
-		# of the stroke, or the path crossed onto this face from elsewhere).
-		if _stroke_last_dab_mesh == target_mesh and _stroke_last_dab_face == target_face_idx \
-				and _stroke_last_dab_local != Vector3.INF:
-			modified = PBSplat.paint_face_splat_segment(
-				data, face, splat_mat, active_layer_idx,
-				_stroke_last_dab_local, local_hit, brush_radius, brush_softness,
-				brush_opacity, erase_mode, _stroke_ctx,
-				_sweep_trim_near(target_face_idx)
-			)
-		else:
-			modified = PBSplat.paint_face_splat(
-				data, face, splat_mat, active_layer_idx,
-				local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
-				_stroke_ctx
-			)
+		# PBSplat.paint_face_splat_segment), a plain disc otherwise. Queued:
+		# the drain paints under the frame budget.
+		apply_paint_stroke_splat(target_mesh, target_face_idx, local_hit,
+				_stroke_last_dab_local
+				if _stroke_last_dab_mesh == target_mesh and _stroke_last_dab_local != Vector3.INF
+				else Vector3.INF)
 
 	_remember_dab(target_mesh, target_face_idx, local_hit)
 
@@ -605,15 +616,6 @@ func _apply_paint_stroke_body() -> void:
 		stroke_dirty = true
 		if _stroke_meshes.has(target_mesh):
 			_stroke_meshes[target_mesh]["dirty"] = true
-
-## True when a sweep on `face_idx` may SKIP its near cap: the stroke's last
-## dab was on this same face with the SAME brush config, so that sweep's
-## band + far half-cap already tile the full disc at the shared endpoint —
-## every pixel the near cap would revisit already holds exactly the value
-## the revisit would write (max replace / erase-once semantics).
-func _sweep_trim_near(face_idx: int) -> bool:
-	return _stroke_last_dab_face == face_idx \
-			and _stroke_last_dab_cfg == _brush_cfg()
 
 func _brush_cfg() -> String:
 	return "%d|%.4f|%.4f|%.4f|%s" % [paint_target, brush_radius, brush_softness, brush_opacity, erase_mode]
@@ -623,15 +625,20 @@ func _remember_dab(mesh: PBMesh, face_idx: int, local_point: Vector3) -> void:
 	_stroke_last_dab_mesh = mesh
 	_stroke_last_dab_face = face_idx
 	_stroke_last_dab_cfg = _brush_cfg()
+	_stroke_last_dab_on_face[face_idx] = {"point": local_point, "cfg": _brush_cfg()}
 
 ## A splat dab at an EXPLICIT stroke position: the interpolated walk calls
 ## this once per same-face run with the run's swept span (from the run's
 ## first pick to its last — one capsule over the whole run, see
 ## PBSplat.paint_face_splat_segment; `sweep_from_local` INF for a single-point
-## run paints a plain disc). Bookkeeping matches apply_paint_stroke: stroke
-## snapshot registration, last-dab tracking (the next event's spacing gate
-## and sweep measure from here), dirty marking. The spacing gate is NOT
-## applied here — the walk already spaced the run's picks.
+## run paints a plain disc). ENQUEUES — the frame-budget drain paints it
+## (time-sliced painting; the interactive trace showed one input event
+## synchronously eating its whole accumulated path, 100-245 ms per frame).
+## Bookkeeping happens NOW (registration, last-dab per face — the next
+## event's spacing gate and trim measure from the cursor, not the delayed
+## paint); dirty marking happens at drain, when the paint actually happened.
+## The spacing gate is NOT applied here — the walk already spaced the run's
+## picks.
 func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 		sweep_from_local: Vector3 = Vector3.INF) -> void:
 	if not is_stroke_active or not paintable or mesh == null or mesh.pb_mesh_data == null:
@@ -650,23 +657,82 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
 		if layer > 0:
 			active_layer_idx = layer
-	var modified := false
-	if sweep_from_local != Vector3.INF:
-		modified = PBSplat.paint_face_splat_segment(data, face, splat_mat, active_layer_idx,
-				sweep_from_local, to_local, brush_radius, brush_softness, brush_opacity,
-				erase_mode, _stroke_ctx, _sweep_trim_near(face_idx))
-	else:
-		modified = PBSplat.paint_face_splat(data, face, splat_mat, active_layer_idx,
-				to_local, brush_radius, brush_softness, brush_opacity, erase_mode, _stroke_ctx)
+	# Continuity against this face's own last dab: start EXACTLY at it when
+	# the run re-picks it within a hair (then the previous sweep's far
+	# half-cap + band bound the near cap — trim is byte-exact); snap to it
+	# when the gap is small (closes the seam, no trim); otherwise sweep from
+	# the run's own pick with full caps.
+	var sweep_from := sweep_from_local
+	var trim := false
+	var prev: Dictionary = _stroke_last_dab_on_face.get(face_idx, {})
+	if sweep_from != Vector3.INF and not prev.is_empty() and String(prev["cfg"]) == _brush_cfg():
+		var prev_point: Vector3 = prev["point"]
+		var snap_r := 0.25 * brush_radius
+		var gap_sq := prev_point.distance_squared_to(sweep_from)
+		if gap_sq < 0.000004:
+			sweep_from = prev_point
+			trim = true
+		elif gap_sq < snap_r * snap_r:
+			sweep_from = prev_point
+	_pending_sweeps.append({
+		"mesh": mesh, "data": data, "face": face, "mat": splat_mat,
+		"layer": active_layer_idx, "from": sweep_from, "to": to_local,
+		"trim": trim, "radius": brush_radius, "softness": brush_softness,
+		"opacity": brush_opacity, "erase": erase_mode,
+	})
 	_remember_dab(mesh, face_idx, to_local)
+	_connect_drain()
+
+## Frame-budget drain: paints at least one queued sweep, then continues only
+## while under PAINT_FRAME_BUDGET_US. Runs on frame_pre_draw.
+func _drain_pending_sweeps() -> void:
+	if _pending_sweeps.is_empty():
+		return
+	var budget_start := Time.get_ticks_usec()
+	while not _pending_sweeps.is_empty():
+		var entry: Dictionary = _pending_sweeps.pop_front()
+		_paint_pending_entry(entry)
+		if Time.get_ticks_usec() - budget_start > PAINT_FRAME_BUDGET_US:
+			break
+
+## Paints EVERYTHING queued (end_stroke must commit post-paint pixels, so it
+## flushes synchronously before snapshotting).
+func flush_pending_sweeps() -> void:
+	while not _pending_sweeps.is_empty():
+		_paint_pending_entry(_pending_sweeps.pop_front())
+
+func _paint_pending_entry(entry: Dictionary) -> void:
+	var mesh: PBMesh = entry["mesh"]
+	if mesh == null or not is_instance_valid(mesh):
+		return
+	var modified := false
+	var sweep_from: Vector3 = entry["from"]
+	if sweep_from != Vector3.INF:
+		modified = PBSplat.paint_face_splat_segment(entry["data"], entry["face"],
+				entry["mat"], entry["layer"], sweep_from, entry["to"],
+				entry["radius"], entry["softness"], entry["opacity"],
+				entry["erase"], _stroke_ctx, entry["trim"])
+	else:
+		modified = PBSplat.paint_face_splat(entry["data"], entry["face"],
+				entry["mat"], entry["layer"], entry["to"], entry["radius"],
+				entry["softness"], entry["opacity"], entry["erase"], _stroke_ctx)
 	if modified:
 		stroke_dirty = true
 		if _stroke_meshes.has(mesh):
 			_stroke_meshes[mesh]["dirty"] = true
 
+func _connect_drain() -> void:
+	if _drain_connected:
+		return
+	_drain_connected = true
+	RenderingServer.frame_pre_draw.connect(_drain_pending_sweeps)
+
 func end_stroke() -> void:
 	if not is_stroke_active:
 		return
+	# The commit's "after" snapshot must contain every queued pixel: drain
+	# synchronously before snapshotting. Steady state this is 0-2 sweeps.
+	flush_pending_sweeps()
 	is_stroke_active = false
 
 	var to_commit: Dictionary = {}

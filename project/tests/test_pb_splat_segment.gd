@@ -224,6 +224,74 @@ func test_segment_erase_is_once_per_stroke() -> void:
 	assert_true(PBSplat.get_layer_mask_image(mat, layer).get_data() == after_once,
 		"a repeated erase sweep within one stroke must be a no-op")
 
+## Total nonzero splat mask texels across a mesh (queue-deferral probe).
+static func _mask_painted(mesh: PBMesh) -> int:
+	var total := 0
+	if mesh == null or mesh.pb_mesh_data == null:
+		return 0
+	for mat in mesh.pb_mesh_data.materials:
+		if mat is ShaderMaterial and PBSplat.is_splat_material(mat):
+			for i in range(1, PBSplat.MAX_LAYERS + 1):
+				if (mat as ShaderMaterial).get_shader_parameter("layer_%d_enabled" % i) == true:
+					var img := PBSplat.get_layer_mask_image(mat, i)
+					if img == null:
+						continue
+					for b in img.get_data():
+						if b != 0:
+							total += 1
+	return total
+
+## Time-slicing: sweeps queue on push (nothing painted), end_stroke flushes
+## them synchronously BEFORE committing, and the drain paints at least one
+## entry per call.
+func test_sweeps_queue_and_flush_before_commit() -> void:
+	var cube := _test_cube
+	var data := cube.pb_mesh_data
+	var fi := _top_face(data)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, fi)
+	ctrl.begin_stroke()
+
+	ctrl.apply_paint_stroke_splat(cube, fi, Vector3(0.4, 1.0, 0.2), Vector3(-0.4, 1.0, 0.2))
+	ctrl.apply_paint_stroke_splat(cube, fi, Vector3(0.4, 1.0, -0.2), Vector3(-0.4, 1.0, -0.2))
+	assert_true(_mask_painted(cube) == 0, "two queued sweeps must not paint until drained")
+
+	# One drain pass paints at least one entry (frame-budget semantics).
+	ctrl._drain_pending_sweeps()
+	var after_one := _mask_painted(cube)
+	assert_true(after_one > 0, "a drain pass must paint at least one queued sweep")
+
+	ctrl.end_stroke()
+	assert_true(_mask_painted(cube) >= after_one, "end_stroke must flush the rest before committing")
+
+func test_sweep_snaps_to_face_endpoint_and_closes_the_seam() -> void:
+	var cube := _test_cube
+	var data := cube.pb_mesh_data
+	var fi := _top_face(data)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_texture = ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8))
+	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, fi)
+	ctrl.begin_stroke()
+
+	# First run ends at x=0.3; the next run's pick lands 0.05m further (within
+	# the 0.25r snap window) — the sweep must START from the recorded endpoint
+	# so the seam between the two runs carries paint.
+	ctrl.apply_paint_stroke_splat(cube, fi, Vector3(0.3, 1.0, 0.0), Vector3(-0.3, 1.0, 0.0))
+	ctrl.apply_paint_stroke_splat(cube, fi, Vector3(0.6, 1.0, 0.0), Vector3(0.35, 1.0, 0.0))
+	ctrl.flush_pending_sweeps()
+	ctrl.end_stroke()
+
+	var mat := data.get_face_material(data.faces[fi]) as ShaderMaterial
+	assert_true(PBSplat.is_splat_material(mat), "the sweeps must leave a splat material")
+	var layer := PBSplat.get_first_active_layer(mat)
+	# The seam point (0.325, 1, 0) sits between the two runs' endpoints: with
+	# the snap it lies INSIDE the second sweep's band (weight ~255 region).
+	assert_true(_mask_value(data, mat, data.faces[fi], layer, Vector3(0.325, 1.0, 0.0)) > 200,
+			"the snapped continuation must paint the seam between runs")
+
 func test_controller_run_dab_paints_and_tracks_last_dab() -> void:
 	var cube := _test_cube
 	var data := cube.pb_mesh_data
@@ -234,9 +302,14 @@ func test_controller_run_dab_paints_and_tracks_last_dab() -> void:
 	ctrl.update_cursor(Vector3(0, 1.0, 0), Vector3.UP, cube, fi)
 	ctrl.begin_stroke()
 
-	# The interpolated walk's run dab: one swept call across the face.
+	# The interpolated walk's run dab: one swept call across the face —
+	# ENQUEUED now (time-sliced painting): nothing is painted until a drain.
 	ctrl.apply_paint_stroke_splat(cube, fi, Vector3(0.6, 1.0, 0.2), Vector3(-0.6, 1.0, 0.2))
-	assert_true(ctrl.stroke_dirty, "the run dab must mark the stroke dirty")
+	assert_false(ctrl.stroke_dirty, "a queued sweep must not mark the stroke dirty before it drains")
+	assert_true(_mask_painted(cube) == 0, "a queued sweep must not paint until drained")
+
+	ctrl.flush_pending_sweeps()
+	assert_true(ctrl.stroke_dirty, "the drained sweep must mark the stroke dirty")
 
 	ctrl.end_stroke()
 	var mat := data.get_face_material(data.faces[fi]) as ShaderMaterial

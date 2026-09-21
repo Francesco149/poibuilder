@@ -3,6 +3,42 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.172 — time-sliced painting: the stroke sweep queue
+
+The second interactive trace (after the pick + near-cap-trim fixes)
+still showed 62 paint-handler-bound hitches of 134-228 ms, one every ~4
+painted frames, with picks now negligible: the structural remainder was
+that ONE input event synchronously painted the whole accumulated path —
+and the near-cap trim almost never fired on real two-face strokes (the
+trace's 2 MB-per-frame mask queues) because it keyed on the OVERALL last
+dab, which alternates faces run by run.
+
+### New: swept segments queue and drain under a frame budget
+The controller now enqueues swept segments (FIFO) instead of painting
+them inside the input event. A frame_pre_draw drain paints at least ONE
+sweep and keeps going only while under an 8 ms budget (a sweep is
+atomic — splitting one would re-introduce per-piece cap overhead). In
+steady state production is ~1 sweep per 4 frames and drain capacity is
+>= 1 per frame, so the queue never builds; in bursts the worst hitch is
+one sweep (~25-40 ms) instead of the whole backlog (150-230 ms).
+end_stroke flushes synchronously BEFORE the commit snapshot, so undo,
+redo and every pixel probe see complete paint. Brush params are
+snapshotted per entry at push, so mid-queue slider changes stay
+deterministic, and dirty marking moved to drain time.
+
+### Fixed: the near-cap trim works on multi-face strokes
+Trim continuity now keys on the last dab PER FACE, not the overall last
+dab, so interleaved runs on two faces both get it. Continuity is also
+tightened to snap-to-endpoint: a run starting within a hair of the
+face's recorded endpoint snaps to it and trims (byte-exact); within
+0.25r it snaps WITHOUT trim (closing the seam between runs — pinned by
+a seam test); further away it sweeps with full caps.
+
+Pinned by new tests: queued sweeps paint nothing until drained;
+end_stroke flushes before committing; a drain pass paints at least one
+entry; the snapped continuation paints the seam. Full headless suite,
+GUI harness and the iGPU paint bench re-run green.
+
 ## v0.9.171 — what the user's real trace showed, and the two fixes it demanded
 
 The first interactive trace (30 s of real painting on the iGPU, two
