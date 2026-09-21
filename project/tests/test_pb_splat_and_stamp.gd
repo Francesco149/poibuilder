@@ -1077,7 +1077,9 @@ func test_decal_does_not_stretch_or_slide_when_face_resized() -> void:
 	assert_true(live_bounds["range_u"] > absf(bounds_before[1] - bounds_before[0]),
 			"…while the geometry itself did grow (precondition for the clip case)")
 
-## Resizing geometry does NOT stretch or slide painted texture layers (UV2 tracks object space).
+## Resizing geometry expands splat_bounds and repositions the mask so:
+## - Existing paint stays at its original world position (not stretched).
+## - The new region becomes paintable (bounds encompass current geometry).
 func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
@@ -1092,39 +1094,56 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	var center := _face_center_local(data, face)
 	PBSplat.paint_face_splat(data, face, mat, layer_idx, center, 0.5, 0.0, 1.0, false)
 	assert_eq(face.splat_bounds.size(), 4, "Splat bounds established on first paint")
-	var orig_bounds := [face.splat_bounds[0], face.splat_bounds[1], face.splat_bounds[2], face.splat_bounds[3]]
+	var orig_bounds := PackedFloat32Array([face.splat_bounds[0], face.splat_bounds[1],
+			face.splat_bounds[2], face.splat_bounds[3]])
 
-	# Rebuild mesh and check initial mask coordinates
-	cube.rebuild()
-	var orig_uv := data.splat_uvs.duplicate()
-	assert_eq(orig_uv.size(), data.positions.size())
+	# Get mask value at centre to verify paint position after resize.
+	var mask_before := PBSplat.get_layer_mask_image(mat, layer_idx)
+	assert_ne(mask_before, null)
+	var cw := mask_before.get_width() / 2
+	var ch := mask_before.get_height() / 2
+	var val_before := mask_before.get_pixel(cw, ch).r
 
 	# Resize face: move right vertices +2m outward along u
-	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var bounds := PBSplat.get_face_planar_bounds(data, face, true)
 	var u_axis: Vector3 = bounds["u"]
 	for idx in face.get_distinct_indexes():
 		var p: Vector3 = data.positions[idx]
 		if u_axis.dot(p) > 0.0:
 			data.positions[idx] = p + u_axis * 2.0
-	cube.rebuild()
 
-	# splat_bounds must NOT have stretched:
-	assert_eq(face.splat_bounds[0], orig_bounds[0])
-	assert_eq(face.splat_bounds[1], orig_bounds[1])
-	assert_eq(face.splat_bounds[2], orig_bounds[2])
-	assert_eq(face.splat_bounds[3], orig_bounds[3])
+	# Painting the expanded region triggers bounds expansion.
+	var expanded_hit := center + u_axis * 2.5
+	PBSplat.paint_face_splat(data, face, mat, layer_idx, expanded_hit,
+			0.5, 0.0, 0.8, false)
 
-	# Mask coordinates at the unmoved vertices must be identical (no sliding):
-	for idx in face.get_distinct_indexes():
-		var p: Vector3 = data.positions[idx]
-		if u_axis.dot(p) < 0.0:
-			assert_almost_eq(data.splat_uvs[idx].x, orig_uv[idx].x, 0.001)
-			assert_almost_eq(data.splat_uvs[idx].y, orig_uv[idx].y, 0.001)
-		else:
-			# Moved vertices land outside the original mask rect (u > 1): the
-			# painted area keeps its object-space anchor, the new geometry
-			# simply clips instead of stretching the paint.
-			assert_true(data.splat_uvs[idx].x > 1.5, "Moved vertices map outside the painted rect, not rescaled to 1.0")
+	# Bounds must have grown to encompass the new geometry.
+	assert_true(face.splat_bounds[1] > orig_bounds[1],
+			"splat_bounds max_u must grow after face expansion (was %f, now %f)" % [
+					orig_bounds[1], face.splat_bounds[1]])
+	# Min bounds must not have shrunk.
+	assert_true(face.splat_bounds[0] <= orig_bounds[0] + 0.001)
+
+	# Original paint position must still have its painted value (not zero /
+	# not smeared by stretching).  The centre of the OLD bounds is where the
+	# original paint was; find its pixel in the (now larger) mask.
+	var mask_after := PBSplat.get_layer_mask_image(mat, layer_idx)
+	assert_ne(mask_after, null)
+	# The old centre maps to a different pixel in the larger image.
+	var old_u_centre := (orig_bounds[0] + orig_bounds[1]) * 0.5
+	var old_v_centre := (orig_bounds[2] + orig_bounds[3]) * 0.5
+	var new_u_frac := (old_u_centre - face.splat_bounds[0]) / maxf(
+			face.splat_bounds[1] - face.splat_bounds[0], 0.0001)
+	var new_v_frac := (old_v_centre - face.splat_bounds[2]) / maxf(
+			face.splat_bounds[3] - face.splat_bounds[2], 0.0001)
+	var px := clampi(int(new_u_frac * float(mask_after.get_width() - 1)),
+			0, mask_after.get_width() - 1)
+	var py := clampi(int(new_v_frac * float(mask_after.get_height() - 1)),
+			0, mask_after.get_height() - 1)
+	var val_after := mask_after.get_pixel(px, py).r
+	assert_true(val_after > 0.5,
+			"original paint must be preserved at its world position (got %.2f at %d,%d)" % [
+					val_after, px, py])
 
 ## Moving the object in Object Mode does not disturb decal pixels: the layer is
 ## stored in mesh-local space, so the stamp travels with the mesh.

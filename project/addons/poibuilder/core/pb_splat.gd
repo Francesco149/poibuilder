@@ -712,11 +712,15 @@ static func remove_layer(mat: ShaderMaterial, layer_idx: int) -> void:
 ## - "min_u", "max_u", "range_u": float
 ## - "min_v", "max_v", "range_v": float
 ##
-## SPLAT RESIZE POLICY: by default a face's splat_bounds PERSIST from the first
-## paint (see PBFace.splat_bounds), so splat masks do not stretch when geometry
-## is resized later. Callers that must track the CURRENT geometry (stamp
-## anchors, decal clipping bounds) pass force_geometry = true, which also skips
-## writing face.splat_bounds so it never poisons the persistent mask record.
+## SPLAT RESIZE POLICY: a face's splat_bounds GROW monotonically.  On the
+## first paint they snapshot the geometry; if the face is later expanded
+## (edges/vertices moved), the bounds expand to encompass the new vertices
+## and the mask image is repositioned so existing paint stays in place
+## (see _expand_mask_for_new_bounds).  Bounds never shrink — shrinking
+## would compress the UV range and stretch the painted pixels.  Callers
+## that need the PURE GEOMETRY bounds (stamp anchors, decal clipping) pass
+## force_geometry = true, which also skips writing face.splat_bounds so it
+## never poisons the persistent mask record.
 static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_geometry: bool = false) -> Dictionary:
 	var result: Dictionary = {}
 	if mesh_data == null or face == null:
@@ -736,10 +740,11 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_ge
 	var u_axis: Vector3 = basis["u"]
 	var v_axis: Vector3 = basis["v"]
 
-	var min_u := INF
-	var max_u := -INF
-	var min_v := INF
-	var max_v := -INF
+	# Current geometry extents.
+	var geo_min_u := INF
+	var geo_max_u := -INF
+	var geo_min_v := INF
+	var geo_max_v := -INF
 
 	var pos_count := mesh_data.positions.size()
 	for idx in indices:
@@ -747,16 +752,24 @@ static func get_face_planar_bounds(mesh_data: PBMeshData, face: PBFace, force_ge
 			var p: Vector3 = mesh_data.positions[idx]
 			var u_val := u_axis.dot(p)
 			var v_val := v_axis.dot(p)
-			min_u = minf(min_u, u_val)
-			max_u = maxf(max_u, u_val)
-			min_v = minf(min_v, v_val)
-			max_v = maxf(max_v, v_val)
+			geo_min_u = minf(geo_min_u, u_val)
+			geo_max_u = maxf(geo_max_u, u_val)
+			geo_min_v = minf(geo_min_v, v_val)
+			geo_max_v = maxf(geo_max_v, v_val)
+
+	var min_u := geo_min_u
+	var max_u := geo_max_u
+	var min_v := geo_min_v
+	var max_v := geo_max_v
 
 	if face.splat_bounds.size() == 4 and not force_geometry:
-		min_u = face.splat_bounds[0]
-		max_u = face.splat_bounds[1]
-		min_v = face.splat_bounds[2]
-		max_v = face.splat_bounds[3]
+		# UNION of cached bounds and current geometry: bounds can only grow.
+		# This ensures that after vertex moves the expanded region is
+		# paintable while existing paint stays at the correct UV position.
+		min_u = minf(face.splat_bounds[0], geo_min_u)
+		max_u = maxf(face.splat_bounds[1], geo_max_u)
+		min_v = minf(face.splat_bounds[2], geo_min_v)
+		max_v = maxf(face.splat_bounds[3], geo_max_v)
 
 	var range_u := max_u - min_u
 	if range_u < 0.0001:
@@ -813,6 +826,90 @@ static func ensure_mesh_splat_uv(mesh_data: PBMeshData) -> void:
 # Brush Painting Engine
 # ==============================================================================
 
+## Expands face.splat_bounds to cover the current geometry (union), and
+## repositions every existing mask image so old paint stays in place.
+## Returns the final bounds dict.  Called before every paint; no-op when
+## the geometry hasn't grown beyond the cached bounds.
+static func _expand_splat_bounds_if_needed(
+		mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
+		stroke_ctx: Dictionary) -> Dictionary:
+	if face.splat_bounds.size() != 4:
+		# First paint on this face: snapshot current geometry.
+		var geom := get_face_planar_bounds(mesh_data, face, true)
+		if geom.is_empty():
+			return geom
+		face.splat_bounds = PackedFloat32Array([
+			geom["min_u"], geom["max_u"], geom["min_v"], geom["max_v"]
+		])
+		return get_face_planar_bounds(mesh_data, face)
+
+	# Bounds already exist — check if the geometry has grown beyond them.
+	var new_bounds := get_face_planar_bounds(mesh_data, face)
+	if new_bounds.is_empty():
+		return new_bounds
+
+	var old_min_u: float = face.splat_bounds[0]
+	var old_max_u: float = face.splat_bounds[1]
+	var old_min_v: float = face.splat_bounds[2]
+	var old_max_v: float = face.splat_bounds[3]
+	var new_min_u: float = new_bounds["min_u"]
+	var new_max_u: float = new_bounds["max_u"]
+	var new_min_v: float = new_bounds["min_v"]
+	var new_max_v: float = new_bounds["max_v"]
+
+	# No expansion needed?
+	if absf(new_min_u - old_min_u) < 0.0001 and absf(new_max_u - old_max_u) < 0.0001 \
+			and absf(new_min_v - old_min_v) < 0.0001 and absf(new_max_v - old_max_v) < 0.0001:
+		return new_bounds
+
+	# Bounds grew — reposition existing mask images so old paint stays put.
+	var old_range_u := maxf(old_max_u - old_min_u, 0.0001)
+	var old_range_v := maxf(old_max_v - old_min_v, 0.0001)
+	var new_range_u: float = new_bounds["range_u"]
+	var new_range_v: float = new_bounds["range_v"]
+
+	for layer_idx in range(1, MAX_LAYERS + 1):
+		var mask_img := get_layer_mask_image(splat_mat, layer_idx)
+		if mask_img == null:
+			continue
+		var old_w := mask_img.get_width()
+		var old_h := mask_img.get_height()
+		if old_w <= 0 or old_h <= 0:
+			continue
+
+		# New image size: scale proportionally to the bounds growth.
+		var new_w := maxi(old_w, int(ceil(float(old_w) * new_range_u / old_range_u)))
+		var new_h := maxi(old_h, int(ceil(float(old_h) * new_range_v / old_range_v)))
+
+		# Where the old image sits inside the new one (pixel coordinates).
+		var dst_x := int(round((old_min_u - new_min_u) / new_range_u * float(new_w - 1)))
+		var dst_y := int(round((old_min_v - new_min_v) / new_range_v * float(new_h - 1)))
+
+		if new_w == old_w and new_h == old_h and dst_x == 0 and dst_y == 0:
+			continue  # nothing changed for this mask
+
+		# Build new image and blit the old data into position.
+		var new_img := Image.create(new_w, new_h, false, mask_img.get_format())
+		new_img.fill(Color(0, 0, 0, 1))
+		new_img.blit_rect(mask_img, Rect2i(0, 0, old_w, old_h),
+				Vector2i(dst_x, dst_y))
+
+		# Replace the mask image in the material and texture.
+		var param_name := "layer_%d_mask" % layer_idx
+		var tex = splat_mat.get_shader_parameter(param_name) as ImageTexture
+		if tex != null:
+			tex.set_image(new_img)
+		_set_cached_image(splat_mat, "layer_%d" % layer_idx, new_img)
+		mask_state_version += 1
+
+		# Invalidate stroke_ctx for this mask (the old bytes/wmax are stale).
+		if stroke_ctx.has(mask_img.get_instance_id()):
+			stroke_ctx.erase(mask_img.get_instance_id())
+
+	# Persist the expanded bounds.
+	face.splat_bounds = PackedFloat32Array([new_min_u, new_max_u, new_min_v, new_max_v])
+	return new_bounds
+
 ## Paints on a face's splat layer with an adjustable brush radius and softness.
 ## Highly optimized: the pixel walk runs on the raw R8 byte buffer (no per-pixel
 ## Color boxing), only the affected 2D bounding box is touched, and the mask is
@@ -865,19 +962,12 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 
+	var bounds := _expand_splat_bounds_if_needed(mesh_data, face, splat_mat, stroke_ctx)
+	if bounds.is_empty():
+		return false
 	var target_res := calculate_uniform_face_resolution(mesh_data, face)
 	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
 	if mask_img == null:
-		return false
-	if face.splat_bounds.size() != 4:
-		var geom_bounds := get_face_planar_bounds(mesh_data, face, true)
-		if not geom_bounds.is_empty():
-			face.splat_bounds = PackedFloat32Array([
-				geom_bounds["min_u"], geom_bounds["max_u"],
-				geom_bounds["min_v"], geom_bounds["max_v"]
-			])
-	var bounds := get_face_planar_bounds(mesh_data, face)
-	if bounds.is_empty():
 		return false
 
 	var u_axis: Vector3 = bounds["u"]
@@ -1130,19 +1220,12 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
 				radius, softness, opacity, erase, stroke_ctx)
 
+	var bounds := _expand_splat_bounds_if_needed(mesh_data, face, splat_mat, stroke_ctx)
+	if bounds.is_empty():
+		return false
 	var target_res := calculate_uniform_face_resolution(mesh_data, face)
 	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
 	if mask_img == null:
-		return false
-	if face.splat_bounds.size() != 4:
-		var geom_bounds := get_face_planar_bounds(mesh_data, face, true)
-		if not geom_bounds.is_empty():
-			face.splat_bounds = PackedFloat32Array([
-				geom_bounds["min_u"], geom_bounds["max_u"],
-				geom_bounds["min_v"], geom_bounds["max_v"]
-			])
-	var bounds := get_face_planar_bounds(mesh_data, face)
-	if bounds.is_empty():
 		return false
 
 	var u_axis: Vector3 = bounds["u"]
