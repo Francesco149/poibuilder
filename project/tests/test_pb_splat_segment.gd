@@ -245,3 +245,73 @@ func test_controller_run_dab_paints_and_tracks_last_dab() -> void:
 		assert_true(_mask_value(data, mat, data.faces[fi], PBSplat.get_first_active_layer(mat),
 				Vector3(-0.6 + 1.2 * frac, 1.0, 0.2)) > 200,
 				"the swept run must paint continuously at %.1f" % frac)
+
+## A trimmed continuation (near cap skipped) must byte-match the untrimmed
+## one: the previous sweep's far half-cap + band already tile the disc at the
+## shared endpoint at exactly the values the revisit would write.
+func test_trimmed_continuation_matches_full_sweep() -> void:
+	var data := _test_cube.pb_mesh_data
+	var fi := _top_face(data)
+	var a := Vector3(-0.6, 1.0, 0.35)
+	var b := Vector3(0.0, 1.0, 0.35)
+	var c := Vector3(0.6, 1.0, 0.35)
+
+	var trim_mat := PBSplat.create_splat_material()
+	var trim_layer := _layer(trim_mat)
+	var ctx := {}
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], trim_mat, trim_layer,
+			a, b, 0.3, 0.5, 1.0, false, ctx)
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], trim_mat, trim_layer,
+			b, c, 0.3, 0.5, 1.0, false, ctx, true)
+
+	var full_mat := PBSplat.create_splat_material()
+	var full_layer := _layer(full_mat)
+	var ctx2 := {}
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], full_mat, full_layer,
+			a, b, 0.3, 0.5, 1.0, false, ctx2)
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], full_mat, full_layer,
+			b, c, 0.3, 0.5, 1.0, false, ctx2)
+
+	# Bool compare — GUT formats megabyte arrays into its messages otherwise.
+	assert_true(PBSplat.get_layer_mask_image(trim_mat, trim_layer).get_data()
+			== PBSplat.get_layer_mask_image(full_mat, full_layer).get_data(),
+			"a trimmed continuation must byte-match the untrimmed sweep")
+
+## Erase sweeps must IGNORE the trim flag: erase's wmax accounting takes the
+## max sub over visits, so the result depends on visit order (a trimmed
+## continuation can land a different total sub on rim pixels). The walk
+## clamps trim off for erase, so an erase continuation with the flag set
+## must still byte-match the untrimmed one.
+func test_trimmed_erase_matches_full_erase() -> void:
+	var data := _test_cube.pb_mesh_data
+	var fi := _top_face(data)
+	var a := Vector3(-0.6, 1.0, -0.35)
+	var b := Vector3(0.0, 1.0, -0.35)
+	var c := Vector3(0.6, 1.0, -0.35)
+
+	var trim_mat := PBSplat.create_splat_material()
+	var trim_layer := _layer(trim_mat)
+	var ctx := {}
+	# Base coat (its OWN stroke ctx), then two erase sweeps sharing one
+	# stroke's ctx — second one passes the trim flag, which the walk must
+	# clamp off for erase.
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], trim_mat, trim_layer,
+			a, c, 0.35, 0.0, 1.0, false, {})
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], trim_mat, trim_layer,
+			a, b, 0.25, 0.5, 1.0, true, ctx)
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], trim_mat, trim_layer,
+			b, c, 0.25, 0.5, 1.0, true, ctx, true)
+
+	var full_mat := PBSplat.create_splat_material()
+	var full_layer := _layer(full_mat)
+	var ctx2 := {}
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], full_mat, full_layer,
+			a, c, 0.35, 0.0, 1.0, false, {})
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], full_mat, full_layer,
+			a, b, 0.25, 0.5, 1.0, true, ctx2)
+	PBSplat.paint_face_splat_segment(data, data.faces[fi], full_mat, full_layer,
+			b, c, 0.25, 0.5, 1.0, true, ctx2)
+
+	assert_true(PBSplat.get_layer_mask_image(trim_mat, trim_layer).get_data()
+			== PBSplat.get_layer_mask_image(full_mat, full_layer).get_data(),
+			"a trimmed erase continuation must byte-match the untrimmed one")

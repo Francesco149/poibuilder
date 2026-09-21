@@ -87,16 +87,21 @@ def main() -> int:
         print(f"input->drawn latency (frames that delivered events): mean {statistics.mean(ins):.1f}  "
               f"p90 {pct(ins, .9):.1f}  max {max(ins):.1f} ms  (n={len(ins)})")
 
-    # Hitch attribution: what was inside the long frames?
+    # Hitch attribution: what was inside the long frames? Frames with NO
+    # events and NO paint stages are silent gaps (window unfocused / editor
+    # stall) — reported separately, never attributed to the paint path.
     hitches = [f for f in frames if f["dt"] > 25.0]
+    attributable = [f for f in hitches if f["ev"] > 0 or f["stages"]]
+    silent = [f for f in hitches if not (f["ev"] > 0 or f["stages"])]
     handler_bound, render_bound = [], []
-    for f in hitches:
+    for f in attributable:
         dab = f["stages"].get("dab_total", (0, 0))[0] + f["stages"].get("splat_dab", (0, 0))[0]
         total = dab + f["stages"].get("handler", (0, 0))[0] + f["stages"].get("interp_walk", (0, 0))[0]
         (handler_bound if total > 0.6 * f["dt"] else render_bound).append(f)
-    print(f"hitches > 25ms: {len(hitches)}  — paint-handler-bound: {len(handler_bound)}, "
-          f"render/editor-side: {len(render_bound)}")
-    top = sorted(hitches, key=lambda f: -f["dt"])[:12]
+    print(f"hitches > 25ms: {len(hitches)} attributable (paint-handler-bound: {len(handler_bound)}, "
+          f"render/editor-side: {len(render_bound)}) + {len(silent)} silent gaps "
+          f"(no events, no paint stages — window idle/stall, not paint jank)")
+    top = sorted(attributable, key=lambda f: -f["dt"])[:12]
     if top:
         print("worst frames (dt | paint handler share | what ran inside):")
         for f in top:
@@ -120,7 +125,10 @@ def main() -> int:
     # Verdict
     dab_frames = [f for f in frames if f["stages"].get("dab_total", (0, 0))[0] > 15.0]
     print("verdict:", end=" ")
-    if handler_bound and len(handler_bound) >= len(render_bound):
+    if not attributable:
+        print("no attributable hitches in this window"
+              + (f" ({len(silent)} silent gaps excluded)" if silent else "") + ".")
+    elif handler_bound and len(handler_bound) >= len(render_bound):
         print("jank is PAINT-HANDLER-BOUND: long frames are long because the dab/walk "
               "pixel work blocks the main thread inside the plugin.")
     elif render_bound:

@@ -1056,17 +1056,27 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 ## face (the controller only sweeps runs it saw pick the same face) — the
 ## planar math is the face's own, so a from-point slightly off this face's
 ## plane still lands a sane capsule; callers never sweep across faces.
+## `trim_near` skips the NEAR cap (the disc around `from_local`) for a sweep
+## that CONTINUES the previous dab on the same face/material with unchanged
+## brush params. Exact there: the previous sweep's band + half-caps tile the
+## full disc around its own endpoint, so every trimmed pixel already holds
+## precisely the value this sweep would write (max / erase-once make the
+## revisit a no-op) — the trim removes only the walk, and the caps are ~60%
+## of a short sweep's pixels (the iGPU trace: 300-700k px per dab frame,
+## mostly re-walked caps, overlap pixels REWRITTEN because a new spine's
+## weight 255 exceeds the old rim's ~100 so wmax never skips them).
 static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
-		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
+		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {},
+		trim_near: bool = false) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 	if not PBPaintProfile.hooks():
 		return _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
-				hit_point_local, radius, softness, opacity, erase, stroke_ctx)
+				hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near)
 	var t0 := Time.get_ticks_usec()
 	var res := _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
-			hit_point_local, radius, softness, opacity, erase, stroke_ctx)
+			hit_point_local, radius, softness, opacity, erase, stroke_ctx, trim_near)
 	PBPaintProfile.add(&"splat_dab", Time.get_ticks_usec() - t0, 1, _prof_bytes, _prof_pixels)
 	_prof_bytes = 0
 	_prof_pixels = 0
@@ -1074,7 +1084,14 @@ static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_
 
 static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
-		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
+		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {},
+		trim_near: bool = false) -> bool:
+	# Trim is exact for PAINT only: erase's wmax accounting takes the max sub
+	# over visits, so the result depends on visit ORDER — a trimmed (near cap
+	# skipped) erase continuation can land a different total sub on rim
+	# pixels than the untrimmed one. Erase keeps its full caps.
+	if erase:
+		trim_near = false
 	if from_local.distance_squared_to(hit_point_local) < 0.0000000001:
 		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
 				radius, softness, opacity, erase, stroke_ctx)
@@ -1222,7 +1239,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 				_prof_pixels += cap_hi_i - cap_lo_i + 1
 			if soft <= 0.001:
 				# Hard brush: uniform opacity_b; no LUT anywhere.
-				for xi in range(cap_lo_i, band_lo_i):
+				# (trim_near drops this near-cap span entirely — see above.)
+				var capA_hi := band_lo_i if trim_near else maxi(band_lo_i, cap_lo_i)
+				for xi in range(cap_lo_i, capA_hi):
 					var i := line_base + xi * i_step
 					var da := (min_a + float(xi) * step_a) - a_end_lo
 					if da * da + dy_sq > r_plane_sq:
@@ -1286,7 +1305,8 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 				var li_scale := inv_r_sq * float(BRUSH_LUT_SIZE - 1)
 				var li_band := int(dy_sq * li_scale)
 				var wb_band := int(lut_bytes[li_band]) if li_band < BRUSH_LUT_SIZE - 1 else 0
-				for xi in range(cap_lo_i, band_lo_i):
+				var capA_hi := band_lo_i if trim_near else maxi(band_lo_i, cap_lo_i)
+				for xi in range(cap_lo_i, capA_hi):
 					var i := line_base + xi * i_step
 					var da := (min_a + float(xi) * step_a) - a_end_lo
 					var li := int((da * da + dy_sq) * li_scale)
@@ -1398,6 +1418,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 			for x in range(x0, x1 + 1):
 				var t := (u_at * seg_du + row_c) * inv_seg_len
 				if t < 0.0:
+					if trim_near:
+						u_at += step_u
+						continue
 					t = 0.0
 				elif t > 1.0:
 					t = 1.0
@@ -1442,6 +1465,9 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 			for x in range(x0, x1 + 1):
 				var t := (u_at * seg_du + row_c) * inv_seg_len
 				if t < 0.0:
+					if trim_near:
+						u_at += step_u
+						continue
 					t = 0.0
 				elif t > 1.0:
 					t = 1.0

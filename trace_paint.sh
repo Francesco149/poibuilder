@@ -10,7 +10,8 @@
 #
 # Optional: pass a scene to open:  ./trace_paint.sh [res://-relative .tscn]
 set -uo pipefail
-cd "$(dirname "$0")/project"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT/project"
 
 DISPLAY_ARGS=()
 if [ -z "${DISPLAY:-}" ]; then
@@ -48,7 +49,7 @@ STATUS=$?
 
 echo
 echo "=== editor closed (exit $STATUS); analyzing the trace ==="
-python3 "$(dirname "$0")/tools/analyze_paint_trace.py" /tmp/pb_paint_trace.log
+python3 "$ROOT/tools/analyze_paint_trace.py" /tmp/pb_paint_trace.log
 echo
 echo "trace kept at /tmp/pb_paint_trace.log"
 rm -rf "$HARNESS_HOME"

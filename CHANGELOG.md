@@ -3,6 +3,41 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.171 — what the user's real trace showed, and the two fixes it demanded
+
+The first interactive trace (30 s of real painting on the iGPU, two
+multi-second strokes) pinned the remaining feel precisely: 40
+handler-bound hitch frames of 100-245 ms, anatomy per frame — sweeps
+whose PIXELS were ~60% re-walked end-cap discs (a new sweep's spine
+rewrites the previous sweep's rim, so wmax never skips them), and the
+interpolated walk's PICKS at 40-50% of the frame (10-34 queued events x
+~2.6 ms; once one long frame lands, events pile up and the burst
+repeats — a saturation spiral). Also fixed: trace_paint.sh analyzed the
+wrong path after its cd (the trace itself was always written).
+
+### Fixed: pick_face is allocation-free
+The per-triangle Dictionary from PBMath.ray_intersects_triangle is gone:
+Moller-Trumbore runs inline with the same 1e-9 epsilon and the same
+barycentric hit point (existing picking tests pass unchanged). Per-pick
+cost roughly halved; a queued-event frame that paid 24-88 ms of picks
+pays about half that.
+
+### Improved: continuing sweeps skip their near cap
+paint_face_splat_segment gains trim_near: a sweep that continues the
+stroke's last dab on the same face/material with unchanged brush params
+skips the disc around its start point — the previous sweep's band +
+far half-cap already tile that disc at exactly the values the revisit
+would write (max replace semantics), so the trim is byte-exact for
+paint. It is NOT exact for erase (erase's wmax accounting takes the max
+sub over visits, so the result depends on visit order) — the walk
+clamps trim off for erase, pinned by a byte-equality test. Also pinned:
+a trimmed paint continuation byte-matches the untrimmed one.
+
+Full suite 1176/1176; the paint bench on the iGPU shows the single-event
+worst case at dab 151 ms (from 164) with picks halved — the trim's real
+win (eliminating cap re-walks across a stroke's whole event stream) only
+shows in continuing strokes, i.e. the interactive trace.
+
 ## v0.9.170 — the interactive paint tracer: the trace of what the user actually feels
 
 The v0.9.169 bench drove synthetic strokes; "doesn't feel any better"

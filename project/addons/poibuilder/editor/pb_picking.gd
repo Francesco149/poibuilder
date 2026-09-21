@@ -81,13 +81,20 @@ class VertexPickResult extends RefCounted:
 
 ## Picks the nearest face intersected by a ray from the camera through screen_pos.
 ## Returns FacePickResult with face_index >= 0 on hit, or face_index == -1 on miss.
+##
+## The ray/triangle math runs inline (no per-triangle Dictionary): the paint
+## stroke's interpolated walk re-picks once per spacing step, and a real
+## session queues tens of motion events behind a slow frame — the iGPU trace
+## showed picks at 40-50% of the hitch frames, most of it allocation churn.
 static func pick_face(mesh_data: PBMeshData, mesh_transform: Transform3D,
 		ray_origin: Vector3, ray_dir: Vector3) -> FacePickResult:
 	if mesh_data == null:
 		return FacePickResult.new()
 
 	var positions := mesh_data.positions
-	var best := FacePickResult.new()
+	var best_distance := INF
+	var best_face := -1
+	var best_point := Vector3.ZERO
 
 	for fi in range(mesh_data.faces.size()):
 		var face: PBFace = mesh_data.faces[fi]
@@ -103,13 +110,39 @@ static func pick_face(mesh_data: PBMeshData, mesh_transform: Transform3D,
 			var v0: Vector3 = mesh_transform * positions[i0]
 			var v1: Vector3 = mesh_transform * positions[i1]
 			var v2: Vector3 = mesh_transform * positions[i2]
-			var result: Dictionary = PBMath.ray_intersects_triangle(ray_origin, ray_dir, v0, v1, v2)
-			if result.get("hit", false):
-				var dist: float = result["distance"]
-				if dist < best.distance:
-					best = FacePickResult.new(fi, dist, result["point"])
+			# Inline Moller-Trumbore (no culling), same 1e-9 epsilon as
+			# PBMath.ray_intersects_triangle — sculpt-density triangles must
+			# stay pickable (see the comment over there).
+			var e1: Vector3 = v1 - v0
+			var e2: Vector3 = v2 - v0
+			var p: Vector3 = ray_dir.cross(e2)
+			var det: float = e1.dot(p)
+			if det > -0.000000001 and det < 0.000000001:
+				continue
+			var inv_det: float = 1.0 / det
+			var t_vec: Vector3 = ray_origin - v0
+			var u: float = t_vec.dot(p) * inv_det
+			if u < 0.0 or u > 1.0:
+				continue
+			var q: Vector3 = t_vec.cross(e1)
+			var v: float = ray_dir.dot(q) * inv_det
+			if v < 0.0 or u + v > 1.0:
+				continue
+			var t: float = e2.dot(q) * inv_det
+			if t <= 0.000000001:
+				continue
+			if t < best_distance:
+				best_distance = t
+				best_face = fi
+				# Same barycentric form as PBMath.ray_intersects_triangle.
+				best_point = Vector3(
+					u * v1.x + v * v2.x + (1.0 - (u + v)) * v0.x,
+					u * v1.y + v * v2.y + (1.0 - (u + v)) * v0.y,
+					u * v1.z + v * v2.z + (1.0 - (u + v)) * v0.z)
 
-	return best
+	if best_face >= 0:
+		return FacePickResult.new(best_face, best_distance, best_point)
+	return FacePickResult.new()
 
 ## Picks ALL faces intersected by a ray, sorted by distance (nearest first).
 static func pick_faces_all(mesh_data: PBMeshData, mesh_transform: Transform3D,

@@ -184,6 +184,10 @@ const DAB_SPACING_FRACTION := 0.2
 var _stroke_last_dab_local: Vector3 = Vector3.INF
 var _stroke_last_dab_mesh: PBMesh = null
 var _stroke_last_dab_face: int = -1
+## Brush config at the last dab: a mid-stroke slider change breaks the
+## previous sweep's far-cap guarantee, so a trimmed continuation is only
+## allowed while this matches.
+var _stroke_last_dab_cfg: String = ""
 
 # Visual preview nodes
 var preview_root: Node3D = null
@@ -518,6 +522,7 @@ func begin_stroke() -> void:
 	_stroke_last_dab_local = Vector3.INF
 	_stroke_last_dab_mesh = null
 	_stroke_last_dab_face = -1
+	_stroke_last_dab_cfg = ""
 	PBPaintProfile.begin_stroke()
 	apply_paint_stroke()
 
@@ -584,7 +589,8 @@ func _apply_paint_stroke_body() -> void:
 			modified = PBSplat.paint_face_splat_segment(
 				data, face, splat_mat, active_layer_idx,
 				_stroke_last_dab_local, local_hit, brush_radius, brush_softness,
-				brush_opacity, erase_mode, _stroke_ctx
+				brush_opacity, erase_mode, _stroke_ctx,
+				_sweep_trim_near(target_face_idx)
 			)
 		else:
 			modified = PBSplat.paint_face_splat(
@@ -593,14 +599,30 @@ func _apply_paint_stroke_body() -> void:
 				_stroke_ctx
 			)
 
-	_stroke_last_dab_local = local_hit
-	_stroke_last_dab_mesh = target_mesh
-	_stroke_last_dab_face = target_face_idx
+	_remember_dab(target_mesh, target_face_idx, local_hit)
 
 	if modified:
 		stroke_dirty = true
 		if _stroke_meshes.has(target_mesh):
 			_stroke_meshes[target_mesh]["dirty"] = true
+
+## True when a sweep on `face_idx` may SKIP its near cap: the stroke's last
+## dab was on this same face with the SAME brush config, so that sweep's
+## band + far half-cap already tile the full disc at the shared endpoint —
+## every pixel the near cap would revisit already holds exactly the value
+## the revisit would write (max replace / erase-once semantics).
+func _sweep_trim_near(face_idx: int) -> bool:
+	return _stroke_last_dab_face == face_idx \
+			and _stroke_last_dab_cfg == _brush_cfg()
+
+func _brush_cfg() -> String:
+	return "%d|%.4f|%.4f|%.4f|%s" % [paint_target, brush_radius, brush_softness, brush_opacity, erase_mode]
+
+func _remember_dab(mesh: PBMesh, face_idx: int, local_point: Vector3) -> void:
+	_stroke_last_dab_local = local_point
+	_stroke_last_dab_mesh = mesh
+	_stroke_last_dab_face = face_idx
+	_stroke_last_dab_cfg = _brush_cfg()
 
 ## A splat dab at an EXPLICIT stroke position: the interpolated walk calls
 ## this once per same-face run with the run's swept span (from the run's
@@ -632,13 +654,11 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 	if sweep_from_local != Vector3.INF:
 		modified = PBSplat.paint_face_splat_segment(data, face, splat_mat, active_layer_idx,
 				sweep_from_local, to_local, brush_radius, brush_softness, brush_opacity,
-				erase_mode, _stroke_ctx)
+				erase_mode, _stroke_ctx, _sweep_trim_near(face_idx))
 	else:
 		modified = PBSplat.paint_face_splat(data, face, splat_mat, active_layer_idx,
 				to_local, brush_radius, brush_softness, brush_opacity, erase_mode, _stroke_ctx)
-	_stroke_last_dab_local = to_local
-	_stroke_last_dab_mesh = mesh
-	_stroke_last_dab_face = face_idx
+	_remember_dab(mesh, face_idx, to_local)
 	if modified:
 		stroke_dirty = true
 		if _stroke_meshes.has(mesh):
