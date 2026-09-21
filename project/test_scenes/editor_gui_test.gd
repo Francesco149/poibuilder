@@ -23,10 +23,38 @@
 extends Node3D
 
 var _failures: int = 0
+## Real-input contamination guard: the harness knows exactly when IT presses
+## buttons. A button held with no synthetic press in flight means a human
+## clicked into the automated run (easy on a real display — the bench shares
+## the desktop), which breaks pick/click cases in confusing ways. Flagged
+## loudly at the end instead of surfacing as mystery failures.
+var _synthetic_press_depth: int = 0
+var _stray_buttons: int = 0
+var _stray_note: String = ""
+## The synthesized release clears the depth counter before Input's buffered
+## state catches up (a 1-2 frame race), so only a PERSISTED hold counts.
+var _stray_run: int = 0
 
 func _ready() -> void:
 	if Engine.is_editor_hint() and OS.get_environment("PB_GUI_TEST") != "":
 		_run.call_deferred()
+
+func _process(_delta: float) -> void:
+	if OS.get_environment("PB_GUI_TEST") == "":
+		return
+	var held := ""
+	for btn in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
+		if Input.is_mouse_button_pressed(btn):
+			held += " %d" % btn
+	if held.is_empty() or _synthetic_press_depth > 0:
+		_stray_run = 0
+		return
+	_stray_run += 1
+	if _stray_run == 8:
+		_stray_note = "real button(s) held mid-run (%s) — a human click reached the automated window" % held
+		print("[GUI TEST] WARNING: " + _stray_note + "; results unreliable, rerun hands-off")
+	if _stray_run >= 8:
+		_stray_buttons += 1
 
 func _fail(msg: String) -> void:
 	_failures += 1
@@ -72,6 +100,9 @@ func _mouse_button(pos: Vector2, pressed: bool, shift: bool = false) -> void:
 	ev.shift_pressed = shift
 	if pressed:
 		ev.button_mask = MOUSE_BUTTON_MASK_LEFT
+		_synthetic_press_depth += 1
+	else:
+		_synthetic_press_depth = maxi(0, _synthetic_press_depth - 1)
 	Input.parse_input_event(ev)
 
 ## Sends Ctrl+Z through the input pipeline (the editor's undo shortcut).
@@ -2509,6 +2540,9 @@ func _run() -> void:
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
+	if _stray_buttons > 0:
+		print("[GUI TEST] !!! %d frames carried real button input mid-run (%s) — the run was contaminated by a human click; treat every failure above as suspect and rerun hands-off"
+			% [_stray_buttons, _stray_note])
 	print("[GUI TEST] done, failures=%d" % _failures)
 	if OS.get_environment("PB_GUI_TEST_INTERACTIVE") != "":
 		print("[GUI TEST] Interactive mode: Leaving editor open for interactive play/inspection. Close window to exit.")

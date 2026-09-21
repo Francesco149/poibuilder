@@ -31,6 +31,8 @@ index, current status, and the process rules that are not area-specific.
 # .pi/orientation/testing.md for why)
 ./run_tests.sh
 ./run_gui_tests.sh          # real-editor event harness for viewport behavior
+./trace_paint.sh            # interactive paint tracer: paint in a live editor,
+                            #   the per-frame trace + analysis print on close
 ./run_paint_perf.sh         # paint-stroke profiler on the REAL GPU (never xvfb):
                             #   per-stage timings for fast strokes; perf claims
                             #   about painting are measured with this

@@ -102,7 +102,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.169"
+const VERSION := "0.9.170"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -4130,6 +4130,16 @@ func _particle_placer_input(camera: Camera3D, event: InputEvent) -> int:
 # ==============================================================================
 
 func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
+	var active := paint_controller != null and paint_controller.is_active()
+	if not PBPaintTrace.enabled or not active:
+		return _paint_controller_input_body(camera, event)
+	PBPaintTrace.note_event(event)
+	var t0 := Time.get_ticks_usec()
+	var res := _paint_controller_input_body(camera, event)
+	PBPaintTrace.record_stage(&"handler", Time.get_ticks_usec() - t0, 1, 0, 0)
+	return res
+
+func _paint_controller_input_body(camera: Camera3D, event: InputEvent) -> int:
 	if paint_controller == null or not paint_controller.is_active():
 		return AFTER_GUI_INPUT_PASS
 
@@ -4206,7 +4216,7 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 ## keeps one stamp per step: its source is texture-aligned, the spacing IS
 ## the rhythm a swept paste would smear.
 func _paint_stroke_dab_along(camera: Camera3D, screen_now: Vector2, hit: Dictionary) -> void:
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		var t0 := Time.get_ticks_usec()
 		_paint_stroke_dab_along_walk(camera, screen_now, hit)
 		PBPaintProfile.add(&"interp_walk", Time.get_ticks_usec() - t0)
@@ -4229,7 +4239,7 @@ func _paint_stroke_dab_along_walk(camera: Camera3D, screen_now: Vector2, hit: Di
 	if dist <= spacing:
 		return
 	var steps := mini(int(dist / spacing), PAINT_STROKE_MAX_INTERP_STEPS)
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		PBPaintProfile.add(&"interp_step", 0, steps)
 	var decal_stamp := paint_controller.paint_target == PBPaintController.PaintTarget.DECAL
 	var run_face := -1
@@ -4263,7 +4273,7 @@ func _paint_stroke_dab_along_walk(camera: Camera3D, screen_now: Vector2, hit: Di
 func _end_stroke_run(mesh: PBMesh, face_idx: int, run_from: Vector3, run_to: Vector3) -> void:
 	if face_idx < 0 or run_to == Vector3.INF:
 		return
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		var t0 := Time.get_ticks_usec()
 		paint_controller.apply_paint_stroke_splat(mesh, face_idx, run_to,
 				run_from if run_from.distance_squared_to(run_to) > 0.0000000001 else Vector3.INF)
@@ -4311,7 +4321,7 @@ func _sync_paint_readout() -> void:
 			if dens < PBSplat.DECAL_TEXELS_PER_M * 0.5 else ""])
 
 func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
-	if not PBPaintProfile.enabled:
+	if not PBPaintProfile.hooks():
 		return _pick_paint_surface_ray(camera, screen_pos)
 	var t0 := Time.get_ticks_usec()
 	var res := _pick_paint_surface_ray(camera, screen_pos)

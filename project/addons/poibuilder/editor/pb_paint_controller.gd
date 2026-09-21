@@ -220,6 +220,7 @@ func set_mode(new_mode: Mode) -> void:
 		_update_stamp_preview_texture()
 	_update_preview_mesh()
 	_update_preview_visibility()
+	PBPaintTrace.set_session_active(mode != Mode.NONE)
 	mode_changed.emit(mode)
 
 func reset() -> void:
@@ -232,6 +233,7 @@ func reset() -> void:
 	paintable = true
 	blocked_reason = ""
 	_update_preview_visibility()
+	PBPaintTrace.set_session_active(false)
 	mode_changed.emit(mode)
 
 func setup_previews(parent_node: Node) -> void:
@@ -520,7 +522,7 @@ func begin_stroke() -> void:
 	apply_paint_stroke()
 
 func apply_paint_stroke() -> void:
-	if not PBPaintProfile.enabled:
+	if not PBPaintProfile.hooks():
 		_apply_paint_stroke_body()
 		return
 	var t0 := Time.get_ticks_usec()

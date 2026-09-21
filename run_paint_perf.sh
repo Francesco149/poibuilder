@@ -46,6 +46,11 @@ echo
 echo "==================== [PAINT PERF] summary ===================="
 grep -E "\[PAINT PERF\]|\[GUI TEST\] (PASS|FAIL): PAINT" "$OUT" || echo "(no PAINT PERF lines — did the bench run?)"
 FAILURES=$(grep -oE "done, failures=[0-9]+" "$OUT" | grep -oE "[0-9]+$" || echo 1)
+if grep -q "real button(s) held mid-run" "$OUT"; then
+    echo ">>> This run received REAL input mid-run (a human click reached the"
+    echo ">>> automated window — the bench shares your desktop). Every failure"
+    echo ">>> above is suspect: rerun hands-off."
+fi
 echo "==============================================================="
 rm -f "$OUT"
 exit "$FAILURES"

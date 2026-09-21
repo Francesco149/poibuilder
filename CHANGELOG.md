@@ -3,6 +3,30 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.170 — the interactive paint tracer: the trace of what the user actually feels
+
+The v0.9.169 bench drove synthetic strokes; "doesn't feel any better"
+needs the REAL session. `PBPaintTrace` (arm with PB_PAINT_TRACE=1, or
+just run `./trace_paint.sh`) records one line per RENDERED frame while a
+paint mode is active — frame delta, which paint stages ran inside it
+(pick / interpolated walk / dabs / upload flush / the whole handler),
+and the input-event-to-drawn-frame latency — to /tmp/pb_paint_trace.log.
+`tools/analyze_paint_trace.py` (run automatically when the trace script's
+editor closes) turns it into the jank story: frame-time distribution,
+hitch attribution, worst-frame contents, ASCII timeline, and a verdict —
+paint-handler-bound (the plugin blocking the main thread) versus
+render/editor-side (long frames with a light handler = redraw/GPU cost;
+the two need opposite fixes, and a handler-only profiler cannot tell
+them apart). Also new: the GUI harness DETECTS real-input contamination —
+automated runs on the real display share the desktop, and one human
+click mid-run used to surface as ~22 mystery case failures; the harness
+now knows which button presses it synthesized itself and flags any other
+as a loud contamination warning on the summary line. Instrumentation gates moved to `PBPaintProfile.hooks()` so
+the trace alone (without PB_PAINT_PROFILE's per-stroke summaries) still
+sees every stage. Validated by running the GUI harness under the tracer
+(stroke markers + per-frame stages all present, failures=0) and re-
+running the paint bench (trace off: numbers unchanged).
+
 ## v0.9.169 — the paint stroke is profiled on the reference iGPU and swept: the small-face lag's real cost found and cut 3-4x
 
 The round happened ON the five-year-old integrated-GPU laptop (Intel UHD

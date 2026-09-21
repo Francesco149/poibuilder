@@ -17,6 +17,11 @@ extends RefCounted
 
 static var enabled: bool = OS.get_environment("PB_PAINT_PROFILE") != ""
 
+## True when either profiler or the per-frame trace is armed: instrumented
+## sites gate on this so PB_PAINT_TRACE=1 alone gets the stage data.
+static func hooks() -> bool:
+	return enabled or PBPaintTrace.enabled
+
 ## Per-stage counters for the CURRENT stroke: name -> {"usec", "calls", "bytes", "pixels"}.
 static var _stages: Dictionary = {}
 ## Per-stage sums across every finished stroke since the last reset.
@@ -33,8 +38,10 @@ static func reset() -> void:
 	stroke_count = 0
 
 ## Adds `usec` microseconds (0 for pure counters), `calls` hits, and optional
-## byte/pixel totals to a stage.
+## byte/pixel totals to a stage. Forwards to the per-frame trace when armed.
 static func add(stage: StringName, usec: int, calls: int = 1, bytes: int = 0, pixels: int = 0) -> void:
+	if PBPaintTrace.enabled:
+		PBPaintTrace.record_stage(stage, usec, calls, bytes, pixels)
 	var e: Dictionary = _stages.get(stage, {})
 	if e.is_empty():
 		e = {"usec": 0, "calls": 0, "bytes": 0, "pixels": 0}
@@ -45,19 +52,27 @@ static func add(stage: StringName, usec: int, calls: int = 1, bytes: int = 0, pi
 	e["pixels"] = int(e["pixels"]) + pixels
 
 static func begin_stroke() -> void:
-	if not enabled:
+	if not hooks():
 		return
 	_stages = {}
 	_stroke_start = Time.get_ticks_usec()
+	if PBPaintTrace.enabled:
+		PBPaintTrace.stroke_marker("begin")
 
 ## Closes the current stroke and prints its summary. `label` names the brush
 ## configuration ("splat r0.50 3m" etc.) so lines stay greppable. Returns the
 ## stroke's wall time in ms (0.0 while idle or disabled).
 static func end_stroke(label: String) -> float:
-	if not enabled or _stroke_start < 0:
+	if not hooks() or _stroke_start < 0:
 		return 0.0
 	var wall_ms := float(Time.get_ticks_usec() - _stroke_start) / 1000.0
 	_stroke_start = -1
+	if PBPaintTrace.enabled:
+		PBPaintTrace.stroke_marker("end wall=%.1f %s" % [wall_ms, label])
+	if not enabled:
+		stroke_count += 1
+		_stages = {}
+		return wall_ms
 	stroke_count += 1
 	var pick := _stage_ms(&"pick")
 	var interp := _stage_ms(&"interp_walk")

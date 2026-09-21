@@ -124,7 +124,7 @@ static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
 	if tex == null or img == null:
 		return
 	_pending_uploads[tex] = img
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		# Only R8 (masks) and RGBA8 (decal windows) are ever queued here.
 		var px_bytes := 4 if img.get_format() != Image.FORMAT_R8 else 1
 		PBPaintProfile.add(&"upload_queue", 0, 1, img.get_width() * img.get_height() * px_bytes)
@@ -135,7 +135,7 @@ static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
 static func _flush_pending_uploads() -> void:
 	if _pending_uploads.is_empty():
 		return
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		var t0 := Time.get_ticks_usec()
 		for tex: ImageTexture in _pending_uploads:
 			if is_instance_valid(tex):
@@ -831,7 +831,7 @@ static func ensure_mesh_splat_uv(mesh_data: PBMeshData) -> void:
 static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, hit_point_local: Vector3, radius: float, softness: float,
 		opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
-	if not PBPaintProfile.enabled:
+	if not PBPaintProfile.hooks():
 		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
 				radius, softness, opacity, erase, stroke_ctx)
 	var t0 := Time.get_ticks_usec()
@@ -918,7 +918,7 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
 	var bytes := mask_img.get_data()
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		_prof_bytes += w * h
 
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
@@ -944,7 +944,7 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 			var max_dx := sqrt(max_dx_sq)
 			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
 			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
-			if PBPaintProfile.enabled:
+			if PBPaintProfile.hooks():
 				_prof_pixels += rx1 - rx0 + 1
 			var row := y * w
 
@@ -989,7 +989,7 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 			var max_dx := sqrt(max_dx_sq)
 			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
 			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
-			if PBPaintProfile.enabled:
+			if PBPaintProfile.hooks():
 				_prof_pixels += rx1 - rx0 + 1
 			var row := y * w
 
@@ -1061,7 +1061,7 @@ static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_
 		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
-	if not PBPaintProfile.enabled:
+	if not PBPaintProfile.hooks():
 		return _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
 				hit_point_local, radius, softness, opacity, erase, stroke_ctx)
 	var t0 := Time.get_ticks_usec()
@@ -1147,7 +1147,7 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
 	var bytes := mask_img.get_data()
-	if PBPaintProfile.enabled:
+	if PBPaintProfile.hooks():
 		_prof_bytes += w * h
 
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
@@ -1218,7 +1218,7 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 			var line_base := line * line_step
 			var cap_lo_i := clampi(int(floor((a_end_lo - half_chord - min_a) / step_a)), 0, n_a - 1)
 			var cap_hi_i := clampi(int(floor((a_end_hi + half_chord - min_a) / step_a)), 0, n_a - 1)
-			if PBPaintProfile.enabled:
+			if PBPaintProfile.hooks():
 				_prof_pixels += cap_hi_i - cap_lo_i + 1
 			if soft <= 0.001:
 				# Hard brush: uniform opacity_b; no LUT anywhere.
@@ -1389,7 +1389,7 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 	if soft <= 0.001:
 		# Hard brush: uniform weight across the swept capsule footprint.
 		for y in range(y0, y1 + 1):
-			if PBPaintProfile.enabled:
+			if PBPaintProfile.hooks():
 				_prof_pixels += x1 - x0 + 1
 			var v_rel := (min_v + float(y) * step_v) - v0
 			var row_c := v_rel * seg_dv
@@ -1433,7 +1433,7 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 		var lut_sz_minus_1 := float(BRUSH_LUT_SIZE - 1)
 		var li_scale := inv_r_sq * lut_sz_minus_1
 		for y in range(y0, y1 + 1):
-			if PBPaintProfile.enabled:
+			if PBPaintProfile.hooks():
 				_prof_pixels += x1 - x0 + 1
 			var v_rel := (min_v + float(y) * step_v) - v0
 			var row_c := v_rel * seg_dv
@@ -1537,7 +1537,7 @@ static func paint_decal_dab(mesh_data: PBMeshData, center_local: Vector3, normal
 		rotation_deg: float, radius: float, softness: float, opacity: float,
 		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
 		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
-	if not PBPaintProfile.enabled:
+	if not PBPaintProfile.hooks():
 		return _paint_decal_dab_walk(mesh_data, center_local, normal, rotation_deg, radius,
 				softness, opacity, erase, image, color, texels_per_m)
 	var t0 := Time.get_ticks_usec()
