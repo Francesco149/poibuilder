@@ -762,6 +762,11 @@ func _paint_pending_entry(entry: Dictionary) -> void:
 		modified = PBSplat.paint_face_splat(entry["data"], entry["face"],
 				entry["mat"], entry["layer"], entry["to"], entry["radius"],
 				entry["softness"], entry["opacity"], entry["erase"], _stroke_ctx)
+	# Bounds expansion repositioned the mask and updated splat UVs in the
+	# PBMeshData; rebuild the ArrayMesh so the shader sees the new CUSTOM0.
+	if PBSplat.bounds_expanded_mesh == entry["data"]:
+		PBSplat.bounds_expanded_mesh = null
+		mesh.rebuild()
 	if modified:
 		stroke_dirty = true
 		if _stroke_meshes.has(mesh):

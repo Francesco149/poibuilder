@@ -1077,14 +1077,14 @@ func test_decal_does_not_stretch_or_slide_when_face_resized() -> void:
 	assert_true(live_bounds["range_u"] > absf(bounds_before[1] - bounds_before[0]),
 			"…while the geometry itself did grow (precondition for the clip case)")
 
-## Resizing geometry expands splat_bounds and repositions the mask so:
-## - Existing paint stays at its original world position (not stretched).
-## - The new region becomes paintable (bounds encompass current geometry).
+## Resizing geometry does NOT stretch the mask on rebuild (bounds frozen).
+## Painting the expanded region triggers bounds expansion + mask reposition
+## so existing paint stays anchored and the new region accepts paint.
 func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	var cube := PBMesh.create_cube(2.0)
 	add_child_autofree(cube)
 	var data := cube.pb_mesh_data
-	var face := data.faces[0] # front face, z = 1.0 or -1.0
+	var face := data.faces[0]
 	var mat := PBSplat.create_splat_material()
 	var tex := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
 	var layer_idx := PBSplat.add_layer(mat, tex)
@@ -1097,12 +1097,9 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 	var orig_bounds := PackedFloat32Array([face.splat_bounds[0], face.splat_bounds[1],
 			face.splat_bounds[2], face.splat_bounds[3]])
 
-	# Get mask value at centre to verify paint position after resize.
-	var mask_before := PBSplat.get_layer_mask_image(mat, layer_idx)
-	assert_ne(mask_before, null)
-	var cw := mask_before.get_width() / 2
-	var ch := mask_before.get_height() / 2
-	var val_before := mask_before.get_pixel(cw, ch).r
+	# Rebuild mesh and check initial mask coordinates
+	cube.rebuild()
+	var orig_uv := data.splat_uvs.duplicate()
 
 	# Resize face: move right vertices +2m outward along u
 	var bounds := PBSplat.get_face_planar_bounds(data, face, true)
@@ -1111,25 +1108,34 @@ func test_splat_texture_does_not_stretch_or_slide_when_face_resized() -> void:
 		var p: Vector3 = data.positions[idx]
 		if u_axis.dot(p) > 0.0:
 			data.positions[idx] = p + u_axis * 2.0
+	cube.rebuild()
 
-	# Painting the expanded region triggers bounds expansion.
+	# After rebuild() ALONE, splat_bounds must NOT have changed (no stretch).
+	assert_eq(face.splat_bounds[0], orig_bounds[0])
+	assert_eq(face.splat_bounds[1], orig_bounds[1])
+	assert_eq(face.splat_bounds[2], orig_bounds[2])
+	assert_eq(face.splat_bounds[3], orig_bounds[3])
+
+	# Unmoved vertices must keep the same splat UV (no sliding).
+	for idx in face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if u_axis.dot(p) < 0.0:
+			assert_almost_eq(data.splat_uvs[idx].x, orig_uv[idx].x, 0.001)
+			assert_almost_eq(data.splat_uvs[idx].y, orig_uv[idx].y, 0.001)
+
+	# NOW paint the expanded region — this triggers bounds expansion.
 	var expanded_hit := center + u_axis * 2.5
 	PBSplat.paint_face_splat(data, face, mat, layer_idx, expanded_hit,
 			0.5, 0.0, 0.8, false)
 
 	# Bounds must have grown to encompass the new geometry.
 	assert_true(face.splat_bounds[1] > orig_bounds[1],
-			"splat_bounds max_u must grow after face expansion (was %f, now %f)" % [
-					orig_bounds[1], face.splat_bounds[1]])
-	# Min bounds must not have shrunk.
+			"splat_bounds max_u must grow after painting expanded region")
 	assert_true(face.splat_bounds[0] <= orig_bounds[0] + 0.001)
 
-	# Original paint position must still have its painted value (not zero /
-	# not smeared by stretching).  The centre of the OLD bounds is where the
-	# original paint was; find its pixel in the (now larger) mask.
+	# Original paint position must still have its painted value.
 	var mask_after := PBSplat.get_layer_mask_image(mat, layer_idx)
 	assert_ne(mask_after, null)
-	# The old centre maps to a different pixel in the larger image.
 	var old_u_centre := (orig_bounds[0] + orig_bounds[1]) * 0.5
 	var old_v_centre := (orig_bounds[2] + orig_bounds[3]) * 0.5
 	var new_u_frac := (old_u_centre - face.splat_bounds[0]) / maxf(
