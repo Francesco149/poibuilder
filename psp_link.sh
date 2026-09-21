@@ -129,7 +129,7 @@ psp_ensure_daemon() {
         sleep 1
     fi
     [ -n "$(psp_daemons)" ] && return 0
-    psp_start_daemon "$dir"
+    _psp_start_daemon "$dir"
 }
 
 # Unconditional fresh daemon — for when the running one is wedged (alive but
@@ -141,7 +141,7 @@ psp_restart_daemon() {
     else
         pkill -x usbhostfs_pc 2>/dev/null || true
         sleep 1
-        psp_start_daemon "$dir"
+        _psp_start_daemon "$dir"
     fi
 }
 
