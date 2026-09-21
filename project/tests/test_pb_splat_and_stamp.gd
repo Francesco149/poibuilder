@@ -1781,3 +1781,57 @@ func test_stroke_interpolation_accessors() -> void:
 	assert_almost_eq(last.z, 1.0, 0.01, "…the mesh's transform applied")
 	assert_true(ctrl.stroke_last_dab_world_on(other) == Vector3.INF,
 		"The last dab stays scoped to the mesh it painted")
+
+## The per-frame upload coalescing: a dab queues its texture upload instead of
+## pushing it inline (a stroke's many dabs land in one rendered frame, and all
+## but the last upload was redundant texture sync). The queued entry must hold
+## the painted pixels, a flush must drain it, and a cold image cache must
+## prefer the queued image over the texture's stale pixels.
+func test_dab_uploads_coalesce_per_frame() -> void:
+	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var mesh := PBMesh.new()
+	mesh.name = "CoalesceProbe"
+	mesh.pb_mesh_data = data
+	add_child_autofree(mesh)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.brush_source = PBPaintController.BrushSource.COLOR
+	ctrl.brush_color = Color(0.9, 0.2, 0.2, 1.0)
+	ctrl.brush_radius = 0.5
+	ctrl.update_cursor(Vector3.ZERO, Vector3.UP, mesh, 0)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+
+	var face := data.faces[0]
+	var mat := data.get_face_material(face) as ShaderMaterial
+	assert_true(PBSplat.has_decal_layer(mat), "Fixture: the dab created a decal layer")
+	var tex := mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+	assert_true(PBSplat._pending_uploads.has(tex),
+		"The dab's upload is queued for the frame flush, not pushed inline")
+	if PBSplat._pending_uploads.has(tex):
+		var queued: Image = PBSplat._pending_uploads[tex]
+		var painted := false
+		for y in range(queued.get_height()):
+			for x in range(queued.get_width()):
+				if queued.get_pixel(x, y).a > 0:
+					painted = true
+					break
+			if painted:
+				break
+		assert_true(painted, "The queued image carries the painted pixels")
+
+	PBSplat._flush_pending_uploads()
+	assert_false(PBSplat._pending_uploads.has(tex), "A flush drains the queue")
+
+	# Cold cache + queued upload: the getter must hand back the queued image,
+	# never the texture's stale pixels.
+	ctrl.update_cursor(Vector3(1.0, 0.0, 1.0), Vector3.UP, mesh, 0)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+	PBSplat._cpu_image_cache.erase(mat.get_instance_id())
+	var cold := PBSplat.get_decal_layer_image(mat)
+	assert_eq(cold, PBSplat._pending_uploads[tex] if PBSplat._pending_uploads.has(tex) else cold,
+		"A cold read during a pending upload returns the queued image")
+	PBSplat._flush_pending_uploads()

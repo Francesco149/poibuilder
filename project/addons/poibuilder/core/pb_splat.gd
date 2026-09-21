@@ -105,6 +105,37 @@ static var _cpu_image_cache: Dictionary = {}
 ## downstream caches (the UV editor's splat composite preview) know when to rebuild.
 static var mask_state_version: int = 0
 
+# ── Per-frame texture upload coalescing ──────────────────────────────────────
+# A dab used to push its whole mask/decal image to the GPU the moment its
+# pixel loop finished. A stroke writes the SAME image many times — every dab
+# of one fast (interpolated) stroke lands inside a single rendered frame — so
+# all but the last of those uploads was redundant texture sync, the fixed
+# per-dab cost that shows on weak GPUs no matter how small the face. Uploads
+# are queued here and flushed once per rendered frame instead; the CPU-side
+# cached Image stays the source of truth either way (every pixel reader goes
+# through the cache, never through the texture — see the staleness notes at
+# the serialization helpers). User actions that are once-per-click (clear
+# layer, window resize via set_image) keep their synchronous uploads.
+
+static var _pending_uploads: Dictionary = {}
+static var _frame_flush_connected := false
+
+static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
+	if tex == null or img == null:
+		return
+	_pending_uploads[tex] = img
+	if not _frame_flush_connected:
+		RenderingServer.frame_pre_draw.connect(_flush_pending_uploads)
+		_frame_flush_connected = true
+
+static func _flush_pending_uploads() -> void:
+	if _pending_uploads.is_empty():
+		return
+	for tex: ImageTexture in _pending_uploads:
+		if is_instance_valid(tex):
+			tex.update(_pending_uploads[tex])
+	_pending_uploads.clear()
+
 ## Decal source images resampled to a footprint size, keyed "source_key_WxH".
 ## A stroke writes the same footprint size on every dab, so the resample (the
 ## only per-stamp cost that scales with the source) happens once.
@@ -394,7 +425,11 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 				img = meta_val
 			mat.remove_meta(meta_key)
 		elif mat.get_shader_parameter("layer_%d_mask" % layer_idx) is ImageTexture:
-			img = (mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture).get_image()
+			var cold_tex = mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
+			# A queued (not yet flushed) upload is fresher than the texture.
+			img = _pending_uploads.get(cold_tex)
+			if img == null:
+				img = cold_tex.get_image()
 		if img != null:
 			_set_cached_image(mat, cache_key, img)
 
@@ -486,7 +521,11 @@ static func get_decal_layer_image(mat: ShaderMaterial, target_res: Vector2i = Ve
 				img = meta_val
 			mat.remove_meta("stamp_layer_image")
 		elif mat.get_shader_parameter("stamp_layer_texture") is ImageTexture:
-			img = (mat.get_shader_parameter("stamp_layer_texture") as ImageTexture).get_image()
+			var cold_tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
+			# A queued (not yet flushed) upload is fresher than the texture.
+			img = _pending_uploads.get(cold_tex)
+			if img == null:
+				img = cold_tex.get_image()
 		if img != null:
 			_set_cached_image(mat, cache_key, img)
 
@@ -957,8 +996,7 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 	if dirty:
 		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
 		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
-		if mask_tex != null:
-			mask_tex.update(mask_img)
+		_queue_texture_upload(mask_tex, mask_img)
 		mask_state_version += 1
 
 	return dirty
@@ -1442,8 +1480,7 @@ static func _commit_decal_target(mat: ShaderMaterial, img: Image) -> void:
 	if mat == null or img == null:
 		return
 	var tex = mat.get_shader_parameter("stamp_layer_texture") as ImageTexture
-	if tex != null:
-		tex.update(img)
+	_queue_texture_upload(tex, img)
 	mask_state_version += 1
 
 static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vector3,
