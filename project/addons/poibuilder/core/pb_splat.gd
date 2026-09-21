@@ -29,16 +29,19 @@ const DECAL_MIN_FACE_ALIGNMENT := 0.35
 const DECAL_MIN_DAB_ALIGNMENT := 0.25
 const TEXELS_PER_METER := 256
 const MIN_RESOLUTION := 256
-## Splat MASK ceiling. Interactive paint cost scales with mask pixels (the
-## GDScript walk does ~3 M px/s; the iGPU traces showed the 3x3 m faces at
-## 1024x1024 were by far the laggiest), and a blend mask's sharpness is
-## about the smoothstep boundary, not texel density — at 512 the 3 m face
-## still holds 171 texels/m. The old 2048 cap already let density fall
-## (a 20 m face painted at 102 texels/m); this moves that knee to 2 m.
+## Splat MASK ceiling.  Interactive paint cost is dominated by the GDScript
+## pixel walk (~700 ns per pixel on the iGPU reference machine).  A 0.5 m
+## brush on a 3 m face at 512x512 walks ~30-55 K pixels per dab (22 K disc,
+## 55 K full capsule sweep) — 22-38 ms per dab, overshooting the 8 ms frame
+## drain budget and causing visible paint lag.  At 256x256 (85 texels/m) the
+## same dab walks 6-14 K pixels (4-10 ms): the drain fits the budget and
+## multiple pieces drain per frame.  Blend-boundary sharpness comes from the
+## shader's smoothstep on the weight, not the mask's texel density; the
+## softness=0.5 default fades over 21 px at 85 texels/m — plenty smooth.
 ## Decal STAMPS keep their own 256 texels/m windows (DECAL_MAX_WINDOW_PX) —
-## crisp stickers are the decal layer's job. Masks in existing scenes never
+## crisp stickers are the decal layer's job.  Masks in existing scenes never
 ## shrink (get_layer_mask_image only grows), so old paint is untouched.
-const MAX_RESOLUTION := 512
+const MAX_RESOLUTION := 256
 ## Decal layer density. The decal image is a WINDOW cropped to the painted area
 ## (not the whole face rect), so it can hold this density — the same 256
 ## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px

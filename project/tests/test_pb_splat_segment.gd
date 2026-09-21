@@ -264,10 +264,11 @@ func test_pending_queue_stays_shallow_under_a_stroke() -> void:
 
 func test_face_mask_resolution_is_capped_for_big_faces() -> void:
 	# The 3x3 face the user reported as the laggiest: its mask must not
-	# exceed the 512 ceiling (1024x1024 made every sweep walk 4x the pixels).
+	# exceed the 256 ceiling (512x512 still walked 30-55 K pixels per sweep
+	# at ~700 ns/px in the GDScript loop, overshooting the frame budget).
 	var data := PBMeshData.create_cube(3.0)
 	var res := PBSplat.calculate_uniform_face_resolution(data, data.faces[0])
-	assert_eq(res, Vector2i(512, 512), "a 3m face's splat mask must be capped at 512")
+	assert_eq(res, Vector2i(256, 256), "a 3m face's splat mask must be capped at 256")
 
 ## Splitting a sweep into collinear pieces (what the time-slice queue does)
 ## must byte-match the single unsplit sweep in every brush mode: middle

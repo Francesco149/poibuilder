@@ -102,7 +102,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.175"
+const VERSION := "0.9.176"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
