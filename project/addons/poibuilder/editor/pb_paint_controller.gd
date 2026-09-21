@@ -481,6 +481,24 @@ func _register_stroke_mesh(mesh: PBMesh) -> void:
 		}
 		PBSplat.ensure_mesh_splat_uv(mesh.pb_mesh_data)
 
+## Dab spacing in world metres for the active brush: the stroke only re-dabs
+## after the cursor travelled this far. The input layer reads it to walk the
+## cursor path between motion events (a fast drag crosses several spacings in
+## ONE event — dabbing only per event is what made fast strokes dotted).
+func dab_spacing_world() -> float:
+	return maxf(brush_radius * DAB_SPACING_FRACTION, 0.01)
+
+## Where the active stroke last dabbed, in `mesh`'s WORLD space — INF when the
+## stroke has not dabbed on that mesh (yet). Interpolation is deliberately
+## confined to one mesh: across an object seam the straight segment between
+## two hits means nothing.
+func stroke_last_dab_world_on(mesh: PBMesh) -> Vector3:
+	if mesh == null or _stroke_last_dab_mesh != mesh or not is_instance_valid(mesh):
+		return Vector3.INF
+	if _stroke_last_dab_local == Vector3.INF:
+		return Vector3.INF
+	return mesh.global_transform * _stroke_last_dab_local
+
 func begin_stroke() -> void:
 	if mode != Mode.PAINT or target_mesh == null or target_mesh.pb_mesh_data == null:
 		return

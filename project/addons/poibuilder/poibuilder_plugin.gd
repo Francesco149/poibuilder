@@ -68,6 +68,13 @@ var _hover_drawn_last: int = -1
 ## under the exact click position.
 var _last_mouse_pos: Vector2 = Vector2.ZERO
 var _last_mouse_camera: Camera3D = null
+## Screen position of the previous motion event of the ACTIVE paint stroke
+## (INF while no stroke runs): the anchor the dab-along interpolator walks from.
+var _paint_stroke_prev_screen: Vector2 = Vector2.INF
+## Cap on dabs interpolated per motion event: a flick across the whole level
+## must not walk hundreds of re-picks in one event (the stroke then simply
+## dabs at 64 spacings and the real endpoint).
+const PAINT_STROKE_MAX_INTERP_STEPS := 64
 ## Time of the last press seen in the viewport, for click-recency checks.
 var _last_press_msec: int = -10000
 
@@ -4138,6 +4145,7 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 			paint_controller.update_cursor(hit["point"], hit["normal"], hit["mesh"], hit["face_index"])
 			_sync_paint_readout()
 			if paint_controller.is_stroke_active:
+				_paint_stroke_dab_along(camera, event.position, hit)
 				paint_controller.apply_paint_stroke()
 		else:
 			paint_controller.clear_cursor()
@@ -4160,6 +4168,7 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 				_sync_paint_readout()
 				if paint_controller.mode == PBPaintController.Mode.PAINT:
 					paint_controller.begin_stroke()
+					_paint_stroke_prev_screen = event.position
 					return AFTER_GUI_INPUT_STOP
 				elif paint_controller.mode == PBPaintController.Mode.STAMP:
 					paint_controller.apply_stamp()
@@ -4167,16 +4176,49 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 			else:
 				if paint_controller.mode == PBPaintController.Mode.PAINT and paint_controller.is_stroke_active:
 					paint_controller.end_stroke()
+					_paint_stroke_prev_screen = Vector2.INF
 					return AFTER_GUI_INPUT_STOP
 	if event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE:
 			paint_controller.reset()
+			_paint_stroke_prev_screen = Vector2.INF
 			_sync_paint_readout()
 			if material_dock != null:
 				material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 			return AFTER_GUI_INPUT_STOP
 	return AFTER_GUI_INPUT_PASS
+
+## Dab spacing is a WORLD distance, but dabs used to be delivered per mouse
+## MOTION event: a fast drag crossed several spacings inside one event and
+## landed a single dab at its end — the stroke came out dotted. This walks the
+## straight cursor path between the previous and the current event in screen
+## space (the pick's own domain), one re-pick per spacing step, so a dab lands
+## everywhere the cursor actually passed — across face borders, on the same
+## rules as a slow drag. The controller's spacing gate stays authoritative:
+## steps closer than one spacing to the last real dab are still rejected.
+func _paint_stroke_dab_along(camera: Camera3D, screen_now: Vector2, hit: Dictionary) -> void:
+	var mesh: PBMesh = hit.get("mesh")
+	if mesh == null:
+		return
+	var from_screen := _paint_stroke_prev_screen
+	_paint_stroke_prev_screen = screen_now
+	if from_screen == Vector2.INF:
+		return
+	var from_world := paint_controller.stroke_last_dab_world_on(mesh)
+	if from_world == Vector3.INF:
+		return
+	var spacing := paint_controller.dab_spacing_world()
+	var dist := from_world.distance_to(hit["point"])
+	if dist <= spacing:
+		return
+	var steps := mini(int(dist / spacing), PAINT_STROKE_MAX_INTERP_STEPS)
+	for i in range(1, steps):
+		var step_hit := _pick_paint_surface(camera, from_screen.lerp(screen_now, float(i) / float(steps)))
+		if step_hit.is_empty() or step_hit.get("mesh") != mesh:
+			continue
+		paint_controller.update_cursor(step_hit["point"], step_hit["normal"], step_hit["mesh"], step_hit["face_index"])
+		paint_controller.apply_paint_stroke()
 
 ## The overlay's extents row carries the paint cursor's state: why nothing is
 ## happening when the brush hovers a surface the tools refuse (a billboard

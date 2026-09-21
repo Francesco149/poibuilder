@@ -1740,3 +1740,44 @@ func test_collect_paint_state_coalesces_unset_layer_params() -> void:
 	assert_eq(layer["color"], Color.WHITE, "nil layer color defaults to WHITE")
 	assert_true(layer["roughness"] is float, "nil layer roughness coalesces to a float (got nil)")
 	assert_almost_eq(float(layer["roughness"]), 0.8, 0.0001, "nil layer roughness defaults to 0.8")
+
+## The fast-stroke fix's controller half: the input layer interpolates the
+## cursor path between motion events using dab_spacing_world() and
+## stroke_last_dab_world_on(). The spacing is the brush radius's fixed
+## fraction; the last-dab query is mesh-scoped and rides the node's WORLD
+## transform (a mesh placed away from the origin must not report dabs at the
+## local coordinates).
+func test_stroke_interpolation_accessors() -> void:
+	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var mesh := PBMesh.new()
+	mesh.name = "InterpProbe"
+	mesh.pb_mesh_data = data
+	mesh.position = Vector3(10.0, 0.0, 0.0)
+	add_child_autofree(mesh)
+	var ctrl := PBPaintController.new()
+	ctrl.set_mode(PBPaintController.Mode.PAINT)
+	ctrl.paint_target = PBPaintController.PaintTarget.DECAL
+	ctrl.brush_source = PBPaintController.BrushSource.COLOR
+	ctrl.brush_color = Color(1, 0, 0, 1)
+	ctrl.brush_radius = 0.5
+	assert_almost_eq(ctrl.dab_spacing_world(), 0.5 * PBPaintController.DAB_SPACING_FRACTION, 0.0001,
+		"Dab spacing is the brush radius's fixed fraction")
+
+	var other := PBMesh.new()
+	add_child_autofree(other)
+	assert_true(ctrl.stroke_last_dab_world_on(mesh) == Vector3.INF,
+		"No dab yet — the stroke has no last position on the mesh")
+	assert_true(ctrl.stroke_last_dab_world_on(other) == Vector3.INF,
+		"…and none on any other mesh")
+
+	ctrl.update_cursor(Vector3(10.0, 0.0, 1.0), Vector3.UP, mesh, 0)
+	ctrl.begin_stroke()
+	ctrl.end_stroke()
+
+	var last := ctrl.stroke_last_dab_world_on(mesh)
+	assert_true(last != Vector3.INF, "After a dab the stroke has a last position")
+	assert_almost_eq(last.x, 10.0, 0.01, "The last dab is reported in WORLD space")
+	assert_almost_eq(last.z, 1.0, 0.01, "…the mesh's transform applied")
+	assert_true(ctrl.stroke_last_dab_world_on(other) == Vector3.INF,
+		"The last dab stays scoped to the mesh it painted")

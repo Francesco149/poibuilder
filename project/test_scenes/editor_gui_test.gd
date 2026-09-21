@@ -1509,6 +1509,84 @@ func _run() -> void:
 				else:
 					_fail("SPLAT-DECAL: failed to reset paint_controller")
 
+				# ── Fast stroke continuity ("dotted lines at speed"): a single
+				# motion event whose cursor path crosses many dab spacings must
+				# paint the WHOLE path. Driven through the plugin's real input
+				# path (press → ONE big motion → release); the probes then read
+				# the decal pixels along the path — before the fix, only the
+				# endpoints carried paint.
+				var stroke_cube := PBMesh.create_cube(1.0)
+				stroke_cube.name = "GuiTestStroke"
+				stroke_cube.position = Vector3(3, 2.2, 0)
+				root.add_child(stroke_cube)
+				stroke_cube.owner = root
+				await _frames(2)
+				var stroke_face := -1
+				for fi in range(stroke_cube.pb_mesh_data.faces.size()):
+					var fn2 := PBMath.normal_from_positions(stroke_cube.pb_mesh_data.positions,
+						stroke_cube.pb_mesh_data.faces[fi].get_indexes())
+					if fn2.y > 0.99:
+						stroke_face = fi
+						break
+				# A known camera pose (top-down onto the stroke cube's top
+				# face), restored afterwards: earlier sections may have flown
+				# the view anywhere, and the pick is a screen-space raycast.
+				var cam2 := vp.get_camera_3d()
+				var cam_saved := cam2.global_transform
+				cam2.global_transform = Transform3D(Basis.IDENTITY, Vector3(3, 6.2, 0.001)) \
+					.looking_at(Vector3(3, 2.2, 0), Vector3.UP)
+				await _frames(2)
+				plugin.editor.active_mesh = stroke_cube
+				plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+				await _frames(2)
+				plugin.paint_controller.paint_target = PBPaintController.PaintTarget.DECAL
+				plugin.paint_controller.brush_source = PBPaintController.BrushSource.COLOR
+				plugin.paint_controller.brush_color = Color(1, 0, 0, 1)
+				plugin.paint_controller.brush_radius = 0.1
+				plugin.paint_controller.brush_softness = 0.0
+				plugin.paint_controller.brush_opacity = 1.0
+				var world_a := Vector3(2.7, 2.7, 0)
+				var world_b := Vector3(3.3, 2.7, 0)
+				var ev_press := InputEventMouseButton.new()
+				ev_press.button_index = MOUSE_BUTTON_LEFT
+				ev_press.pressed = true
+				ev_press.position = cam2.unproject_position(world_a)
+				plugin._paint_controller_input(cam2, ev_press)
+				var ev_move := InputEventMouseMotion.new()
+				ev_move.position = cam2.unproject_position(world_b)
+				plugin._paint_controller_input(cam2, ev_move)
+				var ev_rel := InputEventMouseButton.new()
+				ev_rel.button_index = MOUSE_BUTTON_LEFT
+				ev_rel.pressed = false
+				ev_rel.position = ev_move.position
+				plugin._paint_controller_input(cam2, ev_rel)
+				await _frames(2)
+
+				var stroke_data := stroke_cube.pb_mesh_data
+				var stroke_mat := stroke_data.get_face_material(stroke_data.faces[stroke_face]) as ShaderMaterial
+				if PBSplat.has_decal_layer(stroke_mat):
+					var stroke_hit := 0
+					for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+						var probe_local: Vector3 = stroke_cube.global_transform.affine_inverse() \
+							* world_a.lerp(world_b, frac)
+						var probe_col := _decal_centre_colour(stroke_data, stroke_mat,
+							stroke_data.faces[stroke_face], probe_local)
+						if probe_col.a > 0.0:
+							stroke_hit += 1
+					if stroke_hit == 5:
+						_pass("STROKE-CONTINUITY: a one-event 0.6m stroke painted its whole path (5/5 probes)")
+					else:
+						_fail("STROKE-CONTINUITY: fast stroke left gaps in its path (%d/5 probes painted)" % stroke_hit)
+				else:
+					_fail("STROKE-CONTINUITY: the press did not reach the stroke cube (no decal layer)")
+				plugin.paint_controller.paint_target = PBPaintController.PaintTarget.SPLAT
+				cam2.global_transform = cam_saved
+				await _frames(2)
+				# Out of the way of every later screen-position pick; kept alive
+				# because the committed stroke action references it.
+				stroke_cube.visible = false
+				plugin.editor.active_mesh = null
+
 				# ── Decal brush & stamp panel: every control must reach the pixels.
 				# The panel's widgets are driven the way a user click drives them
 				# (the signals the editor emits), then the PAINTED PIXELS are read
