@@ -487,6 +487,16 @@ int main(int argc, char** argv) {
                 }
             }
 
+            /* HOLD ON freezes the camera in place. The switch zeroes every
+             * BUTTON, but the stick still reports its rest value — and a unit
+             * whose stick rests past the dead zone (measured: 151,115 on the
+             * alpha-test device) used to fly the camera away by itself, so an
+             * unattended app run (Hold ON is the recommended posture) never
+             * stayed where it was left. Home/Select stay live above; they are
+             * dead anyway while Held. */
+            if (pad_hold) {
+                /* nothing moves this frame */
+            } else {
             float move_speed = 9.5f * dt;
             if (pad.Buttons & PSP_CTRL_SQUARE) move_speed *= 2.5f;
 
@@ -533,6 +543,7 @@ int main(int argc, char** argv) {
 
             if (cam_pitch > 1.45f)  cam_pitch = 1.45f;
             if (cam_pitch < -1.45f) cam_pitch = -1.45f;
+            }
         } else if (has_cam_override) {
             cam_x = cam_override[0]; cam_y = cam_override[1]; cam_z = cam_override[2];
             cam_yaw = cam_override[3]; cam_pitch = cam_override[4];
