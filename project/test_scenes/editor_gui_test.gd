@@ -2500,6 +2500,12 @@ func _run() -> void:
 	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 	await _frames(6)
 
+	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
+	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
+	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.
+	if OS.get_environment("PB_PAINT_PERF") != "":
+		await _paint_perf_bench(vp, root)
+
 	# ── Cleanup + exit ───────────────────────────────────────────────────────
 	sel.clear()
 	await _frames(3)
@@ -2535,3 +2541,155 @@ func _press_key(keycode: Key) -> void:
 func _press_and_release_key(keycode: Key) -> void:
 	_press_key(keycode)
 	await _frames(2)
+
+# ==============================================================================
+# Paint stroke perf bench (PB_PAINT_PERF=1 — see run_paint_perf.sh)
+# ==============================================================================
+
+## Fast-stroke profiling on the REAL GPU: drives strokes through the plugin's
+## real input path (press → ONE big motion event → release, exactly what a
+## quick hand drag delivers) over a 3 m face and a 0.5 m tile, splat and decal
+## targets, with PBPaintProfile armed. The per-stage lines it prints are the
+## evidence for paint-lag work — the harness's xvfb/software-GL runner must
+## NEVER be used for these numbers (LIBGL_ALWAYS_SOFTWARE lies about the GPU).
+func _paint_perf_bench(vp: SubViewport, root: Node) -> void:
+	print("[PAINT PERF] stage start: DisplayServer=%s adapter=%s" % [
+		DisplayServer.get_name(), RenderingServer.get_video_adapter_name()])
+	var plugin := _find_plugin(EditorInterface.get_base_control())
+	if plugin == null:
+		plugin = _find_plugin(EditorInterface.get_base_control().get_parent())
+	if plugin == null or plugin.paint_controller == null or plugin.material_dock == null:
+		_fail("PAINT-PERF: plugin, paint controller or dock not found")
+		return
+	var cam := vp.get_camera_3d()
+	var cam_saved := cam.global_transform
+	PBPaintProfile.reset()
+
+	var big := PBMesh.create_cube(3.0)
+	big.name = "PaintPerf3m"
+	big.position = Vector3(0, 1.5, 0) # top face = 3x3 m at y=3
+	root.add_child(big)
+	big.owner = root
+	var small := PBMesh.create_cube(0.5)
+	small.name = "PaintPerfSmall"
+	small.position = Vector3(5, 2.0, 0) # top face = 0.5x0.5 m at y=2.25
+	root.add_child(small)
+	small.owner = root
+	await _frames(2)
+
+	plugin.editor.active_mesh = big
+	plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+	await _frames(2)
+	var pc: PBPaintController = plugin.paint_controller
+
+	# 1. SPLAT on the 3 m face, default brush (r=0.5, softness 0.5): the
+	#    reported case. 2.4 m per stroke = 24 interpolated dab steps inside ONE
+	#    motion event.
+	pc.paint_target = PBPaintController.PaintTarget.SPLAT
+	pc.paint_texture = load("res://addons/poibuilder/materials/textures/circular_square_pattern.png")
+	pc.brush_radius = 0.5
+	pc.brush_softness = 0.5
+	pc.brush_opacity = 1.0
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(0, 7.001, 0.001)) \
+		.looking_at(Vector3(0, 3, 0), Vector3.UP)
+	await _frames(2)
+	var max_frame_ms := 0.0
+	for s in range(8):
+		var stall := await _drive_fast_stroke(plugin, cam,
+				Vector3(-1.2, 3, -1.05 + 0.3 * float(s)), Vector3(1.2, 3, -1.05 + 0.3 * float(s)))
+		max_frame_ms = maxf(max_frame_ms, stall)
+	print("[PAINT PERF] SPLAT 3m r=0.5: %s" % PBPaintProfile.aggregate_line())
+	print("[PAINT PERF] SPLAT 3m r=0.5: max post-stroke frame delta %.1fms" % max_frame_ms)
+	var painted_px := _mask_painted_px(big)
+	if painted_px > 0:
+		_pass("PAINT-PERF: splat strokes painted %d mask texels on the 3m face" % painted_px)
+	else:
+		_fail("PAINT-PERF: splat strokes painted nothing on the 3m face")
+
+	# 2. SPLAT on the 0.5 m tile, half-size brush: the known-issue "small face"
+	#    case (mask bottoms out at 256x256, the dab is world-sized).
+	pc.brush_radius = 0.25
+	plugin.editor.active_mesh = small
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(5, 6.001, 0.001)) \
+		.looking_at(Vector3(5, 2.25, 0), Vector3.UP)
+	await _frames(2)
+	for s in range(8):
+		var zz := -0.175 + 0.1 * float(s)
+		await _drive_fast_stroke(plugin, cam,
+				Vector3(4.8, 2.25, zz), Vector3(5.2, 2.25, zz))
+	print("[PAINT PERF] SPLAT 0.5m tile r=0.25: %s" % PBPaintProfile.aggregate_line())
+
+	# 3. DECAL brush on the 3 m face for comparison (sprite/blend_rect path).
+	pc.paint_target = PBPaintController.PaintTarget.DECAL
+	pc.brush_source = PBPaintController.BrushSource.COLOR
+	pc.brush_color = Color(1, 0, 0, 1)
+	pc.brush_radius = 0.5
+	plugin.editor.active_mesh = big
+	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(0, 7.001, 0.001)) \
+		.looking_at(Vector3(0, 3, 0), Vector3.UP)
+	await _frames(2)
+	for s in range(8):
+		await _drive_fast_stroke(plugin, cam,
+				Vector3(-1.2, 3, -1.05 + 0.3 * float(s)), Vector3(1.2, 3, -1.05 + 0.3 * float(s)))
+	print("[PAINT PERF] DECAL 3m r=0.5: %s" % PBPaintProfile.aggregate_line())
+
+	pc.paint_target = PBPaintController.PaintTarget.SPLAT
+	plugin.material_dock._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+	cam.global_transform = cam_saved
+	# Kept alive (committed undo actions reference the meshes), out of the way
+	# of later screen-position picks.
+	big.visible = false
+	small.visible = false
+	plugin.editor.active_mesh = null
+	await _frames(2)
+	print("[PAINT PERF] stage done")
+
+## One fast stroke through the plugin's real input handler: press → ONE motion
+## event whose cursor path crosses many dab spacings → release, all
+## synchronous (the handler's wall time IS the freeze a user feels). Returns
+## the largest editor frame delta over the frames right after (a slow drain
+## after the stroke shows up here).
+func _drive_fast_stroke(plugin: Node, cam: Camera3D, wa: Vector3, wb: Vector3) -> float:
+	var ev_press := InputEventMouseButton.new()
+	ev_press.button_index = MOUSE_BUTTON_LEFT
+	ev_press.pressed = true
+	ev_press.position = cam.unproject_position(wa)
+	var t0 := Time.get_ticks_usec()
+	plugin._paint_controller_input(cam, ev_press)
+	var ev_move := InputEventMouseMotion.new()
+	ev_move.position = cam.unproject_position(wb)
+	ev_move.button_mask = MOUSE_BUTTON_MASK_LEFT
+	plugin._paint_controller_input(cam, ev_move)
+	var ev_rel := InputEventMouseButton.new()
+	ev_rel.button_index = MOUSE_BUTTON_LEFT
+	ev_rel.pressed = false
+	ev_rel.position = ev_move.position
+	plugin._paint_controller_input(cam, ev_rel)
+	var handler_ms := float(Time.get_ticks_usec() - t0) / 1000.0
+	print("[PAINT PERF]   stroke wall=%.1fms" % handler_ms)
+	var max_delta := 0.0
+	var prev := Time.get_ticks_usec()
+	for i in range(6):
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		max_delta = maxf(max_delta, float(now - prev) / 1000.0)
+		prev = now
+	return max_delta
+
+## Nonzero texel count across every enabled splat mask on `mesh` (the bench's
+## "paint actually landed" probe).
+static func _mask_painted_px(mesh: PBMesh) -> int:
+	if mesh == null or mesh.pb_mesh_data == null:
+		return 0
+	var total := 0
+	for mat in mesh.pb_mesh_data.materials:
+		if mat is ShaderMaterial and PBSplat.is_splat_material(mat):
+			for i in range(1, PBSplat.MAX_LAYERS + 1):
+				if (mat as ShaderMaterial).get_shader_parameter("layer_%d_enabled" % i) == true:
+					var img := PBSplat.get_layer_mask_image(mat, i)
+					if img == null:
+						continue
+					for b in img.get_data():
+						if b != 0:
+							total += 1
+	return total

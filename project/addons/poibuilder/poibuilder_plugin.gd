@@ -102,7 +102,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.168"
+const VERSION := "0.9.169"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -4197,7 +4197,23 @@ func _paint_controller_input(camera: Camera3D, event: InputEvent) -> int:
 ## everywhere the cursor actually passed — across face borders, on the same
 ## rules as a slow drag. The controller's spacing gate stays authoritative:
 ## steps closer than one spacing to the last real dab are still rejected.
+##
+## For the SPLAT target the walk groups consecutive same-face picks into runs
+## and paints each run as ONE swept segment (PBSplat.paint_face_splat_segment):
+## a fast drag used to stamp ~25 overlapping discs per event and re-walk the
+## same mask pixels up to ten times each (the measured iGPU lag — 1.6 M pixel
+## walks, half a second per stroke). Sweeping walks the union once. DECAL
+## keeps one stamp per step: its source is texture-aligned, the spacing IS
+## the rhythm a swept paste would smear.
 func _paint_stroke_dab_along(camera: Camera3D, screen_now: Vector2, hit: Dictionary) -> void:
+	if PBPaintProfile.enabled:
+		var t0 := Time.get_ticks_usec()
+		_paint_stroke_dab_along_walk(camera, screen_now, hit)
+		PBPaintProfile.add(&"interp_walk", Time.get_ticks_usec() - t0)
+	else:
+		_paint_stroke_dab_along_walk(camera, screen_now, hit)
+
+func _paint_stroke_dab_along_walk(camera: Camera3D, screen_now: Vector2, hit: Dictionary) -> void:
 	var mesh: PBMesh = hit.get("mesh")
 	if mesh == null:
 		return
@@ -4213,12 +4229,48 @@ func _paint_stroke_dab_along(camera: Camera3D, screen_now: Vector2, hit: Diction
 	if dist <= spacing:
 		return
 	var steps := mini(int(dist / spacing), PAINT_STROKE_MAX_INTERP_STEPS)
+	if PBPaintProfile.enabled:
+		PBPaintProfile.add(&"interp_step", 0, steps)
+	var decal_stamp := paint_controller.paint_target == PBPaintController.PaintTarget.DECAL
+	var run_face := -1
+	var run_from := Vector3.INF
+	var run_to := Vector3.INF
+	var inv_xf: Transform3D = mesh.global_transform.affine_inverse()
 	for i in range(1, steps):
 		var step_hit := _pick_paint_surface(camera, from_screen.lerp(screen_now, float(i) / float(steps)))
 		if step_hit.is_empty() or step_hit.get("mesh") != mesh:
+			_end_stroke_run(mesh, run_face, run_from, run_to)
+			run_face = -1
+			run_from = Vector3.INF
+			run_to = Vector3.INF
 			continue
-		paint_controller.update_cursor(step_hit["point"], step_hit["normal"], step_hit["mesh"], step_hit["face_index"])
-		paint_controller.apply_paint_stroke()
+		paint_controller.update_cursor(step_hit["point"], step_hit["normal"], step_hit["mesh"],
+				step_hit["face_index"])
+		if decal_stamp:
+			paint_controller.apply_paint_stroke()
+			continue
+		if int(step_hit.get("face_index", -1)) != run_face:
+			_end_stroke_run(mesh, run_face, run_from, run_to)
+			run_face = step_hit["face_index"]
+			run_from = inv_xf * (step_hit["point"] as Vector3)
+		run_to = inv_xf * (step_hit["point"] as Vector3)
+	_end_stroke_run(mesh, run_face, run_from, run_to)
+	paint_controller.update_cursor(hit["point"], hit["normal"], mesh, hit["face_index"])
+
+## Paints one accumulated same-face run of the interpolated walk as a swept
+## splat dab (`run_to`; a plain disc dab when the run holds a single point).
+## Empty runs (steps that missed the mesh) paint nothing.
+func _end_stroke_run(mesh: PBMesh, face_idx: int, run_from: Vector3, run_to: Vector3) -> void:
+	if face_idx < 0 or run_to == Vector3.INF:
+		return
+	if PBPaintProfile.enabled:
+		var t0 := Time.get_ticks_usec()
+		paint_controller.apply_paint_stroke_splat(mesh, face_idx, run_to,
+				run_from if run_from.distance_squared_to(run_to) > 0.0000000001 else Vector3.INF)
+		PBPaintProfile.add(&"dab_total", Time.get_ticks_usec() - t0)
+	else:
+		paint_controller.apply_paint_stroke_splat(mesh, face_idx, run_to,
+				run_from if run_from.distance_squared_to(run_to) > 0.0000000001 else Vector3.INF)
 
 ## The overlay's extents row carries the paint cursor's state: why nothing is
 ## happening when the brush hovers a surface the tools refuse (a billboard
@@ -4259,6 +4311,14 @@ func _sync_paint_readout() -> void:
 			if dens < PBSplat.DECAL_TEXELS_PER_M * 0.5 else ""])
 
 func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
+	if not PBPaintProfile.enabled:
+		return _pick_paint_surface_ray(camera, screen_pos)
+	var t0 := Time.get_ticks_usec()
+	var res := _pick_paint_surface_ray(camera, screen_pos)
+	PBPaintProfile.add(&"pick", Time.get_ticks_usec() - t0)
+	return res
+
+func _pick_paint_surface_ray(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
 	var best_dist := INF

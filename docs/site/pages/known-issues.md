@@ -31,16 +31,26 @@ laptop that serves as the worst-case machine in the
 [performance](performance.html) table.
 
 Brushing over a small face (a 0.5 m tile, a trim strip) runs noticeably
-below the smoothness of big faces — the per-stroke cost is dominated by
-fixed work (mask texture sync) that does not scale down with the face,
-and the weak iGPU is where that fixed cost starts to show.
+below the smoothness of big faces.
 
 **Workaround:** paint the small faces in one continuous pass rather than
 many separate dabs; where possible, paint detail on a larger face and let
 the UV tiling carry it.
 
-**Status:** the first step of the paint rework shipped (v0.9.168) — mask
-and decal uploads now coalesce per rendered frame instead of running once
-per dab, which removes the redundant sync a stroke used to pay on every
-mouse event. The note stays until the whole pipeline has been re-measured
-on the reference iGPU machine.
+**Status:** measured on the reference iGPU at last (v0.9.169, the
+`./run_paint_perf.sh` bench: fast strokes driven through the real input
+path on the Intel UHD 630). The v0.9.168 upload coalescing was real but
+not the story: the profiled cost was the per-dab pixel walk itself —
+stamping a disc per spacing step re-walked the same mask pixels up to ten
+times each (1.59 M pixel visits, ~0.5 s of frozen editor for one fast
+2.4 m stroke on a 3 m face at the default brush). The splat brush now
+sweeps the cursor path as one capsule per motion event (weights by
+distance-to-segment; identical falloff, replace and erase semantics,
+pinned against dense disc stamping in `test_pb_splat_segment.gd`), with a
+constant-weight band fast path for the axis-aligned strokes that dominate
+builder maps. Same worst-case stroke: ~0.16 s — a 3–4x cut, and normal
+fast drags (~10–30 cm per motion event) land at roughly 30–45 ms per
+event on the same machine. The note stays: a pathological flick still
+costs a couple of frames, and the decal brush's stamp rhythm is untouched
+by design. The remaining lever (time-slicing the stroke across frames) is
+queued behind correctness work.

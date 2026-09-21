@@ -31,6 +31,9 @@ index, current status, and the process rules that are not area-specific.
 # .pi/orientation/testing.md for why)
 ./run_tests.sh
 ./run_gui_tests.sh          # real-editor event harness for viewport behavior
+./run_paint_perf.sh         # paint-stroke profiler on the REAL GPU (never xvfb):
+                            #   per-stage timings for fast strokes; perf claims
+                            #   about painting are measured with this
 ./scratch.sh [--play]       # disposable editor playground (FPS controller)
 ./deploy_psp.sh             # newest scratch .pbm -> real PSP, interactive
 ./test_baked_glb.sh         # retro-baked .glb in the interactive viewer

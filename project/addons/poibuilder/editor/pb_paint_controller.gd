@@ -183,6 +183,7 @@ var _stroke_ctx: Dictionary = {}
 const DAB_SPACING_FRACTION := 0.2
 var _stroke_last_dab_local: Vector3 = Vector3.INF
 var _stroke_last_dab_mesh: PBMesh = null
+var _stroke_last_dab_face: int = -1
 
 # Visual preview nodes
 var preview_root: Node3D = null
@@ -514,14 +515,23 @@ func begin_stroke() -> void:
 	_stroke_ctx = {}
 	_stroke_last_dab_local = Vector3.INF
 	_stroke_last_dab_mesh = null
+	_stroke_last_dab_face = -1
+	PBPaintProfile.begin_stroke()
 	apply_paint_stroke()
 
 func apply_paint_stroke() -> void:
+	if not PBPaintProfile.enabled:
+		_apply_paint_stroke_body()
+		return
+	var t0 := Time.get_ticks_usec()
+	_apply_paint_stroke_body()
+	PBPaintProfile.add(&"dab_total", Time.get_ticks_usec() - t0)
+
+func _apply_paint_stroke_body() -> void:
 	if not is_stroke_active or not paintable or target_mesh == null or target_mesh.pb_mesh_data == null or not has_hit:
 		return
 
 	_register_stroke_mesh(target_mesh)
-
 	var data := target_mesh.pb_mesh_data
 	if target_face_idx < 0 or target_face_idx >= data.faces.size():
 		return
@@ -562,20 +572,75 @@ func apply_paint_stroke() -> void:
 			var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
 			if layer > 0:
 				active_layer_idx = layer
-		# Paint on target face under cursor
-		modified = PBSplat.paint_face_splat(
-			data, face, splat_mat, active_layer_idx,
-			local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
-			_stroke_ctx
-		)
+		# Paint on target face under cursor — swept from the stroke's last dab
+		# when it was on this same face (the segment is the planar limit of
+		# stamping discs down the cursor path; see
+		# PBSplat.paint_face_splat_segment), a plain disc otherwise (first dab
+		# of the stroke, or the path crossed onto this face from elsewhere).
+		if _stroke_last_dab_mesh == target_mesh and _stroke_last_dab_face == target_face_idx \
+				and _stroke_last_dab_local != Vector3.INF:
+			modified = PBSplat.paint_face_splat_segment(
+				data, face, splat_mat, active_layer_idx,
+				_stroke_last_dab_local, local_hit, brush_radius, brush_softness,
+				brush_opacity, erase_mode, _stroke_ctx
+			)
+		else:
+			modified = PBSplat.paint_face_splat(
+				data, face, splat_mat, active_layer_idx,
+				local_hit, brush_radius, brush_softness, brush_opacity, erase_mode,
+				_stroke_ctx
+			)
 
 	_stroke_last_dab_local = local_hit
 	_stroke_last_dab_mesh = target_mesh
+	_stroke_last_dab_face = target_face_idx
 
 	if modified:
 		stroke_dirty = true
 		if _stroke_meshes.has(target_mesh):
 			_stroke_meshes[target_mesh]["dirty"] = true
+
+## A splat dab at an EXPLICIT stroke position: the interpolated walk calls
+## this once per same-face run with the run's swept span (from the run's
+## first pick to its last — one capsule over the whole run, see
+## PBSplat.paint_face_splat_segment; `sweep_from_local` INF for a single-point
+## run paints a plain disc). Bookkeeping matches apply_paint_stroke: stroke
+## snapshot registration, last-dab tracking (the next event's spacing gate
+## and sweep measure from here), dirty marking. The spacing gate is NOT
+## applied here — the walk already spaced the run's picks.
+func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
+		sweep_from_local: Vector3 = Vector3.INF) -> void:
+	if not is_stroke_active or not paintable or mesh == null or mesh.pb_mesh_data == null:
+		return
+	var data := mesh.pb_mesh_data
+	if face_idx < 0 or face_idx >= data.faces.size():
+		return
+	var face := data.faces[face_idx]
+	if face == null:
+		return
+	_register_stroke_mesh(mesh)
+	var splat_mat := _ensure_face_splat_material(mesh, face)
+	if splat_mat == null:
+		return
+	if paint_texture != null:
+		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
+		if layer > 0:
+			active_layer_idx = layer
+	var modified := false
+	if sweep_from_local != Vector3.INF:
+		modified = PBSplat.paint_face_splat_segment(data, face, splat_mat, active_layer_idx,
+				sweep_from_local, to_local, brush_radius, brush_softness, brush_opacity,
+				erase_mode, _stroke_ctx)
+	else:
+		modified = PBSplat.paint_face_splat(data, face, splat_mat, active_layer_idx,
+				to_local, brush_radius, brush_softness, brush_opacity, erase_mode, _stroke_ctx)
+	_stroke_last_dab_local = to_local
+	_stroke_last_dab_mesh = mesh
+	_stroke_last_dab_face = face_idx
+	if modified:
+		stroke_dirty = true
+		if _stroke_meshes.has(mesh):
+			_stroke_meshes[mesh]["dirty"] = true
 
 func end_stroke() -> void:
 	if not is_stroke_active:
@@ -598,6 +663,8 @@ func end_stroke() -> void:
 
 	stroke_snapshot_before = null
 	stroke_dirty = false
+	PBPaintProfile.end_stroke("%s r=%.2fm soft=%.2f" % [
+		PaintTarget.keys()[paint_target].to_lower(), brush_radius, brush_softness])
 # ==============================================================================
 # Stamp Execution
 # ==============================================================================

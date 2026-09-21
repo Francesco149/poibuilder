@@ -124,6 +124,10 @@ static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
 	if tex == null or img == null:
 		return
 	_pending_uploads[tex] = img
+	if PBPaintProfile.enabled:
+		# Only R8 (masks) and RGBA8 (decal windows) are ever queued here.
+		var px_bytes := 4 if img.get_format() != Image.FORMAT_R8 else 1
+		PBPaintProfile.add(&"upload_queue", 0, 1, img.get_width() * img.get_height() * px_bytes)
 	if not _frame_flush_connected:
 		RenderingServer.frame_pre_draw.connect(_flush_pending_uploads)
 		_frame_flush_connected = true
@@ -131,9 +135,16 @@ static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
 static func _flush_pending_uploads() -> void:
 	if _pending_uploads.is_empty():
 		return
-	for tex: ImageTexture in _pending_uploads:
-		if is_instance_valid(tex):
-			tex.update(_pending_uploads[tex])
+	if PBPaintProfile.enabled:
+		var t0 := Time.get_ticks_usec()
+		for tex: ImageTexture in _pending_uploads:
+			if is_instance_valid(tex):
+				tex.update(_pending_uploads[tex])
+		PBPaintProfile.add(&"upload_flush", Time.get_ticks_usec() - t0, _pending_uploads.size())
+	else:
+		for tex: ImageTexture in _pending_uploads:
+			if is_instance_valid(tex):
+				tex.update(_pending_uploads[tex])
 	_pending_uploads.clear()
 
 ## Decal source images resampled to a footprint size, keyed "source_key_WxH".
@@ -820,6 +831,25 @@ static func ensure_mesh_splat_uv(mesh_data: PBMeshData) -> void:
 static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
 		layer_idx: int, hit_point_local: Vector3, radius: float, softness: float,
 		opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
+	if not PBPaintProfile.enabled:
+		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
+				radius, softness, opacity, erase, stroke_ctx)
+	var t0 := Time.get_ticks_usec()
+	var res := _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
+			radius, softness, opacity, erase, stroke_ctx)
+	PBPaintProfile.add(&"splat_dab", Time.get_ticks_usec() - t0, 1, _prof_bytes, _prof_pixels)
+	_prof_bytes = 0
+	_prof_pixels = 0
+	return res
+
+## Scratch counters the wrapped dab walk reports to the profiler (one dab at a
+## time; single-threaded editor).
+static var _prof_bytes: int = 0
+static var _prof_pixels: int = 0
+
+static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
+		layer_idx: int, hit_point_local: Vector3, radius: float, softness: float,
+		opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
 	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
 		return false
 
@@ -888,6 +918,8 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
 	var bytes := mask_img.get_data()
+	if PBPaintProfile.enabled:
+		_prof_bytes += w * h
 
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
 	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
@@ -912,6 +944,8 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 			var max_dx := sqrt(max_dx_sq)
 			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
 			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			if PBPaintProfile.enabled:
+				_prof_pixels += rx1 - rx0 + 1
 			var row := y * w
 
 			for x in range(rx0, rx1 + 1):
@@ -955,6 +989,8 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 			var max_dx := sqrt(max_dx_sq)
 			var rx0 := clampi(int(floor((u_hit - max_dx - min_u) / range_u * (w - 1))), x0, x1)
 			var rx1 := clampi(int(ceil((u_hit + max_dx - min_u) / range_u * (w - 1))), x0, x1)
+			if PBPaintProfile.enabled:
+				_prof_pixels += rx1 - rx0 + 1
 			var row := y * w
 
 			var dx_m: float = (min_u + float(rx0) * step_u) - u_hit
@@ -962,6 +998,457 @@ static func paint_face_splat(mesh_data: PBMeshData, face: PBFace, splat_mat: Sha
 				var dist_sq := dx_m * dx_m + dy_sq
 				dx_m += step_u
 				var li := int(dist_sq * inv_r_sq * lut_sz_minus_1)
+				if li >= BRUSH_LUT_SIZE - 1:
+					continue
+				var wb := int(lut_bytes[li])
+				if wb <= 0:
+					continue
+				var i := row + x
+				if erase:
+					var sub := (wb * opacity_b + 128) / 255
+					if sub <= 0 or sub <= int(wmax[i]):
+						continue
+					wmax[i] = sub
+					var p_base := int(base[i])
+					var p_new := maxi(0, p_base - sub)
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+				else:
+					var target_b := (wb * opacity_b + 128) / 255
+					if target_b <= int(wmax[i]):
+						continue
+					wmax[i] = target_b
+					var p_base := int(base[i])
+					var p_new := p_base
+					if p_base <= opacity_b:
+						p_new = maxi(p_base, target_b)
+					else:
+						var erase_excess := (wb * (p_base - opacity_b) + 128) / 255
+						p_new = p_base - erase_excess
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+	if dirty:
+		mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
+		var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
+		_queue_texture_upload(mask_tex, mask_img)
+		mask_state_version += 1
+
+	return dirty
+
+## Paints the splat brush along the straight segment `from_local` ->
+## `hit_point_local` (both node-local, on `face`) as ONE swept capsule: each
+## mask pixel weights by its distance to the SEGMENT instead of to a dab
+## centre — the limit of stamping discs at every spacing step, minus the
+## overlap. Measured on the iGPU reference machine (PBPaintProfile, v0.9.168
+## bench): one fast 2.4 m stroke stamped ~25 overlapping discs and walked
+## ~1.6 M mask pixels (~0.5 s of frozen editor); ~90% of those walks were
+## pixels a neighbouring dab of the same stroke had already visited, because
+## dab spacing (0.2 r) is far smaller than the disc diameter (2 r).
+##
+## Semantics match the per-dab disc: same falloff LUT on squared distance,
+## same stroke_ctx replace/erase-once-per-stroke bookkeeping, same upload
+## path. Swept weights are >= the stamped discs' pointwise max (distance to a
+## segment is <= distance to any point on it), so a swept stroke reads as the
+## same paint, one shade smoother along its spine. A zero-length segment
+## degenerates to the disc dab. `from_local` may arrive from a NEIGHBOURING
+## face (the controller only sweeps runs it saw pick the same face) — the
+## planar math is the face's own, so a from-point slightly off this face's
+## plane still lands a sane capsule; callers never sweep across faces.
+static func paint_face_splat_segment(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
+		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
+		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
+	if mesh_data == null or face == null or splat_mat == null or radius <= 0.0:
+		return false
+	if not PBPaintProfile.enabled:
+		return _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
+				hit_point_local, radius, softness, opacity, erase, stroke_ctx)
+	var t0 := Time.get_ticks_usec()
+	var res := _paint_face_splat_segment_walk(mesh_data, face, splat_mat, layer_idx, from_local,
+			hit_point_local, radius, softness, opacity, erase, stroke_ctx)
+	PBPaintProfile.add(&"splat_dab", Time.get_ticks_usec() - t0, 1, _prof_bytes, _prof_pixels)
+	_prof_bytes = 0
+	_prof_pixels = 0
+	return res
+
+static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, splat_mat: ShaderMaterial,
+		layer_idx: int, from_local: Vector3, hit_point_local: Vector3, radius: float,
+		softness: float, opacity: float, erase: bool = false, stroke_ctx: Dictionary = {}) -> bool:
+	if from_local.distance_squared_to(hit_point_local) < 0.0000000001:
+		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
+				radius, softness, opacity, erase, stroke_ctx)
+
+	var target_res := calculate_uniform_face_resolution(mesh_data, face)
+	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
+	if mask_img == null:
+		return false
+	if face.splat_bounds.size() != 4:
+		var geom_bounds := get_face_planar_bounds(mesh_data, face, true)
+		if not geom_bounds.is_empty():
+			face.splat_bounds = PackedFloat32Array([
+				geom_bounds["min_u"], geom_bounds["max_u"],
+				geom_bounds["min_v"], geom_bounds["max_v"]
+			])
+	var bounds := get_face_planar_bounds(mesh_data, face)
+	if bounds.is_empty():
+		return false
+
+	var u_axis: Vector3 = bounds["u"]
+	var v_axis: Vector3 = bounds["v"]
+	var normal: Vector3 = bounds["normal"]
+	var min_u: float = bounds["min_u"]
+	var range_u: float = bounds["range_u"]
+	var min_v: float = bounds["min_v"]
+	var range_v: float = bounds["range_v"]
+
+	var indices := face.get_distinct_indexes()
+	if indices.is_empty():
+		return false
+	var plane_origin: Vector3 = mesh_data.positions[indices[0]]
+	var d_perp := minf(absf(normal.dot(from_local - plane_origin)),
+			absf(normal.dot(hit_point_local - plane_origin)))
+	if d_perp >= radius:
+		return false # Brush sphere does not intersect the face's plane anywhere on the segment
+
+	var r_plane := sqrt(maxf(0.0, radius * radius - d_perp * d_perp))
+	var u0 := u_axis.dot(from_local)
+	var v0 := v_axis.dot(from_local)
+	var seg_du := u_axis.dot(hit_point_local) - u0
+	var seg_dv := v_axis.dot(hit_point_local) - v0
+	var seg_len_sq := seg_du * seg_du + seg_dv * seg_dv
+	if seg_len_sq < 0.0000000001:
+		return _paint_face_splat_walk(mesh_data, face, splat_mat, layer_idx, hit_point_local,
+				radius, softness, opacity, erase, stroke_ctx)
+	var inv_seg_len := 1.0 / seg_len_sq
+
+	var w := mask_img.get_width()
+	var h := mask_img.get_height()
+
+	# Bounding box of affected pixels: the capsule's planar hull.
+	var u_lo := minf(u0, u0 + seg_du) - r_plane
+	var u_hi := maxf(u0, u0 + seg_du) + r_plane
+	var v_lo := minf(v0, v0 + seg_dv) - r_plane
+	var v_hi := maxf(v0, v0 + seg_dv) + r_plane
+	var x0 := clampi(int(floor((u_lo - min_u) / range_u * (w - 1))), 0, w - 1)
+	var x1 := clampi(int(ceil((u_hi - min_u) / range_u * (w - 1))), 0, w - 1)
+	var y0 := clampi(int(floor((v_lo - min_v) / range_v * (h - 1))), 0, h - 1)
+	var y1 := clampi(int(ceil((v_hi - min_v) / range_v * (h - 1))), 0, h - 1)
+	if x0 > x1 or y0 > y1:
+		return false
+
+	var dirty := false
+	var soft := clampf(softness, 0.0, 1.0)
+	var inv_r_sq := 1.0 / (radius * radius)
+	var step_u := range_u / float(w - 1)
+	var step_v := range_v / float(h - 1)
+	var r_plane_sq := r_plane * r_plane
+
+	if mask_img.get_format() != Image.FORMAT_R8:
+		mask_img.convert(Image.FORMAT_R8)
+	var bytes := mask_img.get_data()
+	if PBPaintProfile.enabled:
+		_prof_bytes += w * h
+
+	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
+	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
+		var base := bytes.duplicate()
+		var wmax := PackedByteArray()
+		wmax.resize(w * h)
+		stroke = {"w": w, "h": h, "base": base, "wmax": wmax}
+		stroke_ctx[mask_img.get_instance_id()] = stroke
+	var base: PackedByteArray = stroke["base"]
+	var wmax: PackedByteArray = stroke["wmax"]
+
+	var opacity_b := int(round(opacity * 255.0))
+
+	# ── Axis-aligned fast path ────────────────────────────────────────────────
+	# A run parallel to the face's u or v axis — the overwhelming case on
+	# builder geometry (axis-aligned faces, strokes that follow corridors and
+	# wall runs) — gets a capsule whose BAND holds a constant distance to the
+	# segment for every mask row (u-aligned) or column (v-aligned). The
+	# falloff LUT is consulted once per line; the band's inner loop is a
+	# compare-and-write span; only the two end caps run per-pixel math, and
+	# theirs is a plain distance-to-a-point ramp (no projection, no clamp).
+	# The slope tolerance is 1e-6 of the length — microns on any real stroke,
+	# far below one texel — so the painted result is identical to the general
+	# walk that follows for diagonal segments.
+	var seg_len := sqrt(seg_len_sq)
+	var aligned_u := absf(seg_dv) <= 0.000001 * seg_len
+	var aligned_v := not aligned_u and absf(seg_du) <= 0.000001 * seg_len
+	if aligned_u or aligned_v:
+		# Normalize: "along" runs the segment's axis, "perp" crosses it, and
+		# the walk below is written once against both (v-aligned strokes
+		# traverse columns, pixel stride w).
+		var a0 := u0
+		var p0 := v0
+		var min_a := min_u
+		var min_p := min_v
+		var step_a := step_u
+		var step_p := step_v
+		var n_a := w
+		var n_p := h
+		var i_step := 1
+		var line_step := w
+		if aligned_v:
+			a0 = v0
+			p0 = u0
+			min_a = min_v
+			min_p = min_u
+			step_a = step_v
+			step_p = step_u
+			n_a = h
+			n_p = w
+			i_step = w
+			line_step = 1
+		var seg_da := seg_du if aligned_u else seg_dv
+		var a_end_lo := minf(a0, a0 + seg_da)
+		var a_end_hi := maxf(a0, a0 + seg_da)
+		var line_lo := clampi(int(floor(((p0 - r_plane) - min_p) / step_p)), 0, n_p - 1)
+		var line_hi := clampi(int(ceil(((p0 + r_plane) - min_p) / step_p)), 0, n_p - 1)
+		var band_lo_i := clampi(int(ceil((a_end_lo - min_a) / step_a)), 0, n_a - 1)
+		var band_hi_i := clampi(int(floor((a_end_hi - min_a) / step_a)), 0, n_a - 1)
+		for line in range(line_lo, line_hi + 1):
+			var dy := (min_p + float(line) * step_p) - p0
+			var ady := absf(dy)
+			if ady >= r_plane:
+				continue
+			var dy_sq := dy * dy
+			var half_chord := sqrt(r_plane_sq - dy_sq)
+			var line_base := line * line_step
+			var cap_lo_i := clampi(int(floor((a_end_lo - half_chord - min_a) / step_a)), 0, n_a - 1)
+			var cap_hi_i := clampi(int(floor((a_end_hi + half_chord - min_a) / step_a)), 0, n_a - 1)
+			if PBPaintProfile.enabled:
+				_prof_pixels += cap_hi_i - cap_lo_i + 1
+			if soft <= 0.001:
+				# Hard brush: uniform opacity_b; no LUT anywhere.
+				for xi in range(cap_lo_i, band_lo_i):
+					var i := line_base + xi * i_step
+					var da := (min_a + float(xi) * step_a) - a_end_lo
+					if da * da + dy_sq > r_plane_sq:
+						continue
+					if erase:
+						if opacity_b <= 0 or opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						var p_new := maxi(0, int(base[i]) - opacity_b)
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+					else:
+						if opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						if int(bytes[i]) != opacity_b:
+							bytes[i] = opacity_b
+							dirty = true
+				for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
+					var i := line_base + xi * i_step
+					if erase:
+						if opacity_b <= 0 or opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						var p_new := maxi(0, int(base[i]) - opacity_b)
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+					else:
+						if opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						if int(bytes[i]) != opacity_b:
+							bytes[i] = opacity_b
+							dirty = true
+				for xi in range(maxi(cap_lo_i, band_hi_i + 1), cap_hi_i + 1):
+					var i := line_base + xi * i_step
+					var da := (min_a + float(xi) * step_a) - a_end_hi
+					if da * da + dy_sq > r_plane_sq:
+						continue
+					if erase:
+						if opacity_b <= 0 or opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						var p_new := maxi(0, int(base[i]) - opacity_b)
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+					else:
+						if opacity_b <= int(wmax[i]):
+							continue
+						wmax[i] = opacity_b
+						if int(bytes[i]) != opacity_b:
+							bytes[i] = opacity_b
+							dirty = true
+			else:
+				# Soft brush: the band's weight is per-LINE constant; the caps
+				# run the LUT on a distance-to-the-endpoint ramp.
+				var lut_bytes := _get_brush_lut_bytes(soft)
+				var li_scale := inv_r_sq * float(BRUSH_LUT_SIZE - 1)
+				var li_band := int(dy_sq * li_scale)
+				var wb_band := int(lut_bytes[li_band]) if li_band < BRUSH_LUT_SIZE - 1 else 0
+				for xi in range(cap_lo_i, band_lo_i):
+					var i := line_base + xi * i_step
+					var da := (min_a + float(xi) * step_a) - a_end_lo
+					var li := int((da * da + dy_sq) * li_scale)
+					if li >= BRUSH_LUT_SIZE - 1:
+						continue
+					var wb := int(lut_bytes[li])
+					if wb <= 0:
+						continue
+					if erase:
+						var sub := (wb * opacity_b + 128) / 255
+						if sub <= 0 or sub <= int(wmax[i]):
+							continue
+						wmax[i] = sub
+						var p_new := maxi(0, int(base[i]) - sub)
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+					else:
+						var target_b := (wb * opacity_b + 128) / 255
+						if target_b <= int(wmax[i]):
+							continue
+						wmax[i] = target_b
+						var p_base := int(base[i])
+						var p_new := p_base
+						if p_base <= opacity_b:
+							p_new = maxi(p_base, target_b)
+						else:
+							var erase_excess := (wb * (p_base - opacity_b) + 128) / 255
+							p_new = p_base - erase_excess
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+				if wb_band > 0:
+					for xi in range(maxi(cap_lo_i, band_lo_i), band_hi_i + 1):
+						var i := line_base + xi * i_step
+						if erase:
+							var sub := (wb_band * opacity_b + 128) / 255
+							if sub <= 0 or sub <= int(wmax[i]):
+								continue
+							wmax[i] = sub
+							var p_new := maxi(0, int(base[i]) - sub)
+							if int(bytes[i]) != p_new:
+								bytes[i] = p_new
+								dirty = true
+						else:
+							var target_b := (wb_band * opacity_b + 128) / 255
+							if target_b <= int(wmax[i]):
+								continue
+							wmax[i] = target_b
+							var p_base := int(base[i])
+							var p_new := p_base
+							if p_base <= opacity_b:
+								p_new = maxi(p_base, target_b)
+							else:
+								var erase_excess := (wb_band * (p_base - opacity_b) + 128) / 255
+								p_new = p_base - erase_excess
+							if int(bytes[i]) != p_new:
+								bytes[i] = p_new
+								dirty = true
+				for xi in range(maxi(cap_lo_i, band_hi_i + 1), cap_hi_i + 1):
+					var i := line_base + xi * i_step
+					var da := (min_a + float(xi) * step_a) - a_end_hi
+					var li := int((da * da + dy_sq) * li_scale)
+					if li >= BRUSH_LUT_SIZE - 1:
+						continue
+					var wb := int(lut_bytes[li])
+					if wb <= 0:
+						continue
+					if erase:
+						var sub := (wb * opacity_b + 128) / 255
+						if sub <= 0 or sub <= int(wmax[i]):
+							continue
+						wmax[i] = sub
+						var p_new := maxi(0, int(base[i]) - sub)
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+					else:
+						var target_b := (wb * opacity_b + 128) / 255
+						if target_b <= int(wmax[i]):
+							continue
+						wmax[i] = target_b
+						var p_base := int(base[i])
+						var p_new := p_base
+						if p_base <= opacity_b:
+							p_new = maxi(p_base, target_b)
+						else:
+							var erase_excess := (wb * (p_base - opacity_b) + 128) / 255
+							p_new = p_base - erase_excess
+						if int(bytes[i]) != p_new:
+							bytes[i] = p_new
+							dirty = true
+		if dirty:
+			mask_img.set_data(w, h, false, Image.FORMAT_R8, bytes)
+			var mask_tex = splat_mat.get_shader_parameter("layer_%d_mask" % layer_idx) as ImageTexture
+			_queue_texture_upload(mask_tex, mask_img)
+			mask_state_version += 1
+		return dirty
+
+	if soft <= 0.001:
+		# Hard brush: uniform weight across the swept capsule footprint.
+		for y in range(y0, y1 + 1):
+			if PBPaintProfile.enabled:
+				_prof_pixels += x1 - x0 + 1
+			var v_rel := (min_v + float(y) * step_v) - v0
+			var row_c := v_rel * seg_dv
+			var row := y * w
+			var u_at := (min_u + float(x0) * step_u) - u0
+			for x in range(x0, x1 + 1):
+				var t := (u_at * seg_du + row_c) * inv_seg_len
+				if t < 0.0:
+					t = 0.0
+				elif t > 1.0:
+					t = 1.0
+				var dxp := u_at - t * seg_du
+				var dyp := v_rel - t * seg_dv
+				u_at += step_u
+				if dxp * dxp + dyp * dyp > r_plane_sq:
+					continue
+				var i := row + x
+				if erase:
+					var sub := opacity_b
+					if sub <= 0 or sub <= int(wmax[i]):
+						continue
+					wmax[i] = sub
+					var p_base := int(base[i])
+					var p_new := maxi(0, p_base - sub)
+					if int(bytes[i]) != p_new:
+						bytes[i] = p_new
+						dirty = true
+				else:
+					var target_b := opacity_b
+					if target_b <= int(wmax[i]):
+						continue
+					wmax[i] = target_b
+					if int(bytes[i]) != target_b:
+						bytes[i] = target_b
+						dirty = true
+	else:
+		# Soft brush: the falloff LUT indexed by squared distance to the
+		# segment, the same curve the disc dab applies to squared distance to
+		# its centre.
+		var lut_bytes := _get_brush_lut_bytes(soft)
+		var lut_sz_minus_1 := float(BRUSH_LUT_SIZE - 1)
+		var li_scale := inv_r_sq * lut_sz_minus_1
+		for y in range(y0, y1 + 1):
+			if PBPaintProfile.enabled:
+				_prof_pixels += x1 - x0 + 1
+			var v_rel := (min_v + float(y) * step_v) - v0
+			var row_c := v_rel * seg_dv
+			var row := y * w
+			var u_at := (min_u + float(x0) * step_u) - u0
+			for x in range(x0, x1 + 1):
+				var t := (u_at * seg_du + row_c) * inv_seg_len
+				if t < 0.0:
+					t = 0.0
+				elif t > 1.0:
+					t = 1.0
+				var dxp := u_at - t * seg_du
+				var dyp := v_rel - t * seg_dv
+				u_at += step_u
+				var li := int((dxp * dxp + dyp * dyp) * li_scale)
 				if li >= BRUSH_LUT_SIZE - 1:
 					continue
 				var wb := int(lut_bytes[li])
@@ -1047,6 +1534,19 @@ static func paste_decal(mesh_data: PBMeshData, center_local: Vector3, normal: Ve
 ## `color` (the basic brush); pass an image to dab the palette texture instead.
 ## Returns the number of faces touched.
 static func paint_decal_dab(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
+		rotation_deg: float, radius: float, softness: float, opacity: float,
+		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
+		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
+	if not PBPaintProfile.enabled:
+		return _paint_decal_dab_walk(mesh_data, center_local, normal, rotation_deg, radius,
+				softness, opacity, erase, image, color, texels_per_m)
+	var t0 := Time.get_ticks_usec()
+	var res := _paint_decal_dab_walk(mesh_data, center_local, normal, rotation_deg, radius,
+			softness, opacity, erase, image, color, texels_per_m)
+	PBPaintProfile.add(&"decal_dab", Time.get_ticks_usec() - t0)
+	return res
+
+static func _paint_decal_dab_walk(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
 		rotation_deg: float, radius: float, softness: float, opacity: float,
 		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
 		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:

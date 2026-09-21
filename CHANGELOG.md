@@ -3,6 +3,67 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.169 — the paint stroke is profiled on the reference iGPU and swept: the small-face lag's real cost found and cut 3-4x
+
+The round happened ON the five-year-old integrated-GPU laptop (Intel UHD
+630, Wayland, Mesa) that the known-issues entry names — the machine the
+v0.9.168 round explicitly could not measure on.
+
+### New: a real paint profiler and a real-GPU paint bench
+`PBPaintProfile` (debug/pb_paint_profile.gd) is an env-gated stage timer
+(`PB_PAINT_PROFILE=1`) wired into the actual stroke path: pick, the
+interpolated dab walk, the splat/decal pixel loops, and the mask texture
+queue/flush. `./run_paint_perf.sh` boots the SAME real-editor GUI harness
+as `./run_gui_tests.sh` but on the machine's REAL display and GPU — never
+xvfb, never `LIBGL_ALWAYS_SOFTWARE` — and with `PB_PAINT_PERF=1` drives
+fast strokes (press -> ONE multi-spacing motion event -> release) through
+the plugin's real input path over a 3 m face and a 0.5 m tile, splat and
+decal targets, printing one breakdown line per stroke plus a
+mean-per-stroke aggregate. It doubles as a GUI-harness run, so
+`failures=0` covers the regression gate too.
+
+### Measured: the lag was the dab pixel loop, not the uploads
+Baseline (v0.9.168 code): a fast 2.4 m stroke on a 3 m face at the
+default brush (r=0.5, softness 0.5) froze the editor 444-706 ms, 98% of
+it inside the splat mask pixel loop — ~1.59 M pixel walks per stroke,
+because stamping a disc per spacing step (spacing = 0.2 r) re-walked
+each pixel under the brush up to ten times. Picks cost 1.7 ms and
+uploads had already been coalesced off the handler's clock (0.0 ms
+in-stroke): the previous round's fix was real, and exactly why it could
+not help perceptually — it never was the elephant. The same face painted
+through the DECAL brush (sprite + one `blend_rect` per dab) ran at
+40-60 ms, confirming the loop as the gap.
+
+### Improved: splat strokes sweep the cursor path as one capsule
+`PBSplat.paint_face_splat_segment` paints from the stroke's last dab to
+the current hit as ONE swept capsule: every mask pixel weights by its
+distance to the SEGMENT through the same falloff LUT, with the same
+stroke replace/erase-once semantics (`wmax` bookkeeping unchanged). The
+interpolated walk groups consecutive same-face picks into runs and
+emits one sweep per run (decal strokes keep one texture-aligned stamp
+per spacing step by design); diagonal segments run the general
+per-pixel sweep (projection per pixel), and a zero-length run
+degenerates to the disc dab. Axis-aligned runs — the overwhelming
+case on builder maps — take a constant-weight band fast path: the band's
+distance to the segment is constant per mask row (or column), so the
+LUT is consulted once per line and only the two end caps run per-pixel
+math; the slope tolerance is 1e-6 of the stroke length, far below one
+texel.
+
+Same worst-case stroke after: 162-171 ms (3-4x); the 0.5 m tile case
+dropped from 60-100 ms to 26-45 ms per stroke. Pixel walks per stroke
+fell 1.59 M -> ~0.51 M. Normal fast drags deliver ~10-30 cm per motion
+event, so per-event cost lands around 30-45 ms on the same machine.
+
+Correctness is pinned, not asserted: `test_pb_splat_segment.gd` holds
+the sweep's contract against dense disc stamping in ALL three dispatch
+branches (swept values are a pointwise superset of the stamped discs'
+max; dab-centre values match; the spine is continuous), a zero-length
+sweep must byte-match the disc dab, erase stays once-per-stroke across
+repeated sweeps of one stroke, and a v-aligned sweep must be the exact
+transpose of the u-aligned one. The GUI harness (run as part of every
+bench) stayed at failures=0.
+
 ## v0.9.168 — the known-issues sweep: four of the six alpha rough edges fixed (one verified on the device), the paint pipeline's first rework step, and a Hold-switch camera fix found on the device
 
 The session worked through docs/site/pages/known-issues.md. Four entries
