@@ -1077,6 +1077,84 @@ func test_decal_does_not_stretch_or_slide_when_face_resized() -> void:
 	assert_true(live_bounds["range_u"] > absf(bounds_before[1] - bounds_before[0]),
 			"…while the geometry itself did grow (precondition for the clip case)")
 
+## The regression this round fixes. A face with a stamp on it, resized so the
+## geometry grows BEYOND splat_bounds, then PAINTED in the new region: the
+## paint call expands the bounds, which re-anchors the splat masks. The decal
+## window's offset/scale live in that same [0,1] space and MUST be remapped
+## with it — before this fix they kept describing the old rect, so the same
+## physical point resolved to a DIFFERENT (and usually out-of-window) decal uv
+## and every existing decal rendered stretched or vanished. The user hit it as
+## "the decal layer jumps to a stretched version after resizing a face".
+func test_decal_stays_anchored_when_bounds_expand_on_a_resized_face() -> void:
+	var cube := PBMesh.create_cube(2.0)
+	add_child_autofree(cube)
+	var data := cube.pb_mesh_data
+	var face := data.faces[4]
+	var mat := PBSplat.ensure_face_owned_material(data, face)
+	PBSplat.ensure_face_splat_bounds(data, face)
+
+	# An OFF-CENTRE stamp (the symmetric case hides the drift).
+	var base_bounds := PBSplat.get_face_planar_bounds(data, face)
+	var u_ax: Vector3 = base_bounds["u"]
+	var v_ax: Vector3 = base_bounds["v"]
+	var mid_u: float = (base_bounds["min_u"] + base_bounds["max_u"]) * 0.5
+	var mid_v: float = (base_bounds["min_v"] + base_bounds["max_v"]) * 0.5
+	var stamp_centre: Vector3 = u_ax * (mid_u + 0.6) + v_ax * mid_v
+	stamp_centre.y = 1.0
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.9, 0.4, 0.1, 1.0))
+	assert_gt(PBSplat.paste_decal(data, stamp_centre, Vector3.UP, 0.0, 0.6, 1.0, img), 0,
+			"Fixture: the stamp must land")
+
+	# The decal uv of that physical point, before any resize.
+	var su := u_ax.dot(stamp_centre)
+	var sv := v_ax.dot(stamp_centre)
+	var uv_before := _mask_uv_of(face, su, sv)
+	var decal_uv_before := PBSplat.decal_uv_from_mask_uv(mat, uv_before)
+	assert_almost_eq(decal_uv_before.x, 0.5, 0.02, "Fixture: the stamp centre maps to the window centre")
+
+	# Grow ONE side of the face (asymmetric — this is what shifts the rect).
+	for idx in face.get_distinct_indexes():
+		var p: Vector3 = data.positions[idx]
+		if u_ax.dot(p) > mid_u:
+			data.positions[idx] = p + u_ax * 3.0
+	cube.rebuild()
+
+	# Paint the NEW region: this is what expands splat_bounds.
+	var grow_hit: Vector3 = u_ax * (base_bounds["max_u"] + 2.0) + v_ax * mid_v
+	grow_hit.y = 1.0
+	var splat_mat := PBSplat.ensure_face_owned_material(data, face)
+	var layer := PBSplat.ensure_layer_for_texture(splat_mat,
+			ImageTexture.create_from_image(Image.create(16, 16, false, Image.FORMAT_RGBA8)))
+	PBSplat.paint_face_splat(data, face, splat_mat, layer, grow_hit, 0.4, 0.5, 0.9, false, {})
+
+	# Precondition: the bounds really did grow (otherwise this proves nothing).
+	assert_true(face.splat_bounds[1] > base_bounds["max_u"] + 0.001,
+			"Fixture: painting the new region must expand splat_bounds")
+
+	# THE ASSERTION: the same physical point must still resolve to the same
+	# decal uv. Pre-fix this drifted by more than the window, which is exactly
+	# why the decal disappeared.
+	var uv_after := _mask_uv_of(face, su, sv)
+	var decal_uv_after := PBSplat.decal_uv_from_mask_uv(mat, uv_after)
+	assert_almost_eq(decal_uv_after.x, decal_uv_before.x, 0.02,
+			"the decal window must follow the bounds: x drifted to %.3f (was %.3f)" % [
+					decal_uv_after.x, decal_uv_before.x])
+	assert_almost_eq(decal_uv_after.y, decal_uv_before.y, 0.02,
+			"the decal window must follow the bounds: y drifted to %.3f (was %.3f)" % [
+					decal_uv_after.y, decal_uv_before.y])
+	# …and it must still be INSIDE the window (a uv outside [0,1] renders nothing).
+	assert_true(decal_uv_after.x >= 0.0 and decal_uv_after.x <= 1.0
+			and decal_uv_after.y >= 0.0 and decal_uv_after.y <= 1.0,
+			"the stamped point must stay inside the decal window (%s)" % [decal_uv_after])
+
+## Face-planar (mask-space) uv of an object-space point, from the face's CURRENT
+## bounds — the same mapping the shader's CUSTOM0 attribute carries.
+func _mask_uv_of(face: PBFace, su: float, sv: float) -> Vector2:
+	var span_u: float = maxf(face.splat_bounds[1] - face.splat_bounds[0], 0.0001)
+	var span_v: float = maxf(face.splat_bounds[3] - face.splat_bounds[2], 0.0001)
+	return Vector2((su - face.splat_bounds[0]) / span_u, (sv - face.splat_bounds[2]) / span_v)
+
 ## Resizing geometry does NOT stretch the mask on rebuild (bounds frozen).
 ## Painting the expanded region triggers bounds expansion + mask reposition
 ## so existing paint stays anchored and the new region accepts paint.

@@ -903,6 +903,36 @@ static func _expand_splat_bounds_if_needed(
 		if stroke_ctx.has(mask_img.get_instance_id()):
 			stroke_ctx.erase(mask_img.get_instance_id())
 
+	# Reposition the decal window too. The masks above are re-anchored by
+	# reallocating their pixels; the decal layer keeps its pixels and instead
+	# carries the mapping in the stamp_layer_uv_offset/scale uniforms, which
+	# are expressed in the SAME face-planar [0,1] space splat_bounds defines.
+	# Growing the bounds therefore moves the space under the window: without
+	# this remap the uniforms keep describing the OLD rect, the shader samples
+	# the window at coordinates that no longer exist in the new space, and
+	# every existing decal pixel renders stretched or (past the window edge)
+	# vanishes outright.
+	#
+	# Both uniforms go through the identical old->new normalized-space
+	# transform:  new_n = (old_n * old_range + old_min - new_min) / new_range.
+	if has_decal_layer(splat_mat):
+		var old_off = splat_mat.get_shader_parameter("stamp_layer_uv_offset")
+		var old_scale = splat_mat.get_shader_parameter("stamp_layer_uv_scale")
+		# A null scale means a layer from before windows existed (it covers
+		# the whole rect implicitly); there is nothing to remap there.
+		if old_off is Vector2 and old_scale is Vector2 \
+				and old_scale.x > 0.000001 and old_scale.y > 0.000001:
+			var off: Vector2 = old_off
+			var sc: Vector2 = old_scale
+			var new_off := Vector2(
+					(off.x * old_range_u + old_min_u - new_min_u) / new_range_u,
+					(off.y * old_range_v + old_min_v - new_min_v) / new_range_v)
+			var new_sc := Vector2(
+					sc.x * new_range_u / old_range_u,
+					sc.y * new_range_v / old_range_v)
+			splat_mat.set_shader_parameter("stamp_layer_uv_offset", new_off)
+			splat_mat.set_shader_parameter("stamp_layer_uv_scale", new_sc)
+
 	# Persist the expanded bounds.
 	face.splat_bounds = PackedFloat32Array([new_min_u, new_max_u, new_min_v, new_max_v])
 	# Refresh the splat UVs for this face so the shader maps the mask
