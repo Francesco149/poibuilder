@@ -27,21 +27,49 @@ const LEGACY_STAMP_CONTAINER := "PBStamps"
 ##     only the sampled content degenerates, and erase must work anywhere.
 const DECAL_MIN_FACE_ALIGNMENT := 0.35
 const DECAL_MIN_DAB_ALIGNMENT := 0.25
+## Texel density the EXPORT BAKE composites at (see bake_face_composite). The
+## live mask no longer tracks this — see MASK_RESOLUTION.
 const TEXELS_PER_METER := 256
+## Floor for the export bake's resolution: even a small face bakes at 256 px,
+## so a painted detail face is never undersampled relative to the base texture.
 const MIN_RESOLUTION := 256
-## Splat MASK ceiling.  At 512x512 (171 texels/m on a 3 m face) the GDScript
-## pixel walk costs ~700 ns per pixel on the iGPU reference machine — 22-38 ms
-## per dab for a 0.5 m brush.  Row-skip tracking (the `row_max` array in
-## stroke_ctx) eliminates most of this cost on the 2nd+ dab of a stroke: once
-## a scanline in the band region is fully painted, its `row_max` entry hits
-## the stroke's opacity ceiling and the inner pixel loop is never entered for
-## that line again.  On a typical fast stroke the first dab is 22 ms but
-## subsequent dabs walk only the NEWLY-ENTERED rows, dropping the amortised
-## per-dab cost to 3-6 ms (measured on the iGPU).
-## Decal STAMPS keep their own 256 texels/m windows (DECAL_MAX_WINDOW_PX) —
-## crisp stickers are the decal layer's job.  Masks in existing scenes never
-## shrink (get_layer_mask_image only grows), so old paint is untouched.
-const MAX_RESOLUTION := 512
+## LIVE splat MASK resolution ceiling and floor.
+##
+## The live mask is sized from the face at TEXELS_PER_METER but clamped into
+## [MASK_MIN_RESOLUTION, MASK_RESOLUTION] — a DENSITY policy with a hard ceiling,
+## not a uniform square. Measured on the reference machine (real sweep, per face
+## size), comparing this against the alternatives:
+##
+##   * master's clamp [256, 512] made the SAME brush cost 4x more on a 3 m face
+##     than on a 1.5 m one (per-dab cost is the brush's footprint in mask
+##     pixels = 2 * radius * mask_px / face_m, so density times radius):
+##     20.5 ms/dab on a 0.5 m face, 18.8 on a 2 m one, 8.9 on a 3 m one.
+##   * a UNIFORM 256 square fixes the mid sizes (3.4-3.8x cheaper on 2-8 m
+##     faces) but does nothing for the worst case — a 0.5 m face still gets 512
+##     texels/m, so it stays at ~20 ms — and it HALVES live fidelity on large
+##     faces (a 60 m floor drops from 8.5 to 4.3 texels/m), which is the very
+##     blockiness this round exists to remove.
+##   * sizing by density and clamping the FLOOR to 128 halves the small-face
+##     cost (a 0.5 m face paints on 128x128 = 256 texels/m, 4x fewer pixels)
+##     while leaving a large face at the full 256 ceiling.
+##
+## The ceiling is what bounds the per-dab walk and the per-frame mask upload
+## (256x256 R8 = 64 KB) on the faces that can afford the most; the floor is what
+## stops a small, dense face from being over-sampled into lag.
+##
+## Density BEYOND this ceiling is the EXPORT BAKE's business (see
+## bake_resolution), where it is paid once per export instead of per dab.
+const MASK_RESOLUTION := 256
+## Floor for the live mask. A 0.5 m face would ask for 128 px at
+## TEXELS_PER_METER and gets it; below this the mask would be too coarse to hold
+## a soft brush ramp.
+const MASK_MIN_RESOLUTION := 128
+## Ceiling for the export bake's per-face texture. The live mask is 256, so the
+## bake is the ONLY place a large face can recover density: at 2048 a 60 m
+## floor reaches 34 texels/m (the upstream ProBuilder-era figure) instead of
+## the 8.5 the old "bake inherits the live mask" path produced. See
+## PBTileBaker.bake_face_composite.
+const MAX_RESOLUTION := 2048
 ## Decal layer density. The decal image is a WINDOW cropped to the painted area
 ## (not the whole face rect), so it can hold this density — the same 256
 ## texels/m the splat masks use — on a face of any size: a 2 m stamp is 512 px
@@ -74,10 +102,35 @@ const DECAL_WINDOW_PAD_PX := 8
 ## loop instead of building a sprite: the sprite path trades memory for speed,
 ## and a 10 m radius brush sprite would be hundreds of megabytes.
 const DECAL_MAX_SPRITE_PX := 1024
-## Computes uniform texture resolution (w, h) in pixels for `face` based on its physical size in meters.
-## Guarantees a consistent texel density across both small and large faces.
-static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFace,
-		texels_per_m: int = TEXELS_PER_METER) -> Vector2i:
+## The LIVE splat-mask resolution for a face: its world size at
+## TEXELS_PER_METER, rounded to a power of two and clamped into
+## [MASK_MIN_RESOLUTION, MASK_RESOLUTION]. Per-dab cost is the brush's footprint
+## in mask pixels, so both ends of that clamp are load-bearing — see
+## MASK_RESOLUTION for the measurement. Returns a uniform square when mesh/face
+## are unknown, which is the safe bound.
+static func live_mask_resolution_for(mesh_data: PBMeshData, face: PBFace) -> Vector2i:
+	if mesh_data == null or face == null:
+		return Vector2i(MASK_RESOLUTION, MASK_RESOLUTION)
+	var bounds := get_face_planar_bounds(mesh_data, face)
+	if bounds.is_empty():
+		return Vector2i(MASK_RESOLUTION, MASK_RESOLUTION)
+	var w: int = clampi(nearest_po2(int(ceil(float(bounds["range_u"]) * float(TEXELS_PER_METER)))),
+			MASK_MIN_RESOLUTION, MASK_RESOLUTION)
+	var h: int = clampi(nearest_po2(int(ceil(float(bounds["range_v"]) * float(TEXELS_PER_METER)))),
+			MASK_MIN_RESOLUTION, MASK_RESOLUTION)
+	return Vector2i(w, h)
+
+## The EXPORT BAKE's resolution (w, h) for `face`: its world size at
+## TEXELS_PER_METER, rounded to a power of two and clamped into
+## [MIN_RESOLUTION, min(MAX_RESOLUTION, `max_size`)]. This is where a large
+## face buys back the density the uniform live mask gave up: the bake runs
+## once per export, so it can afford texels a per-dab walk cannot.
+##
+## `max_size` comes from the export's own texture budget (the retro tile path
+## passes its max_texture_size), and only ever LOWERS the ceiling.
+static func bake_resolution(mesh_data: PBMeshData, face: PBFace,
+		max_size: int = MAX_RESOLUTION) -> Vector2i:
+	var cap := clampi(max_size, MIN_RESOLUTION, MAX_RESOLUTION)
 	if mesh_data == null or face == null:
 		return Vector2i(MIN_RESOLUTION, MIN_RESOLUTION)
 
@@ -88,11 +141,10 @@ static func calculate_uniform_face_resolution(mesh_data: PBMeshData, face: PBFac
 	var range_u: float = bounds.get("range_u", 1.0)
 	var range_v: float = bounds.get("range_v", 1.0)
 
-	var target_w: int = int(ceil(range_u * float(texels_per_m)))
-	var target_h: int = int(ceil(range_v * float(texels_per_m)))
-
-	var w: int = clampi(nearest_po2(target_w), MIN_RESOLUTION, MAX_RESOLUTION)
-	var h: int = clampi(nearest_po2(target_h), MIN_RESOLUTION, MAX_RESOLUTION)
+	var w: int = clampi(nearest_po2(int(ceil(range_u * float(TEXELS_PER_METER)))),
+			MIN_RESOLUTION, cap)
+	var h: int = clampi(nearest_po2(int(ceil(range_v * float(TEXELS_PER_METER)))),
+			MIN_RESOLUTION, cap)
 	return Vector2i(w, h)
 
 
@@ -407,8 +459,12 @@ static func add_layer(mat: ShaderMaterial, texture: Texture2D, color: Color = Co
 	return slot
 
 ## Ensures that a layer exists for `texture`. If already present, returns its index.
-## Otherwise adds a new layer and returns the index.
-static func ensure_layer_for_texture(mat: ShaderMaterial, texture: Texture2D) -> int:
+## Otherwise adds a new layer and returns the index, creating its mask at
+## `mask_res` — pass the face's OWN target (see live_mask_resolution_for), not
+## the ceiling: a mask can only grow, so the creation size is the one chance to
+## apply the policy's floor.
+static func ensure_layer_for_texture(mat: ShaderMaterial, texture: Texture2D,
+		mask_res: int = DEFAULT_MASK_RES) -> int:
 	if mat == null or texture == null:
 		return -1
 
@@ -418,7 +474,7 @@ static func ensure_layer_for_texture(mat: ShaderMaterial, texture: Texture2D) ->
 			if tex == texture:
 				return i
 
-	return add_layer(mat, texture)
+	return add_layer(mat, texture, Color.WHITE, 0.8, mask_res)
 
 ## Returns the Texture2D assigned to `layer_idx`.
 static func get_layer_texture(mat: ShaderMaterial, layer_idx: int) -> Texture2D:
@@ -457,6 +513,10 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 			_set_cached_image(mat, cache_key, img)
 
 	if img != null:
+		# A mask is fitted UP to the requested resolution but never shrunk: an
+		# existing scene's paint keeps whatever resolution it was authored at
+		# (shrinking would resample and soften it), while a face whose geometry
+		# has GROWN still gets the target it now warrants.
 		if target_res != Vector2i.ZERO and (target_res.x > img.get_width() or target_res.y > img.get_height()):
 			var new_w := maxi(img.get_width(), target_res.x)
 			var new_h := maxi(img.get_height(), target_res.y)
@@ -467,7 +527,11 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 			mask_state_version += 1
 		return img
 
-	# Create new blank mask with uniform resolution
+	# Create a blank mask at the requested resolution. This is the branch that
+	# decides the LIVE mask size for a NEW layer: it must use the face's own
+	# target (live_mask_resolution_for), not the ceiling — creating every mask
+	# at the ceiling would defeat the policy's floor, and `get_layer_mask_image`
+	# can only grow a mask, so the floor would never apply (see MASK_RESOLUTION).
 	var init_w := target_res.x if target_res.x > 0 else DEFAULT_MASK_RES
 	var init_h := target_res.y if target_res.y > 0 else DEFAULT_MASK_RES
 	var new_img := Image.create(init_w, init_h, false, Image.FORMAT_R8)
@@ -1019,8 +1083,7 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 	var bounds := _expand_splat_bounds_if_needed(mesh_data, face, splat_mat, stroke_ctx)
 	if bounds.is_empty():
 		return false
-	var target_res := calculate_uniform_face_resolution(mesh_data, face)
-	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
+	var mask_img := get_layer_mask_image(splat_mat, layer_idx, live_mask_resolution_for(mesh_data, face))
 	if mask_img == null:
 		return false
 
@@ -1277,8 +1340,7 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 	var bounds := _expand_splat_bounds_if_needed(mesh_data, face, splat_mat, stroke_ctx)
 	if bounds.is_empty():
 		return false
-	var target_res := calculate_uniform_face_resolution(mesh_data, face)
-	var mask_img := get_layer_mask_image(splat_mat, layer_idx, target_res)
+	var mask_img := get_layer_mask_image(splat_mat, layer_idx, live_mask_resolution_for(mesh_data, face))
 	if mask_img == null:
 		return false
 
@@ -1739,13 +1801,14 @@ static func _paint_face_splat_segment_walk(mesh_data: PBMeshData, face: PBFace, 
 ## Queue-piece length (face-local metres) for time-sliced sweeps: middle
 ## pieces of a collinear chain cost ~band pixels only (length x brush width),
 ## so target ~20k walked pixels per queued piece — a few milliseconds of the
-## drain budget regardless of brush size or mask density.
+## drain budget regardless of brush size or mask density. The density is the
+## LIVE mask's (the walk the pieces feed), not the bake's.
 static func sweep_piece_length(radius: float, mesh_data: PBMeshData, face: PBFace) -> float:
-	var res := calculate_uniform_face_resolution(mesh_data, face)
 	var bounds := get_face_planar_bounds(mesh_data, face)
 	if bounds.is_empty():
 		return 0.15
-	var density := float(res.x) / maxf(float(bounds["range_u"]), 0.001)
+	var mask_w: int = live_mask_resolution_for(mesh_data, face).x
+	var density := float(mask_w) / maxf(float(bounds["range_u"]), 0.001)
 	var width_px := 2.0 * radius * density
 	return clampf(20000.0 / maxf(width_px, 1.0), 0.05, 0.5)
 

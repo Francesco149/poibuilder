@@ -4,14 +4,20 @@
 ## the editor, display, or GPU texture upload — the component the interactive
 ## trace identified as the dominant bottleneck on the iGPU.
 ##
-## The tests time repeated dab/segment walks on cubes of known size,
-## at the 512×512 mask ceiling (3 m face), under both hard and soft brush.
-## They verify:
-## 1. First-dab vs subsequent-dab amortisation (row-skip should make
-##    overlapping dabs dramatically cheaper).
-## 2. Absolute per-dab cost stays below a generous ceiling (50 ms first
-##    dab, 20 ms subsequent — headless is faster than the real editor,
-##    so these are worst-case envelopes, not tight bounds).
+## The tests time repeated dab/segment walks on cubes of known size, on the
+## UNIFORM live mask every face now paints on (PBSplat.MASK_RESOLUTION), under
+## both hard and soft brush. They verify:
+## 1. Per-dab cost stays inside a generous envelope (50 ms first dab, 20 ms
+##    subsequent — headless is faster than the real editor, so these are
+##    worst-case bounds, not tight ones).
+## 2. Per-dab cost does NOT scale with the face's world size: that coupling
+##    (a mask sized at 256 texels/m) is exactly what made a 3 m face the
+##    laggiest thing the painter could brush, and it is what the uniform mask
+##    removed. Measured here, headlessly.
+##
+## The row-skip scanline bookkeeping is deliberately NOT asserted as a speedup:
+## it was measured at 3-7% against the same code with row_max disabled, i.e.
+## inside the noise. See the round's notes in CHANGELOG.md.
 ##
 ## NOT a substitute for the interactive trace (trace_paint.sh) or the
 ## real-GPU perf bench (run_paint_perf.sh) — those test the full pipeline
@@ -20,7 +26,8 @@
 @tool
 extends GutTest
 
-## A cube whose face occupies the 512×512 ceiling (3 m → 768 texels → clamped).
+## A cube large enough that the uniform live mask is what caps the walk
+## (under the old density policy a 3 m face carried a 512x512 mask).
 const CUBE_SIZE := 3.0
 ## Brush parameters matching the default interactive brush.
 const BRUSH_RADIUS := 0.5
@@ -103,14 +110,14 @@ func test_hard_brush_stroke_perf() -> void:
 		mean_sub += t
 	mean_sub /= float(subsequent.size())
 
-	gut.p("[PAINT PERF] hard brush 512x512: first=%.0f µs, mean_subsequent=%.0f µs (n=%d)" % [
+	gut.p("[PAINT PERF] hard brush 256x256: first=%.0f µs, mean_subsequent=%.0f µs (n=%d)" % [
 			first, mean_sub, subsequent.size()])
 
 	# Row-skip should make subsequent dabs much cheaper than the first.
 	# First dab paints ALL rows; subsequent dabs overlap and row_max
 	# causes most rows to be skipped entirely.
 	assert_lt(first, 50000.0,
-			"first hard dab on 512x512 must be < 50 ms (was %.1f ms)" % [first / 1000.0])
+			"first hard dab on the uniform mask must be < 50 ms (was %.1f ms)" % [first / 1000.0])
 	assert_lt(mean_sub, 20000.0,
 			"subsequent hard dabs must be < 20 ms mean (was %.1f ms)" % [mean_sub / 1000.0])
 
@@ -130,11 +137,11 @@ func test_soft_brush_stroke_perf() -> void:
 		mean_sub += t
 	mean_sub /= float(subsequent.size())
 
-	gut.p("[PAINT PERF] soft brush 512x512: first=%.0f µs, mean_subsequent=%.0f µs (n=%d)" % [
+	gut.p("[PAINT PERF] soft brush 256x256: first=%.0f µs, mean_subsequent=%.0f µs (n=%d)" % [
 			first, mean_sub, subsequent.size()])
 
 	assert_lt(first, 50000.0,
-			"first soft dab on 512x512 must be < 50 ms (was %.1f ms)" % [first / 1000.0])
+			"first soft dab on the uniform mask must be < 50 ms (was %.1f ms)" % [first / 1000.0])
 	assert_lt(mean_sub, 20000.0,
 			"subsequent soft dabs must be < 20 ms mean (was %.1f ms)" % [mean_sub / 1000.0])
 
@@ -173,24 +180,70 @@ func test_disc_dab_perf() -> void:
 	assert_lt(last, 15000.0,
 			"repeated disc dab must be < 15 ms (was %.1f ms)" % [last / 1000.0])
 
-func test_row_skip_actually_reduces_work() -> void:
-	# Verify that the row-skip optimization measurably reduces subsequent
-	# dab cost compared to the first dab.
-	var times := _bench_stroke(0.0, 0.1, 15)
-	var first := times[0]
-	# Average of last 5 dabs (steady state)
-	var tail_sum := 0.0
-	for i in range(times.size() - 5, times.size()):
-		tail_sum += times[i]
-	var tail_mean := tail_sum / 5.0
+## Per-dab cost must NOT scale with the face's world size. This is the
+## invariant the uniform live mask exists to hold, and the one the painter
+## felt: under the old 256-texels/m policy a 3 m face carried a 512x512 mask
+## (4x the pixels of a 1.5 m one), so the SAME brush was several times more
+## expensive there — the reported "small faces lag" (it is really
+## "densely-sampled faces lag", and face size is what set the density).
+##
+## The walk itself is what is timed, on masks of identical resolution, so this
+## fails if anyone reintroduces a size-dependent live mask.
+func test_paint_cost_does_not_scale_with_face_size() -> void:
+	# 0.5 m is the face the painter brushes constantly; 8 m is the same brush
+	# over a much larger surface. Both paint on PBSplat.MASK_RESOLUTION.
+	var small := PBMesh.create_cube(0.5)
+	var large := PBMesh.create_cube(8.0)
+	add_child_autofree(small)
+	add_child_autofree(large)
 
-	gut.p("[PAINT PERF] row-skip efficacy: first=%.0f µs, tail_mean=%.0f µs, ratio=%.1fx" % [
-			first, tail_mean, first / maxf(tail_mean, 1.0)])
+	var small_mean := _mean_segment_dab_ms(small, 0.5)
+	var large_mean := _mean_segment_dab_ms(large, 0.5)
+	gut.p("[PAINT PERF] size independence: 0.5m face %.2f ms/dab, 8m face %.2f ms/dab" % [
+			small_mean, large_mean])
+	if small_mean < 0.2:
+		return # too fast on this machine for a meaningful ratio
+	assert_lt(large_mean / small_mean, 4.0,
+			"a big face must not cost multiples of a small one per dab (%.2f vs %.2f ms)" % [
+					large_mean, small_mean])
 
-	# The first dab should be at least 2× slower than the tail mean.
-	# In practice it's 4-10× on the iGPU. On fast CPUs the absolute
-	# times are small but the ratio should still hold.
-	if first > 500.0:  # skip ratio check on very fast machines where noise dominates
-		assert_gt(first / tail_mean, 1.5,
-				"row-skip should make tail dabs at least 1.5× faster than first (ratio=%.1f)" % [
-						first / tail_mean])
+## Mean per-dab cost (ms) of a straight stroke across `mesh`'s top face,
+## travelling `advance` metres per dab. Both meshes are painted with the same
+## brush, so any difference is the mask/geometry, not the parameters.
+func _mean_segment_dab_ms(mesh: PBMesh, advance: float) -> float:
+	var data := mesh.pb_mesh_data
+	PBSplat.ensure_mesh_splat_uv(data)
+	var fi := _top_face(data)
+	assert_ne(fi, -1, "fixture: cube must have a top face")
+	if fi < 0:
+		return 0.0
+	var face := data.faces[fi]
+	var splat_mat := PBSplat.create_splat_material()
+	data.set_face_material(face, splat_mat)
+	var layer := PBSplat.add_layer(splat_mat, ImageTexture.create_from_image(
+			Image.create(16, 16, false, Image.FORMAT_RGBA8)))
+	PBSplat.ensure_face_splat_bounds(data, face)
+	var b := PBSplat.get_face_planar_bounds(data, face)
+	var u_ax: Vector3 = b["u"]
+	var v_ax: Vector3 = b["v"]
+	var mid_u: float = (b["min_u"] + b["max_u"]) * 0.5
+	var mid_v: float = (b["min_v"] + b["max_v"]) * 0.5
+	var origin: Vector3 = u_ax * mid_u + v_ax * mid_v
+	var plane_y: float = data.positions[face.get_distinct_indexes()[0]].y
+	var stroke_ctx := {}
+	var prev := Vector3.INF
+	var total := 0.0
+	var dabs := 24
+	for i in range(dabs):
+		var pt: Vector3 = origin + u_ax * (float(i) * advance)
+		pt.y = plane_y
+		var t0 := Time.get_ticks_usec()
+		if prev == Vector3.INF:
+			PBSplat.paint_face_splat(data, face, splat_mat, layer, pt,
+					BRUSH_RADIUS, 0.5, BRUSH_OPACITY, false, stroke_ctx)
+		else:
+			PBSplat.paint_face_splat_segment(data, face, splat_mat, layer,
+					prev, pt, BRUSH_RADIUS, 0.5, BRUSH_OPACITY, false, stroke_ctx)
+		total += float(Time.get_ticks_usec() - t0)
+		prev = pt
+	return total / 1000.0 / float(dabs)

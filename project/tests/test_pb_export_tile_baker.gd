@@ -155,3 +155,83 @@ func test_enforce_pot_image_lifts_npot() -> void:
 	assert_lte(out.get_width(), 512)
 	assert_lte(out.get_height(), 512)
 
+
+# ==============================================================================
+# Bake resolution & mask upsampling
+# ==============================================================================
+
+## The modern per-face bake must recover the texel density the uniform LIVE
+## mask gave up. The live mask is a fixed 256 square (so per-dab paint cost
+## cannot scale with face size), and the bake is the only place a large face
+## can be resolved finely — it runs once per export, not once per dab.
+##
+## This is the reported "very low res splat mask on large faces": the bake used
+## to size itself from the live mask (and the exporter's cap clamped it to the
+## retro tile size), so a 60 m floor composited at 8.5 texels/m = 11.7 cm per
+## texel. Upstream reached ~34 texels/m.
+func test_bake_resolution_carries_density_on_large_faces() -> void:
+	var floor_mesh := PBMesh.create_cube(60.0)
+	autofree(floor_mesh)
+	var data: PBMeshData = floor_mesh.pb_mesh_data
+	var face: PBFace = data.faces[0]
+
+	# The live mask is CAPPED (it may not grow with the face) …
+	var live := PBSplat.live_mask_resolution_for(data, face)
+	assert_eq(live, Vector2i(PBSplat.MASK_RESOLUTION, PBSplat.MASK_RESOLUTION),
+			"the live mask must be capped at MASK_RESOLUTION on a 60 m face")
+	# … while the BAKE opts into density, up to its own ceiling.
+	var bake := PBSplat.bake_resolution(data, face)
+	assert_eq(bake.x, PBSplat.MAX_RESOLUTION,
+			"a 60 m face must bake at the ceiling (%d), got %d" % [PBSplat.MAX_RESOLUTION, bake.x])
+	var texels_per_m := float(bake.x) / 60.0
+	assert_true(texels_per_m > 30.0,
+			"a 60 m face must bake at >30 texels/m (got %.1f = %.1f cm/texel)" % [
+					texels_per_m, 100.0 / texels_per_m])
+
+	# The export's own texture budget may only cap it DOWN, never silently
+	# impose the retro tile size on the modern bake.
+	var capped := PBSplat.bake_resolution(data, face, 512)
+	assert_true(capped.x <= 512, "an explicit cap must be honoured (%d)" % capped.x)
+
+## A low-res live mask must be interpolated UP to the bake's resolution, not
+## point-sampled: nearest sampling prints the mask's texel blocks across the
+## baked blend edge (measured 13 distinct levels and ~984-px flat runs on a
+## 6-texel ramp upsampled 8x), while bilinear yields a smooth ramp.
+func test_baked_blend_edge_is_smooth_not_blocky() -> void:
+	var data: PBMeshData = PBShapeGenerators.create_plane(20.0, 20.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var base := StandardMaterial3D.new()
+	var base_img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	base_img.fill(Color(0.05, 0.05, 0.05, 1.0))
+	base.albedo_texture = ImageTexture.create_from_image(base_img)
+	var mat := PBSplat.create_splat_material(base)
+	data.set_face_material(face, mat)
+	PBSplat.ensure_face_splat_bounds(data, face)
+	var layer_tex := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	layer_tex.fill(Color(1.0, 1.0, 1.0, 1.0))
+	var layer := PBSplat.add_layer(mat, ImageTexture.create_from_image(layer_tex))
+
+	# A SOFT dab: its mask ramp is what the blend edge is made of.
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var u_ax: Vector3 = bounds["u"]
+	var v_ax: Vector3 = bounds["v"]
+	var centre: Vector3 = u_ax * ((bounds["min_u"] + bounds["max_u"]) * 0.5) \
+			+ v_ax * ((bounds["min_v"] + bounds["max_v"]) * 0.5)
+	PBSplat.paint_face_splat(data, face, mat, layer, centre, 5.0, 0.9, 1.0, false, {})
+
+	var baked := PBTileBaker.bake_face_composite(data, face, 2048)
+	assert_not_null(baked, "Fixture: the painted face must bake")
+	if baked == null:
+		return
+	assert_eq(baked.get_width(), 2048, "Fixture: the 20 m face must bake at 2048")
+
+	# Count DISTINCT values along the centre row: the blend is a smoothstep of
+	# the mask, so a smooth bake shows many levels; point-sampling the 256 mask
+	# across 2048 px shows only a handful of wide steps.
+	var levels := {}
+	var mid := baked.get_height() / 2
+	for x in range(baked.get_width()):
+		levels[snappedf(baked.get_pixel(x, mid).r, 0.001)] = true
+	assert_true(levels.size() > 40,
+			"the baked blend edge must be a smooth ramp, not mask texel blocks (only %d levels)" % levels.size())

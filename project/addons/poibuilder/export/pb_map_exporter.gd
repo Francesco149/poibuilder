@@ -981,8 +981,16 @@ static func _build_modern_baked_splat_mesh(mesh_data: PBMeshData,
 	PBUvOps._split_shared_face_vertices(bake_data)
 	bake_data.splat_uvs = PackedVector2Array()
 
-	var texture_cap: int = clampi(settings.max_texture_size * 4,
-			PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION)
+	# The bake's per-face texture ceiling. This used to be derived from
+	# `max_texture_size` (the RETRO tile size, default 512) via MAX_RESOLUTION,
+	# which — together with bake_face_composite sizing itself from the live
+	# mask — is what pinned a modern bake to the live mask's density. The
+	# modern bake has its own budget now: default to the bake policy's ceiling
+	# and let a raised max_texture_size cap it (for a consumer with a hard
+	# texture limit), never silently lower it to the retro tile size.
+	var texture_cap: int = PBSplat.MAX_RESOLUTION
+	if settings.max_texture_size > PBSplat.MAX_RESOLUTION:
+		texture_cap = settings.max_texture_size
 	var groups: Dictionary = {}        # Material -> Array[int] (bake_data face indices)
 	var group_order: Array[Material] = []
 	var painted: Array = []            # [{face_idx, material}]

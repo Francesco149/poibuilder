@@ -163,17 +163,62 @@ func test_paint_coexists_with_authored_uv2_lightmap_unwrap() -> void:
 			assert_true(false, "paint must never rewrite UV2 (vertex %d)" % i)
 			return
 
-func test_decal_layer_default_resolution_scales_with_face_size() -> void:
-	# Uniform texel density: mask resolution must track the face's world size at
-	# 256 texels/m (both for splat masks and for the decal layer), clamped.
-	var small := PBMeshData.create_cube(1.0)
-	var big := PBMeshData.create_cube(8.0)
-	var small_res := PBSplat.calculate_uniform_face_resolution(small, small.faces[0])
-	var big_res := PBSplat.calculate_uniform_face_resolution(big, big.faces[0])
-	assert_true(big_res.x > small_res.x,
-			"a larger face must get a larger mask (%d vs %d) so paint never looks blurrier" % [big_res.x, small_res.x])
-	assert_eq(clampi(small_res.x, PBSplat.MIN_RESOLUTION, PBSplat.MAX_RESOLUTION), small_res.x,
-			"mask resolution stays inside the documented clamp window")
+## The live mask is a DENSITY policy with a hard ceiling and a raised floor:
+## sized from the face, clamped into [MASK_MIN_RESOLUTION, MASK_RESOLUTION].
+## The ceiling is what bounds the per-dab walk and the per-frame mask upload on
+## a face that can afford the most; the floor is what stops a small, dense face
+## from being over-sampled into lag (a 0.5 m face at 256 texels/m carried the
+## same 512 texels/m as master and stayed at ~20 ms/dab).
+##
+## The BAKE is where density beyond the cap comes back — and only the bake,
+## which runs once per export rather than per dab.
+func test_live_mask_is_density_clamped_and_the_bake_carries_density() -> void:
+	var small := PBMeshData.create_cube(0.5)
+	var small_face := small.faces[0]
+	var medium := PBMeshData.create_cube(2.0)
+	var huge := PBMeshData.create_cube(60.0)
+
+	# The FLOOR: 0.5 m would ask for 128 px, which is at the floor — so a small
+	# face is no longer over-sampled relative to a 1 m one.
+	var live_small := PBSplat.live_mask_resolution_for(small, small_face)
+	assert_eq(live_small, Vector2i(PBSplat.MASK_MIN_RESOLUTION, PBSplat.MASK_MIN_RESOLUTION),
+			"a 0.5 m face paints at the mask floor (%s) — 256 texels/m, not 512" % [live_small])
+	# The CEILING: a 60 m face may not exceed it (this is the per-dab bound).
+	var live_huge := PBSplat.live_mask_resolution_for(huge, huge.faces[0])
+	assert_eq(live_huge.x, PBSplat.MASK_RESOLUTION,
+			"a 60 m face paints at the mask ceiling")
+	# Density in between is honoured: a 2 m face gets the full 512-requested
+	# 512 clamped to the 256 ceiling, i.e. at the ceiling, not below it.
+	assert_eq(PBSplat.live_mask_resolution_for(medium, medium.faces[0]).x, PBSplat.MASK_RESOLUTION,
+			"a 2 m face reaches the ceiling")
+	# The floor must actually be BELOW the ceiling, or the policy is a uniform
+	# square again and the small-face win is gone.
+	assert_true(PBSplat.MASK_MIN_RESOLUTION < PBSplat.MASK_RESOLUTION,
+			"the mask floor must be below the ceiling")
+
+	# The bake DOES scale with the face: that is the whole point of the split.
+	var bake_small := PBSplat.bake_resolution(small, small_face)
+	var bake_big := PBSplat.bake_resolution(huge, huge.faces[0])
+	assert_true(bake_big.x > bake_small.x,
+			"a larger face must bake at a higher resolution (%d vs %d)" % [bake_big.x, bake_small.x])
+	# 60 m would want 15360 px; the ceiling is what stops it.
+	assert_eq(bake_big.x, PBSplat.MAX_RESOLUTION,
+			"a 60 m face must bake at the ceiling")
+	assert_eq(PBSplat.MAX_RESOLUTION, 2048, "the bake ceiling is 2048")
+	# The export's own texture budget may only LOWER the ceiling.
+	assert_true(PBSplat.bake_resolution(huge, huge.faces[0], 512).x <= 512,
+			"an export's max_texture_size must be able to cap the bake below MAX_RESOLUTION")
+	# …and a 60 m floor must reach upstream's ~34 texels/m, not the 8.5 the
+	# old "bake inherits the live mask" path produced (that was the reported
+	# low-res bake: 11.7 cm per texel).
+	var texels_per_m := float(bake_big.x) / 60.0
+	assert_true(texels_per_m > 30.0,
+			"a 60 m face must bake at >30 texels/m (got %.1f)" % texels_per_m)
+	# Every resolution stays a power of two inside the documented window.
+	for r: Vector2i in [bake_small, bake_big]:
+		assert_eq(r.x & (r.x - 1), 0, "bake resolution must be a power of two (%d)" % r.x)
+		assert_true(r.x >= PBSplat.MIN_RESOLUTION and r.x <= PBSplat.MAX_RESOLUTION,
+				"bake resolution %d stays inside [MIN_RESOLUTION, MAX_RESOLUTION]" % r.x)
 
 ## Byte-array equality without GUT formatting megabyte arrays into the report
 ## (mono aborts on the resulting string).
@@ -452,17 +497,30 @@ func test_paint_controller_modes_and_properties() -> void:
 	assert_false(ctrl.is_active())
 
 func test_uniform_resolution_calculation() -> void:
+	# LIVE: a density policy clamped to [floor, ceiling]. A big face is capped
+	# (the per-dab bound); a small one is raised to the floor rather than being
+	# over-sampled at 512 texels/m, which is what made it the slowest thing to
+	# paint.
 	var cube_2m := PBMeshData.create_cube(2.0)
-	var res_2m := PBSplat.calculate_uniform_face_resolution(cube_2m, cube_2m.faces[0])
-	# 2m * 256 texels/m = 512 texels
-	assert_eq(res_2m.x, 512, "2m face width should be 512 pixels")
-	assert_eq(res_2m.y, 512, "2m face height should be 512 pixels")
-
 	var cube_8m := PBMeshData.create_cube(8.0)
-	var res_8m := PBSplat.calculate_uniform_face_resolution(cube_8m, cube_8m.faces[0])
-	# The 512 ceiling: 8m would want 2048, clamped to 512.
-	assert_eq(res_8m.x, 512, "8m face must hit the 512 ceiling")
-	assert_eq(res_8m.y, 512, "8m face must hit the 512 ceiling")
+	assert_eq(PBSplat.live_mask_resolution_for(cube_8m, cube_8m.faces[0]).x, 256,
+			"a big face paints at the live mask ceiling")
+	assert_eq(PBSplat.live_mask_resolution_for(cube_2m, cube_2m.faces[0]).x, 256,
+			"a 2 m face reaches the ceiling too")
+	var tiny := PBMeshData.create_cube(0.5)
+	assert_eq(PBSplat.live_mask_resolution_for(tiny, tiny.faces[0]).x, 128,
+			"a 0.5 m face falls to the floor (256 texels/m, not 512)")
+
+	# The BAKE scales with the face (256 texels/m), so the paint is never
+	# blurrier on a large face than the editor showed.
+	var res_2m := PBSplat.bake_resolution(cube_2m, cube_2m.faces[0])
+	assert_eq(res_2m.x, 512, "2m face width should bake at 512 pixels")
+	assert_eq(res_2m.y, 512, "2m face height should bake at 512 pixels")
+
+	# 8 m would want 2048 — the bake ceiling.
+	var res_8m := PBSplat.bake_resolution(cube_8m, cube_8m.faces[0])
+	assert_eq(res_8m.x, 2048, "8m face must hit the 2048 bake ceiling")
+	assert_eq(res_8m.y, 2048, "8m face must hit the 2048 bake ceiling")
 
 ## The decal layer is a WINDOW cropped to the painted area, not a whole-face
 ## image: that is what keeps its texels/m uniform on a large face (a 32 m floor

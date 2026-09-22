@@ -90,7 +90,7 @@ func set_paint_texture_and_update_layer(tex: Texture2D) -> void:
 					active_layer_idx = existing
 					return
 				else:
-					var target_res := PBSplat.calculate_uniform_face_resolution(data, face)
+					var target_res := PBSplat.live_mask_resolution_for(data, face)
 					var new_slot := PBSplat.add_layer(sm, tex, Color.WHITE, 0.8, target_res.x)
 					if new_slot > 0:
 						active_layer_idx = new_slot
@@ -597,7 +597,8 @@ func _apply_paint_stroke_body() -> void:
 			return
 		# Ensure a layer exists for paint_texture on splat_mat
 		if paint_texture != null:
-			var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
+			var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture,
+					PBSplat.live_mask_resolution_for(data, face).x)
 			if layer > 0:
 				active_layer_idx = layer
 		# Paint on target face under cursor — swept from the stroke's last dab
@@ -654,7 +655,8 @@ func apply_paint_stroke_splat(mesh: PBMesh, face_idx: int, to_local: Vector3,
 	if splat_mat == null:
 		return
 	if paint_texture != null:
-		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture)
+		var layer := PBSplat.ensure_layer_for_texture(splat_mat, paint_texture,
+				PBSplat.live_mask_resolution_for(data, face).x)
 		if layer > 0:
 			active_layer_idx = layer
 	# Continuity against this face's own last dab: start EXACTLY at it when
@@ -914,7 +916,7 @@ func _ensure_face_splat_material(mesh: PBMesh, face: PBFace) -> ShaderMaterial:
 	var splat_mat := PBSplat.create_splat_material(current_mat)
 	# If a paint_texture is selected, configure layer 1 with uniform resolution for this face
 	if paint_texture != null:
-		var target_res := PBSplat.calculate_uniform_face_resolution(mesh.pb_mesh_data, face)
+		var target_res := PBSplat.live_mask_resolution_for(mesh.pb_mesh_data, face)
 		PBSplat.add_layer(splat_mat, paint_texture, Color.WHITE, 0.8, target_res.x)
 
 	mesh.pb_mesh_data.set_face_material(face, splat_mat)

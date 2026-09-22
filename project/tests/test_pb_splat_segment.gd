@@ -263,12 +263,22 @@ func test_pending_queue_stays_shallow_under_a_stroke() -> void:
 	ctrl.end_stroke()
 
 func test_face_mask_resolution_is_capped_for_big_faces() -> void:
-	# The 3x3 face the user reported as the laggiest: its mask must not
-	# exceed the 512 ceiling (row-skip tracking makes subsequent dabs cheap
-	# by skipping already-painted scanlines entirely).
+	# The 3x3 face the user reported as the laggiest: it used to walk a 512x512
+	# mask (170 texels/m, 4x the pixels of a 1.5 m face) because the mask was
+	# sized at 256 texels/m. It now paints at the live ceiling, so per-dab cost
+	# is bounded regardless of density. The bake recovers the density; the live
+	# walk must not pay it.
 	var data := PBMeshData.create_cube(3.0)
-	var res := PBSplat.calculate_uniform_face_resolution(data, data.faces[0])
-	assert_eq(res, Vector2i(512, 512), "a 3m face's splat mask must be capped at 512")
+	assert_eq(PBSplat.live_mask_resolution_for(data, data.faces[0]), Vector2i(256, 256),
+			"a 3m face's splat mask is capped at the live ceiling")
+	var bake := PBSplat.bake_resolution(data, data.faces[0])
+	# 3 m × 256 texels/m = 768, rounded UP to a power of two = 1024 — the same
+	# figure the ORIGINAL density policy produced for a 3 m face (it capped at
+	# 2048 then; master's 512 cap is what shrank it to 512 and made the paint
+	# look coarse).
+	assert_eq(bake, Vector2i(1024, 1024), "…while its BAKE resolves 3m at 1024")
+	assert_true(float(bake.x) / 3.0 >= 256.0,
+			"the bake must never fall BELOW the 256 texels/m target (%s)" % [bake])
 
 ## Splitting a sweep into collinear pieces (what the time-slice queue does)
 ## must byte-match the single unsplit sweep in every brush mode: middle

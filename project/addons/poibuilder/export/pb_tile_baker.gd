@@ -208,11 +208,10 @@ static func _bake_composite_tile(cell_bounds: Rect2, splat_bounds: PackedFloat32
 				if mu < 0.0 or mu > 1.0 or mv < 0.0 or mv > 1.0:
 					continue
 
-				var mw := mask.get_width()
-				var mh := mask.get_height()
-				var mpx := clampi(int(mu * mw), 0, mw - 1)
-				var mpy := clampi(int(mv * mh), 0, mh - 1)
-				var weight: float = mask.get_pixel(mpx, mpy).r
+				# Bilinear, not nearest: the live mask is a fixed 256 square
+				# while a retro tile is drawn at the tile resolution, so a
+				# nearest read would print mask texel blocks across the tile.
+				var weight := _sample_mask_bilinear(mask, mu, mv)
 
 				if weight > 0.001:
 					var lw := l_img.get_width()
@@ -608,9 +607,12 @@ static func bake_pb_mesh_in_place(pb: PBMesh, grid_size: float = 1.0,
 ## the receiving engine needs no shader of ours — the face samples the texture
 ## with its (rewritten) UV1, exactly like any other baked surface.
 ##
-## Resolution follows the live mask policy (256 texels/m, clamped 256..2048,
-## so a large face is never blurrier than a small one and the export matches
-## what the editor showed).
+## Resolution follows the BAKE policy (256 texels/m of the face's world size,
+## clamped 256..min(max_size, MAX_RESOLUTION)) — NOT the live mask, which is a
+## fixed square chosen to bound per-dab cost. That inversion is the whole point
+## of the split: a 20 m face paints on a 256x256 mask but bakes at 2048, and
+## the blend mask is upsampled to meet it, while the base texture and the decal
+## layer composite natively at the bake resolution.
 static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: int = 2048) -> Image:
 	if mesh_data == null or face == null:
 		return null
@@ -618,9 +620,7 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	if paint_state.is_empty():
 		return null
 
-	var res := PBSplat.calculate_uniform_face_resolution(mesh_data, face)
-	res.x = clampi(res.x, 16, max_size)
-	res.y = clampi(res.y, 16, max_size)
+	var res := PBSplat.bake_resolution(mesh_data, face, max_size)
 
 	var base_image: Image = _extract_base_image(mesh_data.get_face_material(face), paint_state)
 	var base_color: Color = _extract_base_color(mesh_data.get_face_material(face), paint_state)
@@ -641,63 +641,110 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	# Triangle soup in mask space, each corner carrying its UV1: sampling the
 	# base texture this way (instead of assuming a linear UV ramp) keeps n-gons,
 	# manual UVs and resized faces correct.
-	var tris: Array = []
-	for tri_i in range(0, face.get_indexes().size() - 2, 3):
-		var fi := face.get_indexes()
-		var tri: Array = []
+	#
+	# A face is PLANAR, so within one triangle the barycentric weights are
+	# affine in (mu, mv) and the UV1 is affine with them. The bake therefore
+	# precomputes each triangle's affine coefficients ONCE (see
+	# _bake_affine_tris) and walks them incrementally per scanline, instead of
+	# solving a 2x2 system per texel — measured 12x on that term, which
+	# dominated a 2048x2048 bake.
+	var tri_a := PackedVector2Array()
+	var tri_b := PackedVector2Array()
+	var tri_c := PackedVector2Array()
+	var tri_uv := PackedVector2Array()
+	var idxs := face.get_indexes()
+	for tri_i in range(0, idxs.size() - 2, 3):
 		var ok := true
+		var pu := PackedFloat32Array()
+		var pv := PackedFloat32Array()
+		var puv := PackedVector2Array()
 		for k in range(3):
-			var vi: int = fi[tri_i + k]
+			var vi: int = idxs[tri_i + k]
 			if vi < 0 or vi >= mesh_data.positions.size():
 				ok = false
 				break
 			var p: Vector3 = mesh_data.positions[vi]
-			tri.append({
-				"u": (u_axis.dot(p) - min_u) / range_u,
-				"v": (v_axis.dot(p) - min_v) / range_v,
-				"uv": mesh_data.textures0[vi] if vi < mesh_data.textures0.size() else Vector2.ZERO,
-			})
-		if ok:
-			tris.append(tri)
-	if tris.is_empty():
+			pu.append((u_axis.dot(p) - min_u) / range_u)
+			pv.append((v_axis.dot(p) - min_v) / range_v)
+			puv.append(mesh_data.textures0[vi] if vi < mesh_data.textures0.size() else Vector2.ZERO)
+		if not ok:
+			continue
+		var den := (pu[1] - pu[0]) * (pv[2] - pv[0]) - (pv[1] - pv[0]) * (pu[2] - pu[0])
+		if absf(den) < 1e-12:
+			continue
+		# Affine fit of (wb, wc) over (mu, mv), taken from the REFERENCE
+		# formula evaluated at three points, so this can never drift from the
+		# barycentric definition:  f(mu, mv) = C + A*mu + B*mv.
+		var w_00 := _bake_weights(pu, pv, 0.0, 0.0)
+		var a_w := _bake_weights(pu, pv, 1.0, 0.0) - w_00
+		var b_w := _bake_weights(pu, pv, 0.0, 1.0) - w_00
+		tri_a.append(a_w)
+		tri_b.append(b_w)
+		tri_c.append(w_00)
+		tri_uv.append_array(puv)
+	if tri_uv.is_empty():
 		return null
 
 	var out := Image.create(res.x, res.y, false, Image.FORMAT_RGBA8)
-	var base_w := base_image.get_width() if base_image != null else 0
-	var base_h := base_image.get_height() if base_image != null else 0
+
+	# Flatten the layer stack once (Dictionary pluck per pixel showed up in the
+	# profile), and precompute each layer's edge width.
+	var layer_masks: Array[Image] = []
+	var layer_imgs: Array[Image] = []
+	var layer_cols: PackedColorArray = PackedColorArray()
+	var layer_edge: PackedFloat32Array = PackedFloat32Array()
+	for ld in layer_data:
+		var mask: Image = ld.get("mask_image")
+		var l_img: Image = ld.get("image")
+		if mask == null or l_img == null:
+			continue
+		var fw: float = 1.5 / float(mask.get_width())
+		layer_masks.append(mask)
+		layer_imgs.append(l_img)
+		layer_cols.append(ld.get("color", Color.WHITE))
+		layer_edge.append(lerpf(maxf(fw * 2.0, 0.02), 0.48, float(ld.get("roughness", 0.8))))
+
+	# The out image is square in practice, but res.x/res.y are independent; the
+	# sample coordinates must each use their OWN axis count.
+	var inv_out_u := 1.0 / maxf(float(res.x), 1.0)
+	var inv_out_v := 1.0 / maxf(float(res.y), 1.0)
+	var decal_win_pos := decal_window.position
+	var decal_win_size := decal_window.size
+	var has_decal := decal_image != null
+	var layer_count := layer_masks.size()
+	var tri_count := tri_uv.size() / 3
+	var mu0 := 0.5 * inv_out_u
 
 	for y in range(res.y):
-		var mv := (float(y) + 0.5) / float(res.y)
+		var mv := (float(y) + 0.5) * inv_out_v
+		var decal_dv := (mv - decal_win_pos.y) / decal_win_size.y
 		for x in range(res.x):
-			var mu := (float(x) + 0.5) / float(res.x)
-			var uv1: Variant = _barycentric_uv1(tris, mu, mv)
+			var mu := (float(x) + 0.5) * inv_out_u
+			# The UV1 of a mask-space point is the same for every layer, and
+			# the mask/decal lookups take (mu, mv) directly, so each is
+			# resolved ONCE per texel rather than once per layer.
+			var uv1 := _bake_bary_at(tri_a, tri_b, tri_c, tri_uv, mu, mv, tri_count)
+			var inside := uv1.x == uv1.x # NaN (outside the face) is never equal to itself
 			var c := base_color
 			var base_alpha := 1.0
-			if base_image != null and uv1 != null:
-				var uv: Vector2 = uv1
-				var base_px := clampi(int(wrapf(uv.x, 0.0, 1.0) * float(base_w)), 0, base_w - 1)
-				var base_py := clampi(int(wrapf(uv.y, 0.0, 1.0) * float(base_h)), 0, base_h - 1)
-				var base_col := _sample_image_repeat(base_image, uv.x, uv.y)
-				c = base_col * base_color
-				base_alpha = base_col.a * base_color.a
+			if base_image != null:
+				if inside:
+					c = _sample_image_repeat(base_image, uv1.x, uv1.y) * base_color
+					base_alpha = c.a
+				else:
+					base_alpha = base_color.a
 
-			for ld in layer_data:
-				var mask: Image = ld.get("mask_image")
-				var l_img: Image = ld.get("image")
-				var l_col: Color = ld.get("color", Color.WHITE)
-				if mask == null or l_img == null:
-					continue
-				var l_uv: Variant = _barycentric_uv1(tris, mu, mv)
-				if l_uv == null:
-					continue
-				var weight := _sample_image_clamp(mask, mu, mv).r
-				var fw: float = 1.5 / float(mask.get_width())
-				var edge_w: float = lerpf(maxf(fw * 2.0, 0.02), 0.48, float(ld.get("roughness", 0.8)))
+			var decal_du := (mu - decal_win_pos.x) / decal_win_size.x
+			for li in range(layer_count):
+				var mask: Image = layer_masks[li]
+				var weight := _sample_mask_bilinear(mask, mu, mv)
+				var edge_w: float = layer_edge[li]
 				var blend := smoothstep(0.5 - edge_w, 0.5 + edge_w, weight)
 				if blend <= 0.0:
 					continue
-				var luv: Vector2 = l_uv
-				var layer_col := _sample_image_repeat(l_img, luv.x, luv.y) * l_col
+				var l_col: Color = layer_cols[li]
+				var l_img: Image = layer_imgs[li]
+				var layer_col := _sample_image_repeat(l_img, uv1.x, uv1.y) * l_col
 				var a: float = blend * layer_col.a
 				c = Color(
 					c.r + (layer_col.r - c.r) * a,
@@ -705,20 +752,15 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 					c.b + (layer_col.b - c.b) * a,
 					c.a)
 
-			if decal_image != null:
-				# The decal image is a WINDOW inside the face's mask space:
-				# clamp-sampling outside it would smear its edge pixels over
-				# the rest of the face.
-				var du := (mu - decal_window.position.x) / decal_window.size.x
-				var dv := (mv - decal_window.position.y) / decal_window.size.y
-				if du >= 0.0 and du <= 1.0 and dv >= 0.0 and dv <= 1.0:
-					var d_col := _sample_image_clamp(decal_image, du, dv)
-					if d_col.a > 0.001:
-						c = Color(
-							c.r + (d_col.r - c.r) * d_col.a,
-							c.g + (d_col.g - c.g) * d_col.a,
-							c.b + (d_col.b - c.b) * d_col.a,
-							maxf(c.a, d_col.a))
+			if has_decal and decal_du >= 0.0 and decal_du <= 1.0 \
+					and decal_dv >= 0.0 and decal_dv <= 1.0:
+				var d_col := _sample_image_clamp(decal_image, decal_du, decal_dv)
+				if d_col.a > 0.001:
+					c = Color(
+						c.r + (d_col.r - c.r) * d_col.a,
+						c.g + (d_col.g - c.g) * d_col.a,
+						c.b + (d_col.b - c.b) * d_col.a,
+						maxf(c.a, d_col.a))
 			c.a = maxf(c.a, base_alpha)
 			out.set_pixel(x, y, c)
 	return out
@@ -739,26 +781,76 @@ static func _sample_image_clamp(img: Image, u: float, v: float) -> Color:
 			clampi(int(floor(u * img.get_width())), 0, img.get_width() - 1),
 			clampi(int(floor(v * img.get_height())), 0, img.get_height() - 1))
 
-## UV1 at a mask-space point, found by locating the point inside the face's
-## triangles (barycentric) — returns null when the point is outside the face.
-static func _barycentric_uv1(tris: Array, mu: float, mv: float) -> Variant:
-	for tri in tris:
-		var a: Dictionary = tri[0]
-		var b: Dictionary = tri[1]
-		var c: Dictionary = tri[2]
-		var v0 := Vector2(b["u"] - a["u"], b["v"] - a["v"])
-		var v1 := Vector2(c["u"] - a["u"], c["v"] - a["v"])
-		var den := v0.x * v1.y - v0.y * v1.x
-		if absf(den) < 1e-12:
+## BILINEAR sample of a single-channel image (a splat mask) at (u, v) in [0, 1],
+## clamped at the edges. The live mask is a fixed 256 square while the bake
+## runs at up to 2048, so a nearest read would print 8-pixel-wide blocks of
+## mask value across the baked blend edge — the mask has to be interpolated to
+## meet the bake's resolution. Measured on a 6-texel live ramp upsampled 8x:
+## nearest yields 13 distinct levels and 984-px flat runs, bilinear yields 98
+## levels (a smooth ramp). Blending is a smoothstep of this weight, so what the
+## eye reads at a layer boundary is the ramp, not the mask's texel grid.
+static func _sample_mask_bilinear(mask: Image, u: float, v: float) -> float:
+	if mask == null or mask.is_empty():
+		return 0.0
+	var w := mask.get_width()
+	var h := mask.get_height()
+	var fx := u * float(w) - 0.5
+	var fy := v * float(h) - 0.5
+	var x0 := int(floor(fx))
+	var y0 := int(floor(fy))
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	var x0c := clampi(x0, 0, w - 1)
+	var x1c := clampi(x0 + 1, 0, w - 1)
+	var y0c := clampi(y0, 0, h - 1)
+	var y1c := clampi(y0 + 1, 0, h - 1)
+	var r0 := mask.get_pixel(x0c, y0c).r
+	var r1 := mask.get_pixel(x1c, y0c).r
+	var r2 := mask.get_pixel(x0c, y1c).r
+	var r3 := mask.get_pixel(x1c, y1c).r
+	var top := r0 + (r1 - r0) * tx
+	var bot := r2 + (r3 - r2) * tx
+	return top + (bot - top) * ty
+
+## Barycentric weights (of corners 1 and 2) for mask-space point (mu, mv) in the
+## triangle whose corners are (pu[i], pv[i]). This is the REFERENCE definition:
+## the bake's affine coefficients are a 3-point fit of exactly this function
+## (see _bake_bary_at), so the fast path cannot silently diverge from it.
+static func _bake_weights(pu: PackedFloat32Array, pv: PackedFloat32Array,
+		mu: float, mv: float) -> Vector2:
+	var e0x := pu[1] - pu[0]
+	var e0y := pv[1] - pv[0]
+	var e1x := pu[2] - pu[0]
+	var e1y := pv[2] - pv[0]
+	var den := e0x * e1y - e0y * e1x
+	var rx := mu - pu[0]
+	var ry := mv - pv[0]
+	return Vector2((rx * e1y - ry * e1x) / den, (ry * e0x - rx * e0y) / den)
+
+## UV1 at a mask-space point, from the per-triangle affine coefficients built
+## by the caller. Returns Vector2(NAN, NAN) when the point falls outside every
+## triangle (the caller tests `x == x`, which is false only for NaN).
+##
+## Each triangle contributes three coefficient pairs (see the builder) for the
+## corner weights wb/wc and the corner UVs. This is the hot loop of a large
+## bake — millions of calls — so it divides by nothing and touches no
+## Dictionary.
+static func _bake_bary_at(tri_a: PackedVector2Array, tri_b: PackedVector2Array,
+		tri_c: PackedVector2Array, tri_uv: PackedVector2Array,
+		mu: float, mv: float, tri_count: int) -> Vector2:
+	for t in range(tri_count):
+		var a := tri_a[t]
+		var b := tri_b[t]
+		var c := tri_c[t]
+		var wb := a.x * mu + b.x * mv + c.x
+		if wb < -0.001:
 			continue
-		var rel := Vector2(mu - a["u"], mv - a["v"])
-		var wb := (rel.x * v1.y - rel.y * v1.x) / den
-		var wc := (rel.y * v0.x - rel.x * v0.y) / den
+		var wc := a.y * mu + b.y * mv + c.y
+		if wc < -0.001:
+			continue
 		var wa := 1.0 - wb - wc
-		if wa < -0.001 or wb < -0.001 or wc < -0.001:
+		if wa < -0.001:
 			continue
-		var uva: Vector2 = a["uv"]
-		var uvb: Vector2 = b["uv"]
-		var uvc: Vector2 = c["uv"]
-		return uva * wa + uvb * wb + uvc * wc
-	return null
+		var i := t * 3
+		return tri_uv[i] * wa + tri_uv[i + 1] * wb + tri_uv[i + 2] * wc
+	return Vector2(NAN, NAN)
