@@ -17,7 +17,7 @@ source — and are intentional.
 **Everything about how this plugin actually works lives in
 [.pi/ORIENTATION.md](.pi/ORIENTATION.md)** and its topic files under
 `.pi/orientation/` (architecture, selection/gizmo, mesh ops, testing,
-footguns, retro). Read the topic file for your area BEFORE touching that
+footguns, retro, paint). Read the topic file for your area BEFORE touching that
 area — agents repeatedly re-implemented behavior that was already there and
 broke it; those docs exist so you are not the next one.
 
@@ -75,7 +75,8 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 - `.pi/ORIENTATION.md` — **worker orientation + index into
   `.pi/orientation/`** (the implementation docs: architecture,
-  selection/gizmo, mesh ops, testing, footguns, retro). Start here.
+  selection/gizmo, mesh ops, testing, footguns, retro, paint,
+  paint-tiling-scope). Start here.
 - `ROADMAP.md` — phased feature-gap implementation plan (ProBuilder &
   UniBuilder parity sessions)
 - `docs/DOCUMENTATION-ROADMAP.md` — the plan for the end-user documentation
@@ -143,6 +144,11 @@ does **not** work — no compositor behind it, so the window is invisible.
 - Full historical development log: [CHANGELOG.md](CHANGELOG.md).
 
 ## Process rules (not duplicated in the orientation)
+
+- **NEVER push.** Agents commit locally and stop; `git push`, force-pushes,
+  remote branch/tag edits and any remote-mutating `gh` call are the human's
+  alone. They verify correctness before anything leaves the machine. Details:
+  rule 5 in `.pi/ORIENTATION.md`.
 
 - **The README.md is a purely HUMAN-FACING doc**: do not read it for context
   and do not factor it into how you work on the project. The only exception

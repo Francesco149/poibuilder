@@ -37,18 +37,24 @@ below the smoothness of big faces.
 many separate dabs; where possible, paint detail on a larger face and let
 the UV tiling carry it.
 
-**Status:** three measured rounds on the reference iGPU (v0.9.169 to
-v0.9.173, driven by `./run_paint_perf.sh` and the interactive
-`./trace_paint.sh`). What the traces found, in order: the per-dab disc
-stamping re-walked every mask pixel up to ten times (fixed: the brush
-sweeps the cursor path as one capsule); picks and cap re-walks were the
-next costs (fixed: allocation-free picking; near-cap trim on continuing
-sweeps); one input event painted the whole accumulated path in a single
-frame (fixed: sweeps queue and drain under a per-frame budget); and the
-underlying scaler — reported by the painter themself — is face size:
-per-sweep cost is mask texels, and a 3 m face carried a 1024x1024 mask.
-Splat masks now cap at 512x512 (a 3 m face paints at 171 texels/m, 4x
-less work; decal stamps keep their 256 texels/m windows, and masks in
-existing scenes never shrink). The note stays until the reference laptop
-re-runs the interactive trace, but the queue bounds any remaining hitch
-to roughly one sweep.
+**Status:** the root cause was found and removed in v0.9.180, and it was not
+"small faces" but the density the face carried: per-dab cost is the brush's
+footprint in MASK PIXELS = `2 * radius * mask_px / face_size_m`, and a mask
+sized at 256 texels/m meant a 0.5 m face carried 512 texels/m (measured ~20 ms
+per dab) while a 3 m face carried 171. The live splat mask is now sized from the
+face with the density clamped into 128..256 px, so a 0.5 m face paints on
+128x128 — **4.04x faster than before** — and a 2-8 m face 3.4-4.1x faster,
+with nothing slower. The mask upload also has a hard 64 KB ceiling. Large faces
+do not lose quality from it: the EXPORT bake composites at the face's own
+256 texels/m up to 2048, upsampling the live mask bilinearly so blend edges stay
+smooth.
+
+The earlier rounds are still in the tree and still helped (the brush sweeps the
+cursor path as one capsule instead of stamping ~25 overlapping discs; picking
+is allocation-free; sweeps queue and drain under a per-frame budget). Note that
+the scanline "row-skip" bookkeeping those rounds added was measured at **3-7%**
+in v0.9.180 — it is not what made large painting fast, and the changelog no
+longer says it was. The note stays until the reference laptop re-runs the
+interactive trace: the last trace's verdict was that most remaining hitches
+were render/editor-side (the iGPU viewport redraw), which no paint-path change
+can shrink.

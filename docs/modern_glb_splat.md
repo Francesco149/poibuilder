@@ -9,13 +9,18 @@ routes (Export dialog → **Modern paint**):
 | **Bake into textures** (default) | Every painted face is composited into **its own texture**, its UV1 is rewritten into mask space, and the material is a plain `StandardMaterial3D`. | Any consumer, no custom code. What you see is what ships. |
 | **Include splat data** | Geometry keeps its mask coordinates (as `TEXCOORD_2`), each painted face's material carries a `poi_splat` record in its glTF `extras`, and the masks / layer textures / decal channel are written as PNGs next to the `.glb` under `<mapname>.splat/`. | Engines that run the blend themselves (dynamic re-tinting, runtime mask edits), or a round trip back into Godot (see below). |
 
-Both routes keep **uniform texel density**: the mask (and therefore the baked
-texture) is sized from the face's world size at 256 texels/m, clamped to
-256..2048 px. A large floor is never blurrier than a small cube, and the export
-matches what the editor showed.
+Both routes keep **uniform texel density**: the baked texture is sized from the
+face's world size at 256 texels/m, clamped to 256..2048 px. A large floor is
+never blurrier than a small cube.
 
-Only *painted* faces pay anything. An unpainted face keeps its base material
-and its authored UVs in both modes.
+The *editor's* live mask is a different thing, deliberately: it is sized from
+the face with its density clamped into 128..256 px, because its resolution is
+what a paint dab pays for on every mouse motion (per-dab cost is the brush's
+footprint in mask pixels). The bake is where density comes back — it runs once
+per export, and it upsamples the live mask (bilinearly, so blend edges stay
+smooth) into the full-resolution composite. Only *painted* faces pay anything,
+and an unpainted face keeps its base material and its authored UVs in both
+modes.
 
 ## BAKE mode
 

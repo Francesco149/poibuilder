@@ -3,6 +3,91 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.180 — the mask resolution split: paint cost stops scaling with face size, and the bake stops being low-res
+
+Correctness first: this round fixes the two regressions the v0.9.169-v0.9.174
+stroke work left behind, then separates the two resolutions that work had
+conflated.
+
+### Fixed: the decal layer jumped to a stretched version on a resized face
+Painting a face whose geometry had grown expanded `splat_bounds`, which
+repositions every splat MASK image — but the DECAL window's
+`stamp_layer_uv_offset`/`uv_scale` uniforms also live in that `[0,1]` space and
+were left describing the old rect. The same physical point then resolved to a
+different decal uv (measured: 0.500 → -0.780, i.e. outside the window), so
+existing decals rendered stretched and then vanished. Fixed by remapping both
+uniforms through the same old→new normalized transform (the piece
+`doomed-tiled-attempt`'s a5bf189 got right). Pinned by
+`test_decal_stays_anchored_when_bounds_expand_on_a_resized_face`, which uses an
+OFF-CENTRE stamp — the centred case hides the drift.
+
+### Fixed: a large face baked at 8.5 texels/m
+The bake sized itself from the LIVE mask (capped at 512) and the modern export
+then clamped it to `max_texture_size * 4`, so a 60 m floor composited at
+**512x512 = 8.5 texels/m = 11.7 cm per texel**, and the cap could only lower
+it. The bake now follows the BAKE policy — 256 texels/m of the face's own size,
+ceiling 2048 — reaching 34 texels/m on that floor (the upstream figure). The
+export's `max_texture_size` may only cap it down. The live mask is
+BILINEARLY upsampled into the bake (`_sample_mask_bilinear`), because a 256
+mask point-sampled across a 2048 face printed 8-px mask blocks along every
+blend edge (measured: 13 distinct levels nearest vs 98+ bilinear on the same
+ramp).
+
+### Changed: the live splat mask is density-clamped to [128, 256]
+Per-dab cost is the brush's footprint in mask pixels =
+`2 * radius * mask_px / face_size_m`. Sizing the mask at 256 texels/m (clamped
+[256, 512]) therefore made the same brush cost MORE the denser the face: a
+0.5 m face carried 512 texels/m and took ~20.5 ms/dab, a 3 m face 171 texels/m.
+That is the reported "small faces are laggy" — really "densely-sampled faces
+are laggy", with face size setting the density.
+
+Three policies were measured on the real sweep before choosing:
+
+| face | master [256,512] | uniform 256 square | **density [128,256]** |
+|---|---|---|---|
+| 0.5 m | 20.45 ms | 19.0 ms | **5.06 ms** |
+| 2 m | 18.77 ms | 4.6 ms | **4.59 ms** |
+| 3 m | 8.94 ms | 2.2 ms | **2.20 ms** |
+| 8 m | 1.61 ms | 0.5 ms | **0.46 ms** |
+| 60 m | 0.14 ms | 0.09 ms | 0.09 ms |
+
+A UNIFORM square was the first implementation and it was wrong: it left the
+worst case untouched (a 0.5 m face still gets 512 texels/m on a 256 mask, so it
+stays at ~20 ms) and it HALVED live fidelity on large faces (a 60 m floor drops
+from 8.5 to 4.3 texels/m). Sizing by density and clamping the FLOOR down to 128
+fixes both: the 0.5 m face paints on 128x128 (4x fewer pixels, 4.04x faster)
+and a large face keeps the full 256 ceiling. Nothing regresses.
+
+The ceiling bounds the per-dab walk and the per-frame upload (256x256 R8 =
+64 KB); the floor stops a small, dense face being over-sampled into lag.
+`live_mask_resolution_for` is the only thing that sizes a live mask, and it must
+be used at layer CREATION too — a mask can only ever grow, so creating layers at
+the ceiling (the old `DEFAULT_MASK_RES`) made the floor unreachable and the
+whole win invisible.
+
+### Corrected: the row-skip scanline machinery buys 3-7%, not "3-4x"
+`row_max` was measured against the same code with it disabled: 175 ms vs 164 ms
+on a 3 m face at 512, 678 vs 640 at 1024, and 3-7% across the perf bench's
+cases. It stays (it is free and harmless) but its comment no longer claims the
+speedup, and `test_row_skip_actually_reduces_work` — which asserted a ≥1.5x
+ratio — is replaced by `test_paint_cost_does_not_scale_with_face_size`, which
+defends the invariant that actually matters.
+
+### Improved: the per-face bake is ~2.8x faster
+The loop solved a 2x2 barycentric system per texel through Dictionaries (3.2
+us/px). A face is planar, so the weights are affine per triangle: the bake now
+fits each triangle's coefficients once (from the reference formula evaluated at
+three points, so the fast path cannot drift from the definition) and indexes
+the layers through flattened arrays. A 2048x2048 face went from ~13.5 s to
+~10 s with the coefficient change alone; the flat/mask sampling both still walk
+in GDScript, so a 60 m floor's bake is seconds, not milliseconds — it is the
+remaining hot spot if the export ever needs to be faster.
+
+Also: agents are now explicitly forbidden from pushing (rule 5 in
+`.pi/ORIENTATION.md`), and the tile-based paint rewrite is re-scoped in
+`.pi/orientation/paint-tiling-scope.md` with the abandoned attempt's measured
+failure mode.
+
 ## v0.9.174 — sweeps split into budget-sized pieces: drain frames stop scaling with the stroke
 
 The fourth trace: hitch frames down to a 74 ms maximum (from 228) and

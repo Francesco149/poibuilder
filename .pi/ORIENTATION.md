@@ -18,6 +18,8 @@ broke it. Do not be the next one.
 | extrude/inset/bevel/bridge/weld/any mesh op | `orientation/mesh_ops.md` |
 | tests, or claiming anything is done | `orientation/testing.md` |
 | the retro pipeline, PSP, exporters | `orientation/retro.md` |
+| painting, splat masks, the bake resolution | `orientation/paint.md` |
+| the tile-based paint idea (proposing a rewrite) | `orientation/paint-tiling-scope.md` |
 | anything, before you invent a workaround | `orientation/footguns.md` |
 
 ## Project Layout
@@ -97,12 +99,21 @@ broke it. Do not be the next one.
    `Co-authored-by: <provider-slug>/<model-slug> <<provider-slug>+<model-slug>@users.noreply.github.com>`
    — derive the slugs from YOUR OWN model id; never reuse another model's
    trailer.
-5. **Read before you write**: this file, the topic docs for your area, and
+5. **NEVER push. The human pushes.** Agents commit locally and stop there:
+   no `git push`, no `git push --force`, no `gh`/API calls that update a
+   remote, no creating or deleting remote branches or tags. The human
+   verifies correctness before anything leaves the machine, and a pushed
+   commit cannot be un-seen by whoever already pulled it. Work is delivered
+   as local commits on the current branch; pushing is entirely the human's
+   call and theirs alone. (This held through the v0.9.18x paint round — the
+   optimizations were abandoned *after* being committed locally, which is
+   only cheap because nothing was ever pushed.)
+6. **Read before you write**: this file, the topic docs for your area, and
    `CLAUDE.md`. If a task says "X is broken/missing", FIRST grep the code and
    `CHANGELOG.md` for X — the behavior usually already exists and was
    regressed, not never-written. Re-implementing it in parallel is the
    single most expensive failure mode this project has had.
-6. **Verify engine APIs before using them.** The `../godot` checkout is
+7. **Verify engine APIs before using them.** The `../godot` checkout is
    4.8-dev but the installed engine is 4.7.2: check
    `../godot/doc/classes/*.xml` and (for editor internals) the C++ source
    itself. War stories: `EditorSettings.save()` does not exist;
