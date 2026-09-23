@@ -590,7 +590,7 @@ func _apply_paint_stroke_body() -> void:
 			modified = PBSplat.paint_decal_dab(data, local_hit, local_normal(target_mesh),
 					stamp_rotation, brush_radius / dens, brush_softness, brush_opacity,
 					erase_mode, decal_img, brush_color,
-					PBSplat.DECAL_TEXELS_PER_M * dens) > 0
+					PBSplat.DECAL_TEXELS_PER_M * dens, target_mesh.global_transform) > 0
 	else:
 		var splat_mat := _ensure_face_splat_material(target_mesh, face)
 		if splat_mat == null:
@@ -834,7 +834,8 @@ func apply_stamp() -> void:
 	# rotated mesh.
 	var dens := decal_world_density(target_mesh)
 	var painted := PBSplat.paste_decal(data, local_hit, local_normal(target_mesh), stamp_rotation,
-			stamp_scale / dens, stamp_opacity, img, PBSplat.DECAL_TEXELS_PER_M * dens)
+			stamp_scale / dens, stamp_opacity, img, PBSplat.DECAL_TEXELS_PER_M * dens,
+			target_mesh.global_transform)
 	if painted <= 0:
 		return
 

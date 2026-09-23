@@ -3,6 +3,52 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.181 — the stamp lands where the preview shows it on a rotated mesh
+
+### Fixed: stamps/decal dabs were rotated by the node's own yaw
+
+Reported: stamping the top face of the scratch map's cube placed the image
+rotated **90° against the preview quad**. The scratch cube is yawed 90° about Y
+(`Shape_Cube`'s transform), which is the whole story.
+
+`PBSplat.get_stamp_basis()` answers "which way is up, as the viewer sees it" —
+a WORLD question. Its floor case returns world `right = +X`, `up = -Z`; its wall
+case projects world +Y onto the face. But `paste_decal` / `paint_decal_dab`
+write into the mesh's **local** data, and both used those world constants
+directly as local axes. The preview quad, meanwhile, is a scene node placed in
+world space against the same world frame — so it was right, and the paste was
+rotated by whatever the node's own basis contributes. On an axis-aligned node
+the two coincide (basis = identity), which is why this survived: every builder
+and every test pasted onto unrotated meshes.
+
+Measured on the reported scene (yaw 90°): preview +x vs the direction the pasted
+image's +x actually landed = **90.0°** off; at yaw −45° it was 45.0° off. The
+existing `test_stamp_on_a_rotated_mesh_keeps_the_source_aspect` could not catch
+it — a rotation preserves aspect ratio, and it measured exactly that.
+
+Fixed by mapping the canonical basis through the node's own transform:
+`_decal_basis(normal, rotation_deg, node_xform)` now builds the frame in world
+space (where "upright" is defined) and pulls it back through
+`node_xform.basis.inverse()` into the local space the writers work in. The
+`node_xform` parameter defaults to the identity, so unrotated callers are
+bit-for-bit unchanged; `paste_decal` and `paint_decal_dab` take it, and
+`PBPaintController.apply_stamp` / the decal brush pass
+`target_mesh.global_transform`.
+
+`migrate_legacy_stamps` had the same conflation from the other side: it derived
+a rotation by comparing the legacy quad's LOCAL right axis against the world
+constants, so every migrated decal was off by the node's yaw too. It now
+compares in world space and passes the transform through.
+
+### Verification
+
+- `test_stamp_orientation_on_a_yawed_mesh_matches_the_preview` (new): measures
+  the actual ORIENTATION — the preview quad's +x in world space against the
+  direction the painted image's +x landed on, recovered from a red-banded source
+  — at yaw 0°, 90° and −45°. Fails pre-fix at 90.0° / 45.0°, passes at 0.0°.
+- `./run_tests.sh`: 1189 tests, 21806 asserts, all passing (74 suites).
+- `./run_gui_tests.sh`: failures=0.
+
 ## v0.9.180 — the mask resolution split: paint cost stops scaling with face size, and the bake stops being low-res
 
 Correctness first: this round fixes the two regressions the v0.9.169-v0.9.174

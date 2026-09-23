@@ -751,6 +751,92 @@ func test_stamp_on_a_rotated_mesh_keeps_the_source_aspect() -> void:
 	assert_almost_eq(ratio, 4.0, 0.3,
 			"A 4:1 source must stay 4:1 on a rotated mesh (got %.2f)" % ratio)
 
+## A stamp's upright reference is a WORLD notion — "as the viewer sees it" — and
+## `get_stamp_basis` returns a world frame. The decal write happens in LOCAL mesh
+## coordinates, so a rotated node needs that frame mapped through its own basis;
+## using the world constants as local axes rotated the paste by the node's own
+## yaw. The aspect check above cannot see this (a rotation preserves aspect), so
+## this measures the actual ORIENTATION: the preview quad's +x in world space
+## against the direction the pasted image's +x really landed on, recovered from
+## the painted pixels.
+##
+## The source is white with a red LEFT band, so image +x is "away from the red".
+func test_stamp_orientation_on_a_yawed_mesh_matches_the_preview() -> void:
+	# 90 degrees is the scratch map's Shape_Cube, where this was reported.
+	for yaw_deg in [0.0, 90.0, -45.0]:
+		var host := Node3D.new()
+		add_child_autofree(host)
+		var mesh := PBMesh.create_cube(2.0)
+		host.add_child(mesh)
+		mesh.transform = Transform3D(Basis(Vector3.UP, deg_to_rad(yaw_deg)), Vector3(-1.5, 1.5, -0.6))
+		var data: PBMeshData = mesh.pb_mesh_data
+
+		var ctrl := PBPaintController.new()
+		ctrl.setup_previews(host)
+		ctrl.set_mode(PBPaintController.Mode.STAMP)
+		var src := Image.create(64, 16, false, Image.FORMAT_RGBA8)
+		for y in range(16):
+			for x in range(64):
+				src.set_pixel(x, y, Color(1, 0, 0) if x < 8 else Color(1, 1, 1))
+		ctrl.stamp_texture = ImageTexture.create_from_image(src)
+		ctrl.stamp_scale = 1.5
+		ctrl.stamp_rotation = 0.0
+
+		var face: PBFace = data.faces[4]
+		var local_n := PBMath.normal_from_positions(data.positions, face.get_indexes()).normalized()
+		var world_hit: Vector3 = mesh.global_transform * _face_center_local(data, face)
+		var world_normal: Vector3 = (mesh.global_transform.basis * local_n).normalized()
+		ctrl.update_cursor(world_hit, world_normal, mesh, 4)
+		ctrl.apply_stamp()
+
+		var mat := data.get_face_material(face) as ShaderMaterial
+		assert_true(PBSplat.has_decal_layer(mat),
+				"Fixture: the stamp must land at yaw %.0f" % yaw_deg)
+		if not PBSplat.has_decal_layer(mat):
+			return
+		var preview_x: Vector3 = ctrl.stamp_mesh_instance.global_transform.basis.x.normalized()
+
+		# Where image +x actually landed, recovered from the painted pixels: the
+		# centroid of the red band sits on the image's -x side of the centroid of
+		# everything painted, so image +x points away from it.
+		var img := PBSplat.get_decal_layer_image(mat)
+		var bounds := PBSplat.get_face_planar_bounds(data, face)
+		var win := PBSplat.get_decal_window(mat)
+		var w := img.get_width()
+		var h := img.get_height()
+		var b := img.get_data()
+		var all_c := Vector2.ZERO
+		var all_n := 0
+		var red_c := Vector2.ZERO
+		var red_n := 0
+		for y in range(h):
+			for x in range(w):
+				var i := (y * w + x) * 4
+				if b[i + 3] <= 25:
+					continue
+				all_c += Vector2(x, y)
+				all_n += 1
+				if b[i] > 200 and b[i + 1] < 80:
+					red_c += Vector2(x, y)
+					red_n += 1
+		assert_gt(red_n, 0, "Fixture: the red band must be painted at yaw %.0f" % yaw_deg)
+		if red_n == 0 or all_n == 0:
+			return
+		all_c /= float(all_n)
+		red_c /= float(red_n)
+		# Image px -> LOCAL metres through the face's own planar axes, then to
+		# world through the node (the inverse of what the writer did).
+		var du: float = win.size.x * float(bounds["range_u"]) / float(w)
+		var dv: float = win.size.y * float(bounds["range_v"]) / float(h)
+		var to_red_local: Vector3 = (red_c.x - all_c.x) * (bounds["u"] as Vector3) * du \
+				+ (red_c.y - all_c.y) * (bounds["v"] as Vector3) * dv
+		var image_x_world: Vector3 = (mesh.global_transform.basis * to_red_local).normalized()
+
+		var err := rad_to_deg(acos(clampf(preview_x.dot(-image_x_world), -1.0, 1.0)))
+		assert_almost_eq(err, 0.0, 3.0,
+				"At yaw %.0f the pasted image must point where the preview shows it (off by %.1f deg)"
+				% [yaw_deg, err])
+
 ## A stamp whose axes do not line up with the face's — a rotated stamp, or a
 ## face whose planar basis differs (a tilted ramp) — used to be sized by its
 ## UNROTATED extents, so the content was clipped inside the sprite and read as a

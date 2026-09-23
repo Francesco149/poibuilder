@@ -113,6 +113,32 @@ other face wearing it (`ensure_face_owned_material` exists to prevent that).
 with the decal pixels — a clone that drops it renders the content stretched
 over the whole face.
 
+## Invariant 3 — a decal's upright frame is WORLD-referenced, so the write needs the node transform
+
+`PBSplat.get_stamp_basis()` answers a WORLD question: which way is "up" as the
+viewer sees it. The preview quad is a scene node in world space, so it wears
+that frame directly and is right by construction.
+
+The decal WRITERS (`paste_decal`, `paint_decal_dab`) work in the mesh's LOCAL
+data. Feeding them the world basis constants as if they were local axes rotates
+the paste by whatever the node's own basis contributes — a node yawed 90° got
+its stamps rotated 90° against the preview (measured; the scratch map's
+`Shape_Cube`). It hides on unrotated meshes, where the basis is the identity,
+which is why every builder and most tests missed it.
+
+`_decal_basis(normal, rotation_deg, node_xform)` is the single place that
+resolves this: build the frame in world space, pull it back through
+`node_xform.basis.inverse()`. The parameter defaults to
+`Transform3D.IDENTITY`, so unrotated callers are unchanged — but **any new
+write path must pass the mesh's `global_transform`**, and any new caller that
+derives a rotation to feed the writers (see `migrate_legacy_stamps`) must do its
+angle comparison in world space too, against the same frame.
+
+When you touch this: a test that measures a stamp's ASPECT cannot see this bug
+(a rotation preserves aspect). Measure orientation — where image +x landed
+relative to the preview quad's +x — as
+`test_stamp_orientation_on_a_yawed_mesh_matches_the_preview` does.
+
 ## The stroke path (where perf changes belong)
 
 `begin_stroke` -> `apply_paint_stroke`/`apply_paint_stroke_splat` ->

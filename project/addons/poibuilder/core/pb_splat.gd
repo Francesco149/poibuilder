@@ -1825,16 +1825,25 @@ static func sweep_piece_length(radius: float, mesh_data: PBMeshData, face: PBFac
 ## footprint can reach receives its own part of the paste, so a stamp may cross
 ## a face edge and continue on the neighbour; faces are given their own splat
 ## material first (see ensure_face_owned_material). `opacity` scales the
-## source alpha. Returns the number of faces painted.
+## source alpha.
+##
+## `node_xform` is the mesh's local->world transform. A decal's upright
+## reference is a WORLD notion ("as the viewer sees it"), and the canonical
+## stamp basis is a world frame, so a write into LOCAL mesh data has to know
+## how the node is turned — see `_decal_basis`. Pass the identity for a mesh
+## whose node transform is the identity; a rotated node pasted into without it
+## lands its content rotated by the node's own yaw (measured: 90 degrees on the
+## scratch map's yawed cube). Returns the number of faces painted.
 static func paste_decal(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
 		rotation_deg: float, scale: float, opacity: float, image: Image,
-		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
+		texels_per_m: float = DECAL_TEXELS_PER_M,
+		node_xform: Transform3D = Transform3D.IDENTITY) -> int:
 	if mesh_data == null or image == null or scale <= 0.0:
 		return 0
 	var src := _decal_source(image)
 	if src.is_empty():
 		return 0
-	var basis := _decal_basis(normal, rotation_deg)
+	var basis := _decal_basis(normal, rotation_deg, node_xform)
 	var ext := _decal_extents(src, scale)
 	# The footprint's circumscribed radius: the prefilter and the pixel window
 	# only need an outer bound, the sampling below uses the real extents.
@@ -1856,24 +1865,28 @@ static func paste_decal(mesh_data: PBMeshData, center_local: Vector3, normal: Ve
 ## layer's alpha out instead of compositing new pixels in, which is how parts
 ## of a stamp get removed again. With `image` = null the dab paints a solid
 ## `color` (the basic brush); pass an image to dab the palette texture instead.
-## Returns the number of faces touched.
+## `node_xform` carries the mesh's local->world transform for the same reason
+## `paste_decal` takes it (see `_decal_basis`). Returns the number of faces
+## touched.
 static func paint_decal_dab(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
 		rotation_deg: float, radius: float, softness: float, opacity: float,
 		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
-		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
+		texels_per_m: float = DECAL_TEXELS_PER_M,
+		node_xform: Transform3D = Transform3D.IDENTITY) -> int:
 	if not PBPaintProfile.hooks():
 		return _paint_decal_dab_walk(mesh_data, center_local, normal, rotation_deg, radius,
-				softness, opacity, erase, image, color, texels_per_m)
+				softness, opacity, erase, image, color, texels_per_m, node_xform)
 	var t0 := Time.get_ticks_usec()
 	var res := _paint_decal_dab_walk(mesh_data, center_local, normal, rotation_deg, radius,
-			softness, opacity, erase, image, color, texels_per_m)
+			softness, opacity, erase, image, color, texels_per_m, node_xform)
 	PBPaintProfile.add(&"decal_dab", Time.get_ticks_usec() - t0)
 	return res
 
 static func _paint_decal_dab_walk(mesh_data: PBMeshData, center_local: Vector3, normal: Vector3,
 		rotation_deg: float, radius: float, softness: float, opacity: float,
 		erase: bool, image: Image, color: Color = Color(0, 0, 0, 0),
-		texels_per_m: float = DECAL_TEXELS_PER_M) -> int:
+		texels_per_m: float = DECAL_TEXELS_PER_M,
+		node_xform: Transform3D = Transform3D.IDENTITY) -> int:
 	if mesh_data == null or radius <= 0.0:
 		return 0
 	if image == null and not erase and color.a <= 0.0:
@@ -1881,7 +1894,7 @@ static func _paint_decal_dab_walk(mesh_data: PBMeshData, center_local: Vector3, 
 	var src := _decal_source(image) if image != null else _decal_solid_source(color)
 	if src.is_empty():
 		return 0
-	var basis := _decal_basis(normal, rotation_deg)
+	var basis := _decal_basis(normal, rotation_deg, node_xform)
 	var ext := _decal_extents(src, radius * 2.0)
 	var circum: float = 0.5 * sqrt(ext.x * ext.x + ext.y * ext.y)
 	var targets := _decal_targets(mesh_data, center_local, basis["right"], basis["up"],
@@ -1918,16 +1931,42 @@ static func _decal_extents(src: Dictionary, width_m: float) -> Vector2:
 	return Vector2(width_m, width_m * (h / w))
 
 ## In-plane orthonormal basis for a decal write: the canonical stamp basis
-## (`get_stamp_basis`) rotated by `rotation_deg` around the surface normal.
-static func _decal_basis(normal: Vector3, rotation_deg: float) -> Dictionary:
-	var sbasis := get_stamp_basis(normal)
+## (`get_stamp_basis`) rotated by `rotation_deg` around the surface normal,
+## expressed in the MESH's local space.
+##
+## The canonical basis is a WORLD frame — its `up` is world +Y on a wall and its
+## `right` is world +X on a floor (that is what "upright, as the viewer sees it"
+## means). The decal write happens in local coordinates, so the frame has to be
+## mapped through the node's own basis: using the world-aligned constants
+## directly as local axes silently rotated the paste by the node's own yaw.
+## Measured on a node yawed 90 degrees (the scratch map's Shape_Cube): the
+## preview quad — which is placed in WORLD space and was always right — and the
+## pasted pixels disagreed by exactly 90 degrees. `node_xform` is the mesh's
+## local->world transform; the identity keeps the unrotated behaviour unchanged.
+static func _decal_basis(normal: Vector3, rotation_deg: float,
+		node_xform: Transform3D) -> Dictionary:
+	var local_normal := normal.normalized() if normal.length_squared() > 0.000001 else Vector3.UP
+	var world_normal := node_xform.basis * local_normal
+	if world_normal.length_squared() < 0.000001:
+		world_normal = local_normal
+
+	var sbasis := get_stamp_basis(world_normal)
 	var rad := deg_to_rad(rotation_deg)
 	var right: Vector3 = sbasis["right"]
 	var up: Vector3 = sbasis["up"]
+	var rot_right := cos(rad) * right + sin(rad) * up
+	var rot_up := -sin(rad) * right + cos(rad) * up
+
+	# The world frame -> the mesh's local frame. A non-uniform or singular node
+	# scale would skew the axes; re-normalizing keeps them orthonormal in the
+	# face's plane, which is all the writers need.
+	var inv := node_xform.basis.inverse()
+	var local_right := inv * rot_right
+	var local_up := inv * rot_up
 	return {
-		"normal": sbasis["normal"],
-		"right": cos(rad) * right + sin(rad) * up,
-		"up": -sin(rad) * right + cos(rad) * up,
+		"normal": local_normal,
+		"right": local_right.normalized() if local_right.length_squared() > 0.000001 else right,
+		"up": local_up.normalized() if local_up.length_squared() > 0.000001 else up,
 	}
 
 ## Faces of `mesh_data` whose planar rect the oriented footprint can touch,
@@ -2784,21 +2823,30 @@ static func migrate_legacy_stamps(mesh: Node) -> int:
 		var normal: Vector3 = xf.basis.z.normalized()
 		if normal.length_squared() < 0.0001:
 			normal = Vector3.UP
+		var node_xform := Transform3D.IDENTITY
+		if mesh is Node3D and (mesh as Node3D).is_inside_tree():
+			node_xform = (mesh as Node3D).global_transform
 		# The legacy node's basis is the FULL stamp extent (right, up, normal),
 		# so the paste scale is the edge length and the rotation is baked into
-		# the basis — paste with zero rotation after re-deriving the axes.
+		# the basis — paste with the rotation that re-derives those axes.
 		var scale_x: float = xf.basis.x.length()
 		var scale_y: float = xf.basis.y.length()
-		var basis := get_stamp_basis(normal)
+		# The rotation is measured against the SAME frame the paste uses: the
+		# canonical stamp basis is world-referenced, so the quad's own right
+		# axis has to be compared in world space too. Comparing a LOCAL x_dir
+		# against the world constants rotated every migrated decal by the
+		# node's own yaw (see _decal_basis).
+		var basis := get_stamp_basis(node_xform.basis * normal)
 		var rot_right: Vector3 = basis["right"]
 		var rot_up: Vector3 = basis["up"]
 		var stamp_scale: float = maxf(scale_x, scale_y)
 		var rotation := 0.0
 		if scale_x > 0.0001:
-			var x_dir := xf.basis.x / scale_x
-			rotation = rad_to_deg(atan2(x_dir.dot(rot_up), x_dir.dot(rot_right)))
+			var x_dir_world: Vector3 = (node_xform.basis * (xf.basis.x / scale_x)).normalized()
+			rotation = rad_to_deg(atan2(x_dir_world.dot(rot_up), x_dir_world.dot(rot_right)))
 		if paste_decal(data, xf.origin, normal, rotation, stamp_scale,
-				float(mi.get_meta("stamp_opacity", 1.0)), img) > 0:
+				float(mi.get_meta("stamp_opacity", 1.0)), img,
+				DECAL_TEXELS_PER_M, node_xform) > 0:
 			migrated += 1
 
 	container.queue_free()
