@@ -26,7 +26,7 @@
 class_name PBTrimWallsTool
 extends RefCounted
 
-enum State { INACTIVE, ARMED }
+enum PBState { INACTIVE, ARMED }
 
 ## Endpoints closer than this are the same joint (metres).
 const JOINT_TOLERANCE := 0.05
@@ -46,7 +46,7 @@ const CHAIN_REACH := 0.6
 ## keeps its short runs - that IS the placement there.
 const MIN_TOP_RUN := 0.5
 
-var state: State = State.INACTIVE
+var state: PBState = PBState.INACTIVE
 
 ## The chosen walls, in click order: {"mesh": PBMesh, "face": int}.
 var walls: Array[Dictionary] = []
@@ -71,17 +71,17 @@ var last_paths: Array[Dictionary] = []
 # ── Session ──────────────────────────────────────────────────────────────────
 
 func arm() -> void:
-	state = State.ARMED
+	state = PBState.ARMED
 	walls.clear()
 	last_paths.clear()
 
 func disarm() -> void:
-	state = State.INACTIVE
+	state = PBState.INACTIVE
 	walls.clear()
 	last_paths.clear()
 
 func is_active() -> bool:
-	return state != State.INACTIVE
+	return state != PBState.INACTIVE
 
 ## Adds the wall face, or drops it when already chosen. Returns true when the
 ## face is chosen after the call. `room_normal` is the camera-facing normal

@@ -35,6 +35,8 @@ func _create_icon_btn(name_id: String, icon_name: String, fallback_text: String,
 	btn.toggle_mode = toggle
 	btn.tooltip_text = tip
 	btn.flat = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	btn.custom_minimum_size = Vector2(24, 24)
 	return btn
 # ==============================================================================
@@ -103,7 +105,6 @@ var _spin_texel: SpinBox
 var _btn_texel_get: Button
 var _btn_texel_set: Button
 var _btn_export_png: Button
-
 ## Optional UndoRedoManager reference for headless tests
 var undo_redo: Object = null
 
@@ -129,7 +130,7 @@ func _init() -> void:
 	name = "PBUvEditorPanel"
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
-	custom_minimum_size = Vector2(300, 200)
+	custom_minimum_size = Vector2(300, 80)
 	_build_ui()
 
 func _ready() -> void:
@@ -155,12 +156,23 @@ func _build_ui() -> void:
 	_toolbar.add_theme_constant_override("separation", 6)
 	add_child(_toolbar)
 
-	# Tools (Move / Rotate / Scale)
+	# Brand text occupies the dock-grabber strip so tool buttons receive clicks.
+	var brand := Label.new()
+	brand.name = "BrandLabel"
+	brand.text = "PoiBuilder UV Editor"
+	brand.tooltip_text = "PoiBuilder UV Editor"
+	brand.mouse_filter = Control.MOUSE_FILTER_STOP
+	brand.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	brand.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+	_toolbar.add_child(brand)
+
+	# Tools (Move / Rotate / Scale) — original left-side order
 	_tool_group = ButtonGroup.new()
+	_tool_group.allow_unpress = false
 	_btn_tool_move = _create_tool_btn("Move", "icon_move.svg", PBUvGizmo.ToolMode.MOVE, "Move tool (W)")
-	_btn_tool_move.button_pressed = true
 	_btn_tool_rot = _create_tool_btn("Rotate", "icon_rotate.svg", PBUvGizmo.ToolMode.ROTATE, "Rotate tool (E)")
 	_btn_tool_scale = _create_tool_btn("Scale", "icon_scale.svg", PBUvGizmo.ToolMode.SCALE, "Scale tool (R)")
+	_btn_tool_move.set_pressed_no_signal(true)
 	_toolbar.add_child(_btn_tool_move)
 	_toolbar.add_child(_btn_tool_rot)
 	_toolbar.add_child(_btn_tool_scale)
@@ -169,8 +181,9 @@ func _build_ui() -> void:
 
 	# Modes (Face / Vertex / Edge / Island)
 	_mode_group = ButtonGroup.new()
+	_mode_group.allow_unpress = false
 	_btn_mode_face = _create_mode_btn("Face", "icon_face.svg", PBUvCanvas.SelectMode.FACE, "Face selection mode")
-	_btn_mode_face.button_pressed = true
+	_btn_mode_face.set_pressed_no_signal(true)
 	_btn_mode_vert = _create_mode_btn("Vertex", "icon_vertex.svg", PBUvCanvas.SelectMode.VERTEX, "UV Vertex selection mode")
 	_btn_mode_edge = _create_mode_btn("Edge", "icon_edge.svg", PBUvCanvas.SelectMode.EDGE, "UV Edge selection mode")
 	_btn_mode_island = _create_mode_btn("Island", "icon_island.svg", PBUvCanvas.SelectMode.ISLAND, "UV Island (connected shell) selection mode")
@@ -260,7 +273,7 @@ func _build_ui() -> void:
 	_btn_toggle_tex.toggled.connect(func(on: bool): if canvas: canvas.show_texture = on)
 	_grid_toolbar.add_child(_btn_toggle_tex)
 
-	_btn_toggle_tile = _create_icon_btn("ToggleTile", "icon_uv_tile.svg", "Tile", "Repeat texture underlay across UV space", true)
+	_btn_toggle_tile = _create_icon_btn("ToggleTile", "icon_uv_tile.svg", "Tile", "Canvas preview only: repeat the texture underlay outside 0–1. Does not tile the mesh. Use the Material dock Face UV Tiling (Auto UV) for 1m repeats.", true)
 	_btn_toggle_tile.button_pressed = false
 	_btn_toggle_tile.toggled.connect(func(on: bool): if canvas: canvas.show_texture_tiling = on)
 	_grid_toolbar.add_child(_btn_toggle_tile)
@@ -422,54 +435,82 @@ func _create_mode_btn(label: String, icon_name: String, mode: PBUvCanvas.SelectM
 	btn.button_group = _mode_group
 	btn.tooltip_text = tip
 	btn.flat = true
-	btn.custom_minimum_size = Vector2(24, 24)
-	btn.pressed.connect(func():
-		if canvas:
-			canvas.select_mode = mode
-		if editor and not _syncing_selection:
-			_syncing_selection = true
-			editor.select_mode = _pb_mode_for_canvas_mode(mode)
-			_syncing_selection = false
-		_update_status()
-	)
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.custom_minimum_size = Vector2(28, 28)
+	btn.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	btn.pressed.connect(_apply_uv_select_mode.bind(mode))
+	btn.gui_input.connect(_on_uv_mode_gui_input.bind(mode))
 	return btn
+
+func _on_uv_mode_gui_input(event: InputEvent, mode: PBUvCanvas.SelectMode) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_apply_uv_select_mode(mode)
+
+func _apply_uv_select_mode(mode: PBUvCanvas.SelectMode) -> void:
+	if canvas:
+		canvas.select_mode = mode
+		if canvas.is_visible_in_tree():
+			canvas.grab_focus()
+	if editor and not _syncing_selection:
+		_syncing_selection = true
+		editor.select_mode = _pb_mode_for_canvas_mode(mode)
+		_syncing_selection = false
+	_on_canvas_select_mode_changed(mode)
+	_update_status()
 
 func _create_tool_btn(label: String, icon_name: String, mode: PBUvGizmo.ToolMode, tip: String) -> Button:
 	var btn := Button.new()
-	btn.name = "Tool" + label
+	btn.name = "UvTool" + label
 	var ico := _load_icon(icon_name)
 	if ico != null:
 		btn.icon = ico
-		btn.text = ""
-	else:
-		btn.text = label
+	btn.text = label
 	btn.toggle_mode = true
 	btn.button_group = _tool_group
 	btn.tooltip_text = tip
 	btn.flat = true
-	btn.custom_minimum_size = Vector2(24, 24)
-	btn.pressed.connect(func(): if canvas: canvas.transform_tool = mode)
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	btn.custom_minimum_size = Vector2(56, 28)
+	btn.pressed.connect(_apply_uv_tool.bind(mode))
+	btn.gui_input.connect(_on_uv_tool_gui_input.bind(mode))
 	return btn
 
+func _on_uv_tool_gui_input(event: InputEvent, mode: PBUvGizmo.ToolMode) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_apply_uv_tool(mode)
+
+func _apply_uv_tool(mode: PBUvGizmo.ToolMode) -> void:
+	if canvas == null:
+		return
+	canvas.apply_transform_tool(mode)
+	_on_canvas_tool_changed(mode)
+	if canvas.is_visible_in_tree():
+		canvas.grab_focus()
+
 func _on_canvas_tool_changed(mode: PBUvGizmo.ToolMode) -> void:
-	match mode:
-		PBUvGizmo.ToolMode.MOVE:
-			if _btn_tool_move: _btn_tool_move.button_pressed = true
-		PBUvGizmo.ToolMode.ROTATE:
-			if _btn_tool_rot: _btn_tool_rot.button_pressed = true
-		PBUvGizmo.ToolMode.SCALE:
-			if _btn_tool_scale: _btn_tool_scale.button_pressed = true
+	if _btn_tool_move:
+		_btn_tool_move.set_pressed_no_signal(mode == PBUvGizmo.ToolMode.MOVE)
+	if _btn_tool_rot:
+		_btn_tool_rot.set_pressed_no_signal(mode == PBUvGizmo.ToolMode.ROTATE)
+	if _btn_tool_scale:
+		_btn_tool_scale.set_pressed_no_signal(mode == PBUvGizmo.ToolMode.SCALE)
 
 func _on_canvas_select_mode_changed(mode: PBUvCanvas.SelectMode) -> void:
-	match mode:
-		PBUvCanvas.SelectMode.VERTEX:
-			if _btn_mode_vert: _btn_mode_vert.button_pressed = true
-		PBUvCanvas.SelectMode.EDGE:
-			if _btn_mode_edge: _btn_mode_edge.button_pressed = true
-		PBUvCanvas.SelectMode.FACE:
-			if _btn_mode_face: _btn_mode_face.button_pressed = true
-		PBUvCanvas.SelectMode.ISLAND:
-			if _btn_mode_island: _btn_mode_island.button_pressed = true
+	if _btn_mode_vert:
+		_btn_mode_vert.set_pressed_no_signal(mode == PBUvCanvas.SelectMode.VERTEX)
+	if _btn_mode_edge:
+		_btn_mode_edge.set_pressed_no_signal(mode == PBUvCanvas.SelectMode.EDGE)
+	if _btn_mode_face:
+		_btn_mode_face.set_pressed_no_signal(mode == PBUvCanvas.SelectMode.FACE)
+	if _btn_mode_island:
+		_btn_mode_island.set_pressed_no_signal(mode == PBUvCanvas.SelectMode.ISLAND)
 	if editor and not _syncing_selection:
 		_syncing_selection = true
 		editor.select_mode = _pb_mode_for_canvas_mode(mode)
@@ -539,7 +580,7 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_verts.clear()
 			canvas.select_mode = PBUvCanvas.SelectMode.VERTEX
 			if _btn_mode_vert:
-				_btn_mode_vert.button_pressed = true
+				_btn_mode_vert.set_pressed_no_signal(true)
 			for sv_idx in selection.selected_vertices:
 				if sv_idx >= 0 and sv_idx < mesh_data.shared_vertices.size():
 					var sv: PBSharedVertex = mesh_data.shared_vertices[sv_idx]
@@ -553,7 +594,7 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_edges.clear()
 			canvas.select_mode = PBUvCanvas.SelectMode.EDGE
 			if _btn_mode_edge:
-				_btn_mode_edge.button_pressed = true
+				_btn_mode_edge.set_pressed_no_signal(true)
 			for edge in selection.selected_edges:
 				if edge != null:
 					canvas.selected_edges[Vector2i(mini(edge.a, edge.b), maxi(edge.a, edge.b))] = true
@@ -564,14 +605,14 @@ func sync_selection_from_3d_state(select_mode: int, selection: PBSelection) -> v
 			canvas.selected_faces.clear()
 			if canvas.select_mode == PBUvCanvas.SelectMode.ISLAND:
 				if _btn_mode_island:
-					_btn_mode_island.button_pressed = true
+					_btn_mode_island.set_pressed_no_signal(true)
 				for fi in selection.selected_faces:
 					for ifi in canvas._get_uv_island(int(fi)):
 						canvas.selected_faces[ifi] = true
 			else:
 				canvas.select_mode = PBUvCanvas.SelectMode.FACE
 				if _btn_mode_face:
-					_btn_mode_face.button_pressed = true
+					_btn_mode_face.set_pressed_no_signal(true)
 				for fi in selection.selected_faces:
 					canvas.selected_faces[int(fi)] = true
 	canvas.refresh_from_mesh()
@@ -934,6 +975,10 @@ func set_floating(floating: bool) -> void:
 		_floating_window.transient = false
 		_floating_window.close_requested.connect(func(): set_floating(false))
 
+		# Unregister the bottom-panel item while this control is still parented
+		# there. Reparenting first leaves a stale "UV Editor" tab behind.
+		pop_out_toggled.emit(true)
+
 		# Move this panel inside floating window
 		var parent := get_parent()
 		if parent:
@@ -952,7 +997,6 @@ func set_floating(floating: bool) -> void:
 		_floating_window.popup_centered()
 		_btn_pop_out.text = "↙ Dock"
 		_btn_pop_out.tooltip_text = "Dock UV Editor back into bottom panel"
-		pop_out_toggled.emit(true)
 	else:
 		# Return back to bottom panel
 		if _floating_window:

@@ -106,6 +106,12 @@ var creation_outline_draws: int = 0
 ## Verification counter (GUI harness): subgizmo ray-cast invocations.
 var intersect_ray_calls: int = 0
 
+## Click-picking TriangleMesh cache: node instance id -> {mesh_id, tmesh,
+## tris}. Kept off node metadata, which is saved into the scene and shown in
+## the inspector (a 64-bit instance id there trips "value is too large").
+var _pick_cache: Dictionary = {}
+const _LEGACY_PICK_METAS: Array[StringName] = [&"_pb_pick_mesh_id", &"_pb_pick_tmesh", &"_pb_pick_tris"]
+
 ## Direct overlay materials for the creation outlines/arrow. The plugin-API
 ## create_material() variants are NOT usable here: get_material() picks the
 ## variant by the NODE's selected state, and the unselected variant draws at
@@ -386,7 +392,7 @@ func _redraw(gizmo) -> void:
 	# Checked FIRST: preview_node draws its overlay without requiring mesh_data!
 	if ngon_drawer != null and ngon_drawer.is_active():
 		if ngon_drawer.preview_node == node:
-			if ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+			if ngon_drawer.state == PBNgonDrawer.PBState.HEIGHT:
 				_draw_ngon_height_preview(gizmo, node.pb_mesh_data, ngon_drawer)
 			else:
 				_draw_ngon_drawer_overlay(gizmo, node.pb_mesh_data, ngon_drawer)
@@ -405,16 +411,25 @@ func _redraw(gizmo) -> void:
 	# and the rebuild cost would land on every motion event. The TriangleMesh
 	# is cached per mesh instance (hover redraws must not rebuild it).
 	if not element_editor.drag_active and node.mesh != null:
+		for meta in _LEGACY_PICK_METAS:
+			if node.has_meta(meta):
+				node.remove_meta(meta)
 		var mesh_id: int = node.mesh.get_instance_id()
-		if int(node.get_meta("_pb_pick_mesh_id", -1)) != mesh_id:
-			node.set_meta("_pb_pick_mesh_id", mesh_id)
+		var node_id: int = node.get_instance_id()
+		var entry: Dictionary = _pick_cache.get(node_id, {})
+		if int(entry.get("mesh_id", -1)) != mesh_id:
+			if not _pick_cache.has(node_id) and _pick_cache.size() >= 256:
+				for stale_id in _pick_cache.keys():
+					if not is_instance_id_valid(stale_id):
+						_pick_cache.erase(stale_id)
 			var pick_tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
-			node.set_meta("_pb_pick_tmesh", pick_tmesh)
 			# Feeding a 943k-triangle sculpt into the gizmo's click picking on
 			# every redraw stalls the editor; cap it like the hover picker.
-			node.set_meta("_pb_pick_tris", pick_tmesh.get_faces().size() / 3)
-		if int(node.get_meta("_pb_pick_tris", 0)) <= PBPicking.PLAIN_MESH_PICK_TRI_BUDGET:
-			gizmo.add_collision_triangles(node.get_meta("_pb_pick_tmesh"))
+			entry = {"mesh_id": mesh_id, "tmesh": pick_tmesh,
+				"tris": pick_tmesh.get_faces().size() / 3}
+			_pick_cache[node_id] = entry
+		if int(entry["tris"]) <= PBPicking.PLAIN_MESH_PICK_TRI_BUDGET:
+			gizmo.add_collision_triangles(entry["tmesh"])
 
 	# Shape-creation overlays: the live preview's cyan bounds + facing arrow,
 	# and the cyan hover highlight on the surface under the cursor. Checked
@@ -978,7 +993,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	# PARAMS: the shape is placed and the adjust modal is open — the cyan
 	# base/bounds box only buries the actual trim/shape the user is trying
 	# to see. Draw nothing but the mesh.
-	if creator.state == PBShapeCreator.State.PARAMS:
+	if creator.state == PBShapeCreator.PBState.PARAMS:
 		return
 	_creation_materials()
 	var node := gizmo.get_node_3d() as Node3D
@@ -987,7 +1002,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 	var to_local := node.global_transform.affine_inverse()
 	var creation_offset: float = _live_stroke_offset * 1.5
 
-	if creator.state == PBShapeCreator.State.BASE:
+	if creator.state == PBShapeCreator.PBState.BASE:
 		var corners := creator.base_rect_corners()
 		var lines := PackedVector3Array()
 		for i in range(corners.size()):
@@ -1046,7 +1061,7 @@ func _draw_creation_preview(gizmo, mesh_data: PBMeshData, creator: PBShapeCreato
 
 	# Height plane: when Alt is held while raising a shape, draw a translucent
 	# infinite white plane at 0.25 opacity at the shape's current height.
-	if creator.state == PBShapeCreator.State.HEIGHT and creator.show_height_plane:
+	if creator.state == PBShapeCreator.PBState.HEIGHT and creator.show_height_plane:
 		var lifted_local: Vector3 = to_local * lifted
 		gizmo.add_mesh(_get_height_plane_mesh(), _get_height_plane_material(),
 			Transform3D(Basis.IDENTITY, Vector3(0.0, lifted_local.y, 0.0)))
@@ -1066,8 +1081,8 @@ func _draw_creation_hover(gizmo, mesh_data: PBMeshData, face_index: int) -> void
 		gizmo.add_mesh(fill, _face_hover_fill_material)
 
 	# ARMED: one square under the cursor (on the hovered surface point).
-	var armed_drawing := (shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED) \
-		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.State.ARMED)
+	var armed_drawing := (shape_creator != null and shape_creator.state == PBShapeCreator.PBState.ARMED) \
+		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.PBState.ARMED)
 	if armed_drawing:
 		_creation_materials()
 		var node := gizmo.get_node_3d() as Node3D

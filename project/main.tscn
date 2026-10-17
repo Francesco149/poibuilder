@@ -1,11 +1,11 @@
-[gd_scene format=3]
+[gd_scene format=4 uid="uid://b80a4kynihcwy"]
 
-[ext_resource type="Script" path="res://player.gd" id="1_player"]
-[ext_resource type="Script" path="res://addons/poibuilder/core/pb_mesh.gd" id="2_7mycd"]
-[ext_resource type="Script" path="res://addons/poibuilder/core/pb_face.gd" id="3_272bh"]
+[ext_resource type="Script" uid="uid://dwf3ioew4ss7x" path="res://player.gd" id="1_player"]
+[ext_resource type="Script" uid="uid://p2kvdrhwfeg8" path="res://addons/poibuilder/core/pb_mesh.gd" id="2_7mycd"]
+[ext_resource type="Script" uid="uid://dmdhch6bs3pff" path="res://addons/poibuilder/core/pb_face.gd" id="3_272bh"]
 [ext_resource type="Material" path="res://addons/poibuilder/materials/pb_default_material.tres" id="4_5vw27"]
-[ext_resource type="Script" path="res://addons/poibuilder/core/pb_mesh_data.gd" id="5_kek77"]
-[ext_resource type="Script" path="res://addons/poibuilder/core/pb_shared_vertex.gd" id="6_4c57u"]
+[ext_resource type="Script" uid="uid://hma2exlywo3s" path="res://addons/poibuilder/core/pb_mesh_data.gd" id="5_kek77"]
+[ext_resource type="Script" uid="uid://lm1r1oqnwwdv" path="res://addons/poibuilder/core/pb_shared_vertex.gd" id="6_4c57u"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.384314, 0.454902, 0.54902, 1)
@@ -23,29 +23,49 @@ tonemap_mode = 2
 radius = 0.4
 height = 1.8
 
+[sub_resource type="ArrayMesh" id="ArrayMesh_7mycd"]
+_surfaces = [{
+"aabb": AABB(-30, -0.5, -30, 60, 1, 60),
+"attribute_data": PackedByteArray("AABwwgAAAAAAAAAAAAAAAAAAAAAAAIA/AABwwgAAgD8AAAAAAAAAAAAAcEIAAAAAAABwQgAAgD8AAAAAAACAPwAAAAAAAAAAAABwQgAAAAAAAHBCAACAPwAAAAAAAIA/AABwQgAAAAAAAAAAAAAAAAAAAAAAAIA/AABwQgAAgD8AAAAAAAAAAAAAAAAAAHBCAABwQgAAcEIAAHBCAAAAAAAAAAAAAHBCAAAAAAAAAAAAAHBCAAAAAAAAcEIAAHBC"),
+"format": 34359742487,
+"index_count": 36,
+"index_data": PackedByteArray("AgABAAAAAAADAAIABgAFAAQABAAHAAYACgAJAAgACAALAAoADgANAAwADAAPAA4AEgARABAAEAATABIAFgAVABQAFAAXABYA"),
+"material": ExtResource("4_5vw27"),
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 24,
+"vertex_data": PackedByteArray("AADwQQAAAL8AAPDBAADwwQAAAL8AAPDBAADwwQAAAD8AAPDBAADwQQAAAD8AAPDBAADwwQAAAL8AAPBBAADwQQAAAL8AAPBBAADwQQAAAD8AAPBBAADwwQAAAD8AAPBBAADwwQAAAL8AAPDBAADwwQAAAL8AAPBBAADwwQAAAD8AAPBBAADwwQAAAD8AAPDBAADwQQAAAL8AAPBBAADwQQAAAL8AAPDBAADwQQAAAD8AAPDBAADwQQAAAD8AAPBBAADwwQAAAD8AAPDBAADwwQAAAD8AAPBBAADwQQAAAD8AAPBBAADwQQAAAD8AAPDBAADwwQAAAL8AAPBBAADwwQAAAL8AAPDBAADwQQAAAL8AAPDBAADwQQAAAL8AAPBB//////9/AID//////38AgP//////fwCA//////9/AID/f/9//38AgP9//3//fwCA/3//f/9/AID/f/9//38AgAAA/3//f/+/AAD/f/9//78AAP9//3//vwAA/3//f/+/////f/9//7////9//3//v////3//f/+/////f/9//7//f///AAD/v/9///8AAP+//3///wAA/7//f///AAD/v/9/AAAAAP+//38AAAAA/7//fwAAAAD/v/9/AAAAAP+/")
+}]
+
 [sub_resource type="Resource" id="Resource_efxa6"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(0, 1, 2, 2, 3, 0)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_dg77c"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(4, 5, 6, 6, 7, 4)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_ycdy4"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(8, 9, 10, 10, 11, 8)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_w48qg"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(12, 13, 14, 14, 15, 12)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_vivmo"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(16, 17, 18, 18, 19, 16)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_2cqfq"]
 script = ExtResource("3_272bh")
 indexes = PackedInt32Array(20, 21, 22, 22, 23, 20)
+splat_bounds = PackedFloat32Array()
 
 [sub_resource type="Resource" id="Resource_yaehf"]
 script = ExtResource("6_4c57u")
@@ -82,7 +102,8 @@ indices = PackedInt32Array(7, 10, 17)
 [sub_resource type="Resource" id="Resource_0odxb"]
 script = ExtResource("5_kek77")
 positions = PackedVector3Array(30, -0.5, -30, -30, -0.5, -30, -30, 0.5, -30, 30, 0.5, -30, -30, -0.5, 30, 30, -0.5, 30, 30, 0.5, 30, -30, 0.5, 30, -30, -0.5, -30, -30, -0.5, 30, -30, 0.5, 30, -30, 0.5, -30, 30, -0.5, 30, 30, -0.5, -30, 30, 0.5, -30, 30, 0.5, 30, -30, 0.5, -30, -30, 0.5, 30, 30, 0.5, 30, 30, 0.5, -30, -30, -0.5, 30, -30, -0.5, -30, 30, -0.5, -30, 30, -0.5, 30)
-textures0 = PackedVector2Array(0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1)
+textures0 = PackedVector2Array(-60, 0, 0, 0, 0, 1, -60, 1, 0, 0, 60, 0, 60, 1, 0, 1, 0, 0, 60, 0, 60, 1, 0, 1, 60, 0, 0, 0, 0, 1, 60, 1, 0, 0, 0, 60, 60, 60, 60, 0, 0, 60, 0, 0, 60, 0, 60, 60)
+textures1 = PackedVector2Array()
 colors = PackedColorArray()
 tangents = PackedFloat32Array()
 faces = Array[ExtResource("3_272bh")]([SubResource("Resource_efxa6"), SubResource("Resource_dg77c"), SubResource("Resource_ycdy4"), SubResource("Resource_w48qg"), SubResource("Resource_vivmo"), SubResource("Resource_2cqfq")])
@@ -94,6 +115,8 @@ shape_params = {
 "width": 60.0
 }
 materials = Array[Material]([ExtResource("4_5vw27")])
+texture_anchor = Vector3(-30, -0.5, -30)
+has_texture_anchor = true
 
 [node name="Main" type="Node3D" unique_id=693180343]
 
@@ -117,5 +140,6 @@ current = true
 
 [node name="Floor" type="MeshInstance3D" parent="." unique_id=251783614]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+mesh = SubResource("ArrayMesh_7mycd")
 script = ExtResource("2_7mycd")
 pb_mesh_data = SubResource("Resource_0odxb")

@@ -140,7 +140,7 @@ func test_end_to_end_godot_entity_authoring_to_pbm() -> void:
 	# Parse metadata table
 	var metadata_lumps: Dictionary = {}
 	for mi in range(num_metadata):
-		var tag := f.get_buffer(32).get_string_from_ascii().split("\u0000")[0].strip_edges()
+		var tag := f.get_buffer(32).get_string_from_ascii().split(String.chr(0))[0].strip_edges()
 		var mtype := f.get_32()
 		var msize := f.get_32()
 		var mdata := f.get_buffer(msize)

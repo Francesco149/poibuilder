@@ -53,7 +53,9 @@ var _btn_mode_shape: Button
 var _btn_mode_particle: Button
 # UI Nodes - Materials Section
 var _scroll: ScrollContainer
+var _mat_scroll: ScrollContainer
 var _material_grid: HFlowContainer
+var _mat_search: LineEdit
 var _status_label: Label
 var _file_dialog: EditorFileDialog
 
@@ -143,7 +145,9 @@ var _syncing: bool = false
 
 func _init() -> void:
 	name = "Material & UV"
-	custom_minimum_size = Vector2(250, 320)
+	# Tall enough that the palette can show more than one row; the inner
+	# palette ScrollContainer takes leftover height so UV controls stay visible.
+	custom_minimum_size = Vector2(160, 220)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_load_default_material_setting()
@@ -273,13 +277,21 @@ func _build_ui() -> void:
 	for c in get_children():
 		c.queue_free()
 
+	_scroll = _ShrinkScroll.new()
+	_scroll.name = "DockScroll"
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	add_child(_scroll)
+
 	var root_vbox := VBoxContainer.new()
 	root_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	add_child(root_vbox)
+	_scroll.add_child(root_vbox)
 
-	# 1. Mode Selector Segmented Row
-	var mode_row := HBoxContainer.new()
+	# 1. Mode Selector — wraps so a narrow dock can shrink.
+	var mode_row := HFlowContainer.new()
 	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	_btn_mode_mat = Button.new()
@@ -359,16 +371,33 @@ func _build_ui() -> void:
 	mat_header.add_child(btn_refresh)
 	root_vbox.add_child(mat_header)
 
-	# Material Cards Container
-	var mat_scroll := ScrollContainer.new()
-	mat_scroll.custom_minimum_size = Vector2(0, 130)
-	mat_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root_vbox.add_child(mat_scroll)
+	_mat_search = LineEdit.new()
+	_mat_search.name = "PaletteSearch"
+	_mat_search.placeholder_text = "Search palette…"
+	_mat_search.clear_button_enabled = true
+	_mat_search.tooltip_text = "Filter cards by material or texture name (e.g. brick or wood_planks)"
+	_mat_search.text_changed.connect(func(_t: String): _rebuild_material_grid())
+	root_vbox.add_child(_mat_search)
+
+	# Material Cards Container — must be taller than one 64px card and must
+	# expand. A 64px inner scroll plus HFlow (no wrap width) hid every card
+	# after the first row: horizontal scroll is off, so extras sat off-screen
+	# with nothing to wheel.
+	_mat_scroll = ScrollContainer.new()
+	_mat_scroll.name = "PaletteScroll"
+	_mat_scroll.custom_minimum_size = Vector2(0, 200)
+	_mat_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_mat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_mat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_mat_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	_mat_scroll.resized.connect(_fit_material_grid_width)
+	root_vbox.add_child(_mat_scroll)
 
 	_material_grid = HFlowContainer.new()
 	_material_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mat_scroll.add_child(_material_grid)
+	_material_grid.add_theme_constant_override("h_separation", 4)
+	_material_grid.add_theme_constant_override("v_separation", 4)
+	_mat_scroll.add_child(_material_grid)
 
 	root_vbox.add_child(HSeparator.new())
 
@@ -1312,16 +1341,16 @@ func _select_first_classified(category: String, select_fn: Callable) -> void:
 			return
 	select_fn.call(_project_materials[0])
 func _extract_texture(mat: Material) -> Texture2D:
-	if mat is StandardMaterial3D and mat.albedo_texture != null:
-		return mat.albedo_texture
-	elif mat is ShaderMaterial:
-		var tex = (mat as ShaderMaterial).get_shader_parameter("base_texture")
-		if tex is Texture2D:
-			return tex
-	var def := get_default_material()
-	if def is StandardMaterial3D and def.albedo_texture != null:
-		return def.albedo_texture
-	return null
+	return PBUvCanvas._material_albedo_texture(mat)
+
+func _fit_material_grid_width() -> void:
+	if _mat_scroll == null or _material_grid == null:
+		return
+	var w := _mat_scroll.size.x
+	var bar := _mat_scroll.get_v_scroll_bar()
+	if bar != null and bar.visible:
+		w -= bar.size.x
+	_material_grid.custom_minimum_size.x = maxf(w, 64.0)
 
 ## The mesh the paint tools are pointed at: whatever the brush last touched,
 ## else the selection. Painting never required a selection (the brush picks the
@@ -1477,8 +1506,45 @@ func _append_material_once(mat: Material) -> bool:
 	_project_materials.append(mat)
 	return true
 
-func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
-	if depth > 3 or _project_materials.size() > 60:
+func _should_skip_material_scan_dir(full_path: String, name_str: String) -> bool:
+	if name_str == "addons" or name_str == ".godot":
+		return true
+	if FileAccess.file_exists(full_path.path_join(".gdignore")):
+		return true
+	return FileAccess.file_exists(full_path.path_join("project.godot"))
+
+func _try_load_scanned_material(path: String) -> Material:
+	if not _tres_declares_material(path):
+		return null
+	if not ResourceLoader.exists(path):
+		return null
+	var res = ResourceLoader.load(path, "Material")
+	if res is Material:
+		return res
+	return null
+
+func _tres_declares_material(path: String) -> bool:
+	if path.get_extension().to_lower() == "material":
+		return true
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return false
+	var head := f.get_buffer(mini(512, int(f.get_length()))).get_string_from_utf8()
+	f.close()
+	# Only the root [gd_resource type="..."]. Environment.tres embeds a
+	# ShaderMaterial and used to match, then ResourceLoader pulled Sky.gdshader.
+	var nl := head.find("\n")
+	var first := head.substr(0, nl if nl >= 0 else head.length())
+	for type_name in ["StandardMaterial3D", "ORMMaterial3D", "ShaderMaterial"]:
+		if first.contains("type=\"%s\"" % type_name):
+			return true
+	return false
+
+func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Array = []) -> void:
+	# Depth 6 reaches materials nested deep inside imported asset packs.
+	# Texture-image wrappers are capped so a large PNG tree cannot hide saved
+	# .tres cards.
+	if depth > 6:
 		return
 	var d := DirAccess.open(dir_path)
 	if d == null:
@@ -1486,41 +1552,59 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0) -> void:
 	d.list_dir_begin()
 	var name_str := d.get_next()
 	while name_str != "":
-		if not name_str.begins_with(".") and not name_str.begins_with(".godot"):
+		if not name_str.begins_with("."):
 			var full_path := dir_path.path_join(name_str)
 			if d.current_is_dir():
-				_scan_dir_for_materials(full_path, depth + 1)
+				if not _should_skip_material_scan_dir(full_path, name_str):
+					_scan_dir_for_materials(full_path, depth + 1, tex_wrappers)
 			else:
 				var ext := name_str.get_extension().to_lower()
 				if ext == "tres" or ext == "material":
-					if ResourceLoader.exists(full_path):
-						var res = ResourceLoader.load(full_path)
-						if res is Material:
-							_append_material_once(res)
+					var mat := _try_load_scanned_material(full_path)
+					if mat != null:
+						_append_material_once(mat)
 				elif ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp":
-					# One card per texture NAME: a project copy of a bundled
-					# texture must not show twice in the palette.
-					var file_key := name_str.get_file()
-					if not _scanned_texture_paths.has(file_key):
-						_scanned_texture_paths[file_key] = true
-						if ResourceLoader.exists(full_path):
-							var tex = ResourceLoader.load(full_path)
-							if tex is Texture2D:
-								var mat := StandardMaterial3D.new()
-								mat.resource_name = name_str.get_basename().capitalize()
-								mat.set_meta("source_texture_path", full_path)
-								mat.albedo_texture = tex
-								mat.roughness = 0.8
-								mat.vertex_color_use_as_albedo = true
-								mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-								# The palette preview must match the retro bake:
-								# alpha is taken from the texture's pixels
-								# (water/waterfall sheets blend, foliage cuts),
-								# never left opaque until export fixes it.
-								PBAlphaDetect.ensure_transparency(mat)
-								_append_material_once(mat)
+					if tex_wrappers.size() >= 40:
+						pass
+					else:
+						# One card per texture NAME: a project copy of a bundled
+						# texture must not show twice in the palette.
+						var file_key := name_str.get_file()
+						if not _scanned_texture_paths.has(file_key):
+							_scanned_texture_paths[file_key] = true
+							if ResourceLoader.exists(full_path):
+								var tex = ResourceLoader.load(full_path)
+								if tex is Texture2D:
+									var mat := StandardMaterial3D.new()
+									mat.resource_name = name_str.get_basename().capitalize()
+									mat.set_meta("source_texture_path", full_path)
+									mat.albedo_texture = tex
+									mat.roughness = 0.8
+									mat.vertex_color_use_as_albedo = true
+									mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+									PBAlphaDetect.ensure_transparency(mat)
+									if _append_material_once(mat):
+										tex_wrappers.append(full_path)
 		name_str = d.get_next()
 	d.list_dir_end()
+
+func _palette_matches_search(mat: Material) -> bool:
+	if _mat_search == null:
+		return true
+	var q := _mat_search.text.strip_edges().to_lower()
+	if q.is_empty():
+		return true
+	var name_str := mat.resource_name
+	if name_str.is_empty():
+		name_str = mat.resource_path.get_file().get_basename()
+	if name_str.to_lower().contains(q):
+		return true
+	if mat.resource_path.to_lower().contains(q):
+		return true
+	if mat.has_meta("source_texture_path") \
+			and str(mat.get_meta("source_texture_path")).to_lower().contains(q):
+		return true
+	return false
 
 func _rebuild_material_grid() -> void:
 	if _material_grid == null:
@@ -1558,8 +1642,11 @@ func _rebuild_material_grid() -> void:
 			if mat.has_meta("source_texture_path") \
 					and PBAssetCatalog.classify_path(mat.get_meta("source_texture_path")) != "texture":
 				continue
+		if not _palette_matches_search(mat):
+			continue
 		var card := _create_material_card(mat)
 		_material_grid.add_child(card)
+	_fit_material_grid_width.call_deferred()
 
 func _create_material_card(mat: Material) -> Control:
 	var btn := Button.new()
@@ -1721,7 +1808,7 @@ func _on_file_dialog_selected(path: String) -> void:
 		var res = ResourceLoader.load(path)
 		if res is Material:
 			if not _project_materials.has(res):
-				_project_materials.append(res)
+				_append_material_once(res)
 				_rebuild_material_grid()
 		elif res is Texture2D:
 			var mat := StandardMaterial3D.new()
@@ -2190,3 +2277,8 @@ class PBSpriteDropBox extends PanelContainer:
 							if mat is Material:
 								dock._select_sprite_material(mat)
 								return
+
+## Reports no content-driven min size so the right dock can shrink; content scrolls.
+class _ShrinkScroll extends ScrollContainer:
+	func _get_minimum_size() -> Vector2:
+		return Vector2.ZERO

@@ -23,7 +23,7 @@
 class_name PBParticlePlacer
 extends RefCounted
 
-enum State {
+enum PBState {
 	INACTIVE = 0,
 	ARMED = 1,
 	RAISE = 2,
@@ -34,7 +34,7 @@ const DRAG_THRESHOLD := 6.0
 ## Count changes per pixel of horizontal travel in the TUNE phase.
 const COUNT_PER_PIXEL := 0.12
 
-var state: State = State.INACTIVE
+var state: PBState = PBState.INACTIVE
 
 # Texture / effect selection
 var last_texture: Texture2D = null
@@ -63,16 +63,16 @@ var grid: PBGrid = null
 ## placer's raise guide.
 var _guide_line: MeshInstance3D = null
 
-signal state_changed(new_state: State)
+signal state_changed(new_state: PBState)
 signal emitter_placed(node: GPUParticles3D)
 signal placement_aborted()
 
 func is_active() -> bool:
-	return state != State.INACTIVE
+	return state != PBState.INACTIVE
 
 func arm() -> void:
 	abort()
-	state = State.ARMED
+	state = PBState.ARMED
 	_press_pending = false
 	state_changed.emit(state)
 
@@ -89,28 +89,28 @@ func abort() -> void:
 		preview_node = null
 	_clear_guide_line()
 	var prev_state := state
-	state = State.INACTIVE
-	if prev_state != State.INACTIVE:
+	state = PBState.INACTIVE
+	if prev_state != PBState.INACTIVE:
 		state_changed.emit(state)
 		placement_aborted.emit()
 
 ## The hint the plugin shows for the current phase (creation row + dock).
 func phase_hint() -> String:
 	match state:
-		State.ARMED:
+		PBState.ARMED:
 			return "Particles: click a surface to place the selected emitter (Esc cancels)"
-		State.RAISE:
+		PBState.RAISE:
 			return "Particles: mouse up/down to lift off the surface • click to lock"
-		State.TUNE:
+		PBState.TUNE:
 			return "Particles: mouse left/right for particle count • wheel for size • click to commit"
 	return ""
 
 ## Live readout for the overlay's extents row.
 func get_extents_readout() -> String:
 	match state:
-		State.RAISE:
+		PBState.RAISE:
 			return "Offset: %.2fm" % elevation
-		State.TUNE:
+		PBState.TUNE:
 			var total := PBParticleParams.total_amount(_budget_root())
 			var flag := "  [!]" if total > PBParticleParams.MAP_BUDGET else ""
 			return "Count %d (map %d/%d)%s • size %.2fm" % [count, total, PBParticleParams.MAP_BUDGET, flag, size]
@@ -132,7 +132,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 	const STOP := 1
 
 	self.camera = camera
-	if state == State.INACTIVE:
+	if state == PBState.INACTIVE:
 		return PASS
 
 	if event is InputEventKey and event.pressed:
@@ -142,7 +142,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 			return STOP
 
 	match state:
-		State.ARMED:
+		PBState.ARMED:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					if surface_hit.is_empty():
@@ -158,7 +158,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 						_start_raise_phase()
 						return STOP
 
-		State.RAISE:
+		PBState.RAISE:
 			if event is InputEventMouseMotion:
 				elevation = maxf(0.0, elevation - event.relative.y * 0.012)
 				if grid != null and grid.enabled:
@@ -168,11 +168,11 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 			elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 				tune_start_x = event.position.x
 				tune_start_count = count
-				state = State.TUNE
+				state = PBState.TUNE
 				state_changed.emit(state)
 				return STOP
 
-		State.TUNE:
+		PBState.TUNE:
 			if event is InputEventMouseMotion:
 				var delta_x: float = event.position.x - tune_start_x
 				count = clampi(tune_start_count + int(round(delta_x * COUNT_PER_PIXEL)), 1, PBParticleParams.MAX_PER_EMITTER)
@@ -209,7 +209,7 @@ func current_values() -> Dictionary:
 # ==============================================================================
 
 func _start_raise_phase() -> void:
-	state = State.RAISE
+	state = PBState.RAISE
 	elevation = 0.0
 	count = int(last_values.get("count", 16.0))
 	size = float(last_values.get("size", 0.5))
@@ -285,7 +285,7 @@ func _update_guide_line() -> void:
 	if mesh == null:
 		return
 	mesh.clear_surfaces()
-	if state != State.RAISE and state != State.TUNE:
+	if state != PBState.RAISE and state != PBState.TUNE:
 		_guide_line.visible = false
 		return
 	_guide_line.visible = true
@@ -358,7 +358,7 @@ func finalize_placement() -> void:
 
 	var node := preview_node
 	preview_node = null
-	state = State.INACTIVE
+	state = PBState.INACTIVE
 	_clear_guide_line()
 
 	var scene_root: Node = null

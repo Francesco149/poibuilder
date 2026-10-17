@@ -25,6 +25,9 @@ static func perform_boolean(mesh_a: PBMeshData, mesh_b: PBMeshData, op: BooleanO
 	if mesh_b == null or mesh_b.faces.is_empty():
 		return {"success": false, "error": "Mesh B is empty or null"}
 
+	mesh_a = _close_t_junctions(mesh_a)
+	mesh_b = _close_t_junctions(mesh_b)
+
 	# Pre-flight watertightness check
 	var boundary_a := PBSelectionOps.select_boundary_edges(mesh_a)
 	var boundary_b := PBSelectionOps.select_boundary_edges(mesh_b)
@@ -86,4 +89,22 @@ static func perform_boolean(mesh_a: PBMeshData, mesh_b: PBMeshData, op: BooleanO
 
 	var result_data: PBMeshData = converted.pb_mesh_data
 	converted.free()
+	# The kernel returns one face per triangle; fold flat neighbors back into
+	# clean quads/n-gons, and give every face auto UVs so merged faces and any
+	# leftover triangles share one projection (no texture seams between them).
+	PBMeshOps.tidy_faces(result_data)
+	for face in result_data.faces:
+		face.manual_uv = false
+		PBUv.apply_face_uvs(result_data, face)
 	return {"success": true, "mesh_data": result_data}
+
+## Extrudes routinely leave T-junctions (a corner landing mid-edge on a
+## neighbor): closed, but read as open edges by the pre-flight and as
+## non-manifold by the CSG kernel. Repairs a COPY — the caller's mesh must stay
+## untouched when the boolean fails.
+static func _close_t_junctions(mesh: PBMeshData) -> PBMeshData:
+	if PBSelectionOps.select_boundary_edges(mesh).is_empty():
+		return mesh
+	var copy := PBCommand.copy_mesh_data(mesh)
+	PBMeshOps.repair_t_junctions(copy)
+	return copy

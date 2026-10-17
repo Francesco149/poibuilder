@@ -28,7 +28,7 @@
 class_name PBShapeCreator
 extends RefCounted
 
-enum State { INACTIVE, ARMED, BASE, HEIGHT, OFFSET, PARAMS }
+enum PBState { INACTIVE, ARMED, BASE, HEIGHT, OFFSET, PARAMS }
 
 ## Sentinel for "ray missed the plane" from ray_plane_intersect.
 const RAY_MISS := Vector3(INF, INF, INF)
@@ -36,7 +36,7 @@ const RAY_MISS := Vector3(INF, INF, INF)
 ## Minimum base extent so a stray click cannot create a degenerate shape.
 const MIN_EXTENT := 0.1
 
-var state: State = State.INACTIVE
+var state: PBState = PBState.INACTIVE
 
 ## The factory shape being created.
 var shape_id: StringName = &""
@@ -123,7 +123,7 @@ var vertex_snap_candidates_fn: Callable = Callable()
 # ── Queries ──────────────────────────────────────────────────────────────────
 
 func is_active() -> bool:
-	return state != State.INACTIVE
+	return state != PBState.INACTIVE
 
 ## Local-space facing direction for the creation arrow (ZERO = none).
 func facing_direction() -> Vector3:
@@ -241,7 +241,7 @@ func _trim_placement() -> Transform3D:
 
 ## Arms creation for `p_shape_id` (a New Shape menu pick). Nothing exists yet.
 func arm(p_shape_id: StringName) -> void:
-	state = State.ARMED
+	state = PBState.ARMED
 	shape_id = p_shape_id
 	values = PBShapeParams.get_default_values(p_shape_id)
 	session_values = {}
@@ -258,7 +258,7 @@ func snap_starting_point(surface_point: Vector3, surface_normal: Vector3) -> Vec
 
 ## horizontal drags feel natural on walls too.
 func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> void:
-	state = State.BASE
+	state = PBState.BASE
 	plane_normal = surface_normal.normalized()
 	var press := snap_starting_point(surface_point, plane_normal)
 	plane_point = press
@@ -298,7 +298,7 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 ## surfaces snap it to the nearest world axis (shapes come out axis
 ## aligned); arbitrary surfaces keep the drag direction in the plane.
 func update_base(point_on_plane: Vector3) -> void:
-	if state != State.BASE:
+	if state != PBState.BASE:
 		return
 	var drag := point_on_plane - base_start
 	if not _u_locked and drag.length() > 0.05:
@@ -332,7 +332,7 @@ func update_base(point_on_plane: Vector3) -> void:
 ## extent may stay small on purpose: a straight 2 m x 5 cm drag is a
 ## legitimate thin wall.
 func end_base() -> bool:
-	if state != State.BASE:
+	if state != PBState.BASE:
 		return false
 	var min_extent := MIN_EXTENT
 	if grid != null:
@@ -343,7 +343,7 @@ func end_base() -> bool:
 	# Stand-off shapes (sprite, plane) do not grow a third dimension: the next
 	# stage lifts the sheet off the surface instead, so the value the base drag
 	# sized stays the shape's final size.
-	state = State.OFFSET if PBShapeParams.height_drags_offset(shape_id) else State.HEIGHT
+	state = PBState.OFFSET if PBShapeParams.height_drags_offset(shape_id) else PBState.HEIGHT
 	height = 0.0
 	# The values NOW are the baseline the height drag works against (round
 	# shapes resize relative to their base-release footprint).
@@ -356,7 +356,7 @@ func end_base() -> bool:
 ## motion then displaces it along the captured normal (OFFSET state).
 func begin_anchor(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> void:
 	begin(surface_point, surface_normal, view_z)
-	state = State.OFFSET
+	state = PBState.OFFSET
 	facing = Vector3.ZERO  # no base drag → no facing heuristic, no arrow
 	# begin() seeded the size dims from the zero rect; the anchor flow never
 	# drags a base, so the shape keeps its default parameters.
@@ -371,13 +371,13 @@ func begin_anchor(surface_point: Vector3, surface_normal: Vector3, view_z: Vecto
 ## offset never goes negative (they ride ON the surface, not through it);
 ## height-param shapes keep signed growth (negative = below).
 func update_height_point(world_point: Vector3) -> void:
-	if state != State.HEIGHT and state != State.OFFSET:
+	if state != PBState.HEIGHT and state != PBState.OFFSET:
 		return
 	height = (world_point - plane_point).dot(plane_normal)
 	if grid != null and grid.enabled:
 		height = grid.snap_val(height)
 	height = _vertex_snap_height(height)
-	if state == State.OFFSET:
+	if state == PBState.OFFSET:
 		height = maxf(0.0, height)
 	_apply_drag_extents()
 
@@ -418,8 +418,8 @@ func base_rect_corners() -> PackedVector3Array:
 ## LMB click in HEIGHT (or the sprite's OFFSET): keep the shape, open the
 ## params modal.
 func confirm_height() -> void:
-	if state == State.HEIGHT or state == State.OFFSET:
-		state = State.PARAMS
+	if state == PBState.HEIGHT or state == PBState.OFFSET:
+		state = PBState.PARAMS
 		session_values = values.duplicate()
 
 ## A modal parameter edit. Height-like changes re-anchor the placement.
@@ -431,14 +431,14 @@ func set_param(param_name: String, value: float) -> void:
 
 ## Cancel in the modal: restore the values from modal-open.
 func cancel_params() -> void:
-	if state == State.PARAMS:
+	if state == PBState.PARAMS:
 		values = session_values.duplicate()
 		if values.has("height"):
 			height = values["height"]
 
 ## Tears everything down (ESC before the confirming click creates nothing).
 func reset() -> void:
-	state = State.INACTIVE
+	state = PBState.INACTIVE
 	shape_id = &""
 	values = {}
 	base_values = {}
@@ -537,7 +537,7 @@ func _world_axis_near(axis: Vector3) -> Vector3:
 ## (e.g. "W: 4.00m  D: 2.00m  H: 2.50m" or "Radius: 1.00m  Height: 2.00m").
 func get_extents_readout() -> String:
 	match state:
-		State.BASE:
+		PBState.BASE:
 			if shape_id == &"sphere":
 				return "Radius: %.2fm" % float(values.get("radius", maxf(u_size, v_size) * 0.5))
 			elif shape_id == &"torus":
@@ -549,7 +549,7 @@ func get_extents_readout() -> String:
 				var w: float = float(values.get("width", u_size))
 				var d: float = float(values.get("depth", v_size))
 				return "W: %.2fm  D: %.2fm" % [w, d]
-		State.HEIGHT:
+		PBState.HEIGHT:
 			if shape_id == &"sphere":
 				return "Radius: %.2fm" % float(values.get("radius", 0.5))
 			elif shape_id == &"torus":
@@ -566,7 +566,7 @@ func get_extents_readout() -> String:
 				var d: float = float(values.get("depth", v_size))
 				var h: float = float(values.get("height", height))
 				return "W: %.2fm  D: %.2fm  H: %.2fm" % [w, d, h]
-		State.OFFSET:
+		PBState.OFFSET:
 			if shape_id == &"sprite":
 				return "Offset: %.2fm" % height
 			return "W: %.2fm  D: %.2fm  Offset: %.2fm" % [
@@ -581,11 +581,11 @@ func get_extents_readout() -> String:
 ## x and y are the base box dimensions drawn, and z is the height (0.00 during BASE).
 func get_cursor_extents_text() -> String:
 	match state:
-		State.BASE:
+		PBState.BASE:
 			return "(%.2f, %.2f, 0.00)" % [u_size, v_size]
-		State.HEIGHT:
+		PBState.HEIGHT:
 			return "(%.2f, %.2f, %.2f)" % [u_size, v_size, absf(height)]
-		State.OFFSET:
+		PBState.OFFSET:
 			# The sprite has no base rect (it is sized by its parameters), the
 			# plane's footprint is what the base drag just drew.
 			if shape_id == &"sprite":
@@ -597,7 +597,7 @@ func get_cursor_extents_text() -> String:
 ## local Y along the face normal, local +Z along facing (depth), and local +X
 ## perpendicular (width).
 func _apply_drag_extents() -> void:
-	if state == State.OFFSET:
+	if state == PBState.OFFSET:
 		return  # anchor flow (sprite): the drag drives the normal offset only
 	if shape_id == &"trim":
 		# Trim: the drag IS the strip's face — the LONGER side of the rect is
@@ -621,7 +621,7 @@ func _apply_drag_extents() -> void:
 			if vertical > 0.03:
 				values["height"] = maxf(0.03, vertical)
 		return
-	var height_value: float = height if state >= State.HEIGHT else NAN
+	var height_value: float = height if state >= PBState.HEIGHT else NAN
 	var v_dir := plane_normal.cross(u_dir).normalized()
 	var forward_along_u: bool = absf(arrow_direction().dot(u_dir)) > absf(arrow_direction().dot(v_dir))
 	var width := v_size if forward_along_u else u_size

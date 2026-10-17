@@ -142,6 +142,23 @@ func test_ensure_export_dir_creates_gdignore() -> void:
 	DirAccess.remove_absolute(test_dir.path_join(".gdignore"))
 	DirAccess.remove_absolute(test_dir)
 
+func test_ensure_export_dir_leaves_populated_dir_visible() -> void:
+	# Exporting next to existing assets must not hide them: a .gdignore there
+	# drops the folder's imports and UIDs (a user's res://models/ lost its
+	# Synty .glb materials this way).
+	var test_dir := "res://test_export_populated_temp"
+	DirAccess.make_dir_recursive_absolute(test_dir)
+	var asset_path := test_dir.path_join("existing_asset.txt")
+	var f := FileAccess.open(asset_path, FileAccess.WRITE)
+	f.store_string("asset")
+	f.close()
+	PBMapExporter.ensure_export_dir(test_dir.path_join("map.glb"))
+	assert_false(FileAccess.file_exists(test_dir.path_join(".gdignore")),
+		"A populated asset folder must not get a .gdignore")
+	DirAccess.remove_absolute(test_dir.path_join(".gdignore"))
+	DirAccess.remove_absolute(asset_path)
+	DirAccess.remove_absolute(test_dir)
+
 func test_cleanup_intermediate_files() -> void:
 	var test_dir := "user://test_cleanup_dir"
 	DirAccess.make_dir_recursive_absolute(test_dir)

@@ -175,7 +175,7 @@ func test_pbm_writer_layout_and_contracts() -> void:
 	var tex_alpha_by_id: Dictionary = {}
 	var tex_fmt_by_id: Dictionary = {}
 	for ti in range(num_textures):
-		var tex_name := f.get_buffer(32).get_string_from_ascii().split("\u0000")[0]
+		var tex_name := f.get_buffer(32).get_string_from_ascii().split(String.chr(0))[0]
 		if tex_name.begins_with("TileAtlas"):
 			atlas_ids[ti] = true
 		var w := f.get_16()

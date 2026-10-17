@@ -98,9 +98,9 @@ func hit_test(mouse_pos: Vector2, canvas: PBUvCanvas) -> HandleType:
 				return HandleType.MOVE_AXIS_V
 
 		ToolMode.ROTATE:
-			# Dial ring
+			# Whole disc matches the drawn dial (not just the thin ring).
 			var dist := mouse_pos.distance_to(pivot_screen)
-			if absf(dist - ROTATE_RADIUS) <= HIT_RADIUS:
+			if dist <= ROTATE_RADIUS + HIT_RADIUS:
 				return HandleType.ROTATE_DIAL
 
 		ToolMode.SCALE:
