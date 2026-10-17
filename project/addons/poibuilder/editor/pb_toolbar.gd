@@ -350,6 +350,7 @@ func _build_ui() -> void:
 	_make_op_button("Mirror", "mirror_object", "Mirror object geometry across X", "icon_mirror.svg")
 	_make_op_button("Center Pivot", "center_pivot", "Center pivot to bounding box", "icon_center_pivot.svg")
 	_make_op_button("Freeze Xform", "freeze_transform", "Freeze transform into vertex positions", "icon_freeze_transform.svg")
+	_make_op_button("Tidy", "tidy_faces", "Clean up the active mesh: remove hidden internal faces, fix T-junctions, and merge flat neighboring faces into clean quads", "icon_tidy_faces.svg")
 	var p_btn := _make_op_button("Poibuilderize", "poibuilderize", "Convert selected MeshInstance3D or CSG to editable PBMesh", "icon_poibuilderize.svg")
 	_op_buttons["probuilderize"] = p_btn
 
@@ -691,7 +692,7 @@ func _update_row_layout() -> void:
 		var grp_row4_obj: Array[Control] = [
 			_sep_row3_obj,
 			_op_buttons["merge_objects"], _op_buttons["mirror_object"], _op_buttons["center_pivot"],
-			_op_buttons["freeze_transform"], _op_buttons["poibuilderize"]
+			_op_buttons["freeze_transform"], _op_buttons["tidy_faces"], _op_buttons["poibuilderize"]
 		]
 		var grp_row4_csg: Array[Control] = [
 			_sep_row3_csg,
@@ -884,6 +885,8 @@ func _on_selection_info_changed(_arg = null) -> void:
 		_op_buttons["center_pivot"].disabled = not has_mesh
 	if _op_buttons.has("freeze_transform"):
 		_op_buttons["freeze_transform"].disabled = not has_mesh
+	if _op_buttons.has("tidy_faces"):
+		_op_buttons["tidy_faces"].disabled = not has_mesh
 	if _op_buttons.has("poibuilderize"):
 		_op_buttons["poibuilderize"].disabled = false
 	if _op_buttons.has("probuilderize"):

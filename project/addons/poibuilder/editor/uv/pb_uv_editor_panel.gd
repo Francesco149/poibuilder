@@ -458,7 +458,8 @@ func _on_uv_mode_gui_input(event: InputEvent, mode: PBUvCanvas.SelectMode) -> vo
 func _apply_uv_select_mode(mode: PBUvCanvas.SelectMode) -> void:
 	if canvas:
 		canvas.select_mode = mode
-		canvas.grab_focus()
+		if canvas.is_visible_in_tree():
+			canvas.grab_focus()
 	if editor and not _syncing_selection:
 		_syncing_selection = true
 		editor.select_mode = _pb_mode_for_canvas_mode(mode)
@@ -496,7 +497,8 @@ func _apply_uv_tool(mode: PBUvGizmo.ToolMode) -> void:
 		return
 	canvas.apply_transform_tool(mode)
 	_on_canvas_tool_changed(mode)
-	canvas.grab_focus()
+	if canvas.is_visible_in_tree():
+		canvas.grab_focus()
 
 func _on_canvas_tool_changed(mode: PBUvGizmo.ToolMode) -> void:
 	if _btn_tool_move:

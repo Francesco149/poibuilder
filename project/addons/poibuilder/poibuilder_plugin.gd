@@ -618,7 +618,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# keys passing through as before.
 	if event is InputEventKey:
 		var k := event as InputEventKey
-		if k.keycode == KEY_V and not k.ctrl_pressed and not k.alt_pressed and not k.meta_pressed:
+		if PBActions.matches(&"hold_vertex_snap", k, _settings, not k.pressed):
 			gizmo_plugin.element_editor.vertex_snap_held = k.pressed
 		if k.pressed:
 			return _handle_action_key(k)
@@ -665,9 +665,7 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
 	var editing := editor.is_editing()
-	var sp_active := sprite_placer != null and sprite_placer.is_active()
-	var pp_active := particle_placer != null and particle_placer.is_active()
-	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active() or sp_active or pp_active
+	var pb_context := _has_pb_context()
 	match action:
 		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
 		# nothing PoiBuilder-related active, scene-tree search fields would
@@ -769,19 +767,33 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			_on_operation_requested(PBActions.OP_ACTION_TO_OPERATION[action])
 	return AFTER_GUI_INPUT_STOP
 
-## Grid + snap toggles work in EVERY context (nothing selected, mid-drag of
-## a new shape, editing) — the grid must be adjustable before and during
-## use. toggle_snap is the exception: with no PoiBuilder context at all the
-## engine's own Use Snap button keeps its Y binding.
+## True while PoiBuilder is in use: a PBMesh is active or being edited, or a
+## PoiBuilder tool (shape creation, n-gon, sprite/particle placer) is running.
+func _has_pb_context() -> bool:
+	var sp_active := sprite_placer != null and sprite_placer.is_active()
+	var pp_active := particle_placer != null and particle_placer.is_active()
+	return editor.is_editing() or editor.active_mesh != null or shape_creator.is_active() \
+		or ngon_drawer.is_active() or sp_active or pp_active
+
+## Grid and snap keys work in any PoiBuilder context or while the grid is
+## drawn (so a visible grid is always adjustable); the sprite tool key only in
+## a PoiBuilder context. Otherwise they PASS: single-letter defaults (B, G,
+## [, ] …) must never hijack plain Godot work (holding B while aligning
+## ordinary nodes opened the sprite placer). The object Lit/Shadow toggles
+## keep their own gate (they act on any selection).
 func _handle_grid_action_key(key_event: InputEventKey) -> int:
 	var action := PBActions.action_for(key_event, _settings)
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
-	if action == &"toggle_snap":
-		if editor.is_editing() or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active():
-			grid.enabled = not grid.enabled
-			return AFTER_GUI_INPUT_STOP
+	if action == &"tool_sprite":
+		if not _has_pb_context():
+			return AFTER_GUI_INPUT_PASS
+	elif action != &"obj_toggle_lit" and action != &"obj_toggle_shadows" \
+			and not _has_pb_context() and not show_grid_should_draw():
 		return AFTER_GUI_INPUT_PASS
+	if action == &"toggle_snap":
+		grid.enabled = not grid.enabled
+		return AFTER_GUI_INPUT_STOP
 	elif action == &"toggle_on_grid":
 		grid.draw_on_grid = not grid.draw_on_grid
 	elif action == &"toggle_grid":
@@ -2157,6 +2169,9 @@ func _on_operation_requested(op_name: String) -> void:
 	if op_name == "smooth_auto":
 		_perform_auto_smooth()
 		return
+	if op_name == "tidy_faces":
+		_perform_tidy_faces()
+		return
 	if not editor.is_editing() or editor.active_mesh == null:
 		return
 	# Extrude is ONE action: face mode extrudes faces, edge mode extrudes
@@ -2334,7 +2349,9 @@ func _on_operation_requested(op_name: String) -> void:
 	cmd.capture_after()
 	if not cmd.is_noop():
 		cmd.add_to_undo_manager(get_undo_redo())
-	_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
+	# Not every op reports created faces (collapse returns only its target point).
+	var created: PackedInt32Array = result.get("new_face_ids", PackedInt32Array())
+	_finish_mesh_op(mesh, op_name, created.size(), created)
 ## sibling holding the extracted faces. One undo action covers both (the new
 ## node is registered as a do-reference so undo keeps it alive for redo).
 func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
@@ -2407,6 +2424,7 @@ const OP_ACTION_NAMES := {
 	"connect_vertices": "Connect Vertices",
 	"collapse_elements": "Collapse",
 	"fill_hole": "Fill Hole",
+	"tidy_faces": "Tidy Faces",
 }
 func _perform_select_all() -> void:
 	var mesh := editor.active_mesh
@@ -2773,6 +2791,34 @@ func _restore_csg_mesh(mesh: PBMesh, data: PBMeshData) -> void:
 		mesh.pb_mesh_data.shape_edited = true
 		mesh.rebuild()
 		mesh.update_gizmos()
+## Whole-mesh cleanup (Tidy button): buried internal faces, T-junctions, and
+## flat neighbors merged into clean faces. Runs in any mode like the other
+## whole-object tools; topology changes, so it undoes via a CmdMeshOp snapshot.
+func _perform_tidy_faces() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var cmd := CmdMeshOp.new(mesh.pb_mesh_data, OP_ACTION_NAMES["tidy_faces"], mesh)
+	if logger:
+		cmd.logger = logger
+	var faces_before := mesh.pb_mesh_data.faces.size()
+	var result := PBMeshOps.tidy_faces(mesh.pb_mesh_data)
+	if not result.get("ok", false):
+		if logger:
+			logger.warn("mesh_ops", "tidy_faces failed: %s" % result.get("error", "?"))
+		return
+	cmd.capture_after()
+	if cmd.is_noop():
+		if logger:
+			logger.info("mesh_ops", "Tidy Faces: %s is already tidy" % mesh.name)
+		return
+	cmd.add_to_undo_manager(get_undo_redo())
+	_finish_mesh_op(mesh, "tidy_faces", 0)
+	if logger:
+		logger.info("mesh_ops", "Tidy Faces on %s: %d -> %d faces (%d hidden internal faces removed, %d T-junction edges split)" % [
+			mesh.name, faces_before, mesh.pb_mesh_data.faces.size(),
+			int(result.get("internal_removed", 0)), int(result.get("t_junctions", 0))])
+
 func _perform_auto_smooth() -> void:
 	var mesh := editor.active_mesh
 	if mesh == null or mesh.pb_mesh_data == null:

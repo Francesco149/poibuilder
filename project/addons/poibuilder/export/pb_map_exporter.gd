@@ -110,11 +110,21 @@ class CancellationToken extends RefCounted:
 
 ## Ensures the export directory exists on disk and creates a .gdignore file
 ## if it is inside res:// to prevent Godot from auto-importing exported assets.
+## A .gdignore hides the WHOLE directory from the editor (imports, UIDs, the
+## class cache), so it is only written into a directory that is new or still
+## empty — never into an existing asset folder the user exported next to.
 static func ensure_export_dir(file_path: String) -> void:
 	var base_dir := file_path.get_base_dir()
 	if base_dir.is_empty() or base_dir == "res://" or base_dir == "res:":
 		return
-	if not DirAccess.dir_exists_absolute(base_dir):
+	# Listing needs the OS path: DirAccess cannot open res:// paths that climb
+	# out of the project ("res://../retro_engine/psp"), though exists() can.
+	var os_dir := ProjectSettings.globalize_path(base_dir)
+	if DirAccess.dir_exists_absolute(os_dir):
+		if not DirAccess.get_files_at(os_dir).is_empty() \
+				or not DirAccess.get_directories_at(os_dir).is_empty():
+			return
+	else:
 		DirAccess.make_dir_recursive_absolute(base_dir)
 	var gdignore_path := base_dir.path_join(".gdignore")
 	if not FileAccess.file_exists(gdignore_path):

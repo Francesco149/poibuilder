@@ -445,31 +445,33 @@ func get_uv_array() -> PackedVector2Array:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
-		if key_event.keycode == KEY_SPACE:
+		var settings := PBActions.editor_settings()
+		if PBActions.matches(&"uv_pan_hold", key_event, settings, not key_event.pressed):
 			_space_held = key_event.pressed
 			mouse_default_cursor_shape = Control.CURSOR_DRAG if _space_held else Control.CURSOR_ARROW
 			accept_event()
 			return
-		if not key_event.pressed and key_event.keycode == KEY_F:
-			frame_selection()
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_A and key_event.ctrl_pressed:
-			select_all()
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_W:
-			transform_tool = PBUvGizmo.ToolMode.MOVE
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_E:
-			transform_tool = PBUvGizmo.ToolMode.ROTATE
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_R:
-			transform_tool = PBUvGizmo.ToolMode.SCALE
-			accept_event()
-			return
+		if not key_event.pressed:
+			if PBActions.matches(&"uv_frame", key_event, settings):
+				frame_selection()
+				accept_event()
+				return
+			if PBActions.matches(&"uv_select_all", key_event, settings):
+				select_all()
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_move", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.MOVE
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_rotate", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.ROTATE
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_scale", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.SCALE
+				accept_event()
+				return
 
 	# Mouse wheel zooming
 	if event is InputEventMouseButton:

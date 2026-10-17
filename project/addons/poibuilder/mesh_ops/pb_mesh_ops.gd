@@ -30,6 +30,10 @@ extends RefCounted
 ## normals (calculate_normals writes per position; the last face wins).
 
 const WELD_TOLERANCE := 0.0001
+## A region has no extrude direction when its area-weighted normals cancel:
+## |sum| relative to the summed face areas, so the test is scale-free (an
+## absolute threshold refused every face under ~0.35 units², e.g. wall ends).
+const DEGENERATE_REGION_RATIO := 0.001
 
 # ==============================================================================
 # Face operations
@@ -59,7 +63,7 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 
 	for region: PackedInt32Array in _face_regions(mesh_data, face_ids):
 		var dir := _region_normal(mesh_data, region)
-		if dir.length_squared() < 0.5:
+		if dir.length() <= _region_area_sum(mesh_data, region) * DEGENERATE_REGION_RATIO:
 			return _fail("Extrude faces: degenerate region normal")
 		var offset := dir.normalized() * distance
 
@@ -427,91 +431,9 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 	for region in regions:
 		if region.size() < 2:
 			continue
-		var cycle := _region_boundary_cycle(mesh_data, region)
-		if cycle.is_empty():
+		var face := _merged_face_for_region(mesh_data, region)
+		if face == null:
 			return _fail("Merge faces: region boundary is not a clean cycle (holes?)")
-
-		# Fan-triangulate the ordered loop, on FRESHLY DUPLICATED corners. The
-		# cycle's own positions are not free to take: they are also used by the
-		# neighbours the removed faces were welded to (a subdivision leaves its
-		# mid-point positions shared between the pieces either side of the cut),
-		# and UVs live in a PER-POSITION array — a merged face reusing them
-		# rendered with whichever neighbour's projection was written last, which
-		# is the "merged face goes diagonal" report. Duplicating restores the
-		# position-privacy invariant; the weld rebuild at the end of the op
-		# re-connects the copies by coincidence, so the face still moves as part
-		# of the mesh.
-		var dup := PackedInt32Array()
-		for i in cycle:
-			dup.append(_dup_position(mesh_data, i, Vector3.ZERO))
-		var face := PBFace.new(PackedInt32Array())
-
-		# 2D ear-clip the cycle to avoid degenerate zero-area or overlapping fan triangles.
-		var cycle_3d := PackedVector3Array()
-		for i in cycle:
-			cycle_3d.append(mesh_data.positions[i])
-		var reg_n := Vector3.ZERO
-		for fi in region:
-			if fi >= 0 and fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
-				reg_n += PBMath.normal_from_positions(mesh_data.positions, mesh_data.faces[fi].get_indexes())
-		if reg_n.length_squared() < 0.0001:
-			reg_n = Vector3.UP
-		else:
-			reg_n = reg_n.normalized()
-
-		var basis := PBUv.get_planar_basis(reg_n)
-		var u_axis: Vector3 = basis["u"]
-		var v_axis: Vector3 = basis["v"]
-		var pts_2d := PackedVector2Array()
-		for p in cycle_3d:
-			pts_2d.append(Vector2(u_axis.dot(p), v_axis.dot(p)))
-
-		var area2 := 0.0
-		var n_pts := pts_2d.size()
-		for i in range(n_pts):
-			area2 += pts_2d[i].cross(pts_2d[(i + 1) % n_pts])
-
-		var pts_for_clip := pts_2d
-		var reversed := false
-		if area2 < 0.0:
-			pts_for_clip = pts_2d.duplicate()
-			pts_for_clip.reverse()
-			reversed = true
-
-		var tris := PBShapeComplex._triangulate_2d(pts_for_clip)
-		var idxs := PackedInt32Array()
-		if not tris.is_empty():
-			for tri in tris:
-				var i0: int = tri[0]
-				var i1: int = tri[1]
-				var i2: int = tri[2]
-				if reversed:
-					i0 = n_pts - 1 - i0
-					i1 = n_pts - 1 - i1
-					i2 = n_pts - 1 - i2
-					idxs.append_array(PackedInt32Array([dup[i0], dup[i2], dup[i1]]))
-				else:
-					idxs.append_array(PackedInt32Array([dup[i0], dup[i1], dup[i2]]))
-		else:
-			for i in range(1, dup.size() - 1):
-				idxs.append_array(PackedInt32Array([dup[0], dup[i], dup[i + 1]]))
-		face.set_indexes(idxs)
-		# The merged face replaces its pieces, so it wears their look: the first
-		# piece's material slot and auto-UV settings (a fresh face would reset a
-		# face whose tiling the author had set, and the merged area would jump).
-		var source: PBFace = mesh_data.faces[region[0]]
-		face.submesh_index = source.submesh_index
-		face.uv_offset = source.uv_offset
-		face.uv_rotation = source.uv_rotation
-		face.uv_scale = source.uv_scale
-		face.uv_use_world_space = source.uv_use_world_space
-		face.uv_flip_u = source.uv_flip_u
-		face.uv_flip_v = source.uv_flip_v
-		face.uv_swap_uv = source.uv_swap_uv
-		face.uv_fill = source.uv_fill
-		face.uv_anchor = source.uv_anchor
-		face.atlas_tile_origin = source.atlas_tile_origin
-		face.atlas_tile_size = source.atlas_tile_size
 		merged_faces.append(face)
 		for fi in region:
 			removed[fi] = true
@@ -530,6 +452,96 @@ static func merge_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> Di
 		if fid >= 0 and fid < mesh_data.faces.size():
 			PBUv.apply_face_uvs(mesh_data, mesh_data.faces[fid])
 	return result
+
+## Builds the single n-gon that replaces an edge-connected face region, or
+## null when the region's boundary is not one clean cycle (a hole).
+static func _merged_face_for_region(mesh_data: PBMeshData, region: PackedInt32Array) -> PBFace:
+	var cycle := _region_boundary_cycle(mesh_data, region)
+	if cycle.is_empty():
+		return null
+
+	# Fan-triangulate the ordered loop, on FRESHLY DUPLICATED corners. The
+	# cycle's own positions are not free to take: they are also used by the
+	# neighbours the removed faces were welded to (a subdivision leaves its
+	# mid-point positions shared between the pieces either side of the cut),
+	# and UVs live in a PER-POSITION array — a merged face reusing them
+	# rendered with whichever neighbour's projection was written last, which
+	# is the "merged face goes diagonal" report. Duplicating restores the
+	# position-privacy invariant; the weld rebuild at the end of the op
+	# re-connects the copies by coincidence, so the face still moves as part
+	# of the mesh.
+	var dup := PackedInt32Array()
+	for i in cycle:
+		dup.append(_dup_position(mesh_data, i, Vector3.ZERO))
+	var face := PBFace.new(PackedInt32Array())
+
+	# 2D ear-clip the cycle to avoid degenerate zero-area or overlapping fan triangles.
+	var cycle_3d := PackedVector3Array()
+	for i in cycle:
+		cycle_3d.append(mesh_data.positions[i])
+	var reg_n := Vector3.ZERO
+	for fi in region:
+		if fi >= 0 and fi < mesh_data.faces.size() and mesh_data.faces[fi] != null:
+			reg_n += PBMath.normal_from_positions(mesh_data.positions, mesh_data.faces[fi].get_indexes())
+	if reg_n.length_squared() < 0.0001:
+		reg_n = Vector3.UP
+	else:
+		reg_n = reg_n.normalized()
+
+	var basis := PBUv.get_planar_basis(reg_n)
+	var u_axis: Vector3 = basis["u"]
+	var v_axis: Vector3 = basis["v"]
+	var pts_2d := PackedVector2Array()
+	for p in cycle_3d:
+		pts_2d.append(Vector2(u_axis.dot(p), v_axis.dot(p)))
+
+	var area2 := 0.0
+	var n_pts := pts_2d.size()
+	for i in range(n_pts):
+		area2 += pts_2d[i].cross(pts_2d[(i + 1) % n_pts])
+
+	var pts_for_clip := pts_2d
+	var reversed := false
+	if area2 < 0.0:
+		pts_for_clip = pts_2d.duplicate()
+		pts_for_clip.reverse()
+		reversed = true
+
+	var tris := PBShapeComplex._triangulate_2d(pts_for_clip)
+	var idxs := PackedInt32Array()
+	if not tris.is_empty():
+		for tri in tris:
+			var i0: int = tri[0]
+			var i1: int = tri[1]
+			var i2: int = tri[2]
+			if reversed:
+				i0 = n_pts - 1 - i0
+				i1 = n_pts - 1 - i1
+				i2 = n_pts - 1 - i2
+				idxs.append_array(PackedInt32Array([dup[i0], dup[i2], dup[i1]]))
+			else:
+				idxs.append_array(PackedInt32Array([dup[i0], dup[i1], dup[i2]]))
+	else:
+		for i in range(1, dup.size() - 1):
+			idxs.append_array(PackedInt32Array([dup[0], dup[i], dup[i + 1]]))
+	face.set_indexes(idxs)
+	# The merged face replaces its pieces, so it wears their look: the first
+	# piece's material slot and auto-UV settings (a fresh face would reset a
+	# face whose tiling the author had set, and the merged area would jump).
+	var source: PBFace = mesh_data.faces[region[0]]
+	face.submesh_index = source.submesh_index
+	face.uv_offset = source.uv_offset
+	face.uv_rotation = source.uv_rotation
+	face.uv_scale = source.uv_scale
+	face.uv_use_world_space = source.uv_use_world_space
+	face.uv_flip_u = source.uv_flip_u
+	face.uv_flip_v = source.uv_flip_v
+	face.uv_swap_uv = source.uv_swap_uv
+	face.uv_fill = source.uv_fill
+	face.uv_anchor = source.uv_anchor
+	face.atlas_tile_origin = source.atlas_tile_origin
+	face.atlas_tile_size = source.atlas_tile_size
+	return face
 
 ## Welds (merges) the selected shared-vertex groups: every position in the
 ## selected groups snaps to their common centroid and the groups collapse
@@ -1484,6 +1496,282 @@ static func _build_polygon_face_with_normal(mesh_data: PBMeshData, pts_3d: Packe
 	PBUv.apply_face_uvs(mesh_data, face)
 	return face
 
+## Splits face edges that another face's corner lies on (T-junctions: one
+## face spans an edge that its neighbors cover with two shorter edges). The
+## surface is closed, but no edge pairs exactly, so boundary detection and
+## Godot's CSG kernel both read it as open. Only unpaired edges are tested,
+## against the endpoints of other unpaired edges. Returns the edges split.
+static func repair_t_junctions(mesh_data: PBMeshData) -> int:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return 0
+	var all_faces := PackedInt32Array()
+	for fi in range(mesh_data.faces.size()):
+		if mesh_data.faces[fi] != null:
+			all_faces.append(fi)
+	var splits := 0
+	# Splitting can expose a further T-vertex on an edge just created.
+	for _pass in range(8):
+		var open := _region_boundary_edges(mesh_data, all_faces)
+		if open.is_empty():
+			break
+		var corners := {}
+		for edge in open:
+			for idx in [edge["a"], edge["b"]]:
+				var p: Vector3 = mesh_data.positions[idx]
+				corners[Vector3(snappedf(p.x, WELD_TOLERANCE), snappedf(p.y, WELD_TOLERANCE),
+						snappedf(p.z, WELD_TOLERANCE))] = p
+		var did := 0
+		for edge in open:
+			var a: int = edge["a"]
+			var b: int = edge["b"]
+			var pa := mesh_data.positions[a]
+			var pb := mesh_data.positions[b]
+			var ab := pb - pa
+			var len2 := ab.length_squared()
+			if len2 <= WELD_TOLERANCE * WELD_TOLERANCE:
+				continue
+			var hits: Array = []
+			for key in corners:
+				var p: Vector3 = corners[key]
+				if p.distance_to(pa) <= WELD_TOLERANCE or p.distance_to(pb) <= WELD_TOLERANCE:
+					continue
+				var t := (p - pa).dot(ab) / len2
+				if t <= 0.0 or t >= 1.0 or pa.lerp(pb, t).distance_to(p) > WELD_TOLERANCE:
+					continue
+				hits.append([t, p])
+			if hits.is_empty():
+				continue
+			hits.sort_custom(func(x, y): return x[0] < y[0])
+			if _split_face_edge(mesh_data, mesh_data.faces[edge["face_idx"]], a, b, hits):
+				did += 1
+		if did == 0:
+			break
+		splits += did
+	if splits > 0:
+		mesh_data.rebuild_welds()
+	return splits
+
+## Replaces the triangle holding directed edge a→b with a fan through the
+## `hits` points ([t, position] sorted by t), keeping the triangle's winding.
+## Each inserted corner is a private position (position privacy).
+static func _split_face_edge(mesh_data: PBMeshData, face: PBFace, a: int, b: int,
+		hits: Array) -> bool:
+	var idx := face.get_indexes()
+	for t0 in range(0, idx.size() - 2, 3):
+		for r in range(3):
+			if idx[t0 + r] != a or idx[t0 + (r + 1) % 3] != b:
+				continue
+			var apex: int = idx[t0 + (r + 2) % 3]
+			var chain := PackedInt32Array([a])
+			for hit in hits:
+				var s: float = hit[0]
+				var n := _dup_position_at(mesh_data, hit[1], a)
+				if mesh_data.textures0.size() == mesh_data.positions.size():
+					mesh_data.textures0[n] = mesh_data.textures0[a].lerp(mesh_data.textures0[b], s)
+				if mesh_data.colors.size() == mesh_data.positions.size():
+					mesh_data.colors[n] = mesh_data.colors[a].lerp(mesh_data.colors[b], s)
+				chain.append(n)
+			chain.append(b)
+			var out := idx.slice(0, t0)
+			for k in range(chain.size() - 1):
+				out.append_array(PackedInt32Array([chain[k], chain[k + 1], apex]))
+			out.append_array(idx.slice(t0 + 3))
+			face.set_indexes(out)
+			return true
+	return false
+
+## Whole-mesh cleanup ("Tidy"): removes buried back-to-back face pairs (the
+## internal wall left where two extrusions meet), repairs T-junctions, then
+## merges flat edge-connected neighbors into convex faces — a triangle soup
+## from CSG becomes clean quads, a frame around a hole becomes four quads
+## (a face cannot carry a hole). Triangle count is unchanged; only the face
+## outlines (the drawn edges) get cleaner.
+## Result: _replace_faces fields plus "internal_removed", "t_junctions",
+## "faces_merged" (faces folded into others). Nothing to do is still ok.
+static func tidy_faces(mesh_data: PBMeshData) -> Dictionary:
+	if mesh_data == null or mesh_data.faces.is_empty():
+		return _fail("Tidy faces: empty mesh")
+	var internal := _remove_internal_face_pairs(mesh_data)
+	var t_fixed := repair_t_junctions(mesh_data)
+	_rebuild_welds(mesh_data)
+
+	var groups := _coplanar_convex_groups(mesh_data)
+	var merged: Array[PBFace] = []
+	var removed := {}
+	for group: PackedInt32Array in groups:
+		var face := _merged_face_for_region(mesh_data, group)
+		if face == null:
+			continue
+		merged.append(face)
+		for fi in group:
+			removed[fi] = true
+
+	var result: Dictionary
+	if merged.is_empty():
+		_rebuild_topology(mesh_data)
+		result = {"ok": true, "cap_face_ids": PackedInt32Array(), "new_face_ids": PackedInt32Array()}
+	else:
+		result = _replace_faces(mesh_data, removed, merged, [])
+		if not result.get("ok", false):
+			return result
+		for fid in result["cap_face_ids"]:
+			PBUv.apply_face_uvs(mesh_data, mesh_data.faces[fid])
+	result["internal_removed"] = internal
+	result["t_junctions"] = t_fixed
+	result["faces_merged"] = removed.size() - merged.size()
+	return result
+
+## Deletes pairs of coincident, opposite-facing faces whose every edge is also
+## used by other faces — a wall buried inside the solid. A free-standing
+## two-sided card (edges used only by the pair) is left alone.
+static func _remove_internal_face_pairs(mesh_data: PBMeshData) -> int:
+	var edge_use := {}
+	var by_corners := {}
+	for fi in range(mesh_data.faces.size()):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		for e in face.get_edges():
+			var ek := _coord_edge_key(mesh_data, e.a, e.b)
+			edge_use[ek] = edge_use.get(ek, 0) + 1
+		var corners: Array[String] = []
+		for idx in face.get_distinct_indexes():
+			var p := mesh_data.positions[idx]
+			corners.append(str(Vector3(snappedf(p.x, WELD_TOLERANCE), snappedf(p.y, WELD_TOLERANCE),
+					snappedf(p.z, WELD_TOLERANCE))))
+		corners.sort()
+		var key := "|".join(corners)
+		if not by_corners.has(key):
+			by_corners[key] = PackedInt32Array()
+		by_corners[key].append(fi)
+
+	var removed := {}
+	for key in by_corners:
+		var ids: PackedInt32Array = by_corners[key]
+		for i in range(ids.size()):
+			for j in range(i + 1, ids.size()):
+				var fa: int = ids[i]
+				var fb: int = ids[j]
+				if removed.has(fa) or removed.has(fb):
+					continue
+				var na := _face_area_normal(mesh_data, mesh_data.faces[fa]).normalized()
+				var nb := _face_area_normal(mesh_data, mesh_data.faces[fb]).normalized()
+				if na.dot(nb) > -0.999:
+					continue
+				var buried := true
+				for e in mesh_data.faces[fa].get_edges():
+					if int(edge_use.get(_coord_edge_key(mesh_data, e.a, e.b), 0)) < 4:
+						buried = false
+						break
+				if buried:
+					removed[fa] = true
+					removed[fb] = true
+	if removed.is_empty() or removed.size() == mesh_data.faces.size():
+		return 0
+	_replace_faces(mesh_data, removed, [], [])
+	return removed.size()
+
+## Groups of flat, edge-connected faces (same plane, same material slot) that
+## merge into ONE convex face each. Grown greedily from each seed while the
+## union's outline stays a single convex cycle.
+static func _coplanar_convex_groups(mesh_data: PBMeshData) -> Array:
+	var count := mesh_data.faces.size()
+	var normals: Array[Vector3] = []
+	var offsets := PackedFloat64Array()
+	for fi in range(count):
+		var face: PBFace = mesh_data.faces[fi]
+		var n := Vector3.ZERO
+		var d := 0.0
+		if face != null and not face.get_indexes().is_empty():
+			n = _face_area_normal(mesh_data, face).normalized()
+			d = n.dot(mesh_data.positions[face.get_indexes()[0]])
+		normals.append(n)
+		offsets.append(d)
+
+	var edge_faces := {}
+	for fi in range(count):
+		var face: PBFace = mesh_data.faces[fi]
+		if face == null:
+			continue
+		for e in face.get_edges():
+			var ek := _coord_edge_key(mesh_data, e.a, e.b)
+			if not edge_faces.has(ek):
+				edge_faces[ek] = PackedInt32Array()
+			edge_faces[ek].append(fi)
+	var adjacent := {}
+	for ek in edge_faces:
+		var pair: PackedInt32Array = edge_faces[ek]
+		if pair.size() != 2 or pair[0] == pair[1]:
+			continue
+		var fa: int = pair[0]
+		var fb: int = pair[1]
+		if normals[fa] == Vector3.ZERO or normals[fa].dot(normals[fb]) < 0.9999 \
+				or absf(offsets[fa] - offsets[fb]) > WELD_TOLERANCE \
+				or mesh_data.faces[fa].submesh_index != mesh_data.faces[fb].submesh_index:
+			continue
+		if not adjacent.has(fa):
+			adjacent[fa] = []
+		if not adjacent.has(fb):
+			adjacent[fb] = []
+		adjacent[fa].append(fb)
+		adjacent[fb].append(fa)
+
+	var assigned := {}
+	var groups: Array = []
+	for start in range(count):
+		if assigned.has(start) or not adjacent.has(start):
+			continue
+		assigned[start] = true
+		var group := PackedInt32Array([start])
+		var grew := true
+		while grew:
+			grew = false
+			for m in range(group.size()):
+				for nb in adjacent.get(group[m], []):
+					if assigned.has(nb):
+						continue
+					var trial := group.duplicate()
+					trial.append(nb)
+					if _region_is_convex(mesh_data, trial, normals[start]):
+						group = trial
+						assigned[nb] = true
+						grew = true
+		if group.size() >= 2:
+			groups.append(group)
+	return groups
+
+## True when the region's outline is one cycle that is convex in its plane
+## (collinear corners — T-vertices on a straight side — are ignored).
+static func _region_is_convex(mesh_data: PBMeshData, region: PackedInt32Array, normal: Vector3) -> bool:
+	var cycle := _region_boundary_cycle(mesh_data, region)
+	if cycle.size() < 3:
+		return false
+	var basis := PBUv.get_planar_basis(normal)
+	var u_axis: Vector3 = basis["u"]
+	var v_axis: Vector3 = basis["v"]
+	var pts := PackedVector2Array()
+	for idx in cycle:
+		var p := mesh_data.positions[idx]
+		pts.append(Vector2(u_axis.dot(p), v_axis.dot(p)))
+	var n := pts.size()
+	var turn := 0.0
+	for i in range(n):
+		var a := pts[(i + n - 1) % n]
+		var b := pts[i]
+		var c := pts[(i + 1) % n]
+		var ab := b - a
+		var bc := c - b
+		var cr := ab.cross(bc)
+		if absf(cr) <= 0.000001 * ab.length() * bc.length():
+			if ab.dot(bc) < 0.0:
+				return false
+			continue
+		if turn == 0.0:
+			turn = signf(cr)
+		elif signf(cr) != turn:
+			return false
+	return turn != 0.0
+
 # ==============================================================================
 # Selection helpers
 # ==============================================================================
@@ -2157,6 +2445,13 @@ static func _region_normal(mesh_data: PBMeshData, region: PackedInt32Array) -> V
 	for fi in region:
 		acc += _face_area_normal(mesh_data, mesh_data.faces[fi])
 	return acc
+
+## Sum of the region's per-face area-normal magnitudes (the |sum| ceiling).
+static func _region_area_sum(mesh_data: PBMeshData, region: PackedInt32Array) -> float:
+	var total := 0.0
+	for fi in region:
+		total += _face_area_normal(mesh_data, mesh_data.faces[fi]).length()
+	return total
 
 static func _face_area_normal(mesh_data: PBMeshData, face: PBFace) -> Vector3:
 	var acc := Vector3.ZERO

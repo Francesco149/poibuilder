@@ -1509,6 +1509,8 @@ func _append_material_once(mat: Material) -> bool:
 func _should_skip_material_scan_dir(full_path: String, name_str: String) -> bool:
 	if name_str in ["addons", ".godot", "demo", "Animations", "Character"]:
 		return true
+	if FileAccess.file_exists(full_path.path_join(".gdignore")):
+		return true
 	return FileAccess.file_exists(full_path.path_join("project.godot"))
 
 func _try_load_scanned_material(path: String) -> Material:
