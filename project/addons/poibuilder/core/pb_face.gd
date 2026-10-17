@@ -55,11 +55,6 @@ extends Resource
 ## UV fill mode: 0 = Fit, 1 = Tile, 2 = Stretch.
 @export var uv_fill: int = 1
 
-## Sub-rect on an atlas sheet (0–1). Size (1,1) means the whole texture.
-## Used by PBAtlasTile so Auto UV can repeat one cell without extra triangles.
-@export var atlas_tile_origin: Vector2 = Vector2.ZERO
-@export var atlas_tile_size: Vector2 = Vector2.ONE
-
 ## UV anchor position: 0-8 = 3x3 grid positions (UpperLeft..LowerRight), 9 = None.
 @export var uv_anchor: int = 9
 
@@ -110,8 +105,6 @@ func copy_from(other: PBFace) -> void:
 	uv_swap_uv = other.uv_swap_uv
 	uv_fill = other.uv_fill
 	uv_anchor = other.uv_anchor
-	atlas_tile_origin = other.atlas_tile_origin
-	atlas_tile_size = other.atlas_tile_size
 	splat_bounds = other.splat_bounds.duplicate()
 
 	invalidate_cache()

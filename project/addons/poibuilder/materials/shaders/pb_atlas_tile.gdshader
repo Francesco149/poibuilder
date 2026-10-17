@@ -33,7 +33,7 @@ void fragment() {
 	}
 	ALBEDO = alb.rgb;
 	// Do not write ALPHA. Writing it forces transparent shading, which made
-	// Synty atlas cells see-through even when clip discarded the holes.
+	// atlas cells see-through even when clip discarded the holes.
 	METALLIC = metallic;
 	ROUGHNESS = clamp(1.0 - smoothness, 0.0, 1.0);
 	if (enable_emission) {

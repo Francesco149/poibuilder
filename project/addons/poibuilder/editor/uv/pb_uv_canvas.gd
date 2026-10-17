@@ -314,9 +314,19 @@ func _update_preview_texture() -> void:
 		preview_texture = albedo_tex
 
 ## Extracts the albedo/base texture a material presents, including splat
-## ShaderMaterials and Synty / atlas-wrap ShaderMaterials (`Albedo_Map` / `albedo_map`).
+## ShaderMaterials and custom ShaderMaterials exposing `Albedo_Map` / `albedo_map`.
 static func _material_albedo_texture(mat: Material) -> Texture2D:
-	return PBAtlasTile.albedo_texture(mat)
+	if mat is StandardMaterial3D:
+		return (mat as StandardMaterial3D).albedo_texture
+	if mat is ORMMaterial3D:
+		return (mat as ORMMaterial3D).albedo_texture
+	if mat is ShaderMaterial:
+		var sm := mat as ShaderMaterial
+		for pname in ["Albedo_Map", "albedo_map", "Texture_Map", "base_texture"]:
+			var tex = sm.get_shader_parameter(pname)
+			if tex is Texture2D:
+				return tex
+	return null
 
 ## Returns the cached splat composite for `splat_mat`, rebuilding it when
 ## the material's masks have changed (PBSplat.mask_state_version moved).

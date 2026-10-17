@@ -113,7 +113,6 @@ static func extrude_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array,
 	for idx in drag_positions:
 		final_drag.append(remap.get(idx, idx))
 	result["drag_positions"] = final_drag
-	PBAtlasTile.sync_face_wrappers(mesh_data, result["new_face_ids"])
 	return result
 
 ## Insets each selected face independently: the face is replaced by a shrunken
@@ -257,8 +256,6 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 			f.uv_swap_uv = face.uv_swap_uv
 			f.uv_fill = face.uv_fill
 			f.uv_anchor = face.uv_anchor
-			f.atlas_tile_origin = face.atlas_tile_origin
-			f.atlas_tile_size = face.atlas_tile_size
 			new_faces.append(f)
 
 		removed[fi] = true
@@ -362,8 +359,6 @@ static func subdivide_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -
 		new_nface.uv_swap_uv = nface.uv_swap_uv
 		new_nface.uv_fill = nface.uv_fill
 		new_nface.uv_anchor = nface.uv_anchor
-		new_nface.atlas_tile_origin = nface.atlas_tile_origin
-		new_nface.atlas_tile_size = nface.atlas_tile_size
 		updated_neighbor_faces.append(new_nface)
 		removed[nfi] = true
 	var res := _replace_faces(mesh_data, removed, new_faces, updated_neighbor_faces)
@@ -539,8 +534,6 @@ static func _merged_face_for_region(mesh_data: PBMeshData, region: PackedInt32Ar
 	face.uv_swap_uv = source.uv_swap_uv
 	face.uv_fill = source.uv_fill
 	face.uv_anchor = source.uv_anchor
-	face.atlas_tile_origin = source.atlas_tile_origin
-	face.atlas_tile_size = source.atlas_tile_size
 	return face
 
 ## Welds (merges) the selected shared-vertex groups: every position in the
@@ -763,10 +756,8 @@ static func extrude_edges(mesh_data: PBMeshData, edge_ids: PackedInt32Array,
 	var final_drag := PackedInt32Array()
 	for idx in drag_positions:
 		final_drag.append(remap.get(idx, idx))
-	var edge_result := {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids,
+	return {"ok": true, "new_face_ids": new_ids, "cap_face_ids": new_ids,
 		"drag_positions": final_drag}
-	PBAtlasTile.sync_face_wrappers(mesh_data, new_ids)
-	return edge_result
 
 ## Bevels selected edges with a flat chamfer (segments = 1) or a multi-segment
 ## circular fillet (segments = 2..8) — see PBMeshBevel, which owns the op.

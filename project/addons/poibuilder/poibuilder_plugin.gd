@@ -2,6 +2,8 @@
 extends EditorPlugin
 class_name PoiBuilderPlugin
 
+const PB_MESH_ICON := "res://addons/poibuilder/icons/pb_mesh_icon.svg"
+
 # ==============================================================================
 # Core Systems
 # ==============================================================================
@@ -160,7 +162,9 @@ func _enter_tree():
 		"PBMesh",
 		"MeshInstance3D",
 		preload("res://addons/poibuilder/core/pb_mesh.gd"),
-		preload("res://addons/poibuilder/icons/pb_mesh_icon.svg") if FileAccess.file_exists("res://addons/poibuilder/icons/pb_mesh_icon.svg") else null
+		# load(), not preload(): on a project's first boot the svg is not yet
+		# imported, and a failed preload fails the whole plugin script to parse.
+		load(PB_MESH_ICON) if ResourceLoader.exists(PB_MESH_ICON) else null
 	)
 
 	# Register the node gizmo plugin — this is the native editor integration:
@@ -2047,10 +2051,7 @@ func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material)
 			% (previous.resource_name if previous != null else "(none)"))
 
 	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
-	if PBAtlasTile.is_atlas_source(prepared) or PBAtlasTile.is_wrapper(prepared):
-		PBAtlasTile.apply_to_faces(mesh.pb_mesh_data, target_faces, prepared)
-	else:
-		mesh.pb_mesh_data.set_faces_material(target_faces, prepared)
+	mesh.pb_mesh_data.set_faces_material(target_faces, prepared)
 	var after := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
 
 	var undo := get_undo_redo()

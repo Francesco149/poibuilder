@@ -375,7 +375,7 @@ func _build_ui() -> void:
 	_mat_search.name = "PaletteSearch"
 	_mat_search.placeholder_text = "Search palette…"
 	_mat_search.clear_button_enabled = true
-	_mat_search.tooltip_text = "Filter cards by material or texture name (e.g. PolygonScifiWorlds_01_A)"
+	_mat_search.tooltip_text = "Filter cards by material or texture name (e.g. brick or wood_planks)"
 	_mat_search.text_changed.connect(func(_t: String): _rebuild_material_grid())
 	root_vbox.add_child(_mat_search)
 
@@ -1341,7 +1341,7 @@ func _select_first_classified(category: String, select_fn: Callable) -> void:
 			return
 	select_fn.call(_project_materials[0])
 func _extract_texture(mat: Material) -> Texture2D:
-	return PBAtlasTile.albedo_texture(mat)
+	return PBUvCanvas._material_albedo_texture(mat)
 
 func _fit_material_grid_width() -> void:
 	if _mat_scroll == null or _material_grid == null:
@@ -1507,7 +1507,7 @@ func _append_material_once(mat: Material) -> bool:
 	return true
 
 func _should_skip_material_scan_dir(full_path: String, name_str: String) -> bool:
-	if name_str in ["addons", ".godot", "demo", "Animations", "Character"]:
+	if name_str == "addons" or name_str == ".godot":
 		return true
 	if FileAccess.file_exists(full_path.path_join(".gdignore")):
 		return true
@@ -1541,8 +1541,9 @@ func _tres_declares_material(path: String) -> bool:
 	return false
 
 func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Array = []) -> void:
-	# Depth 6 reaches Assets/SyntySciFiWorlds/Materials/Alts. Texture-image
-	# wrappers are capped so a large PNG tree cannot hide saved .tres cards.
+	# Depth 6 reaches materials nested deep inside imported asset packs.
+	# Texture-image wrappers are capped so a large PNG tree cannot hide saved
+	# .tres cards.
 	if depth > 6:
 		return
 	var d := DirAccess.open(dir_path)

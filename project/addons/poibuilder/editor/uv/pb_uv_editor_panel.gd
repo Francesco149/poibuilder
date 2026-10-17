@@ -105,8 +105,6 @@ var _spin_texel: SpinBox
 var _btn_texel_get: Button
 var _btn_texel_set: Button
 var _btn_export_png: Button
-var _btn_atlas_tile: Button
-
 ## Optional UndoRedoManager reference for headless tests
 var undo_redo: Object = null
 
@@ -400,10 +398,6 @@ func _build_ui() -> void:
 	_btn_stitch = _create_icon_btn("BtnStitch", "icon_uv_stitch.svg", "Stitch", "Auto-stitch matching edge of 2 selected adjacent faces")
 	_btn_stitch.pressed.connect(_on_stitch_pressed)
 	_ops_toolbar.add_child(_btn_stitch)
-
-	_btn_atlas_tile = _create_icon_btn("BtnAtlasTile", "icon_uv_tile.svg", "Atlas Tile", "Use the selected UV island as one atlas cell, then Auto-UV so that cell tiles at 1 m (no extra triangles). Swap PolygonScifiWorlds / atlas colorways afterwards — the cell is stored on the face.")
-	_btn_atlas_tile.pressed.connect(_on_atlas_tile_pressed)
-	_ops_toolbar.add_child(_btn_atlas_tile)
 
 	_ops_toolbar.add_child(_make_vsep())
 
@@ -803,26 +797,6 @@ func _get_target_vertices() -> Array:
 	for vi in range(active_mesh.pb_mesh_data.positions.size()):
 		all_verts.append(vi)
 	return all_verts
-
-func _on_atlas_tile_pressed() -> void:
-	if active_mesh == null or active_mesh.pb_mesh_data == null:
-		return
-	var faces := _get_target_faces()
-	if faces.is_empty():
-		if _lbl_status != null:
-			_lbl_status.text = "Select a face whose UVs sit on one atlas cell"
-		return
-	var bounds := PBAtlasTile.uv_bounds(active_mesh.pb_mesh_data, faces, canvas.uv_channel if canvas else 0)
-	if bounds.size.x > 1.0001 or bounds.size.y > 1.0001:
-		if _lbl_status != null:
-			_lbl_status.text = "Island is larger than 0–1 — shrink it onto one atlas cell first"
-		return
-	_execute_uv_op("Set Atlas Tile", func() -> bool:
-		return PBAtlasTile.lock_tile_from_uvs(
-			active_mesh.pb_mesh_data, faces, canvas.uv_channel if canvas else 0))
-	if _lbl_status != null:
-		_lbl_status.text = "Atlas tile %0.3f,%0.3f size %0.3f×%0.3f — Auto UV tiles that cell" % [
-			bounds.position.x, bounds.position.y, bounds.size.x, bounds.size.y]
 
 func _execute_uv_op(action_name: String, op_callable: Callable) -> void:
 	if active_mesh == null or active_mesh.pb_mesh_data == null:

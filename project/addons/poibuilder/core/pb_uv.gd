@@ -212,8 +212,6 @@ static func setup_extruded_face_uvs(mesh_data: PBMeshData, side: PBFace,
 		side.uv_swap_uv = source_face.uv_swap_uv
 		side.uv_fill = source_face.uv_fill
 		side.uv_anchor = source_face.uv_anchor
-		side.atlas_tile_origin = source_face.atlas_tile_origin
-		side.atlas_tile_size = source_face.atlas_tile_size
 		side.uv_use_world_space = source_face.uv_use_world_space
 	else:
 		side.uv_use_world_space = false
