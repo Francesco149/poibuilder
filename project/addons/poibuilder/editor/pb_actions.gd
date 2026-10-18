@@ -99,6 +99,12 @@ const ACTIONS: Dictionary = {
 	"env_dusk":        { "label": "Environment: Dusk", "keys": [] },
 	"env_night":       { "label": "Environment: Night", "keys": [] },
 	"env_cycle":       { "label": "Environment: Cycle Time of Day", "keys": [] },
+	# Material dock favorites (unbound by default)
+	"fav_1":           { "label": "Favorite: Apply Slot 1", "keys": [] },
+	"fav_2":           { "label": "Favorite: Apply Slot 2", "keys": [] },
+	"fav_3":           { "label": "Favorite: Apply Slot 3", "keys": [] },
+	"fav_4":           { "label": "Favorite: Apply Slot 4", "keys": [] },
+	"fav_5":           { "label": "Favorite: Apply Slot 5", "keys": [] },
 	# Scoped keys: matched by their owner through matches(), never dispatched
 	# by action_for (hold keys fire on press AND release; UV keys belong to
 	# the UV editor canvas, not the 3D viewport).

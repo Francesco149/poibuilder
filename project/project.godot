@@ -31,6 +31,38 @@ project/assembly_name="PoiBuilder"
 
 enabled=PackedStringArray("res://addons/poibuilder/plugin.cfg")
 
+[importer_defaults]
+
+texture={
+"compress/channel_pack": 0,
+"compress/hdr_compression": 1,
+"compress/high_quality": false,
+"compress/lossy_quality": 0.7,
+"compress/mode": 2,
+"compress/normal_map": 0,
+"compress/rdo_quality_loss": 0.0,
+"compress/uastc_level": 0,
+"detect_3d/compress_to": 0,
+"mipmaps/generate": true,
+"mipmaps/limit": -1,
+"process/channel_remap/alpha": 3,
+"process/channel_remap/blue": 2,
+"process/channel_remap/green": 1,
+"process/channel_remap/red": 0,
+"process/fix_alpha_border": true,
+"process/hdr_as_srgb": false,
+"process/hdr_clamp_exposure": false,
+"process/normal_map_invert_y": false,
+"process/premult_alpha": false,
+"process/size_limit": 0,
+"roughness/mode": 0,
+"roughness/src_normal": ""
+}
+
+[poibuilder]
+
+palette/favorites=PackedStringArray("res://addons/poibuilder/materials/textures/kenney_prototype-textures/PNG/Dark/dark_texture_11.png", "res://addons/poibuilder/materials/textures/kenney_prototype-textures/PNG/Dark/dark_texture_12.png", "res://addons/poibuilder/materials/textures/kenney_prototype-textures/PNG/Dark/dark_texture_10.png", "res://addons/poibuilder/materials/textures/kenney_prototype-textures/PNG/Purple/purple_texture_06.png", "res://addons/poibuilder/materials/textures/kenney_prototype-textures/PNG/Orange/orange_texture_08.png")
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

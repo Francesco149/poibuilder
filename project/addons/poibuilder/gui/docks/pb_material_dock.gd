@@ -22,6 +22,11 @@ extends PanelContainer
 enum DockMode { MATERIAL, PAINT, STAMP, SPRITE, SHAPE, PARTICLE }
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
+## Per-project palette state lives in ProjectSettings (project.godot), not in
+## .godot/: it must survive a cache wipe, and each project keeps its own.
+const SETTING_ADDED_PATHS := "poibuilder/palette/added_paths"
+const SETTING_FAVORITES := "poibuilder/palette/favorites"
+const FAVORITE_SLOTS := 5
 
 ## Emitted when the mode row switches tabs. The plugin owns what each mode
 ## ARMS in the viewport (sprite placement, shape placement) and drives the
@@ -135,6 +140,11 @@ var _spin_stamp_opacity: Range
 # Context Menu
 var _context_menu: PopupMenu
 var _context_material: Material = null
+
+var _favorites_row: HBoxContainer
+var _favorite_buttons: Array[Button] = []
+var _favorite_menu: PopupMenu
+var _favorite_menu_slot: int = -1
 
 # Flag to prevent recursive updates while syncing from selection
 var _syncing: bool = false
@@ -370,6 +380,9 @@ func _build_ui() -> void:
 	btn_refresh.pressed.connect(refresh_materials)
 	mat_header.add_child(btn_refresh)
 	root_vbox.add_child(mat_header)
+
+	_build_favorites_row()
+	root_vbox.add_child(_favorites_row)
 
 	_mat_search = LineEdit.new()
 	_mat_search.name = "PaletteSearch"
@@ -996,6 +1009,8 @@ func _set_dock_mode(new_mode: DockMode) -> void:
 	_btn_mode_particle.button_pressed = (dock_mode == DockMode.PARTICLE)
 
 	_uv_and_tint_section.visible = (dock_mode == DockMode.MATERIAL)
+	if _favorites_row != null:
+		_favorites_row.visible = (dock_mode == DockMode.MATERIAL)
 	_paint_tool_section.visible = (dock_mode == DockMode.PAINT)
 	_stamp_tool_section.visible = (dock_mode == DockMode.STAMP)
 	_sprite_tool_section.visible = (dock_mode == DockMode.SPRITE)
@@ -1432,13 +1447,31 @@ func refresh_materials() -> void:
 	# never reaches addons/poibuilder/materials/textures (4 levels down). This
 	# is where the water/particle/waterfall sheets and shipped stamps come
 	# from on a fresh project.
-	_scan_dir_for_materials("res://addons/poibuilder/materials/textures")
+	# Every bundled texture gets a card (no cap): texture packs shipped inside
+	# the addon are opted in by being there, and deleting a pack's folder
+	# removes its cards on the next rescan.
+	_scan_dir_for_materials("res://addons/poibuilder/materials/textures", 0, [], -1)
 
 	# 4. Scan the rest of the project for materials and texture images
 	_scan_dir_for_materials("res://")
 
+	# 5. "+ Add" picks survive rescans and restarts. A pick is dropped only once
+	# its file is gone from disk (not merely unimported on a fresh boot).
+	var added := _get_project_list(SETTING_ADDED_PATHS)
+	var kept := PackedStringArray()
+	for path in added:
+		if not FileAccess.file_exists(path):
+			continue
+		kept.append(path)
+		var mat := _load_palette_entry(path)
+		if mat != null:
+			_append_material_once(mat)
+	if kept.size() != added.size():
+		_set_project_list(SETTING_ADDED_PATHS, kept)
+
 	_collapse_duplicate_materials()
 	_rebuild_material_grid()
+	_refresh_favorites_row()
 	_refresh_particle_labels()
 
 ## Collapse cross-order duplicates: a texture wrapper scanned BEFORE the
@@ -1540,10 +1573,11 @@ func _tres_declares_material(path: String) -> bool:
 			return true
 	return false
 
-func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Array = []) -> void:
+func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Array = [],
+		texture_limit: int = 40) -> void:
 	# Depth 6 reaches materials nested deep inside imported asset packs.
-	# Texture-image wrappers are capped so a large PNG tree cannot hide saved
-	# .tres cards.
+	# Texture-image wrappers are capped (texture_limit, -1 = no cap) so a large
+	# PNG tree elsewhere in the project cannot flood the palette.
 	if depth > 6:
 		return
 	var d := DirAccess.open(dir_path)
@@ -1556,7 +1590,7 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Arr
 			var full_path := dir_path.path_join(name_str)
 			if d.current_is_dir():
 				if not _should_skip_material_scan_dir(full_path, name_str):
-					_scan_dir_for_materials(full_path, depth + 1, tex_wrappers)
+					_scan_dir_for_materials(full_path, depth + 1, tex_wrappers, texture_limit)
 			else:
 				var ext := name_str.get_extension().to_lower()
 				if ext == "tres" or ext == "material":
@@ -1564,7 +1598,7 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Arr
 					if mat != null:
 						_append_material_once(mat)
 				elif ext == "png" or ext == "jpg" or ext == "jpeg" or ext == "webp":
-					if tex_wrappers.size() >= 40:
+					if texture_limit >= 0 and tex_wrappers.size() >= texture_limit:
 						pass
 					else:
 						# One card per texture NAME: a project copy of a bundled
@@ -1575,15 +1609,7 @@ func _scan_dir_for_materials(dir_path: String, depth: int = 0, tex_wrappers: Arr
 							if ResourceLoader.exists(full_path):
 								var tex = ResourceLoader.load(full_path)
 								if tex is Texture2D:
-									var mat := StandardMaterial3D.new()
-									mat.resource_name = name_str.get_basename().capitalize()
-									mat.set_meta("source_texture_path", full_path)
-									mat.albedo_texture = tex
-									mat.roughness = 0.8
-									mat.vertex_color_use_as_albedo = true
-									mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-									PBAlphaDetect.ensure_transparency(mat)
-									if _append_material_once(mat):
+									if _append_material_once(_make_texture_card(full_path, tex)):
 										tex_wrappers.append(full_path)
 		name_str = d.get_next()
 	d.list_dir_end()
@@ -1763,6 +1789,9 @@ func _show_context_menu(mat: Material, pos: Vector2) -> void:
 	_context_menu.add_item("Set as Sprite Texture", 6)
 	_context_menu.add_item("Set as Particle Texture", 7)
 	_context_menu.add_separator()
+	for slot in range(FAVORITE_SLOTS):
+		_context_menu.add_item("Set as Favorite %d" % (slot + 1), 11 + slot)
+	_context_menu.add_separator()
 	_context_menu.add_item("Copy Path", 3)
 	_context_menu.popup(Rect2i(Vector2i(pos), Vector2i(190, 130)))
 
@@ -1793,6 +1822,8 @@ func _on_context_menu_id_pressed(id: int) -> void:
 		7: # Particle
 			_select_particle_material(_context_material)
 			_set_dock_mode(DockMode.PARTICLE)
+		11, 12, 13, 14, 15: # Favorite slots
+			set_favorite(id - 11, _context_material)
 
 func _on_add_material_pressed() -> void:
 	if _file_dialog == null:
@@ -1803,21 +1834,207 @@ func _on_add_material_pressed() -> void:
 		add_child(_file_dialog)
 	_file_dialog.popup_file_dialog()
 
+## "+ Add": the picked material/texture becomes the same card a scan would
+## build, skipped when already shown, and remembered for later rescans.
 func _on_file_dialog_selected(path: String) -> void:
-	if ResourceLoader.exists(path):
-		var res = ResourceLoader.load(path)
-		if res is Material:
-			if not _project_materials.has(res):
-				_append_material_once(res)
-				_rebuild_material_grid()
-		elif res is Texture2D:
-			var mat := StandardMaterial3D.new()
-			mat.resource_name = path.get_file().get_basename().capitalize()
-			mat.albedo_texture = res
-			mat.roughness = 0.8
-			PBAlphaDetect.ensure_transparency(mat)
-			_project_materials.append(mat)
-			_rebuild_material_grid()
+	var mat := _load_palette_entry(path)
+	if mat == null:
+		return
+	var added := _get_project_list(SETTING_ADDED_PATHS)
+	if not added.has(path):
+		added.append(path)
+		_set_project_list(SETTING_ADDED_PATHS, added)
+	_append_material_once(mat)
+	_collapse_duplicate_materials()
+	_rebuild_material_grid()
+
+## One palette card for a texture image — identical whether it came from the
+## scan, "+ Add", or a favorite slot.
+func _make_texture_card(path: String, tex: Texture2D) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.resource_name = path.get_file().get_basename().capitalize()
+	mat.set_meta("source_texture_path", path)
+	mat.albedo_texture = tex
+	mat.roughness = 0.8
+	mat.vertex_color_use_as_albedo = true
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	PBAlphaDetect.ensure_transparency(mat)
+	return mat
+
+## A saved material, or a texture image wrapped as a card; null when the file
+## is missing or not yet imported.
+func _load_palette_entry(path: String) -> Material:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return null
+	var res = ResourceLoader.load(path)
+	if res is Material:
+		return res
+	if res is Texture2D:
+		return _make_texture_card(path, res)
+	return null
+
+## The file a card can be reloaded from: a saved material's own path, else the
+## image a texture card wraps. "" for materials embedded in a scene.
+func _palette_entry_path(mat: Material) -> String:
+	if mat == null:
+		return ""
+	if not mat.resource_path.is_empty() and not mat.resource_path.contains("::"):
+		return mat.resource_path
+	if mat.has_meta("source_texture_path"):
+		return str(mat.get_meta("source_texture_path"))
+	return ""
+
+func _get_project_list(key: String) -> PackedStringArray:
+	if ProjectSettings.has_setting(key):
+		return PackedStringArray(ProjectSettings.get_setting(key))
+	return PackedStringArray()
+
+func _set_project_list(key: String, values: PackedStringArray) -> void:
+	var is_empty := true
+	for v in values:
+		if not v.is_empty():
+			is_empty = false
+			break
+	ProjectSettings.set_setting(key, null if is_empty else values)
+	if Engine.is_editor_hint():
+		ProjectSettings.save()
+
+# ==============================================================================
+# Favorites (5 quick-apply slots, saved per project)
+# ==============================================================================
+
+func _build_favorites_row() -> void:
+	_favorites_row = HBoxContainer.new()
+	_favorites_row.name = "FavoritesRow"
+	var title := Label.new()
+	title.text = "Favorites"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_favorites_row.add_child(title)
+	_favorite_buttons.clear()
+	for slot in range(FAVORITE_SLOTS):
+		var btn := Button.new()
+		btn.name = "Favorite%d" % (slot + 1)
+		btn.custom_minimum_size = Vector2(40, 40)
+		btn.expand_icon = true
+		btn.focus_mode = Control.FOCUS_NONE
+		var badge := Label.new()
+		badge.name = "SlotNumber"
+		badge.text = str(slot + 1)
+		badge.position = Vector2(3, 0)
+		badge.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
+		badge.add_theme_color_override("font_outline_color", Color.BLACK)
+		badge.add_theme_constant_override("outline_size", 4)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		btn.add_child(badge)
+		btn.pressed.connect(func(): _on_favorite_pressed(slot))
+		btn.gui_input.connect(func(event: InputEvent):
+			if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+				_show_favorite_menu(slot, btn.get_global_mouse_position())
+		)
+		_favorites_row.add_child(btn)
+		_favorite_buttons.append(btn)
+	_favorite_menu = PopupMenu.new()
+	_favorite_menu.id_pressed.connect(func(_id: int):
+		if _favorite_menu_slot >= 0:
+			clear_favorite(_favorite_menu_slot)
+	)
+	_favorites_row.add_child(_favorite_menu)
+	_refresh_favorites_row()
+
+func _get_favorites() -> PackedStringArray:
+	var favs := _get_project_list(SETTING_FAVORITES)
+	favs.resize(FAVORITE_SLOTS)
+	return favs
+
+## Assigns a palette card to favorite `slot` (0-based).
+func set_favorite(slot: int, mat: Material) -> void:
+	if slot < 0 or slot >= FAVORITE_SLOTS:
+		return
+	var path := _palette_entry_path(mat)
+	if path.is_empty():
+		_set_status("This material is embedded in a scene — save it as a .tres to make it a favorite")
+		return
+	var favs := _get_favorites()
+	favs[slot] = path
+	_set_project_list(SETTING_FAVORITES, favs)
+	_refresh_favorites_row()
+	_set_status("Favorite %d: %s" % [slot + 1, path.get_file()])
+
+func clear_favorite(slot: int) -> void:
+	if slot < 0 or slot >= FAVORITE_SLOTS:
+		return
+	var favs := _get_favorites()
+	favs[slot] = ""
+	_set_project_list(SETTING_FAVORITES, favs)
+	_refresh_favorites_row()
+
+## Applies favorite `slot` (0-based) to the selected faces, or to the whole
+## active object when no faces are selected. False when nothing was applied.
+func apply_favorite(slot: int) -> bool:
+	if slot < 0 or slot >= FAVORITE_SLOTS:
+		return false
+	var path := _get_favorites()[slot]
+	if path.is_empty():
+		_set_status("Favorite %d is empty — right-click a palette card → Set as Favorite %d" % [slot + 1, slot + 1])
+		return false
+	if editor == null or editor.active_mesh == null:
+		_set_status("Select a PoiBuilder object or faces first")
+		return false
+	var mat := _palette_material_for(path)
+	if mat == null:
+		_set_status("Favorite %d: %s is missing" % [slot + 1, path.get_file()])
+		return false
+	_apply_material_to_selection(mat)
+	return true
+
+## The palette's own card for `path` (so repeated applies reuse one material
+## instance — the mesh matches material slots by instance), created and added
+## to the palette when it is not showing.
+func _palette_material_for(path: String) -> Material:
+	for m in _project_materials:
+		if m != null and _palette_entry_path(m) == path:
+			return m
+	var mat := _load_palette_entry(path)
+	if mat != null and _append_material_once(mat):
+		_rebuild_material_grid()
+	return mat
+
+func _on_favorite_pressed(slot: int) -> void:
+	apply_favorite(slot)
+
+func _show_favorite_menu(slot: int, pos: Vector2) -> void:
+	if _get_favorites()[slot].is_empty():
+		return
+	_favorite_menu_slot = slot
+	_favorite_menu.clear()
+	_favorite_menu.add_item("Clear Favorite %d" % (slot + 1), 0)
+	_favorite_menu.popup(Rect2i(Vector2i(pos), Vector2i(150, 30)))
+
+func _refresh_favorites_row() -> void:
+	if _favorite_buttons.is_empty():
+		return
+	var favs := _get_favorites()
+	for slot in range(FAVORITE_SLOTS):
+		var btn := _favorite_buttons[slot]
+		var path := favs[slot]
+		var tex: Texture2D = null
+		if not path.is_empty() and ResourceLoader.exists(path):
+			var res = ResourceLoader.load(path)
+			if res is Texture2D:
+				tex = res
+			elif res is Material:
+				tex = _extract_texture(res)
+		btn.icon = tex
+		if path.is_empty():
+			btn.tooltip_text = "Favorite %d (empty)\nRight-click a palette card → Set as Favorite %d" % [slot + 1, slot + 1]
+		else:
+			btn.tooltip_text = "Favorite %d: %s\nClick: apply to the selected faces (or the whole object)\nRight-click: clear" % [slot + 1, path.get_file()]
+
+func _set_status(text: String) -> void:
+	if _status_label != null:
+		_status_label.text = text
+	if plugin != null and plugin.logger != null:
+		plugin.logger.info("materials", text)
 
 # ==============================================================================
 # Selection Synchronization & UI State

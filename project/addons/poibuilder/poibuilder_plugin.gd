@@ -763,6 +763,10 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			_on_env_preset_requested("night")
 		&"env_cycle":
 			_cycle_env_preset()
+		&"fav_1", &"fav_2", &"fav_3", &"fav_4", &"fav_5":
+			if not pb_context or material_dock == null or not is_instance_valid(material_dock):
+				return AFTER_GUI_INPUT_PASS
+			material_dock.apply_favorite(int(String(action).right(1)) - 1)
 		_:
 			# Mesh operation keys route into the toolbar ops pipeline; the
 			# op itself validates the selection context.
