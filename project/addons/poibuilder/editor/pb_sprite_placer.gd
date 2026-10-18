@@ -14,7 +14,7 @@
 class_name PBSpritePlacer
 extends RefCounted
 
-enum State {
+enum PBState {
 	INACTIVE = 0,
 	ARMED = 1,
 	TEXTURE_SELECT = 2,
@@ -29,7 +29,7 @@ const TEXTURE_DIRS := [
 	"res://materials/sprites",
 ]
 
-var state: State = State.INACTIVE
+var state: PBState = PBState.INACTIVE
 
 # Texture selection state
 var last_texture: Texture2D = null
@@ -74,7 +74,7 @@ var _carousel_active_name_label: Label = null
 var _carousel_cards: Array[PanelContainer] = []
 var _carousel_trects: Array[TextureRect] = []
 
-signal state_changed(new_state: State)
+signal state_changed(new_state: PBState)
 signal sprite_placed(node: PBMesh)
 signal placement_aborted()
 
@@ -123,12 +123,12 @@ func _scan_dir_for_textures(dir_path: String, seen_paths: Dictionary) -> void:
 	dir.list_dir_end()
 
 func is_active() -> bool:
-	return state != State.INACTIVE
+	return state != PBState.INACTIVE
 
 func arm() -> void:
 	abort()
 	refresh_available_textures()
-	state = State.ARMED
+	state = PBState.ARMED
 	_press_pending = false
 	state_changed.emit(state)
 
@@ -148,8 +148,8 @@ func abort() -> void:
 
 	hide_carousel()
 	var prev_state := state
-	state = State.INACTIVE
-	if prev_state != State.INACTIVE:
+	state = PBState.INACTIVE
+	if prev_state != PBState.INACTIVE:
 		state_changed.emit(state)
 		placement_aborted.emit()
 
@@ -320,7 +320,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 	const PASS := 0
 	const STOP := 1
 
-	if state == State.INACTIVE:
+	if state == PBState.INACTIVE:
 		return PASS
 
 	if carousel_overlay == null and host_control != null:
@@ -331,7 +331,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 		if k.keycode == KEY_ESCAPE:
 			abort()
 			return STOP
-		if state == State.TEXTURE_SELECT:
+		if state == PBState.TEXTURE_SELECT:
 			if k.keycode == KEY_LEFT or k.keycode == KEY_A:
 				scroll_offset -= 1.0
 				update_carousel_ui()
@@ -347,7 +347,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 				return STOP
 
 	match state:
-		State.ARMED:
+		PBState.ARMED:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					if surface_hit.is_empty():
@@ -361,7 +361,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 						# No previous texture -> click triggers click-mode carousel
 						is_hold_mode = false
 						_press_pending = false
-						state = State.TEXTURE_SELECT
+						state = PBState.TEXTURE_SELECT
 						show_carousel(host_control)
 						state_changed.emit(state)
 						return STOP
@@ -382,12 +382,12 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 					_press_pending = false
 					# Click-and-drag -> open hold-mode carousel
 					is_hold_mode = true
-					state = State.TEXTURE_SELECT
+					state = PBState.TEXTURE_SELECT
 					show_carousel(host_control)
 					state_changed.emit(state)
 					return STOP
 
-		State.TEXTURE_SELECT:
+		PBState.TEXTURE_SELECT:
 			if event is InputEventMouseMotion:
 				# Drag or move mouse left/right smoothly scrolls textures
 				scroll_offset += event.relative.x * 0.015
@@ -417,7 +417,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 						_start_raise_phase(camera)
 						return STOP
 
-		State.RAISE:
+		PBState.RAISE:
 			if event is InputEventMouseMotion:
 				# Mouse up increases elevation, mouse down decreases
 				elevation = maxf(0.0, elevation - event.relative.y * 0.012)
@@ -434,11 +434,11 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 					locked_basis = Basis.IDENTITY
 				scale_start_x = event.position.x
 				scale_factor = 1.0
-				state = State.SCALE
+				state = PBState.SCALE
 				state_changed.emit(state)
 				return STOP
 
-		State.SCALE:
+		PBState.SCALE:
 			if event is InputEventMouseMotion:
 				var delta_x: float = event.position.x - scale_start_x
 				var s := maxf(0.05, 1.0 + delta_x * 0.008)
@@ -460,7 +460,7 @@ func handle_input(camera: Camera3D, event: InputEvent, surface_hit: Dictionary, 
 # ==============================================================================
 
 func _start_raise_phase(camera: Camera3D) -> void:
-	state = State.RAISE
+	state = PBState.RAISE
 	elevation = 0.0
 	_spawn_preview_node()
 	_update_raise_transform(camera)
@@ -558,7 +558,7 @@ func _update_guide_line() -> void:
 	if mesh == null:
 		return
 	mesh.clear_surfaces()
-	if state != State.RAISE and state != State.SCALE:
+	if state != PBState.RAISE and state != PBState.SCALE:
 		_guide_line.visible = false
 		return
 	_guide_line.visible = true
@@ -613,9 +613,9 @@ func _clear_guide_line() -> void:
 ## Live extents readout for the tool overlay (raise + scale phases).
 func get_extents_readout() -> String:
 	match state:
-		State.RAISE:
+		PBState.RAISE:
 			return "Offset: %.2fm" % elevation
-		State.SCALE:
+		PBState.SCALE:
 			return "W %.2fm x H %.2fm (x%.2f)" % [
 				base_width * scale_factor, base_height * scale_factor, scale_factor]
 	return ""
@@ -676,7 +676,7 @@ func finalize_placement() -> void:
 
 	var node := preview_node
 	preview_node = null
-	state = State.INACTIVE
+	state = PBState.INACTIVE
 	_clear_guide_line()
 
 	var final_w := base_width * scale_factor

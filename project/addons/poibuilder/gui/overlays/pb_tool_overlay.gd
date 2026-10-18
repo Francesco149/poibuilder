@@ -693,20 +693,21 @@ func _build_grid_section() -> void:
 	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
 	_grid_section.add_child(title)
 
-	var rows := GridContainer.new()
-	rows.columns = 2
-	rows.add_theme_constant_override("h_separation", 8)
-	rows.add_theme_constant_override("v_separation", 2)
-	_grid_section.add_child(rows)
+	# Toggles live outside the 2-column grid. An odd number of checkboxes
+	# in that grid shifted every later label one cell (Unit sat beside
+	# Subdivisions, Subdivisions beside Rotate step, and so on).
+	var toggles := HBoxContainer.new()
+	toggles.name = "GridToggles"
+	toggles.add_theme_constant_override("separation", 8)
+	_grid_section.add_child(toggles)
 
-	# Toggles
 	var snap_check := CheckBox.new()
 	snap_check.name = "GridSnap"
 	snap_check.text = "Snap"
 	snap_check.tooltip_text = "Element drags and shape creation quantize to the grid step (Y)"
 	snap_check.focus_mode = Control.FOCUS_NONE
 	snap_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"enabled", 1.0 if on else 0.0))
-	rows.add_child(snap_check)
+	toggles.add_child(snap_check)
 	_grid_controls["enabled"] = snap_check
 
 	var on_grid_check := CheckBox.new()
@@ -715,7 +716,7 @@ func _build_grid_section() -> void:
 	on_grid_check.tooltip_text = "New shapes draw on the grid plane at its elevation (G)"
 	on_grid_check.focus_mode = Control.FOCUS_NONE
 	on_grid_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"draw_on_grid", 1.0 if on else 0.0))
-	rows.add_child(on_grid_check)
+	toggles.add_child(on_grid_check)
 	_grid_controls["draw_on_grid"] = on_grid_check
 
 	var show_check := CheckBox.new()
@@ -724,8 +725,14 @@ func _build_grid_section() -> void:
 	show_check.tooltip_text = "Draw the PoiBuilder grid (cyan) while editing"
 	show_check.focus_mode = Control.FOCUS_NONE
 	show_check.toggled.connect(func(on: bool): grid_setting_changed.emit(&"show_grid", 1.0 if on else 0.0))
-	rows.add_child(show_check)
+	toggles.add_child(show_check)
 	_grid_controls["show_grid"] = show_check
+
+	var rows := GridContainer.new()
+	rows.columns = 2
+	rows.add_theme_constant_override("h_separation", 8)
+	rows.add_theme_constant_override("v_separation", 2)
+	_grid_section.add_child(rows)
 
 	# Numeric rows
 	var unit_spin := SpinBox.new()

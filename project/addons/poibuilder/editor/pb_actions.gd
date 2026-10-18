@@ -99,6 +99,22 @@ const ACTIONS: Dictionary = {
 	"env_dusk":        { "label": "Environment: Dusk", "keys": [] },
 	"env_night":       { "label": "Environment: Night", "keys": [] },
 	"env_cycle":       { "label": "Environment: Cycle Time of Day", "keys": [] },
+	# Material dock favorites (unbound by default)
+	"fav_1":           { "label": "Favorite: Apply Slot 1", "keys": [] },
+	"fav_2":           { "label": "Favorite: Apply Slot 2", "keys": [] },
+	"fav_3":           { "label": "Favorite: Apply Slot 3", "keys": [] },
+	"fav_4":           { "label": "Favorite: Apply Slot 4", "keys": [] },
+	"fav_5":           { "label": "Favorite: Apply Slot 5", "keys": [] },
+	# Scoped keys: matched by their owner through matches(), never dispatched
+	# by action_for (hold keys fire on press AND release; UV keys belong to
+	# the UV editor canvas, not the 3D viewport).
+	"hold_vertex_snap": { "label": "Snapping: Hold for Vertex Snap", "keys": [[KEY_V, 0, 0, 0]], "scope": "hold" },
+	"uv_pan_hold":     { "label": "UV Editor: Hold to Pan",      "keys": [[KEY_SPACE, 0, 0, 0]], "scope": "uv" },
+	"uv_frame":        { "label": "UV Editor: Frame Selection",  "keys": [[KEY_F, 0, 0, 0]], "scope": "uv" },
+	"uv_select_all":   { "label": "UV Editor: Select All",       "keys": [[KEY_A, 1, 0, 0]], "scope": "uv" },
+	"uv_tool_move":    { "label": "UV Editor: Move Tool",        "keys": [[KEY_W, 0, 0, 0]], "scope": "uv" },
+	"uv_tool_rotate":  { "label": "UV Editor: Rotate Tool",      "keys": [[KEY_E, 0, 0, 0]], "scope": "uv" },
+	"uv_tool_scale":   { "label": "UV Editor: Scale Tool",       "keys": [[KEY_R, 0, 0, 0]], "scope": "uv" },
 }
 
 ## Mesh-op action id → the op string the toolbar/plugin pipeline expects.
@@ -216,6 +232,11 @@ static func unbind_conflicts(settings: Object, logger: Object = null) -> Array[S
 
 ## Registers every action into the EditorSettings shortcut store and unbinds
 ## conflicting engine shortcuts. Safe to call repeatedly.
+## Same contract as the engine's ED_SHORTCUT: a binding loaded from the user's
+## settings keeps its events (a cleared binding stays cleared), and
+## meta("original") is ALWAYS the compiled default — the settings file only
+## persists shortcuts that differ from "original", so recording the user's
+## rebind there made it silently revert after the next save + restart.
 static func register(settings: Object, logger: Object = null) -> void:
 	if settings == null or not settings.has_method("add_shortcut"):
 		return
@@ -230,13 +251,7 @@ static func register(settings: Object, logger: Object = null) -> void:
 			# Ensure human-readable display label ("Grid: Raise Elevation", etc.)
 			if sc.get_name().is_empty() or sc.get_name() == id:
 				sc.set_name(ACTIONS[id]["label"])
-			# Ensure meta("original") is always set so EditorSettingsDialog displays it!
-			if not sc.has_meta("original"):
-				sc.set_meta("original", sc.events.duplicate(true))
-			# Ensure empty shortcuts receive default events
-			if sc.events.is_empty() and ACTIONS[id]["keys"].size() > 0:
-				sc.events = def_sc.events.duplicate(true)
-				sc.set_meta("original", def_sc.events.duplicate(true))
+			sc.set_meta("original", def_sc.events.duplicate(true))
 
 static func _make_shortcut(id: String) -> Shortcut:
 	var sc := Shortcut.new()
@@ -272,38 +287,62 @@ static func action_for(event: InputEvent, settings: Object = null) -> StringName
 	var key_event := event as InputEventKey
 	if not key_event.pressed:
 		return &""
-	if settings != null and settings.has_method("is_shortcut"):
-		for id: String in ACTIONS:
-			var path := PREFIX + id
-			if settings.has_shortcut(path) and settings.is_shortcut(path, key_event):
-				var act := StringName(id)
-				if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
-					return act
-		# Fallback: if settings shortcut matching missed due to keycode vs physical_keycode layout mismatch
-		for id: String in ACTIONS:
-			for spec: Array in ACTIONS[id]["keys"]:
-				if _match_default(key_event, spec):
-					var act := StringName(id)
-					if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
-						return act
-	else:
-		for id: String in ACTIONS:
-			for spec: Array in ACTIONS[id]["keys"]:
-				if _match_default(key_event, spec):
-					var act := StringName(id)
-					if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
-						return act
+	for id: String in ACTIONS:
+		if ACTIONS[id].has("scope"):
+			continue
+		if matches(StringName(id), key_event, settings):
+			var act := StringName(id)
+			if not key_event.echo or act == &"grid_raise" or act == &"grid_lower":
+				return act
 	return &""
-## Default-table matching: physical keycode (layout-independent), with the
-## keycode as fallback, and EXACT modifier equality.
-static func _match_default(event: InputEventKey, spec: Array) -> bool:
-	var target := spec[0] as Key
-	var key_match: bool = event.physical_keycode == target or event.keycode == target or event.key_label == target
-	return key_match \
-		and event.ctrl_pressed == bool(spec[1]) \
-		and event.shift_pressed == bool(spec[2]) \
-		and event.alt_pressed == bool(spec[3])
 
+## True when `event` is one of action `id`'s CURRENT bindings: the user's
+## rebinds from the EditorSettings store when given, else the compiled
+## defaults. A rebound or cleared action never answers to its old default.
+## Pressed state is ignored so hold keys can test their release;
+## `ignore_modifiers` lets that release match after a modifier changed
+## mid-hold.
+static func matches(id: StringName, event: InputEventKey, settings: Object = null,
+		ignore_modifiers: bool = false) -> bool:
+	for bound in _bound_events(id, settings):
+		if bound is InputEventKey and _event_matches(event, bound, ignore_modifiers):
+			return true
+	return false
+
+## The editor's settings store, or null outside the editor (matching then
+## falls back to the compiled defaults).
+static func editor_settings() -> Object:
+	if Engine.is_editor_hint() and Engine.has_singleton("EditorInterface"):
+		return Engine.get_singleton("EditorInterface").get_editor_settings()
+	return null
+
+static func _bound_events(id: StringName, settings: Object) -> Array:
+	var path := PREFIX + String(id)
+	if settings != null and settings.has_method("has_shortcut") and settings.has_shortcut(path):
+		var sc: Shortcut = settings.get_shortcut(path)
+		if sc != null:
+			return sc.events
+	var events: Array = []
+	for spec: Array in ACTIONS[String(id)]["keys"]:
+		events.append(make_event(spec))
+	return events
+
+## Physical keycode first (layout-independent, how defaults are stored), then
+## keycode / key label (bindings recorded in the shortcut dialog by meaning).
+static func _event_matches(event: InputEventKey, bound: InputEventKey, ignore_modifiers: bool) -> bool:
+	var key_match := false
+	if bound.physical_keycode != KEY_NONE and event.physical_keycode == bound.physical_keycode:
+		key_match = true
+	elif bound.keycode != KEY_NONE and (event.keycode == bound.keycode or event.key_label == bound.keycode):
+		key_match = true
+	if not key_match:
+		return false
+	if ignore_modifiers:
+		return true
+	return event.ctrl_pressed == bound.ctrl_pressed \
+		and event.shift_pressed == bound.shift_pressed \
+		and event.alt_pressed == bound.alt_pressed \
+		and event.meta_pressed == bound.meta_pressed
 ## Human-readable current binding ("Shift+_ , H") for tooltips.
 static func binding_text(id: StringName, settings: Object = null) -> String:
 	var path := PREFIX + String(id)

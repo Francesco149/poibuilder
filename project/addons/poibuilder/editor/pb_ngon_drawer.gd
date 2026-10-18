@@ -19,14 +19,14 @@ class_name PBNgonDrawer
 extends RefCounted
 
 enum Mode { NONE, KNIFE, NGON_EXTRUDE }
-enum State { INACTIVE, ARMED, DRAWING, DRAGGING_VERT, HEIGHT }
+enum PBState { INACTIVE, ARMED, DRAWING, DRAGGING_VERT, HEIGHT }
 
 const RAY_MISS := Vector3(INF, INF, INF)
 const SNAP_VERT_DISTANCE := 0.15
 const SNAP_EDGE_DISTANCE := 0.12
 
 var mode: Mode = Mode.NONE
-var state: State = State.INACTIVE
+var state: PBState = PBState.INACTIVE
 
 ## Drawing plane captured on first click
 var plane_point: Vector3 = Vector3.ZERO
@@ -70,12 +70,12 @@ var vertex_snap_candidates_fn: Callable = Callable()
 # ==============================================================================
 
 func is_active() -> bool:
-	return state != State.INACTIVE
+	return state != PBState.INACTIVE
 
 func arm(p_mode: Mode, p_mesh: PBMesh = null, p_face: int = -1) -> void:
 	reset()
 	mode = p_mode
-	state = State.ARMED
+	state = PBState.ARMED
 	target_mesh = p_mesh
 	target_face_index = p_face
 
@@ -100,9 +100,9 @@ func begin(point: Vector3, normal: Vector3, p_mesh: PBMesh = null, p_face: int =
 	live_cursor_point = start_pt
 	hovered_vert_idx = -1
 	dragged_vert_idx = -1
-	state = State.DRAWING
+	state = PBState.DRAWING
 func add_point(point: Vector3) -> bool:
-	if state != State.DRAWING:
+	if state != PBState.DRAWING:
 		return false
 	var snapped_pt := _snap_point(point)
 	# Disallow placing right on top of the last vertex
@@ -114,15 +114,15 @@ func add_point(point: Vector3) -> bool:
 func start_drag_vert(idx: int) -> void:
 	if idx >= 0 and idx < points.size():
 		dragged_vert_idx = idx
-		state = State.DRAGGING_VERT
+		state = PBState.DRAGGING_VERT
 
 func end_drag_vert() -> void:
-	if state == State.DRAGGING_VERT:
+	if state == PBState.DRAGGING_VERT:
 		dragged_vert_idx = -1
-		state = State.DRAWING
+		state = PBState.DRAWING
 
 func update_cursor_plane(raw_point: Vector3) -> void:
-	if state == State.INACTIVE or state == State.HEIGHT:
+	if state == PBState.INACTIVE or state == PBState.HEIGHT:
 		return
 
 	# Project point strictly onto plane
@@ -135,7 +135,7 @@ func update_cursor_plane(raw_point: Vector3) -> void:
 
 	live_cursor_point = snapped_pt
 
-	if state == State.DRAGGING_VERT and dragged_vert_idx >= 0 and dragged_vert_idx < points.size():
+	if state == PBState.DRAGGING_VERT and dragged_vert_idx >= 0 and dragged_vert_idx < points.size():
 		points[dragged_vert_idx] = snapped_pt
 		hovered_vert_idx = dragged_vert_idx
 		return
@@ -152,14 +152,14 @@ func update_cursor_plane(raw_point: Vector3) -> void:
 ## Live extents readout for the tool overlay (draw + height phases).
 func get_extents_readout() -> String:
 	match state:
-		State.DRAWING, State.DRAGGING_VERT:
+		PBState.DRAWING, PBState.DRAGGING_VERT:
 			return "%d vertices" % points.size() if not points.is_empty() else "0 vertices"
-		State.HEIGHT:
+		PBState.HEIGHT:
 			return "Height: %.2fm" % height
 	return ""
 
 func update_height_point(ref_point: Vector3) -> void:
-	if state != State.HEIGHT:
+	if state != PBState.HEIGHT:
 		return
 	var raw := plane_normal.dot(ref_point - plane_point)
 	if grid != null and grid.enabled:
@@ -186,7 +186,7 @@ func _vertex_snap_height(raw_height: float) -> float:
 	return float(res["d"]) if res["caught"] else raw_height
 
 func complete() -> Dictionary:
-	if state != State.DRAWING and state != State.DRAGGING_VERT:
+	if state != PBState.DRAWING and state != PBState.DRAGGING_VERT:
 		return {"ok": false, "error": "Not in drawing state"}
 
 	if points.size() < 2:
@@ -216,7 +216,7 @@ func _complete_knife() -> Dictionary:
 
 	var res := PBMeshOps.cut_face(target_mesh.pb_mesh_data, target_face_index, local_points, is_closed)
 	if res.get("ok", false):
-		state = State.INACTIVE
+		state = PBState.INACTIVE
 	return res
 
 func _complete_ngon_extrude() -> Dictionary:
@@ -229,12 +229,12 @@ func _complete_ngon_extrude() -> Dictionary:
 	if points.size() < 3:
 		return {"ok": false, "error": "N-Gon extrude requires at least 3 points"}
 
-	state = State.HEIGHT
+	state = PBState.HEIGHT
 	height = 0.0
 	return {"ok": true, "action": "enter_height"}
 
 func confirm_height() -> Dictionary:
-	if state != State.HEIGHT:
+	if state != PBState.HEIGHT:
 		return {"ok": false, "error": "Not in height state"}
 
 	var poly := PackedVector3Array()
@@ -269,7 +269,7 @@ func confirm_height() -> Dictionary:
 	reset()
 	return result
 func build_preview_data() -> PBMeshData:
-	if state != State.HEIGHT:
+	if state != PBState.HEIGHT:
 		return null
 	var poly := PackedVector3Array()
 	for p in points:
@@ -279,7 +279,7 @@ func build_preview_data() -> PBMeshData:
 
 func reset() -> void:
 	mode = Mode.NONE
-	state = State.INACTIVE
+	state = PBState.INACTIVE
 	plane_point = Vector3.ZERO
 	plane_normal = Vector3.UP
 	target_mesh = null
@@ -432,7 +432,7 @@ func _clamp_to_face_boundary(node: PBMesh, face_idx: int, world_pt: Vector3) -> 
 func _snap_point(p: Vector3) -> Vector3:
 	# 1. Snap to placed vertices
 	for i in range(points.size()):
-		if state == State.DRAGGING_VERT and i == dragged_vert_idx:
+		if state == PBState.DRAGGING_VERT and i == dragged_vert_idx:
 			continue
 		if p.distance_to(points[i]) <= SNAP_VERT_DISTANCE:
 			return points[i]

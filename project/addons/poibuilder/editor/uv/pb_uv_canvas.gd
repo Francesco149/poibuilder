@@ -171,10 +171,17 @@ var transform_tool: PBUvGizmo.ToolMode:
 	get:
 		return gizmo.tool_mode if gizmo != null else PBUvGizmo.ToolMode.MOVE
 	set(val):
-		if gizmo != null and gizmo.tool_mode != val:
-			gizmo.tool_mode = val
-			tool_changed.emit(val)
-			queue_redraw()
+		apply_transform_tool(val)
+
+func apply_transform_tool(mode: PBUvGizmo.ToolMode) -> void:
+	if gizmo == null:
+		return
+	if gizmo.tool_mode == mode:
+		queue_redraw()
+		return
+	gizmo.tool_mode = mode
+	tool_changed.emit(mode)
+	queue_redraw()
 
 ## Optional UndoRedoManager reference
 var undo_redo: Object = null:
@@ -246,9 +253,6 @@ func _init() -> void:
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	custom_minimum_size = Vector2(200, 150)
 
-func _ready() -> void:
-	mouse_entered.connect(func(): grab_focus())
-
 # ==============================================================================
 # Mesh & Selection Binding
 # ==============================================================================
@@ -310,14 +314,18 @@ func _update_preview_texture() -> void:
 		preview_texture = albedo_tex
 
 ## Extracts the albedo/base texture a material presents, including splat
-## ShaderMaterials (whose base texture is a shader parameter, not `albedo_texture`).
+## ShaderMaterials and custom ShaderMaterials exposing `Albedo_Map` / `albedo_map`.
 static func _material_albedo_texture(mat: Material) -> Texture2D:
 	if mat is StandardMaterial3D:
 		return (mat as StandardMaterial3D).albedo_texture
 	if mat is ORMMaterial3D:
 		return (mat as ORMMaterial3D).albedo_texture
-	if mat is ShaderMaterial and PBSplat.is_splat_material(mat):
-		return (mat as ShaderMaterial).get_shader_parameter("base_texture") as Texture2D
+	if mat is ShaderMaterial:
+		var sm := mat as ShaderMaterial
+		for pname in ["Albedo_Map", "albedo_map", "Texture_Map", "base_texture"]:
+			var tex = sm.get_shader_parameter(pname)
+			if tex is Texture2D:
+				return tex
 	return null
 
 ## Returns the cached splat composite for `splat_mat`, rebuilding it when
@@ -447,31 +455,33 @@ func get_uv_array() -> PackedVector2Array:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
-		if key_event.keycode == KEY_SPACE:
+		var settings := PBActions.editor_settings()
+		if PBActions.matches(&"uv_pan_hold", key_event, settings, not key_event.pressed):
 			_space_held = key_event.pressed
 			mouse_default_cursor_shape = Control.CURSOR_DRAG if _space_held else Control.CURSOR_ARROW
 			accept_event()
 			return
-		if not key_event.pressed and key_event.keycode == KEY_F:
-			frame_selection()
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_A and key_event.ctrl_pressed:
-			select_all()
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_W:
-			transform_tool = PBUvGizmo.ToolMode.MOVE
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_E:
-			transform_tool = PBUvGizmo.ToolMode.ROTATE
-			accept_event()
-			return
-		if not key_event.pressed and key_event.keycode == KEY_R:
-			transform_tool = PBUvGizmo.ToolMode.SCALE
-			accept_event()
-			return
+		if not key_event.pressed:
+			if PBActions.matches(&"uv_frame", key_event, settings):
+				frame_selection()
+				accept_event()
+				return
+			if PBActions.matches(&"uv_select_all", key_event, settings):
+				select_all()
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_move", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.MOVE
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_rotate", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.ROTATE
+				accept_event()
+				return
+			if PBActions.matches(&"uv_tool_scale", key_event, settings):
+				transform_tool = PBUvGizmo.ToolMode.SCALE
+				accept_event()
+				return
 
 	# Mouse wheel zooming
 	if event is InputEventMouseButton:
@@ -501,6 +511,7 @@ func _gui_input(event: InputEvent) -> void:
 		# Left click selection & marquee
 		if mb.button_index == MOUSE_BUTTON_LEFT and not _space_held:
 			if mb.pressed:
+				grab_focus()
 				if mb.double_click:
 					_handle_double_click(mb.position, mb.shift_pressed)
 				else:
@@ -1013,13 +1024,13 @@ func _handle_left_press(mouse_pos: Vector2, is_shift: bool) -> void:
 		selection_changed.emit()
 		_update_gizmo_pivot()
 	else:
-		# Start marquee selection
+		# Defer the clear until release. Clearing here made a near-miss click
+		# (or a click on the rotate disc interior) wipe the island before the
+		# user could drag the gizmo.
 		_is_marquee = true
 		_marquee_start = mouse_pos
 		_marquee_current = mouse_pos
 		_marquee_add = is_shift
-		if not is_shift:
-			clear_selection()
 
 func _handle_left_release(mouse_pos: Vector2) -> void:
 	if _is_gizmo_dragging:
@@ -1048,6 +1059,8 @@ func _handle_double_click(mouse_pos: Vector2, is_shift: bool) -> void:
 func _apply_marquee_selection() -> void:
 	var rect := Rect2(_marquee_start, _marquee_current - _marquee_start).abs()
 	if rect.size.x < 3.0 and rect.size.y < 3.0:
+		if not _marquee_add:
+			clear_selection()
 		return
 
 	var uvs := get_uv_array()

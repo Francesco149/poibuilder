@@ -1,6 +1,6 @@
-[gd_resource type="StandardMaterial3D" load_steps=2 format=3]
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://bx2fjhuo8l1v4"]
 
-[ext_resource type="Texture2D" path="res://materials/textures/wood_planks.png" id="1_wood"]
+[ext_resource type="Texture2D" uid="uid://be5nr8cn3xcal" path="res://materials/textures/wood_planks.png" id="1_wood"]
 
 [resource]
 resource_name = "Wood_Planks"

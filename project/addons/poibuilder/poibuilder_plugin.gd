@@ -2,6 +2,8 @@
 extends EditorPlugin
 class_name PoiBuilderPlugin
 
+const PB_MESH_ICON := "res://addons/poibuilder/icons/pb_mesh_icon.svg"
+
 # ==============================================================================
 # Core Systems
 # ==============================================================================
@@ -70,11 +72,13 @@ var _last_mouse_pos: Vector2 = Vector2.ZERO
 var _last_mouse_camera: Camera3D = null
 ## Time of the last press seen in the viewport, for click-recency checks.
 var _last_press_msec: int = -10000
+## MeshInstance3D.mesh stashed while Poibuilderize nests under the scene root.
+## Keyed by instance id so undo can restore without writing scene metadata.
+var _poibuilderize_mesh_backup: Dictionary = {}
 
-## Invisible anchor used to locate the 3D editor's toolbar containers; added
-## to CONTAINER_SPATIAL_EDITOR_MENU, walked for the placement below, then
-## removed again.
+## Throwaway probe used only to locate Node3DEditor for the tool bridge.
 var _toolbar_anchor: Control = null
+var _toolbar_bottom_button: Button = null
 ## Live animated scrolling textures in editor viewport.
 var animate_scrolling_textures: bool = true:
 	set(val):
@@ -158,7 +162,9 @@ func _enter_tree():
 		"PBMesh",
 		"MeshInstance3D",
 		preload("res://addons/poibuilder/core/pb_mesh.gd"),
-		preload("res://addons/poibuilder/icons/pb_mesh_icon.svg") if FileAccess.file_exists("res://addons/poibuilder/icons/pb_mesh_icon.svg") else null
+		# load(), not preload(): on a project's first boot the svg is not yet
+		# imported, and a failed preload fails the whole plugin script to parse.
+		load(PB_MESH_ICON) if ResourceLoader.exists(PB_MESH_ICON) else null
 	)
 
 	# Register the node gizmo plugin — this is the native editor integration:
@@ -166,7 +172,8 @@ func _enter_tree():
 	# undo are all driven by the editor through the subgizmo API.
 	add_node_3d_gizmo_plugin(gizmo_plugin)
 
-	# Persistent toolbar row UNDER the 3D scene toolbar (not inside it)
+	# Persistent toolbar as a bottom panel (collapsible / floatable), same
+	# pattern as AssetPlacer and the UV Editor — not welded into the 3D stack.
 	toolbar = PBToolbar.new()
 	toolbar.editor = editor
 	toolbar.set_editing_active(false)
@@ -181,9 +188,12 @@ func _enter_tree():
 	toolbar.uv_editor_requested.connect(focus_uv_editor)
 	toolbar.settings_panel_toggled.connect(_on_settings_panel_toggled)
 	toolbar.export_requested.connect(_on_export_requested)
+	toolbar.bake_requested.connect(_on_bake_requested)
 	toolbar.docs_requested.connect(_on_docs_requested)
 	toolbar.env_preset_requested.connect(_on_env_preset_requested)
 	toolbar.split_rows_toggled.connect(_on_toolbar_split_rows_toggled)
+	toolbar.placement_requested.connect(_on_toolbar_placement_requested)
+	toolbar.float_closed.connect(_on_toolbar_float_closed)
 	toolbar.vertex_snap_toggled.connect(func(on: bool):
 		gizmo_plugin.element_editor.vertex_snap_enabled = on
 		if editor.active_mesh != null:
@@ -208,7 +218,8 @@ func _enter_tree():
 				toolbar.set_rows_mode(int(ed_settings.get_setting("poibuilder/toolbar/rows_mode")))
 			elif ed_settings.has_setting("poibuilder/toolbar/two_rows"):
 				toolbar.set_two_rows(bool(ed_settings.get_setting("poibuilder/toolbar/two_rows")))
-	_add_toolbar_row_below_3d_toolbar()
+	_find_3d_editor()
+	_restore_toolbar_placement()
 	_export_dialog = PBExportDialog.new()
 	if Engine.is_editor_hint():
 		var base := EditorInterface.get_base_control()
@@ -266,11 +277,13 @@ func _enter_tree():
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 	_setup_ideal_dock_layout.call_deferred()
 	# Dedicated 2D UV Editor Panel (Bottom dock)
+	_purge_stale_uv_editor_hosts()
 	uv_editor_panel = PBUvEditorPanel.new()
 	uv_editor_panel.editor = editor
 	uv_editor_panel.plugin = self
 	if Engine.is_editor_hint():
 		_uv_bottom_button = add_control_to_bottom_panel(uv_editor_panel, "UV Editor")
+		_purge_stale_uv_editor_buttons(_uv_bottom_button)
 	uv_editor_panel.pop_out_toggled.connect(_on_uv_pop_out_toggled)
 	# Half-size manipulator gizmos by default (the engine default of 80px is
 	# huge next to PoiBuilder's element work). Respect user customization:
@@ -337,10 +350,15 @@ func _exit_tree():
 
 	# Remove toolbar
 	if toolbar:
-		if is_instance_valid(toolbar) and toolbar.get_parent() != null:
-			toolbar.get_parent().remove_child(toolbar)
+		if is_instance_valid(toolbar):
+			if toolbar._is_floating and toolbar._floating_window != null:
+				toolbar._floating_window.remove_child(toolbar)
+				toolbar._floating_window.queue_free()
+			elif Engine.is_editor_hint():
+				_detach_toolbar_from_host()
 			toolbar.queue_free()
 		toolbar = null
+		_toolbar_bottom_button = null
 	if _toolbar_anchor:
 		if is_instance_valid(_toolbar_anchor) and _toolbar_anchor.get_parent() != null:
 			remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
@@ -365,14 +383,22 @@ func _exit_tree():
 		remove_control_from_docks(material_dock)
 		if is_instance_valid(material_dock):
 			material_dock.queue_free()
-	# Remove UV editor panel
-	if uv_editor_panel != null:
-		if not uv_editor_panel._is_floating and Engine.is_editor_hint():
+	# Remove UV editor panel (floating window first, then the bottom-panel item).
+	# Do not call set_floating(false) here — that would re-add a bottom tab.
+	if uv_editor_panel != null and is_instance_valid(uv_editor_panel):
+		if uv_editor_panel._floating_window != null and is_instance_valid(uv_editor_panel._floating_window):
+			uv_editor_panel._floating_window.remove_child(uv_editor_panel)
+			uv_editor_panel._floating_window.queue_free()
+			uv_editor_panel._floating_window = null
+			uv_editor_panel._is_floating = false
+		elif Engine.is_editor_hint():
 			remove_control_from_bottom_panel(uv_editor_panel)
 		if is_instance_valid(uv_editor_panel):
 			uv_editor_panel.queue_free()
-		uv_editor_panel = null
-		_uv_bottom_button = null
+	uv_editor_panel = null
+	_uv_bottom_button = null
+	_purge_stale_uv_editor_hosts()
+	_purge_stale_uv_editor_buttons(null)
 	# Remove export dialog
 	if _export_dialog != null:
 		if is_instance_valid(_export_dialog) and _export_dialog.get_parent() != null:
@@ -404,52 +430,87 @@ func _exit_tree():
 # ==============================================================================
 
 var _n3d_editor: Node = null
+var _toolbar_host: int = -1
+var _toolbar_dock_slot: int = EditorPlugin.DOCK_SLOT_LEFT_BL
+var _toolbar_return_host: int = PBToolbar.HOST_BOTTOM
+var _toolbar_return_slot: int = EditorPlugin.DOCK_SLOT_LEFT_BL
 
 func toolbar_has_3d_editor() -> bool:
 	return _n3d_editor != null and is_instance_valid(_n3d_editor)
 
-## Adds the toolbar as its own row below the 3D scene toolbar.
-##
-## The plugin API only offers a slot INSIDE the engine's toolbar flow, so a
-## throwaway anchor control is added there and walked to find the real
-## layout: anchor → context panel → HFlowContainer → toolbar MarginContainer
-## → layout container. In Godot 4.7 the Node3DEditor IS the layout VBox
-## (`VBoxContainer *vbc = this;` — get_class() still reports
-## "Node3DEditor", so class-name searches for a VBox miss it and must never
-## be used; one such search landed the row inside a hidden snap dialog).
-## Inserting our row into the margin's parent container as a sibling AFTER
-## the engine toolbar makes the engine's own VBox layout give us a
-## full-width row and push the viewports down, whatever the version.
-func _add_toolbar_row_below_3d_toolbar() -> void:
+## Locates Node3DEditor for the tool bridge. A throwaway probe is added to
+## the spatial-editor menu slot and walked upward, then removed. The toolbar
+## itself is no longer inserted into that VBox — that is what shoved the
+## Output / Debugger / Audio strip off short screens.
+func _find_3d_editor() -> void:
 	_toolbar_anchor = Control.new()
 	_toolbar_anchor.name = "PBToolbarAnchor"
 	add_control_to_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
-
-	var flow: Node = _find_ancestor_of_class(_toolbar_anchor, "HFlowContainer")
 	_n3d_editor = _find_ancestor_of_class(_toolbar_anchor, "Node3DEditor")
-	var layout: Container = null
-	if flow != null and flow.get_parent() is Container:
-		var margin: Container = flow.get_parent()
-		if margin.get_parent() is Container:
-			layout = margin.get_parent()
-	if layout == null or _n3d_editor == null:
-		logger.warn("plugin", "Could not locate the 3D editor toolbar layout — toolbar placed inside the scene toolbar")
-		add_control_to_container(CONTAINER_SPATIAL_EDITOR_MENU, toolbar)
-		remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
-		_toolbar_anchor.queue_free()
-		_toolbar_anchor = null
-		return
-
-	layout.add_child(toolbar)
-	var margin: Node = flow.get_parent()
-	layout.move_child(toolbar, mini(margin.get_index() + 1, layout.get_child_count() - 1))
-
-	# The anchor's job (locating the layout) is done; remove it so it does
-	# not leave an invisible entry in the context toolbar.
 	remove_control_from_container(CONTAINER_SPATIAL_EDITOR_MENU, _toolbar_anchor)
 	_toolbar_anchor.queue_free()
 	_toolbar_anchor = null
-	logger.info("plugin", "Toolbar added as a row below the 3D scene toolbar")
+	if _n3d_editor == null:
+		logger.warn("plugin", "Could not locate the 3D editor — tool bridge unavailable")
+
+func _restore_toolbar_placement() -> void:
+	var host := PBToolbar.HOST_BOTTOM
+	var slot := EditorPlugin.DOCK_SLOT_LEFT_BL
+	if Engine.is_editor_hint():
+		var ed := EditorInterface.get_editor_settings()
+		if ed != null:
+			if ed.has_setting("poibuilder/toolbar/host"):
+				host = int(ed.get_setting("poibuilder/toolbar/host"))
+			if ed.has_setting("poibuilder/toolbar/dock_slot"):
+				slot = int(ed.get_setting("poibuilder/toolbar/dock_slot"))
+	_apply_toolbar_placement(host, slot)
+
+func _on_toolbar_placement_requested(host: int, slot: int) -> void:
+	_apply_toolbar_placement(host, slot)
+
+func _on_toolbar_float_closed() -> void:
+	_apply_toolbar_placement(_toolbar_return_host, _toolbar_return_slot)
+
+func _apply_toolbar_placement(host: int, slot: int) -> void:
+	if toolbar == null or not Engine.is_editor_hint():
+		return
+	if host == PBToolbar.HOST_FLOAT and _toolbar_host != PBToolbar.HOST_FLOAT:
+		_toolbar_return_host = _toolbar_host if _toolbar_host >= 0 else PBToolbar.HOST_BOTTOM
+		_toolbar_return_slot = _toolbar_dock_slot
+	_detach_toolbar_from_host()
+	match host:
+		PBToolbar.HOST_DOCK:
+			add_control_to_dock(slot, toolbar)
+			_toolbar_dock_slot = slot
+			_toolbar_host = PBToolbar.HOST_DOCK
+		PBToolbar.HOST_FLOAT:
+			toolbar.attach_floating_window()
+			_toolbar_host = PBToolbar.HOST_FLOAT
+		_:
+			_toolbar_bottom_button = add_control_to_bottom_panel(toolbar, "PoiBuilder")
+			make_bottom_panel_item_visible(toolbar)
+			_toolbar_host = PBToolbar.HOST_BOTTOM
+	_save_toolbar_placement()
+
+func _detach_toolbar_from_host() -> void:
+	if toolbar == null or not Engine.is_editor_hint():
+		return
+	match _toolbar_host:
+		PBToolbar.HOST_BOTTOM:
+			remove_control_from_bottom_panel(toolbar)
+			_toolbar_bottom_button = null
+		PBToolbar.HOST_DOCK:
+			remove_control_from_docks(toolbar)
+		PBToolbar.HOST_FLOAT:
+			toolbar.detach_floating_window()
+	_toolbar_host = -1
+
+func _save_toolbar_placement() -> void:
+	var ed := EditorInterface.get_editor_settings()
+	if ed == null:
+		return
+	ed.set_setting("poibuilder/toolbar/host", _toolbar_host)
+	ed.set_setting("poibuilder/toolbar/dock_slot", _toolbar_dock_slot)
 
 ## Parents `control` to the first 3D editor viewport so it floats over the
 ## scene. The Node3DEditorViewport is a plain Control (no container sort), so
@@ -561,7 +622,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 	# keys passing through as before.
 	if event is InputEventKey:
 		var k := event as InputEventKey
-		if k.keycode == KEY_V and not k.ctrl_pressed and not k.alt_pressed and not k.meta_pressed:
+		if PBActions.matches(&"hold_vertex_snap", k, _settings, not k.pressed):
 			gizmo_plugin.element_editor.vertex_snap_held = k.pressed
 		if k.pressed:
 			return _handle_action_key(k)
@@ -608,9 +669,7 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
 	var editing := editor.is_editing()
-	var sp_active := sprite_placer != null and sprite_placer.is_active()
-	var pp_active := particle_placer != null and particle_placer.is_active()
-	var pb_context := editing or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active() or sp_active or pp_active
+	var pb_context := _has_pb_context()
 	match action:
 		# Selection modes need a PoiBuilder context (if we consumed H/J/K with
 		# nothing PoiBuilder-related active, scene-tree search fields would
@@ -704,6 +763,10 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			_on_env_preset_requested("night")
 		&"env_cycle":
 			_cycle_env_preset()
+		&"fav_1", &"fav_2", &"fav_3", &"fav_4", &"fav_5":
+			if not pb_context or material_dock == null or not is_instance_valid(material_dock):
+				return AFTER_GUI_INPUT_PASS
+			material_dock.apply_favorite(int(String(action).right(1)) - 1)
 		_:
 			# Mesh operation keys route into the toolbar ops pipeline; the
 			# op itself validates the selection context.
@@ -712,19 +775,33 @@ func _handle_action_key(key_event: InputEventKey) -> int:
 			_on_operation_requested(PBActions.OP_ACTION_TO_OPERATION[action])
 	return AFTER_GUI_INPUT_STOP
 
-## Grid + snap toggles work in EVERY context (nothing selected, mid-drag of
-## a new shape, editing) — the grid must be adjustable before and during
-## use. toggle_snap is the exception: with no PoiBuilder context at all the
-## engine's own Use Snap button keeps its Y binding.
+## True while PoiBuilder is in use: a PBMesh is active or being edited, or a
+## PoiBuilder tool (shape creation, n-gon, sprite/particle placer) is running.
+func _has_pb_context() -> bool:
+	var sp_active := sprite_placer != null and sprite_placer.is_active()
+	var pp_active := particle_placer != null and particle_placer.is_active()
+	return editor.is_editing() or editor.active_mesh != null or shape_creator.is_active() \
+		or ngon_drawer.is_active() or sp_active or pp_active
+
+## Grid and snap keys work in any PoiBuilder context or while the grid is
+## drawn (so a visible grid is always adjustable); the sprite tool key only in
+## a PoiBuilder context. Otherwise they PASS: single-letter defaults (B, G,
+## [, ] …) must never hijack plain Godot work (holding B while aligning
+## ordinary nodes opened the sprite placer). The object Lit/Shadow toggles
+## keep their own gate (they act on any selection).
 func _handle_grid_action_key(key_event: InputEventKey) -> int:
 	var action := PBActions.action_for(key_event, _settings)
 	if action == &"":
 		return AFTER_GUI_INPUT_PASS
-	if action == &"toggle_snap":
-		if editor.is_editing() or editor.active_mesh != null or shape_creator.is_active() or ngon_drawer.is_active():
-			grid.enabled = not grid.enabled
-			return AFTER_GUI_INPUT_STOP
+	if action == &"tool_sprite":
+		if not _has_pb_context():
+			return AFTER_GUI_INPUT_PASS
+	elif action != &"obj_toggle_lit" and action != &"obj_toggle_shadows" \
+			and not _has_pb_context() and not show_grid_should_draw():
 		return AFTER_GUI_INPUT_PASS
+	if action == &"toggle_snap":
+		grid.enabled = not grid.enabled
+		return AFTER_GUI_INPUT_STOP
 	elif action == &"toggle_on_grid":
 		grid.draw_on_grid = not grid.draw_on_grid
 	elif action == &"toggle_grid":
@@ -1348,8 +1425,8 @@ func _process(delta: float) -> void:
 	# PBMesh gizmo — which needs a mesh in the scene. With none (fresh
 	# import, first shape not yet placed) the grid_view renders the square
 	# scenario-side instead; with a host, the gizmo drew it and this hides.
-	var armed := (shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED) \
-		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.State.ARMED)
+	var armed := (shape_creator != null and shape_creator.state == PBShapeCreator.PBState.ARMED) \
+		or (ngon_drawer != null and ngon_drawer.state == PBNgonDrawer.PBState.ARMED)
 	var hover_host: PBMesh = gizmo_plugin.creation_hover_node if gizmo_plugin != null else null
 	var host_drew := hover_host != null and is_instance_valid(hover_host)
 	grid_view.set_creation_cursor(
@@ -1569,6 +1646,118 @@ func _on_export_requested() -> void:
 		scene = get_tree().root
 	_export_dialog.open_dialog(scene)
 
+func _on_bake_requested(mode: int) -> void:
+	_perform_bake_to_scene(mode as PBSceneBaker.BakeMode)
+
+## Bakes every selected PBMesh into plain MeshInstance3D geometry beside it,
+## each with its collision as an owned StaticBody3D child, and HIDES the source
+## rather than freeing it: the PBMeshData is the only editable copy of the
+## geometry, so a delete would be the one unrecoverable step in an otherwise
+## reversible pipeline.
+func _perform_bake_to_scene(mode: PBSceneBaker.BakeMode) -> void:
+	var ei := get_editor_interface()
+	var scene_root: Node = ei.get_edited_scene_root() if ei != null else null
+
+	var targets: Array[PBMesh] = []
+	if ei != null and ei.get_selection() != null:
+		for n in ei.get_selection().get_selected_nodes():
+			if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
+				targets.append(n as PBMesh)
+	if targets.is_empty() and editor.active_mesh != null:
+		targets.append(editor.active_mesh)
+	if targets.is_empty():
+		if logger:
+			logger.warn("plugin", "Bake: select a PBMesh first")
+		return
+
+	var undo := get_undo_redo()
+	if undo != null:
+		# Scene-history context (see the CSG action above).
+		undo.create_action("Bake to MeshInstance3D", UndoRedo.MERGE_DISABLE,
+			scene_root if scene_root != null else targets[0])
+
+	var baked_nodes: Array[Node] = []
+	for pb in targets:
+		# A PBMesh that IS the edited scene root has no sibling slot (its parent
+		# is the editor viewport, which cannot own scene nodes), so the bake
+		# nests under it. Hiding the source would then hide the bake along with
+		# it — Node3D visibility is inherited — so that source stays visible.
+		var nest_under_source: bool = pb == scene_root
+		var parent: Node = pb if nest_under_source else pb.get_parent()
+		if parent == null:
+			continue
+		var nodes := PBSceneBaker.build_baked_nodes(pb, mode, scene_root)
+		if nodes.is_empty():
+			continue
+		for mi in nodes:
+			baked_nodes.append(mi)
+			if nest_under_source:
+				mi.transform = Transform3D.IDENTITY
+			if undo != null:
+				undo.add_do_reference(mi)
+				undo.add_do_method(self, "_attach_baked_node", mi, parent, pb)
+				undo.add_undo_method(self, "_detach_node", mi)
+			else:
+				_attach_baked_node(mi, parent, pb)
+		# The bake now carries its own StaticBody3D, so the source's generated
+		# collider has to stand down: two identical shapes in the same spot
+		# make bodies jitter and report every raycast hit twice.
+		if pb.collider_type != PBMesh.ColliderType.OFF:
+			if undo != null:
+				undo.add_do_property(pb, "collider_type", PBMesh.ColliderType.OFF)
+				undo.add_undo_property(pb, "collider_type", pb.collider_type)
+			else:
+				pb.collider_type = PBMesh.ColliderType.OFF
+
+		if nest_under_source:
+			if logger:
+				logger.warn("plugin", "Bake: '%s' is the scene root, so the bake was nested inside it and the source left visible (hiding the root would hide the bake too)" % pb.name)
+		elif undo != null:
+			undo.add_do_property(pb, "visible", false)
+			undo.add_undo_property(pb, "visible", pb.visible)
+		else:
+			pb.visible = false
+
+	if undo != null:
+		undo.commit_action()
+
+	if baked_nodes.is_empty():
+		if logger:
+			logger.warn("plugin", "Bake produced no geometry")
+		return
+
+	if ei != null and ei.get_selection() != null:
+		ei.get_selection().clear()
+		for mi in baked_nodes:
+			ei.get_selection().add_node(mi)
+	if logger:
+		var with_collision := 0
+		for mi in baked_nodes:
+			if mi.get_node_or_null(NodePath(PBMesh.COLLIDER_BODY_NAME)) != null:
+				with_collision += 1
+		logger.info("plugin", "Baked %d PBMesh(es) to %d MeshInstance3D node(s) (%s), %d with collision" % [
+			targets.size(), baked_nodes.size(), PBSceneBaker.mode_label(mode), with_collision])
+
+## Undo "do" half of a scene bake: park the baked mesh directly after its
+## source so the Scene dock shows the pair together.
+func _attach_baked_node(node: Node, parent: Node, after: Node) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	if parent == null or not is_instance_valid(parent) or node.get_parent() != null:
+		return
+	parent.add_child(node)
+	if after != null and is_instance_valid(after) and after.get_parent() == parent:
+		parent.move_child(node, after.get_index() + 1)
+	# Recursive: the baked collider rides along as a child, and an unowned node
+	# renders in the viewport but is absent from the Scene dock AND from the
+	# saved scene — the collision would vanish on reload.
+	_own_node_recursive(node)
+
+func _own_node_recursive(node: Node) -> void:
+	_own_node(node)
+	for child in node.get_children():
+		_own_node_recursive(child)
+
 func _on_docs_requested() -> void:
 	var script_res := get_script() as Script
 	var plugin_dir := ""
@@ -1646,10 +1835,13 @@ func _on_display_reset() -> void:
 	_on_display_setting_changed(&"hover_opacity", 0.25)
 	tool_overlay.sync_display_settings(0.7, 0.7, 0.25, 0.25)
 
-## Focuses the Material & UV dock.
+## Focuses the Material & UV dock. Re-adds it if the user closed the tab
+## or a floating dock window.
 func focus_material_dock() -> void:
-	if material_dock == null:
+	if material_dock == null or not is_instance_valid(material_dock):
 		return
+	if Engine.is_editor_hint() and not _material_dock_is_on_screen():
+		_restore_material_dock()
 	var editor_dock := material_dock.get_parent() as Control
 	if editor_dock != null:
 		editor_dock.show()
@@ -1662,6 +1854,27 @@ func focus_material_dock() -> void:
 					tb.call("grab_focus", true)
 	material_dock.show()
 	material_dock.sync_selection()
+
+func _material_dock_is_on_screen() -> bool:
+	var n: Node = material_dock
+	if n == null or n.get_parent() == null:
+		return false
+	while n != null:
+		if n is Window:
+			return (n as Window).visible
+		if n is CanvasItem and not (n as CanvasItem).visible:
+			return false
+		n = n.get_parent()
+	return true
+
+func _restore_material_dock() -> void:
+	var parent := material_dock.get_parent()
+	if parent is Window:
+		parent.remove_child(material_dock)
+		parent.queue_free()
+	elif parent != null:
+		remove_control_from_docks(material_dock)
+	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 
 ## Focuses or opens the UV Editor bottom dock panel.
 func focus_uv_editor() -> void:
@@ -1677,14 +1890,80 @@ func focus_uv_editor() -> void:
 	_sync_uv_editor_selection()
 
 func _on_uv_pop_out_toggled(floating: bool) -> void:
-	if not Engine.is_editor_hint():
+	if not Engine.is_editor_hint() or uv_editor_panel == null:
 		return
 	if floating:
 		remove_control_from_bottom_panel(uv_editor_panel)
 		_uv_bottom_button = null
 	else:
+		_purge_stale_uv_editor_hosts()
 		_uv_bottom_button = add_control_to_bottom_panel(uv_editor_panel, "UV Editor")
+		_purge_stale_uv_editor_buttons(_uv_bottom_button)
 		make_bottom_panel_item_visible(uv_editor_panel)
+
+## Drops leftover UV Editor hosts from a previous plugin instance (script
+## reload / enable without a clean _exit_tree). Godot keeps the old bottom-panel
+## tab when the control is reparented or the plugin is replaced.
+func _purge_stale_uv_editor_hosts() -> void:
+	if not Engine.is_editor_hint():
+		return
+	var ei := get_editor_interface()
+	if ei == null:
+		return
+	var base := ei.get_base_control()
+	if base == null:
+		return
+	var stale: Array[Node] = []
+	_collect_named_nodes(base, "PBUvEditorPanel", stale)
+	_collect_named_nodes(base, "PoiBuilder_UVEditor_Window", stale)
+	for n in stale:
+		if n == uv_editor_panel:
+			continue
+		if n is Control:
+			remove_control_from_bottom_panel(n)
+		if is_instance_valid(n) and n.get_parent() != null:
+			n.get_parent().remove_child(n)
+		if is_instance_valid(n):
+			n.queue_free()
+
+func _purge_stale_uv_editor_buttons(keep: Button) -> void:
+	if not Engine.is_editor_hint():
+		return
+	var ei := get_editor_interface()
+	if ei == null:
+		return
+	var base := ei.get_base_control()
+	if base == null:
+		return
+	var buttons: Array[Node] = []
+	_collect_bottom_panel_buttons_named(base, "UV Editor", buttons)
+	for n in buttons:
+		if n == keep or not is_instance_valid(n):
+			continue
+		n.queue_free()
+
+func _collect_named_nodes(root: Node, node_name: String, out: Array[Node]) -> void:
+	if root.name == node_name:
+		out.append(root)
+	for child in root.get_children():
+		_collect_named_nodes(child, node_name, out)
+
+func _collect_bottom_panel_buttons_named(root: Node, title: String, out: Array[Node]) -> void:
+	if root is Button and (root as Button).text == title and _looks_like_bottom_panel_button(root):
+		out.append(root)
+	for child in root.get_children():
+		_collect_bottom_panel_buttons_named(child, title, out)
+
+func _looks_like_bottom_panel_button(btn: Node) -> bool:
+	var parent := btn.get_parent()
+	if parent == null:
+		return false
+	for child in parent.get_children():
+		if child is Button:
+			var label := (child as Button).text
+			if label == "Output" or label == "Debugger" or label == "Audio":
+				return true
+	return false
 
 func _sync_uv_editor_selection() -> void:
 	if uv_editor_panel == null:
@@ -1895,6 +2174,9 @@ func _on_operation_requested(op_name: String) -> void:
 	if op_name == "smooth_auto":
 		_perform_auto_smooth()
 		return
+	if op_name == "tidy_faces":
+		_perform_tidy_faces()
+		return
 	if not editor.is_editing() or editor.active_mesh == null:
 		return
 	# Extrude is ONE action: face mode extrudes faces, edge mode extrudes
@@ -2072,7 +2354,9 @@ func _on_operation_requested(op_name: String) -> void:
 	cmd.capture_after()
 	if not cmd.is_noop():
 		cmd.add_to_undo_manager(get_undo_redo())
-	_finish_mesh_op(mesh, op_name, int(result["new_face_ids"].size()), result.get("new_face_ids", PackedInt32Array()))
+	# Not every op reports created faces (collapse returns only its target point).
+	var created: PackedInt32Array = result.get("new_face_ids", PackedInt32Array())
+	_finish_mesh_op(mesh, op_name, created.size(), created)
 ## sibling holding the extracted faces. One undo action covers both (the new
 ## node is registered as a do-reference so undo keeps it alive for redo).
 func _perform_detach(mesh: PBMesh, face_ids: PackedInt32Array) -> void:
@@ -2145,6 +2429,7 @@ const OP_ACTION_NAMES := {
 	"connect_vertices": "Connect Vertices",
 	"collapse_elements": "Collapse",
 	"fill_hole": "Fill Hole",
+	"tidy_faces": "Tidy Faces",
 }
 func _perform_select_all() -> void:
 	var mesh := editor.active_mesh
@@ -2345,28 +2630,18 @@ func _perform_poibuilderize() -> void:
 			pb = PBObjectOps.poibuilderize_csg(n as CSGShape3D)
 
 		if pb != null:
-			var parent := n.get_parent()
-			if parent == null and scene_root != null:
-				parent = scene_root
-			if parent != null:
-				pb.transform = n.transform
-				created_nodes.append(pb)
-				# The whole swap runs through the undo do-methods: adding the
-				# PBMesh directly here as well would make the committed
-				# add_child a no-op error ("already has a parent") and leave
-				# the action's bookkeeping out of sync with the tree.
-				if undo_mgr != null:
-					undo_mgr.add_do_reference(pb)
-					undo_mgr.add_undo_reference(n)
-					undo_mgr.add_do_method(parent, "add_child", pb)
-					undo_mgr.add_do_method(self, "_own_node", pb)
-					undo_mgr.add_do_method(parent, "remove_child", n)
-					undo_mgr.add_undo_method(parent, "add_child", n)
-					undo_mgr.add_undo_method(parent, "remove_child", pb)
-				else:
-					parent.add_child(pb)
-					pb.owner = scene_root if scene_root != null else parent
-					parent.remove_child(n)
+			created_nodes.append(pb)
+			# The whole swap runs through the undo do-methods: adding the
+			# PBMesh directly here as well would make the committed
+			# add_child a no-op error ("already has a parent") and leave
+			# the action's bookkeeping out of sync with the tree.
+			if undo_mgr != null:
+				undo_mgr.add_do_reference(pb)
+				undo_mgr.add_undo_reference(n)
+				undo_mgr.add_do_method(self, "_poibuilderize_insert", pb, n)
+				undo_mgr.add_undo_method(self, "_poibuilderize_revert", pb, n)
+			else:
+				_poibuilderize_insert(pb, n)
 
 	if undo_mgr != null:
 		undo_mgr.commit_action()
@@ -2521,6 +2796,34 @@ func _restore_csg_mesh(mesh: PBMesh, data: PBMeshData) -> void:
 		mesh.pb_mesh_data.shape_edited = true
 		mesh.rebuild()
 		mesh.update_gizmos()
+## Whole-mesh cleanup (Tidy button): buried internal faces, T-junctions, and
+## flat neighbors merged into clean faces. Runs in any mode like the other
+## whole-object tools; topology changes, so it undoes via a CmdMeshOp snapshot.
+func _perform_tidy_faces() -> void:
+	var mesh := editor.active_mesh
+	if mesh == null or mesh.pb_mesh_data == null:
+		return
+	var cmd := CmdMeshOp.new(mesh.pb_mesh_data, OP_ACTION_NAMES["tidy_faces"], mesh)
+	if logger:
+		cmd.logger = logger
+	var faces_before := mesh.pb_mesh_data.faces.size()
+	var result := PBMeshOps.tidy_faces(mesh.pb_mesh_data)
+	if not result.get("ok", false):
+		if logger:
+			logger.warn("mesh_ops", "tidy_faces failed: %s" % result.get("error", "?"))
+		return
+	cmd.capture_after()
+	if cmd.is_noop():
+		if logger:
+			logger.info("mesh_ops", "Tidy Faces: %s is already tidy" % mesh.name)
+		return
+	cmd.add_to_undo_manager(get_undo_redo())
+	_finish_mesh_op(mesh, "tidy_faces", 0)
+	if logger:
+		logger.info("mesh_ops", "Tidy Faces on %s: %d -> %d faces (%d hidden internal faces removed, %d T-junction edges split)" % [
+			mesh.name, faces_before, mesh.pb_mesh_data.faces.size(),
+			int(result.get("internal_removed", 0)), int(result.get("t_junctions", 0))])
+
 func _perform_auto_smooth() -> void:
 	var mesh := editor.active_mesh
 	if mesh == null or mesh.pb_mesh_data == null:
@@ -2618,13 +2921,13 @@ func _set_creation_hint(text: String) -> void:
 func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventWithModifiers:
 		shape_creator.lock_direction = event.ctrl_pressed or Input.is_key_pressed(KEY_CTRL)
-		if shape_creator.state == PBShapeCreator.State.HEIGHT:
+		if shape_creator.state == PBShapeCreator.PBState.HEIGHT:
 			var alt_down: bool = event.alt_pressed or Input.is_key_pressed(KEY_ALT)
 			if shape_creator.show_height_plane != alt_down:
 				shape_creator.show_height_plane = alt_down
 				_refresh_preview()
 	elif event is InputEventKey:
-		if shape_creator.state == PBShapeCreator.State.HEIGHT:
+		if shape_creator.state == PBShapeCreator.PBState.HEIGHT:
 			var alt_down: bool = event.alt_pressed or Input.is_key_pressed(KEY_ALT)
 			if shape_creator.show_height_plane != alt_down:
 				shape_creator.show_height_plane = alt_down
@@ -2639,16 +2942,16 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			match shape_creator.state:
-				PBShapeCreator.State.ARMED:
+				PBShapeCreator.PBState.ARMED:
 					if _creation_begin_from_surface(camera, event.position):
 						# Consume the press so the engine never starts a
 						# marquee / selection under the creation drag.
 						return AFTER_GUI_INPUT_STOP
 					return AFTER_GUI_INPUT_PASS
-				PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
+				PBShapeCreator.PBState.HEIGHT, PBShapeCreator.PBState.OFFSET:
 					_creation_confirm()
 					return AFTER_GUI_INPUT_STOP
-				PBShapeCreator.State.PARAMS:
+				PBShapeCreator.PBState.PARAMS:
 					# Clicking elsewhere cancels the uncommitted modal changes
 					# (reverts to placement values), exactly like clicking Cancel.
 					if logger:
@@ -2656,17 +2959,17 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 					_on_params_canceled()
 					return AFTER_GUI_INPUT_PASS
 		else:
-			if shape_creator.state == PBShapeCreator.State.BASE:
+			if shape_creator.state == PBShapeCreator.PBState.BASE:
 				_creation_end_base()
 				return AFTER_GUI_INPUT_STOP
 
 	if event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if not k.echo or _is_repeatable_grid_key(k):
-			if shape_creator.state != PBShapeCreator.State.PARAMS \
+			if shape_creator.state != PBShapeCreator.PBState.PARAMS \
 					and _handle_grid_action_key(k) == AFTER_GUI_INPUT_STOP:
 				return AFTER_GUI_INPUT_STOP
-		if shape_creator.state == PBShapeCreator.State.PARAMS:
+		if shape_creator.state == PBShapeCreator.PBState.PARAMS:
 			if event.keycode == KEY_ESCAPE:
 				_on_params_canceled()
 				return AFTER_GUI_INPUT_STOP
@@ -2822,7 +3125,7 @@ func _refresh_preview() -> void:
 		return
 	node.transform = shape_creator.placement_transform(data)
 	node.pb_mesh_data = data
-	if shape_creator.state == PBShapeCreator.State.BASE:
+	if shape_creator.state == PBShapeCreator.PBState.BASE:
 		node.mesh = null
 	# rebuild alone never redraws it.
 	node.update_gizmos()
@@ -2832,7 +3135,7 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
 	match shape_creator.state:
-		PBShapeCreator.State.BASE:
+		PBShapeCreator.PBState.BASE:
 			var hit := PBShapeCreator.ray_plane_intersect(ray_o, ray_d,
 				shape_creator.plane_point, shape_creator.plane_normal)
 			if hit != PBShapeCreator.RAY_MISS:
@@ -2841,14 +3144,14 @@ func _creation_motion(camera: Camera3D, screen_pos: Vector2) -> void:
 				_update_cursor_extents(screen_pos)
 			# No hover highlight while the base drag is out — the cursor is
 			# busy drawing the rect, not picking a face.
-		PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
+		PBShapeCreator.PBState.HEIGHT, PBShapeCreator.PBState.OFFSET:
 			var ref := PBShapeCreator.height_reference_point(camera.global_position,
 				-camera.global_transform.basis.z, ray_o, ray_d, shape_creator.rect_center)
 			shape_creator.update_height_point(ref)
 			_refresh_preview()
 			_update_cursor_extents(screen_pos)
 			_clear_creation_hover()
-		PBShapeCreator.State.PARAMS:
+		PBShapeCreator.PBState.PARAMS:
 			_clear_creation_hover()
 		_:
 			_update_creation_hover(camera, screen_pos)
@@ -2946,14 +3249,14 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 			best_face = -1
 
 	# Snap the hover vertex to the exact starting point creation will use when clicked:
-	if shape_creator != null and shape_creator.state == PBShapeCreator.State.ARMED:
+	if shape_creator != null and shape_creator.state == PBShapeCreator.PBState.ARMED:
 		best_point = shape_creator.snap_starting_point(best_point, best_normal)
-	elif ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.ARMED:
+	elif ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.PBState.ARMED:
 		best_point = ngon_drawer.snap_starting_point(best_point, best_normal, best_node, best_face)
-	elif sprite_placer != null and sprite_placer.is_active() and sprite_placer.state == PBSpritePlacer.State.ARMED:
+	elif sprite_placer != null and sprite_placer.is_active() and sprite_placer.state == PBSpritePlacer.PBState.ARMED:
 		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
 			best_point = grid.snap_point_masked(best_point, best_normal)
-	elif particle_placer != null and particle_placer.is_active() and particle_placer.state == PBParticlePlacer.State.ARMED:
+	elif particle_placer != null and particle_placer.is_active() and particle_placer.state == PBParticlePlacer.PBState.ARMED:
 		if grid != null and grid.enabled and PBGrid.is_cardinal(best_normal):
 			best_point = grid.snap_point_masked(best_point, best_normal)
 
@@ -3006,7 +3309,7 @@ func _creation_end_base() -> void:
 	# the surface (height 0) instead of popping in below it with a jump at
 	# the first mouse move.
 	_refresh_preview()
-	if shape_creator.state == PBShapeCreator.State.OFFSET:
+	if shape_creator.state == PBShapeCreator.PBState.OFFSET:
 		_set_creation_hint("move to lift it off the surface, then click to confirm")
 	else:
 		_set_creation_hint("move to size it, then click to confirm (Alt: height plane)")
@@ -3159,25 +3462,25 @@ func _update_cursor_extents(screen_pos: Vector2) -> void:
 		return
 	# Billboard sprite raise/scale: same floating readout as shape creation.
 	if sprite_placer != null and sprite_placer.is_active() \
-			and (sprite_placer.state == PBSpritePlacer.State.RAISE or sprite_placer.state == PBSpritePlacer.State.SCALE):
+			and (sprite_placer.state == PBSpritePlacer.PBState.RAISE or sprite_placer.state == PBSpritePlacer.PBState.SCALE):
 		var sp_text := sprite_placer.get_extents_readout()
 		if not sp_text.is_empty():
 			_show_cursor_extents(sp_text, screen_pos)
 			return
 	# Particle placement lift/tune: same treatment.
 	if particle_placer != null and particle_placer.is_active() \
-			and (particle_placer.state == PBParticlePlacer.State.RAISE or particle_placer.state == PBParticlePlacer.State.TUNE):
+			and (particle_placer.state == PBParticlePlacer.PBState.RAISE or particle_placer.state == PBParticlePlacer.PBState.TUNE):
 		var pp_text := particle_placer.get_extents_readout()
 		if not pp_text.is_empty():
 			_show_cursor_extents(pp_text, screen_pos)
 			return
 	# N-gon height drag: same treatment.
-	if ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+	if ngon_drawer != null and ngon_drawer.is_active() and ngon_drawer.state == PBNgonDrawer.PBState.HEIGHT:
 		var ng_text := ngon_drawer.get_extents_readout()
 		if not ng_text.is_empty():
 			_show_cursor_extents(ng_text, screen_pos)
 			return
-	if shape_creator == null or not (shape_creator.state == PBShapeCreator.State.BASE or shape_creator.state == PBShapeCreator.State.HEIGHT or shape_creator.state == PBShapeCreator.State.OFFSET):
+	if shape_creator == null or not (shape_creator.state == PBShapeCreator.PBState.BASE or shape_creator.state == PBShapeCreator.PBState.HEIGHT or shape_creator.state == PBShapeCreator.PBState.OFFSET):
 		_cursor_extents_label.visible = false
 		return
 
@@ -3206,7 +3509,7 @@ func _show_cursor_extents(text: String, screen_pos: Vector2) -> void:
 func _forward_3d_draw_over_viewport(viewport_control: Control) -> void:
 	if _cursor_extents_label != null and _cursor_extents_label.is_inside_tree() and _cursor_extents_label.visible:
 		return
-	if shape_creator == null or not (shape_creator.state == PBShapeCreator.State.BASE or shape_creator.state == PBShapeCreator.State.HEIGHT or shape_creator.state == PBShapeCreator.State.OFFSET):
+	if shape_creator == null or not (shape_creator.state == PBShapeCreator.PBState.BASE or shape_creator.state == PBShapeCreator.PBState.HEIGHT or shape_creator.state == PBShapeCreator.PBState.OFFSET):
 		return
 	var text := shape_creator.get_cursor_extents_text()
 	if text.is_empty():
@@ -3283,13 +3586,13 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 		var ray_d: Vector3 = camera.project_ray_normal(event.position)
 
 		match ngon_drawer.state:
-			PBNgonDrawer.State.HEIGHT:
+			PBNgonDrawer.PBState.HEIGHT:
 				var ref := PBShapeCreator.height_reference_point(camera.global_position,
 					-camera.global_transform.basis.z, ray_o, ray_d, ngon_drawer.plane_point)
 				ngon_drawer.update_height_point(ref)
 				_refresh_ngon_preview()
 				_update_cursor_extents(event.position)
-			PBNgonDrawer.State.ARMED:
+			PBNgonDrawer.PBState.ARMED:
 				_update_creation_hover(camera, event.position)
 				var hit := _pick_creation_surface(camera, event.position)
 				if not hit.is_empty():
@@ -3314,7 +3617,7 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 						ngon_drawer.preview_node.update_gizmos()
 					elif best_m != null:
 						best_m.update_gizmos()
-			PBNgonDrawer.State.DRAWING, PBNgonDrawer.State.DRAGGING_VERT:
+			PBNgonDrawer.PBState.DRAWING, PBNgonDrawer.PBState.DRAGGING_VERT:
 				# Knife mode: check if cursor hits an adjacent face to switch to
 				if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE and ngon_drawer.target_mesh != null:
 					var tm: PBMesh = ngon_drawer.target_mesh
@@ -3339,11 +3642,11 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			match ngon_drawer.state:
-				PBNgonDrawer.State.ARMED:
+				PBNgonDrawer.PBState.ARMED:
 					if _ngon_drawer_begin_from_surface(camera, event.position):
 						return AFTER_GUI_INPUT_STOP
 					return AFTER_GUI_INPUT_PASS
-				PBNgonDrawer.State.DRAWING:
+				PBNgonDrawer.PBState.DRAWING:
 					if ngon_drawer.hovered_vert_idx >= 0:
 						if ngon_drawer.hovered_vert_idx == 0 and ngon_drawer.points.size() >= 3:
 							_on_ngon_drawer_complete()
@@ -3360,11 +3663,11 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 						elif editor.active_mesh != null:
 							editor.active_mesh.update_gizmos()
 						return AFTER_GUI_INPUT_STOP
-				PBNgonDrawer.State.HEIGHT:
+				PBNgonDrawer.PBState.HEIGHT:
 					_on_ngon_drawer_confirm_height()
 					return AFTER_GUI_INPUT_STOP
 		else:
-			if ngon_drawer.state == PBNgonDrawer.State.DRAGGING_VERT:
+			if ngon_drawer.state == PBNgonDrawer.PBState.DRAGGING_VERT:
 				ngon_drawer.end_drag_vert()
 				if ngon_drawer.preview_node != null:
 					ngon_drawer.preview_node.update_gizmos()
@@ -3375,10 +3678,10 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventKey and event.pressed:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER:
-			if ngon_drawer.state == PBNgonDrawer.State.DRAWING or ngon_drawer.state == PBNgonDrawer.State.DRAGGING_VERT:
+			if ngon_drawer.state == PBNgonDrawer.PBState.DRAWING or ngon_drawer.state == PBNgonDrawer.PBState.DRAGGING_VERT:
 				_on_ngon_drawer_complete()
 				return AFTER_GUI_INPUT_STOP
-			elif ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+			elif ngon_drawer.state == PBNgonDrawer.PBState.HEIGHT:
 				_on_ngon_drawer_confirm_height()
 				return AFTER_GUI_INPUT_STOP
 		elif k.keycode == KEY_ESCAPE:
@@ -3446,7 +3749,7 @@ func _refresh_ngon_preview() -> void:
 	var node := ngon_drawer.preview_node
 	if node == null:
 		return
-	if ngon_drawer.state == PBNgonDrawer.State.HEIGHT:
+	if ngon_drawer.state == PBNgonDrawer.PBState.HEIGHT:
 		var data := ngon_drawer.build_preview_data()
 		if data != null:
 			node.transform = Transform3D.IDENTITY
@@ -3609,7 +3912,7 @@ func _on_dock_mode_changed(new_mode: PBMaterialDock.DockMode) -> void:
 				sprite_placer.abort()
 			if particle_placer != null and particle_placer.is_active():
 				particle_placer.abort()
-			if shape_creator.is_active() and shape_creator.state == PBShapeCreator.State.ARMED:
+			if shape_creator.is_active() and shape_creator.state == PBShapeCreator.PBState.ARMED:
 				shape_creator.reset()
 				_set_creation_hint("")
 				_update_editing_context()
@@ -3621,7 +3924,7 @@ func _arm_shape_mode_shape() -> void:
 	if not _dock_is_shape_mode():
 		return
 	if shape_creator.is_active() and shape_creator.shape_id == _shape_mode_shape \
-			and shape_creator.state == PBShapeCreator.State.ARMED:
+			and shape_creator.state == PBShapeCreator.PBState.ARMED:
 		return
 	_on_shape_requested(_shape_mode_shape)
 
@@ -4049,19 +4352,19 @@ func _sprite_placer_input(camera: Camera3D, event: InputEvent) -> int:
 			var view_forward: Vector3 = -camera.global_transform.basis.z
 			if view_forward.dot(surface_hit["normal"]) > 0.0:
 				surface_hit["normal"] = -surface_hit["normal"]
-		if sprite_placer.state == PBSpritePlacer.State.ARMED:
+		if sprite_placer.state == PBSpritePlacer.PBState.ARMED:
 			if not surface_hit.is_empty():
 				_set_creation_hint("Sprite: click a surface to place the selected sprite (drag to pick a texture)")
 				_update_creation_hover(camera, event.position)
 			else:
 				_clear_creation_hover()
-		elif sprite_placer.state == PBSpritePlacer.State.TEXTURE_SELECT:
+		elif sprite_placer.state == PBSpritePlacer.PBState.TEXTURE_SELECT:
 			_clear_creation_hover()
 			_set_creation_hint("Sprite: scroll to select texture • release / click to confirm")
-		elif sprite_placer.state == PBSpritePlacer.State.RAISE:
+		elif sprite_placer.state == PBSpritePlacer.PBState.RAISE:
 			_clear_creation_hover()
 			_set_creation_hint("Sprite: mouse up/down to raise • click to lock angle")
-		elif sprite_placer.state == PBSpritePlacer.State.SCALE:
+		elif sprite_placer.state == PBSpritePlacer.PBState.SCALE:
 			_clear_creation_hover()
 			_set_creation_hint("Sprite: mouse left/right to scale • click to confirm placement")
 
@@ -4095,7 +4398,7 @@ func _particle_placer_input(camera: Camera3D, event: InputEvent) -> int:
 			var view_forward: Vector3 = -camera.global_transform.basis.z
 			if view_forward.dot(surface_hit["normal"]) > 0.0:
 				surface_hit["normal"] = -surface_hit["normal"]
-		if particle_placer.state == PBParticlePlacer.State.ARMED:
+		if particle_placer.state == PBParticlePlacer.PBState.ARMED:
 			if not surface_hit.is_empty():
 				_set_creation_hint(particle_placer.phase_hint())
 				_update_creation_hover(camera, event.position)
@@ -4687,15 +4990,79 @@ func _attach_detached(node: Node, parent: Node) -> void:
 	if parent == null or not is_instance_valid(parent):
 		return
 	if node.get_parent() == parent:
+		_own_node(node)
 		return  # already attached (creation finalize commits against a live preview)
 	parent.add_child(node)
-	node.owner = get_editor_interface().get_edited_scene_root()
+	_own_node(node)
 
 ## Undo "do" half for creation: the preview node is already in the tree when
 ## the action commits — only ownership is missing.
 func _own_node(node: Node) -> void:
-	if node != null and is_instance_valid(node):
-		node.owner = get_editor_interface().get_edited_scene_root()
+	if node == null or not is_instance_valid(node):
+		return
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root == null or node == scene_root:
+		return
+	# Godot rejects owner assignment unless the owner is an ancestor in the
+	# live tree. Poibuilderize used to hit this when converting the edited
+	# scene root: the new node was parented beside that root, not under it.
+	if not node.is_inside_tree() or not scene_root.is_ancestor_of(node):
+		return
+	node.owner = scene_root
+
+## Insert a poibuilderized mesh. A child of the edited scene can be swapped
+## in place. The edited scene root cannot: its parent is the editor viewport,
+## so a sibling there cannot take the scene root as owner.
+func _poibuilderize_insert(pb: Node, original: Node) -> void:
+	if pb == null or original == null or not is_instance_valid(pb) or not is_instance_valid(original):
+		return
+	if pb.get_parent() != null:
+		return
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	var parent := original.get_parent()
+	var parent_in_edited_scene := scene_root != null and parent != null \
+		and (parent == scene_root or scene_root.is_ancestor_of(parent))
+	if original == scene_root or not parent_in_edited_scene:
+		pb.transform = Transform3D.IDENTITY
+		if original is GeometryInstance3D and pb is GeometryInstance3D:
+			(pb as GeometryInstance3D).gi_mode = (original as GeometryInstance3D).gi_mode
+			(pb as GeometryInstance3D).cast_shadow = (original as GeometryInstance3D).cast_shadow
+		original.add_child(pb)
+		_own_node(pb)
+		if original is MeshInstance3D:
+			_poibuilderize_mesh_backup[original.get_instance_id()] = (original as MeshInstance3D).mesh
+			(original as MeshInstance3D).mesh = null
+		if logger:
+			logger.info("plugin", "Poibuilderize: '%s' is the scene root, so the editable mesh was added as a child" % original.name)
+		return
+	pb.transform = original.transform
+	var index := original.get_index()
+	parent.add_child(pb)
+	parent.move_child(pb, index)
+	_own_node(pb)
+	parent.remove_child(original)
+
+func _poibuilderize_revert(pb: Node, original: Node) -> void:
+	if pb == null or not is_instance_valid(pb):
+		return
+	var parent := pb.get_parent()
+	if parent == null:
+		return
+	if original != null and is_instance_valid(original) and parent == original:
+		parent.remove_child(pb)
+		if original is MeshInstance3D:
+			var id := original.get_instance_id()
+			if _poibuilderize_mesh_backup.has(id):
+				(original as MeshInstance3D).mesh = _poibuilderize_mesh_backup[id]
+				_poibuilderize_mesh_backup.erase(id)
+		return
+	if original != null and is_instance_valid(original):
+		var index := pb.get_index()
+		parent.add_child(original)
+		parent.move_child(original, index)
+		if original.owner == null:
+			_own_node(original)
+	parent.remove_child(pb)
 
 ## Undo of detach: remove the node WITHOUT freeing it — the undo history's
 ## do-reference keeps it alive so redo can re-attach it.
