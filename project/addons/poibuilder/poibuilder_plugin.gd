@@ -2524,7 +2524,9 @@ func _reattach_csg_cutter(node: Node, parent: Node) -> void:
 
 func _restore_csg_mesh(mesh: PBMesh, data: PBMeshData) -> void:
 	if mesh != null and is_instance_valid(mesh):
-		mesh.pb_mesh_data = PBCommand.copy_mesh_data(data)
+		# A live copy: undo snapshots are cold (no GPU textures) and this one
+		# is rendered as-is.
+		mesh.pb_mesh_data = PBCommand.copy_mesh_data_live(data)
 		mesh.pb_mesh_data.shape_edited = true
 		mesh.rebuild()
 		mesh.update_gizmos()

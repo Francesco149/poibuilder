@@ -41,9 +41,22 @@ func add_to_undo_manager(undo: Object) -> void:
 	undo.add_undo_method(self, "undo_it")
 	undo.commit_action()
 
-## Creates a deep copy of the given PBMeshData resource.
-## All vertex attributes, faces, and shared vertex groups are cloned.
+## Creates a deep copy of the given PBMeshData resource — an UNDO SNAPSHOT.
+## All vertex attributes, faces, and shared vertex groups are cloned. Splat
+## materials are cloned COLD: their pixels live in the PBSplat CPU cache only
+## (copy-on-write, so unchanged masks cost nothing) and no GPU texture is
+## created. A snapshot is restored through `restore_mesh_data`, which makes
+## the materials live again; code that renders a copy directly must use
+## `copy_mesh_data_live` instead.
 static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
+	return _copy_mesh_data(source, true)
+
+## A copy meant to be RENDERED (assigned straight to a PBMesh): splat
+## materials get their GPU textures.
+static func copy_mesh_data_live(source: PBMeshData) -> PBMeshData:
+	return _copy_mesh_data(source, false)
+
+static func _copy_mesh_data(source: PBMeshData, cold: bool) -> PBMeshData:
 	if source == null:
 		return null
 
@@ -58,7 +71,7 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	var new_mats: Array[Material] = []
 	for m in source.materials:
 		if PBSplat.is_splat_material(m):
-			new_mats.append(PBSplat.clone_splat_material(m as ShaderMaterial))
+			new_mats.append(PBSplat.clone_splat_material(m as ShaderMaterial, cold))
 		else:
 			new_mats.append(m)
 	copy.materials = new_mats
@@ -90,7 +103,7 @@ static func copy_mesh_data(source: PBMeshData) -> PBMeshData:
 	# Shape bookkeeping travels with snapshots so undo/redo never loses the
 	# shape identity / editability of a factory-created mesh.
 	copy.shape_id = source.shape_id
-	copy.shape_params = source.shape_params.duplicate()
+	copy.shape_params = source.shape_params.duplicate(true)
 	copy.shape_edited = source.shape_edited
 	copy.texture_anchor = source.texture_anchor
 	copy.has_texture_anchor = source.has_texture_anchor
@@ -143,7 +156,7 @@ static func restore_mesh_data(target: PBMeshData, snapshot: PBMeshData) -> void:
 	target.shared_textures = new_st
 
 	target.shape_id = snapshot.shape_id
-	target.shape_params = snapshot.shape_params.duplicate()
+	target.shape_params = snapshot.shape_params.duplicate(true)
 	target.shape_edited = snapshot.shape_edited
 	target.texture_anchor = snapshot.texture_anchor
 	target.has_texture_anchor = snapshot.has_texture_anchor

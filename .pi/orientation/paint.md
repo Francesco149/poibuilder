@@ -109,9 +109,22 @@ cancels).
 
 A shared splat material across faces makes one face's paint appear on every
 other face wearing it (`ensure_face_owned_material` exists to prevent that).
-`_copy_layer_setup` and `clone_splat_material` must carry the window mapping
+`clone_splat_material` is the ONE function that copies a layer setup (privatising
+a shared material goes through it too) and it must carry the window mapping
 with the decal pixels — a clone that drops it renders the content stretched
 over the whole face.
+
+## Invariant 2b — undo snapshots are COLD (v0.9.182)
+
+`PBCommand.copy_mesh_data` clones splat materials with `cold = true`: the
+pixels live in the CPU image cache (copy-on-write) and NO ImageTexture is
+created. `restore_mesh_data` turns them live again. Anything that renders a
+copy directly must use `copy_mesh_data_live`. Read masks through
+`get_layer_mask_image` / `get_decal_layer_image`, never by testing the
+material's texture parameter for null — a cold snapshot has none. The cache is
+keyed by material instance id and pruned of freed materials
+(`prune_image_cache`); do not add another static image store that is never
+pruned.
 
 ## Invariant 3 — a decal's upright frame is WORLD-referenced, so the write needs the node transform
 

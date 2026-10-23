@@ -36,6 +36,31 @@ contract for this round: scenes saved by the current public release
 
 Tests: seven new cases in `test_pb_trim_walls.gd`; all seven fail on v0.9.181.
 
+### Undo snapshots stop holding GPU textures; the image cache stops leaking
+
+Measured on the demo map's courtyard floor (a 1024² mask + a 3136x2304 decal
+window): every decal stroke kept **+27.6 MB** in the undo history, and after
+twenty strokes with the history cleared **285.8 MB** was still resident.
+
+- `PBCommand.copy_mesh_data` (every undo snapshot) now clones splat materials
+  COLD: their pixels go to the CPU cache copy-on-write and no ImageTexture is
+  created — each snapshot used to allocate a GPU copy of every mask and decal
+  on the mesh, twice per stroke. `restore_mesh_data` makes them live again.
+  The one caller that renders a copy directly (`_restore_csg_mesh`) uses the
+  new `copy_mesh_data_live`.
+- Clones share pixels instead of allocating a zeroed image and then
+  overwriting it (`Image.create` + `copy_from` paid for a full-size buffer
+  only to throw it away — 27.6 MB per snapshot on the courtyard decal).
+- `PBSplat.prune_image_cache()` drops the images of freed materials; it runs
+  every 64 new cache entries. Nothing ever removed an entry before.
+- `_copy_layer_setup` is gone: privatising a shared splat material is a
+  `clone_splat_material`, the one place that knows the whole layer setup
+  (paint.md's "both must carry the window mapping" pair is now one function).
+- Snapshot `shape_params` are deep copies (Trim Walls' recorded paths are
+  nested arrays that were shared with the live mesh).
+
+Tests: new suite `test_pb_paint_storage.gd`.
+
 ## v0.9.181 — the stamp lands where the preview shows it on a rotated mesh
 
 ### Fixed: stamps/decal dabs were rotated by the node's own yaw

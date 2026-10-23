@@ -241,8 +241,33 @@ static func _set_cached_image(mat: ShaderMaterial, key: String, img: Image) -> v
 		return
 	var id := mat.get_instance_id()
 	if not _cpu_image_cache.has(id):
+		_cache_inserts_since_prune += 1
+		if _cache_inserts_since_prune >= CACHE_PRUNE_INTERVAL:
+			prune_image_cache()
 		_cpu_image_cache[id] = {}
 	_cpu_image_cache[id][key] = img
+
+## New materials registered in the image cache since the last sweep.
+static var _cache_inserts_since_prune := 0
+## Every this many new materials, the cache drops the images of materials
+## that no longer exist.
+const CACHE_PRUNE_INTERVAL := 64
+
+## Drops the cached CPU images of materials that have been freed. The cache is
+## keyed by instance id and nothing else ever removed an entry, so every undo
+## snapshot's images stayed resident after the snapshot itself was gone —
+## 285 MB after twenty decal strokes on the demo courtyard, until the editor
+## restarted. Runs automatically every CACHE_PRUNE_INTERVAL new materials.
+## Returns how many materials were dropped.
+static func prune_image_cache() -> int:
+	_cache_inserts_since_prune = 0
+	var dead: Array = []
+	for id in _cpu_image_cache:
+		if not is_instance_id_valid(id):
+			dead.append(id)
+	for id in dead:
+		_cpu_image_cache.erase(id)
+	return dead.size()
 
 static func _get_brush_lut(softness: float) -> PackedFloat32Array:
 	var key := int(round(softness * 1000.0))
@@ -2734,10 +2759,16 @@ static func ensure_face_owned_material(mesh_data: PBMeshData, face: PBFace) -> S
 	if is_splat_material(current) and not _is_material_shared(mesh_data, face, current):
 		return current as ShaderMaterial
 
-	var shell := create_splat_material(
-			current if current is StandardMaterial3D else null)
+	# A shared splat material is privatised as a full copy (layers, masks,
+	# decal and its window mapping — clone_splat_material is the ONE place
+	# that knows the whole layer setup); anything else converts to a fresh
+	# splat shell over its albedo.
+	var shell: ShaderMaterial
 	if is_splat_material(current):
-		_copy_layer_setup(current as ShaderMaterial, shell)
+		shell = clone_splat_material(current as ShaderMaterial)
+		mask_state_version += 1
+	else:
+		shell = create_splat_material(current if current is StandardMaterial3D else null)
 	mesh_data.set_face_material(face, shell)
 	return shell
 
@@ -2746,43 +2777,6 @@ static func _is_material_shared(mesh_data: PBMeshData, face: PBFace, mat: Materi
 		if f != null and f != face and mesh_data.get_face_material(f) == mat:
 			return true
 	return false
-
-## Copies a splat material's look and layer setup (textures, colors, roughness
-## and any painted masks/decal) onto `target`.
-static func _copy_layer_setup(source: ShaderMaterial, target: ShaderMaterial) -> void:
-	target.set_shader_parameter("base_texture", source.get_shader_parameter("base_texture"))
-	target.set_shader_parameter("base_color", source.get_shader_parameter("base_color"))
-	target.set_shader_parameter("roughness", source.get_shader_parameter("roughness"))
-	for i in range(1, MAX_LAYERS + 1):
-		if source.get_shader_parameter("layer_%d_enabled" % i) != true:
-			continue
-		target.set_shader_parameter("layer_%d_enabled" % i, true)
-		target.set_shader_parameter("layer_%d_texture" % i, source.get_shader_parameter("layer_%d_texture" % i))
-		target.set_shader_parameter("layer_%d_color" % i, source.get_shader_parameter("layer_%d_color" % i))
-		target.set_shader_parameter("layer_%d_roughness" % i, source.get_shader_parameter("layer_%d_roughness" % i))
-		var src_mask := get_layer_mask_image(source, i)
-		if src_mask != null:
-			var copy := Image.create(src_mask.get_width(), src_mask.get_height(), false, src_mask.get_format())
-			copy.copy_from(src_mask)
-			target.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(copy))
-			_set_cached_image(target, "layer_%d" % i, copy)
-	if has_decal_layer(source):
-		var src_decal := get_decal_layer_image(source)
-		if src_decal != null:
-			var decal_copy := Image.create(src_decal.get_width(), src_decal.get_height(), false, Image.FORMAT_RGBA8)
-			decal_copy.copy_from(src_decal)
-			target.set_shader_parameter("stamp_layer_enabled", true)
-			target.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(decal_copy))
-			# The window mapping travels WITH the pixels: a copy that dropped
-			# it would render the content stretched over the whole face.
-			var win_off = source.get_shader_parameter("stamp_layer_uv_offset")
-			var win_scale = source.get_shader_parameter("stamp_layer_uv_scale")
-			if win_off is Vector2:
-				target.set_shader_parameter("stamp_layer_uv_offset", win_off)
-			if win_scale is Vector2:
-				target.set_shader_parameter("stamp_layer_uv_scale", win_scale)
-			_set_cached_image(target, "stamp", decal_copy)
-	mask_state_version += 1
 # ==============================================================================
 # Legacy decal nodes (migration into the decal layer)
 # ==============================================================================
@@ -2924,7 +2918,17 @@ static func collect_face_paint_state(mesh_data: PBMeshData, face: PBFace) -> Dic
 # ==============================================================================
 
 ## Deep-clones a splat material and all of its active layer mask images for undo/redo.
-static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
+##
+## The pixels are copied copy-on-write (`Image.copy_from` shares the buffer
+## until either side writes), so a clone costs memory only for the images that
+## change afterwards. A COLD clone — what undo snapshots hold — carries its
+## images in the CPU cache only and creates no GPU textures: snapshots are
+## never rendered, and an ImageTexture per mask per snapshot put a full GPU
+## copy of every mask of the mesh into the undo history on every stroke.
+## `PBCommand.restore_mesh_data` turns a cold clone back into a live one.
+## Readers go through get_layer_mask_image / get_decal_layer_image (the
+## cache), which answer the same for both.
+static func clone_splat_material(source: ShaderMaterial, cold: bool = false) -> ShaderMaterial:
 	if source == null:
 		return null
 
@@ -2948,20 +2952,22 @@ static func clone_splat_material(source: ShaderMaterial) -> ShaderMaterial:
 
 			var src_img := get_layer_mask_image(source, i)
 			if src_img != null:
-				var cloned_img := Image.create(src_img.get_width(), src_img.get_height(), false, src_img.get_format())
+				# copy_from SHARES the buffer (copy-on-write): no allocation
+				# here, and none later unless one side is painted.
+				var cloned_img := Image.new()
 				cloned_img.copy_from(src_img)
-				var cloned_tex := ImageTexture.create_from_image(cloned_img)
-				clone.set_shader_parameter("layer_%d_mask" % i, cloned_tex)
+				if not cold:
+					clone.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(cloned_img))
 				_set_cached_image(clone, "layer_%d" % i, cloned_img)
 	# Clone the decal layer if it exists (window mapping included)
 	if source.get_shader_parameter("stamp_layer_enabled") == true:
 		clone.set_shader_parameter("stamp_layer_enabled", true)
 		var src_stamp_img := get_decal_layer_image(source)
 		if src_stamp_img != null:
-			var cloned_stamp_img := Image.create(src_stamp_img.get_width(), src_stamp_img.get_height(), false, src_stamp_img.get_format())
+			var cloned_stamp_img := Image.new()
 			cloned_stamp_img.copy_from(src_stamp_img)
-			var cloned_stamp_tex := ImageTexture.create_from_image(cloned_stamp_img)
-			clone.set_shader_parameter("stamp_layer_texture", cloned_stamp_tex)
+			if not cold:
+				clone.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(cloned_stamp_img))
 			_set_cached_image(clone, "stamp", cloned_stamp_img)
 		var clone_off = source.get_shader_parameter("stamp_layer_uv_offset")
 		var clone_scale = source.get_shader_parameter("stamp_layer_uv_scale")
@@ -2997,7 +3003,10 @@ static func build_preview_texture(mat: Material, size: int = 256) -> ImageTextur
 		if smat.get_shader_parameter("layer_%d_enabled" % i) != true:
 			continue
 		var l_img := _preview_source_image(smat.get_shader_parameter("layer_%d_texture" % i))
-		if l_img == null or smat.get_shader_parameter("layer_%d_mask" % i) == null:
+		# A layer with no mask anywhere has nothing to show (a cold undo
+		# snapshot has no mask TEXTURE but keeps its pixels in the cache).
+		if l_img == null or (smat.get_shader_parameter("layer_%d_mask" % i) == null \
+				and _get_cached_image(smat, "layer_%d" % i) == null):
 			continue
 		# Masks are sampled from the CPU image cache, never via
 		# ImageTexture.get_image() — the GPU round-trip returns stale data
@@ -3017,7 +3026,8 @@ static func build_preview_texture(mat: Material, size: int = 256) -> ImageTextur
 	var stamp_img: Image = null
 	var stamp_win := get_decal_window(smat)
 	if smat.get_shader_parameter("stamp_layer_enabled") == true \
-			and smat.get_shader_parameter("stamp_layer_texture") != null:
+			and (smat.get_shader_parameter("stamp_layer_texture") != null \
+				or _get_cached_image(smat, "stamp") != null):
 		stamp_img = get_decal_layer_image(smat)
 
 	for y in range(size):
