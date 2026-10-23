@@ -228,6 +228,22 @@ format converts before a save, an old-format scene loads and paints); GUI
 case MASK-SAVE (on the real renderer, the GPU read-back a save performs
 matches the painted pixels exactly). GUI harness failures=0.
 
+### A compatibility test against what the public release actually wrote
+
+The next release must keep loading maps made on the public one (the `nightly`
+release, v0.9.167 = `de492fe`, mirrored by the Asset Library). That is now a
+test, not a hope: `tools/release_fixture/make_release_fixture.sh` builds a
+painted scene INSIDE A WORKTREE OF THE RELEASE COMMIT, with the release's own
+code, and records what the release read back from it (mask sizes, pixel
+hashes, decal windows, mask rects). `test_pb_release_compat.gd` loads that
+scene with the current code and requires the same answers byte for byte,
+then renders it, paints on it, re-saves it in the compressed form, reloads it
+and undoes the paint back to the release's pixels.
+
+The fixture (`tests/fixtures/release_v0_9_167/`, 26 KB) is committed on
+purpose: it cannot be regenerated from the current tree — that would compare
+the code with itself. Its README says how to make one for a newer release.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

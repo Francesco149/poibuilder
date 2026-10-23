@@ -1,0 +1,126 @@
+{
+  "commit": "de492fe",
+  "meshes": {
+    "PaintedCube": {
+      "faces": [
+        {
+          "index": 0,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 1,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 2,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 3,
+          "layers": [
+            {
+              "h": 256,
+              "hash": 1211561255,
+              "nonzero": 18120,
+              "slot": 1,
+              "texture": "res://addons/poibuilder/materials/textures/tiles_wet_4x4.png",
+              "w": 256
+            }
+          ],
+          "splat": true,
+          "splat_bounds": [
+            -0.5,
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "decal": {
+            "alpha_nonzero": 9996,
+            "h": 128,
+            "hash": 3887758042,
+            "w": 128,
+            "window": [
+              0.25,
+              0.25,
+              0.5,
+              0.5
+            ]
+          },
+          "index": 4,
+          "layers": [
+            {
+              "h": 256,
+              "hash": 480186901,
+              "nonzero": 12432,
+              "slot": 1,
+              "texture": "res://addons/poibuilder/materials/textures/tiles_wet_4x4.png",
+              "w": 256
+            },
+            {
+              "h": 256,
+              "hash": 4046533373,
+              "nonzero": 8388,
+              "slot": 2,
+              "texture": "res://addons/poibuilder/materials/textures/brick_path_4x4.png",
+              "w": 256
+            }
+          ],
+          "splat": true,
+          "splat_bounds": [
+            -0.5,
+            0.5,
+            -0.5,
+            0.5
+          ]
+        },
+        {
+          "index": 5,
+          "splat": false,
+          "splat_bounds": []
+        }
+      ],
+      "positions": 24
+    },
+    "PlainCube": {
+      "faces": [
+        {
+          "index": 0,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 1,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 2,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 3,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 4,
+          "splat": false,
+          "splat_bounds": []
+        },
+        {
+          "index": 5,
+          "splat": false,
+          "splat_bounds": []
+        }
+      ],
+      "positions": 24
+    }
+  },
+  "release": "0.9.167"
+}

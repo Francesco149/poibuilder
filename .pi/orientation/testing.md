@@ -99,6 +99,17 @@ probes before committing. Known retainers:
 - **Anything flushed on `frame_pre_draw`** never flushes headless — the
   display server never draws.
 
+## Release compatibility (v0.9.182)
+
+`test_pb_release_compat.gd` loads a scene written BY the public release
+(`tests/fixtures/release_v0_9_167/`, built with that release's code by
+`tools/release_fixture/make_release_fixture.sh`) and requires the current code
+to read it back byte for byte, render it, paint, re-save and undo on it. A
+change that breaks it breaks users' maps. The fixture is a deliberate,
+committed exception to "never commit generated files": it can only come from
+the release commit. When a new public release ships, add its fixture next to
+the old one (keep the old one: maps from it still exist).
+
 ## Writing tests
 
 - Location `project/tests/test_<feature>.gd`, `extends GutTest`,
