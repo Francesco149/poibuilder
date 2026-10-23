@@ -131,31 +131,7 @@ func _pick_pbmesh_face(screen_pos: Vector2) -> Dictionary:
 	if scene_root == null:
 		return {}
 
-	var best_t := INF
-	var best_node: PBMesh = null
-	var best_face := -1
-
-	for node in _collect_pbmeshes(scene_root):
-		if not node.is_visible_in_tree() or node.pb_mesh_data == null:
-			continue
-		var res: PBPicking.FacePickResult = PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-		if res.face_index >= 0 and res.distance < best_t:
-			best_t = res.distance
-			best_node = node
-			best_face = res.face_index
-
-	if best_node != null and best_face >= 0:
-		return {"mesh": best_node, "face_index": best_face}
-
-	return {}
-
-func _collect_pbmeshes(root: Node) -> Array[PBMesh]:
-	var result: Array[PBMesh] = []
-	var stack: Array[Node] = [root]
-	while not stack.is_empty():
-		var cur: Node = stack.pop_back()
-		if cur is PBMesh:
-			result.append(cur)
-		for child in cur.get_children():
-			stack.append(child)
-	return result
+	var hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root), ray_o, ray_d)
+	if hit.is_empty():
+		return {}
+	return {"mesh": hit["mesh"], "face_index": hit["face_index"]}

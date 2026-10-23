@@ -89,3 +89,47 @@ func test_assert_call_scanner_finds_multiline_calls() -> void:
 	assert_true((calls[0]["text"] as String).begins_with("assert_eq("), "a value assert is recognised")
 	assert_eq((calls[0]["text"] as String).count(".get_data()"), 2, "the continuation line is part of the call")
 	assert_gt(_scripts_under(TESTS_DIR).size(), 50, "the scan reaches the whole suite")
+
+## The function bodies of a GDScript source: {name, line, text} per `func`.
+func _functions(source: String) -> Array:
+	var out: Array = []
+	var lines := source.split("\n")
+	var cur := {}
+	for i in range(lines.size()):
+		var line: String = lines[i]
+		var stripped := line.strip_edges()
+		if stripped.begins_with("func ") or stripped.begins_with("static func "):
+			if not cur.is_empty():
+				out.append(cur)
+			cur = {"name": stripped.get_slice("(", 0), "line": i + 1, "text": line}
+		elif not cur.is_empty():
+			cur["text"] += "\n" + line
+	if not cur.is_empty():
+		out.append(cur)
+	return out
+
+## INCIDENT (v0.9.182): seven hand-copied "which PBMesh face is under the
+## cursor" loops had drifted apart — two prefiltered by AABB, three skipped
+## hidden meshes, one preferred the selected mesh and painted through walls.
+## Every scene-wide face pick goes through PBPicking.scene_ray_pick; a
+## function that walks the scene's PBMeshes AND ray-picks their faces is a new
+## copy of the loop.
+func test_scene_wide_face_picks_use_the_shared_helper() -> void:
+	var scene_loop := RegEx.create_from_string("for\\s+\\w+\\s+in\\s+[^\\n]*collect_pbmeshes\\(")
+	var offenders := PackedStringArray()
+	for path in _scripts_under("res://addons/poibuilder"):
+		if path.ends_with("editor/pb_picking.gd"):
+			continue
+		for fn in _functions(FileAccess.get_file_as_string(path)):
+			var text: String = fn["text"]
+			if scene_loop.search(text) != null and text.contains("pick_face("):
+				offenders.append("%s:%d %s" % [path, fn["line"], fn["name"]])
+	assert_eq(offenders.size(), 0,
+			"scene-wide face picks must call PBPicking.scene_ray_pick: %s" % ", ".join(offenders))
+	assert_gt(_functions(FileAccess.get_file_as_string("res://addons/poibuilder/poibuilder_plugin.gd")).size(), 100,
+			"the function scanner reaches the plugin's functions")
+	# The rule must catch the shape it exists for.
+	var copy := "func _pick(r):\n\tfor node in PBPicking.collect_pbmeshes(r):\n\t\tvar res := PBPicking.pick_face(node.pb_mesh_data, xf, o, d)\n"
+	var fn: Dictionary = _functions(copy)[0]
+	assert_true(scene_loop.search(fn["text"]) != null and (fn["text"] as String).contains("pick_face("),
+			"a hand-written scene loop is detected")

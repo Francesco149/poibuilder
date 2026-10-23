@@ -190,6 +190,16 @@ func get_render_meshes() -> Array[Mesh]:
 			out.append(chunk.mesh)
 	return out
 
+## The local AABB of EVERYTHING this node renders. `get_aabb()` is only the
+## first chunk's box, so a ray prefilter against it could skip faces that
+## live in an overflow chunk.
+func get_full_aabb() -> AABB:
+	var box := get_aabb()
+	for chunk in _overflow_chunks:
+		if is_instance_valid(chunk) and chunk.mesh != null:
+			box = box.merge(chunk.mesh.get_aabb())
+	return box
+
 func _sync_overflow_chunks(chunks: Array) -> void:
 	var needed: int = maxi(chunks.size() - 1, 0)
 	if needed == 0 and _overflow_chunks.is_empty():

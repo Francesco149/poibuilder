@@ -125,6 +125,41 @@ Same floor, before → after: surfaces drawn 256 → 400, uploaded vertices
 
 Tests: new suite `test_pb_mesh_build_scaling.gd`. GUI harness failures=0.
 
+### One scene-wide pick: nearest surface wins, hidden meshes are looked through
+
+Seven hand-copied "which PBMesh face is under the cursor" loops (shape
+creation, creation hover, n-gon cursor, n-gon begin, Trim Walls, paint,
+material drag-and-drop) had drifted apart: two prefiltered meshes by AABB,
+three skipped hidden meshes, and the paint pick returned the SELECTED mesh
+whenever the ray met it anywhere — the brush painted through whatever stood in
+front of it. They are all `PBPicking.scene_ray_pick` now:
+
+- nearest hit wins outright; hidden and `exclude`d meshes never hit (shape
+  creation used to snap onto hidden meshes); an optional `face_filter` lets
+  Trim Walls look through floors;
+- meshes are tried nearest-first by AABB entry distance (`get_full_aabb`,
+  covering every render chunk) and skipped once their box starts behind the
+  best hit; `collect_pbmeshes` is one C++ `find_children` walk;
+- a paint motion event prepares the scene once per frame
+  (`prepare_scene_candidates`) and reuses it for the cursor pick and every
+  interpolated stroke pick.
+
+Measured with a live tree (a ray across rows of wall boxes): 500 meshes
+10.1 → 0.59 ms per paint pick, 2000 meshes 39.1 → 3.2 ms. (Correction to
+the audit: its 14/50/157 ms figures came from a probe whose nodes were not
+yet in the tree, so every `global_transform` read printed an error; the real
+old cost is ~4x lower, and the fix's ratio stands.)
+
+Also: `PBPicking._plain_mesh_pick_cache` was keyed by the Mesh itself and fed
+by PBMesh nodes too, so every rebuild's ArrayMesh (with its materials and
+textures) stayed alive for the editor session. PBMeshes are no longer
+plain-picked, and the cache is keyed by instance id with a change stamp.
+
+Tests: new suite `test_pb_scene_pick.gd` (it pins a pick's cost as the number
+of meshes triangle-tested: < 3 of 500), a hygiene rule that fails any new
+hand-written scene pick loop, and a GUI harness case PAINT-OCCLUSION (a box in
+front of the selected wall gets the paint). GUI harness failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

@@ -2528,6 +2528,64 @@ func _run() -> void:
 		_fail("BILLBOARD-PAINT: the stamp converted the sprite material")
 	plugin.editor.active_mesh = null
 	sprite.queue_free()
+
+	# ── PAINT-OCCLUSION: the brush paints what the cursor SEES ──────────────
+	# The paint pick returned the SELECTED mesh whenever the ray met it
+	# anywhere, so with a big wall selected the brush painted it THROUGH a box
+	# standing in front of it (v0.9.182: one scene-wide pick, nearest wins).
+	var occ_cam: Camera3D = vp.get_camera_3d()
+	var occ_xf := occ_cam.global_transform
+	var occ_aim := Vector2(float(vp.size.x) * 0.5, minf(140.0, float(vp.size.y) * 0.2))
+	var occ_front := PBMesh.new()
+	occ_front.name = "GuiTestOccluder"
+	occ_front.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.6, 0.6, 0.6))
+	root.add_child(occ_front)
+	occ_front.owner = root
+	occ_front.global_transform = Transform3D(occ_xf.basis, occ_cam.project_position(occ_aim, 3.0))
+	var occ_back := PBMesh.new()
+	occ_back.name = "GuiTestOccluded"
+	occ_back.pb_mesh_data = PBShapeGenerators.create_box(Vector3(6.0, 6.0, 0.2))
+	root.add_child(occ_back)
+	occ_back.owner = root
+	occ_back.global_transform = Transform3D(occ_xf.basis, occ_cam.project_position(occ_aim, 8.0))
+	occ_front.rebuild()
+	occ_back.rebuild()
+	await _frames(10)
+	plugin.editor.active_mesh = occ_back  # the SELECTED mesh is the one behind
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+	pc_ps.paint_target = PBPaintController.PaintTarget.SPLAT
+	pc_ps.paint_texture = ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
+	await _frames(6)
+	var occ_pt := _window_pos(vp, host, occ_cam.project_position(occ_aim, 3.0))
+	_mouse_motion(occ_pt)
+	await _frames(6)
+	if pc_ps.target_mesh == occ_front:
+		_pass("PAINT-OCCLUSION: the cursor lands on the mesh in front, not the selected one behind")
+	else:
+		_fail("PAINT-OCCLUSION: cursor target=%s (front=%s, selected-behind=%s)" % [
+			str(pc_ps.target_mesh), str(occ_front), str(occ_back)])
+	var back_mat_before: Material = occ_back.pb_mesh_data.get_face_material(occ_back.pb_mesh_data.faces[0])
+	_mouse_button(occ_pt, true)
+	await _frames(6)
+	_mouse_button(occ_pt, false)
+	await _frames(6)
+	var front_painted := false
+	for f in occ_front.pb_mesh_data.faces:
+		if PBSplat.is_splat_material(occ_front.pb_mesh_data.get_face_material(f)):
+			front_painted = true
+	var back_untouched := true
+	for f in occ_back.pb_mesh_data.faces:
+		if PBSplat.is_splat_material(occ_back.pb_mesh_data.get_face_material(f)):
+			back_untouched = false
+	if front_painted and back_untouched \
+			and occ_back.pb_mesh_data.get_face_material(occ_back.pb_mesh_data.faces[0]) == back_mat_before:
+		_pass("PAINT-OCCLUSION: a click paints the front mesh and leaves the selected one alone")
+	else:
+		_fail("PAINT-OCCLUSION: front painted=%s, selected-behind untouched=%s" % [
+			str(front_painted), str(back_untouched)])
+	plugin.editor.active_mesh = null
+	occ_front.queue_free()
+	occ_back.queue_free()
 	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 	await _frames(6)
 

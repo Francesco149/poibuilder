@@ -582,17 +582,131 @@ static func pick_vertices_in_rect(mesh_data: PBMeshData, mesh_transform: Transfo
 const PLAIN_MESH_PICK_TRI_BUDGET := 65536
 
 ## One-time face extraction per Mesh resource; over-budget meshes cache an
-## empty array so the budget check is free afterwards.
-static var _plain_mesh_pick_cache: Dictionary = {} # Mesh -> PackedVector3Array
+## empty array so the budget check is free afterwards. Keyed by the mesh's
+## INSTANCE ID with the surface count + AABB as a change stamp: keyed by the
+## Mesh itself the cache held a strong reference to every mesh it ever saw —
+## and since PBMesh nodes went through this path too, every rebuild's fresh
+## ArrayMesh (materials, textures and all) stayed alive for the session.
+static var _plain_mesh_pick_cache: Dictionary = {} # instance id -> {stamp, faces}
+## Dead entries are swept once the cache grows past this many.
+const PLAIN_MESH_PICK_CACHE_PRUNE_AT := 256
 
 static func plain_mesh_pick_faces(mesh: Mesh) -> PackedVector3Array:
-	if _plain_mesh_pick_cache.has(mesh):
-		return _plain_mesh_pick_cache[mesh]
+	var id := mesh.get_instance_id()
+	var stamp := [mesh.get_surface_count(), mesh.get_aabb()]
+	var hit: Dictionary = _plain_mesh_pick_cache.get(id, {})
+	if not hit.is_empty() and hit["stamp"] == stamp:
+		return hit["faces"]
 	var faces := mesh.get_faces()
 	if faces.size() / 3 > PLAIN_MESH_PICK_TRI_BUDGET:
 		faces = PackedVector3Array()
-	_plain_mesh_pick_cache[mesh] = faces
+	if _plain_mesh_pick_cache.size() >= PLAIN_MESH_PICK_CACHE_PRUNE_AT:
+		for dead in _plain_mesh_pick_cache.keys().filter(func(k): return not is_instance_id_valid(k)):
+			_plain_mesh_pick_cache.erase(dead)
+	_plain_mesh_pick_cache[id] = {"stamp": stamp, "faces": faces}
 	return faces
+
+## Every PBMesh under `root` (root included), in one C++ walk. The plugin
+## used to recurse in GDScript, allocating and concatenating an array at
+## every level of the tree, on every pick.
+static func collect_pbmeshes(root: Node) -> Array[PBMesh]:
+	var out: Array[PBMesh] = []
+	if root == null:
+		return out
+	if root is PBMesh:
+		out.append(root as PBMesh)
+	for n in root.find_children("*", "PBMesh", true, false):
+		out.append(n as PBMesh)
+	return out
+
+## THE scene-wide face pick: the nearest PBMesh face along a world ray, across
+## `meshes`. Every viewport tool that asks "which surface is under the
+## cursor" goes through here — the plugin had six hand-copied loops, two with
+## an AABB prefilter and two with a visibility check, so the paint brush
+## ray-tested every triangle of every mesh in GDScript (50 ms per pick at 500
+## meshes, up to 64 picks per motion event), and shape creation snapped onto
+## hidden meshes.
+##   - Hidden meshes (not visible in tree) and `exclude`d ones never hit.
+##   - Meshes are tried nearest-first by their AABB entry distance; one whose
+##     box starts behind the best hit is skipped without a triangle test.
+##   - `face_filter(hit) -> bool` rejects hits (Trim Walls skips floors);
+##     the nearest ACCEPTED face wins.
+##   - The nearest hit wins outright — no mesh is preferred (the paint pick
+##     used to return the selected mesh when the ray met it ANYWHERE, so the
+##     brush painted through whatever stood in front of it).
+## Returns {mesh, face_index, point, normal (world, geometric), distance}, or
+## {} on a miss.
+static func scene_ray_pick(meshes: Array, ray_origin: Vector3, ray_dir: Vector3,
+		exclude: Array = [], face_filter: Callable = Callable(), max_distance: float = INF) -> Dictionary:
+	return scene_ray_pick_prepared(prepare_scene_candidates(meshes, exclude),
+			ray_origin, ray_dir, face_filter, max_distance)
+
+## The pickable part of a scene — each visible, non-excluded PBMesh with its
+## WORLD bounds — for running several picks against one scene state: a paint
+## motion event picks the cursor and then up to 64 interpolated stroke
+## points, and the per-mesh world-bounds work was most of each pick's cost.
+static func prepare_scene_candidates(meshes: Array, exclude: Array = []) -> Array:
+	var out: Array = []
+	for node in meshes:
+		var pb := node as PBMesh
+		if pb == null or pb.pb_mesh_data == null or not pb.is_visible_in_tree() or exclude.has(pb):
+			continue
+		out.append([pb.global_transform * pb.get_full_aabb(), pb])
+	return out
+
+## scene_ray_pick against candidates from prepare_scene_candidates.
+static func scene_ray_pick_prepared(prepared: Array, ray_origin: Vector3, ray_dir: Vector3,
+		face_filter: Callable = Callable(), max_distance: float = INF) -> Dictionary:
+	var candidates: Array = []
+	for entry in prepared:
+		var pb: PBMesh = entry[1]
+		if not is_instance_valid(pb) or pb.pb_mesh_data == null:
+			continue
+		var span := ray_aabb_span(ray_origin, ray_dir, entry[0])
+		if span.x < 0.0 or span.x >= max_distance:
+			continue
+		candidates.append([span.x, pb])
+	candidates.sort_custom(func(a, b): return a[0] < b[0])
+	var best_t := max_distance
+	var best := {}
+	last_scene_pick_meshes_tested = 0
+	for cand in candidates:
+		if cand[0] >= best_t:
+			break
+		last_scene_pick_meshes_tested += 1
+		var pb: PBMesh = cand[1]
+		var xf := pb.global_transform
+		if face_filter.is_valid():
+			for res in pick_faces_all(pb.pb_mesh_data, xf, ray_origin, ray_dir):
+				if res.distance >= best_t:
+					break
+				var hit := _scene_hit(pb, xf, res)
+				if face_filter.call(hit):
+					best_t = res.distance
+					best = hit
+					break
+		else:
+			var res := pick_face(pb.pb_mesh_data, xf, ray_origin, ray_dir)
+			if res.face_index >= 0 and res.distance < best_t:
+				best_t = res.distance
+				best = _scene_hit(pb, xf, res)
+	return best
+
+## How many meshes the last scene_ray_pick triangle-tested (the rest were
+## rejected by their bounding boxes). The deterministic measure of a pick's
+## cost — tests pin it instead of timing it.
+static var last_scene_pick_meshes_tested: int = 0
+
+static func _scene_hit(pb: PBMesh, xf: Transform3D, res: FacePickResult) -> Dictionary:
+	var data := pb.pb_mesh_data
+	var n := PBMath.normal_from_positions(data.positions, data.faces[res.face_index].get_indexes())
+	return {
+		"mesh": pb,
+		"face_index": res.face_index,
+		"point": res.hit_point,
+		"normal": (xf.basis * n).normalized(),
+		"distance": res.distance,
+	}
 
 ## Slab test of a (normalized-direction) ray against a world-space AABB.
 ## Returns (t_enter, t_exit) with t_enter >= 0, or (-1, -1) on miss / box
@@ -636,7 +750,9 @@ static func pick_plain_mesh_surface(root: Node, ray_origin: Vector3, ray_dir: Ve
 		var node: Node = stack.pop_back()
 		for child in node.get_children():
 			stack.append(child)
-		if not (node is MeshInstance3D) or not node.is_visible_in_tree():
+		# PBMeshes are picked from their DATA (scene_ray_pick); their render
+		# meshes are rebuilt per edit and must not flow through here.
+		if not (node is MeshInstance3D) or node is PBMesh or not node.is_visible_in_tree():
 			continue
 		var mi := node as MeshInstance3D
 		if mi.mesh == null or mi == root:

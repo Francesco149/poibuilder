@@ -2711,21 +2711,11 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 	var best := {}
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
-		for node in _collect_pbmeshes(scene_root):
-			if node == shape_creator.preview_node or node.pb_mesh_data == null:
-				continue
-			# AABB prefilter: a poibuilderized sculpt has thousands of faces,
-			# so skip whole meshes the ray cannot hit before a nearer surface.
-			var pb_span := PBPicking.ray_aabb_span(ray_o, ray_d, node.global_transform * node.get_aabb())
-			if pb_span.x < 0.0 or pb_span.x >= best_t:
-				continue
-			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-			if res.face_index >= 0 and res.distance < best_t:
-				var normal := PBMath.normal_from_positions(
-					node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
-				best_t = res.distance
-				best = {"point": res.hit_point,
-					"normal": (node.global_transform.basis * normal).normalized()}
+		var pb_hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root),
+				ray_o, ray_d, [shape_creator.preview_node])
+		if not pb_hit.is_empty():
+			best_t = pb_hit["distance"]
+			best = {"point": pb_hit["point"], "normal": pb_hit["normal"]}
 
 		var plain := PBPicking.pick_plain_mesh_surface(scene_root, ray_o, ray_d, best_t)
 		if not plain.is_empty():
@@ -2753,13 +2743,6 @@ func _pick_creation_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary
 			best = {"point": hit, "normal": Vector3.UP}
 	return best
 
-func _collect_pbmeshes(root: Node) -> Array[PBMesh]:
-	var out: Array[PBMesh] = []
-	if root is PBMesh:
-		out.append(root)
-	for child in root.get_children():
-		out.append_array(_collect_pbmeshes(child))
-	return out
 
 func _collect_mesh_instances(root: Node) -> Array[MeshInstance3D]:
 	var out: Array[MeshInstance3D] = []
@@ -2884,7 +2867,7 @@ func _scene_vertex_candidates(skip: PBMesh) -> PackedVector3Array:
 	if scene_root == null:
 		return out
 	var seen := {}
-	for m in _collect_pbmeshes(scene_root):
+	for m in PBPicking.collect_pbmeshes(scene_root):
 		if m == skip or m.pb_mesh_data == null:
 			continue
 		var xf: Transform3D = m.global_transform
@@ -2907,23 +2890,14 @@ func _update_creation_hover(camera: Camera3D, screen_pos: Vector2) -> void:
 	var best_normal := Vector3.UP
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
-		for node in _collect_pbmeshes(scene_root):
-			if node == shape_creator.preview_node or node.pb_mesh_data == null:
-				continue
-			# AABB prefilter: a poibuilderized sculpt has thousands of faces,
-			# so skip whole meshes the ray cannot hit before a nearer surface.
-			var pb_span := PBPicking.ray_aabb_span(ray_o, ray_d, node.global_transform * node.get_aabb())
-			if pb_span.x < 0.0 or pb_span.x >= best_t:
-				continue
-			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-			if res.face_index >= 0 and res.distance < best_t:
-				best_t = res.distance
-				best_node = node
-				best_face = res.face_index
-				best_point = res.hit_point
-				var normal := PBMath.normal_from_positions(
-					node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
-				best_normal = (node.global_transform.basis * normal).normalized()
+		var pb_hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root),
+				ray_o, ray_d, [shape_creator.preview_node])
+		if not pb_hit.is_empty():
+			best_t = pb_hit["distance"]
+			best_node = pb_hit["mesh"]
+			best_face = pb_hit["face_index"]
+			best_point = pb_hit["point"]
+			best_normal = pb_hit["normal"]
 		var plain := PBPicking.pick_plain_mesh_surface(scene_root, ray_o, ray_d, best_t)
 		if not plain.is_empty():
 			best_t = ray_o.distance_to(plain["point"])
@@ -3309,14 +3283,12 @@ func _ngon_drawer_input(camera: Camera3D, event: InputEvent) -> int:
 					var best_dist := INF
 					var scene_root := get_editor_interface().get_edited_scene_root()
 					if scene_root != null:
-						for node in _collect_pbmeshes(scene_root):
-							if node == ngon_drawer.preview_node or node.pb_mesh_data == null:
-								continue
-							var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-							if res.face_index >= 0 and res.distance < best_dist:
-								best_dist = res.distance
-								best_m = node
-								best_f = res.face_index
+						var pb_hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root),
+								ray_o, ray_d, [ngon_drawer.preview_node])
+						if not pb_hit.is_empty():
+							best_dist = pb_hit["distance"]
+							best_m = pb_hit["mesh"]
+							best_f = pb_hit["face_index"]
 					var norm: Vector3 = hit.get("normal", Vector3.UP)
 					pt = ngon_drawer.snap_starting_point(pt, norm, best_m, best_f)
 					ngon_drawer.live_cursor_point = pt
@@ -3413,14 +3385,11 @@ func _ngon_drawer_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> b
 
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
-		for node in _collect_pbmeshes(scene_root):
-			if node.pb_mesh_data == null:
-				continue
-			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-			if res.face_index >= 0 and res.distance < best_dist:
-				best_dist = res.distance
-				best_mesh = node
-				best_face = res.face_index
+		var pb_hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root), ray_o, ray_d)
+		if not pb_hit.is_empty():
+			best_dist = pb_hit["distance"]
+			best_mesh = pb_hit["mesh"]
+			best_face = pb_hit["face_index"]
 
 	if ngon_drawer.mode == PBNgonDrawer.Mode.KNIFE:
 		if best_mesh == null or best_face < 0:
@@ -3879,37 +3848,21 @@ func _pick_wall_face(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
 	var scene_root := get_editor_interface().get_edited_scene_root()
-	var best_t := INF
-	var best_node: PBMesh = null
-	var best_face := -1
-	var best_normal := Vector3.ZERO
-	if scene_root != null:
-		for node in _collect_pbmeshes(scene_root):
-			if node == _trim_walls_preview or node.pb_mesh_data == null \
-					or not node.is_visible_in_tree():
-				continue
-			var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-			if res.face_index < 0 or res.distance >= best_t:
-				continue
-			var n := PBMath.normal_from_positions(
-				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
-			var world_n: Vector3 = (node.global_transform.basis * n).normalized()
-			if absf(world_n.dot(Vector3.UP)) > 0.7:
-				continue  # a floor/ceiling — not a wall
-			# The visible face's normal opposes the viewing ray; inward-wound
-			# geometry (GLB sources) yields the flipped one — face the camera
-			# so the trim protrudes into the room, never into the wall.
-			if world_n.dot(ray_d) > 0.0:
-				world_n = -world_n
-			if absf(world_n.dot(Vector3.UP)) > 0.7:
-				continue
-			best_t = res.distance
-			best_node = node
-			best_face = res.face_index
-			best_normal = world_n
-	if best_node == null:
+	if scene_root == null:
 		return {}
-	return {"node": best_node, "face": best_face, "normal": best_normal}
+	# Walls only: a floor/ceiling face in front of a wall is looked through.
+	var hit := PBPicking.scene_ray_pick(PBPicking.collect_pbmeshes(scene_root), ray_o, ray_d,
+			[_trim_walls_preview], func(h: Dictionary) -> bool:
+				return absf((h["normal"] as Vector3).dot(Vector3.UP)) <= 0.7)
+	if hit.is_empty():
+		return {}
+	# The visible face's normal opposes the viewing ray; inward-wound
+	# geometry (GLB sources) yields the flipped one — face the camera so the
+	# trim protrudes into the room, never into the wall.
+	var world_n: Vector3 = hit["normal"]
+	if world_n.dot(ray_d) > 0.0:
+		world_n = -world_n
+	return {"node": hit["mesh"], "face": hit["face_index"], "normal": world_n}
 
 ## Mirrors the session state into the gizmo plugin (teal hover, amber chosen).
 func _sync_trim_walls_highlights() -> void:
@@ -3917,7 +3870,7 @@ func _sync_trim_walls_highlights() -> void:
 	gizmo_plugin.trim_walls_chosen.clear()
 	for w in trim_walls_tool.walls:
 		gizmo_plugin.trim_walls_chosen.append(w)
-	for node in _collect_pbmeshes(get_editor_interface().get_edited_scene_root()):
+	for node in PBPicking.collect_pbmeshes(get_editor_interface().get_edited_scene_root()):
 		if is_instance_valid(node):
 			node.update_gizmos()
 
@@ -4019,7 +3972,7 @@ func _probe_surface_y(from: Vector3, dir: Vector3) -> float:
 	var exclude: Array[RID] = []
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root != null:
-		for node in _collect_pbmeshes(scene_root):
+		for node in PBPicking.collect_pbmeshes(scene_root):
 			var sid: StringName = node.pb_mesh_data.shape_id if node.pb_mesh_data != null else &""
 			if node == _trim_walls_preview or sid == &"trim" or sid == &"trim_walls":
 				for child in node.get_children():
@@ -4334,49 +4287,24 @@ func _pick_paint_surface(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 func _pick_paint_surface_ray(camera: Camera3D, screen_pos: Vector2) -> Dictionary:
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)
-	var best_dist := INF
-	var best_res := {}
 	var scene_root := get_editor_interface().get_edited_scene_root()
 	if scene_root == null:
-		return best_res
+		return {}
 
-	# 1. First test editor.active_mesh if available
-	if editor != null and editor.active_mesh != null and editor.active_mesh.pb_mesh_data != null and editor.active_mesh.is_visible_in_tree():
-		var node: PBMesh = editor.active_mesh
-		var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-		if res.face_index >= 0:
-			var normal := PBMath.normal_from_positions(
-				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
-			var world_normal: Vector3 = (node.global_transform.basis * normal).normalized()
-			return {
-				"mesh": node,
-				"face_index": res.face_index,
-				"point": res.hit_point,
-				"normal": world_normal,
-				"distance": res.distance
-			}
+	# One prepared scene per frame: the cursor pick and every interpolated
+	# stroke pick of the frame's motion events share it.
+	var frame := Engine.get_process_frames()
+	if frame != _paint_pick_frame:
+		_paint_pick_frame = frame
+		_paint_pick_candidates = PBPicking.prepare_scene_candidates(PBPicking.collect_pbmeshes(scene_root))
+	# The nearest surface wins — the selected mesh used to be returned whenever
+	# the ray met it ANYWHERE, so the brush painted through whatever stood in
+	# front of it.
+	return PBPicking.scene_ray_pick_prepared(_paint_pick_candidates, ray_o, ray_d)
 
-	# 2. Test all other PBMesh instances in the scene
-	for node in _collect_pbmeshes(scene_root):
-		if node.pb_mesh_data == null or not node.is_visible_in_tree():
-			continue
-		if editor != null and node == editor.active_mesh:
-			continue
-		var res := PBPicking.pick_face(node.pb_mesh_data, node.global_transform, ray_o, ray_d)
-		if res.face_index >= 0 and res.distance < best_dist:
-			best_dist = res.distance
-			var normal := PBMath.normal_from_positions(
-				node.pb_mesh_data.positions, node.pb_mesh_data.faces[res.face_index].get_indexes())
-			var world_normal: Vector3 = (node.global_transform.basis * normal).normalized()
-			best_res = {
-				"mesh": node,
-				"face_index": res.face_index,
-				"point": res.hit_point,
-				"normal": world_normal,
-				"distance": res.distance
-			}
-
-	return best_res
+## The paint pick's prepared scene and the process frame it belongs to.
+var _paint_pick_candidates: Array = []
+var _paint_pick_frame: int = -1
 # ==============================================================================
 # Shape Params modal (create + edit sessions)
 # ==============================================================================
