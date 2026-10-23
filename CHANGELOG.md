@@ -30,6 +30,26 @@ variants of the shell/concordance audit, and two tests on the reported
 params (drop rays under every tread at five radial lanes; the player
 capsule walking up from the floor). All four fail on v0.9.182.
 
+**Known limit, measured, not changed: a steep inner band.** A curved ramp's
+true slope at radius r is atan(rise / (r * sweep)), so tight spirals are
+steep near the axis: on the reported stairs (4 m rise in 90 degrees, inner
+radius 1.31 m, width 3.94 m) it runs from 62.7 degrees at the inner edge
+to 25.9 at the outer. A default CharacterBody3D (floor_max_angle 45 degrees)
+walking up from the floor climbs from 0.48 of the width out; the slope
+passes 45 degrees at 0.31, and the band between locks at the foot or mid-climb.
+Planar ramps up to 44 degrees climb from the floor, so the band is the twisted
+surface, not the controller. Two things were measured and rejected:
+- The comment claiming 4 slices per step keeps every facet within 1-2
+  degrees of the true slope was wrong: each slice quad's two triangles take
+  its inner and outer EDGE slopes (80 facets at 25.9 degrees and 80 at 62.7,
+  none between).
+- Radial rings that give each facet its local slope moved the walkable edge
+  only from 0.48 to 0.44, for 4x the triangles (640 to 2608). Not shipped.
+
+The comment now records this.
+Wider inner radius, a longer sweep or less rise make a tight spiral
+walkable; a steeper floor_max_angle on the player does too.
+
 ## v0.9.182 — the scaling audit: paint storage, surface cap, picking, Trim Walls
 
 An audit of how the plugin scales to bigger maps and heavier painting, with

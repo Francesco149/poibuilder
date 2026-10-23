@@ -879,14 +879,20 @@ static func create_curved_stairs_ramp(
 		ramp.append(c)
 
 	# Tessellate the wedge along the sweep FINER than the step grid. The
-	# incline is a twisted helical strip: with one quad per step its two
-	# triangle halves' normals differ by ~25 degrees (measured: 27 deg vs 53
-	# deg local slope on the default stairs), and the second half pops ~0.18 m
-	# above the first's plane. To a character controller the steep facet is a
-	# WALL (floor_max_angle 45-50 deg), so a capsule climbing the ramp locks
-	# dead against the first crease — the "stuck on touch" report. Crease
-	# angle falls with the SQUARE of the slice arc; 4 slices per step keeps
-	# every facet within ~1-2 degrees of the true slope.
+	# incline is a twisted helical strip, one quad per slice, and each quad's
+	# two triangles take the slopes of its two ARC edges — one holds the
+	# outer chord, atan(rise / (r_out * sweep)), the other the inner,
+	# atan(rise / (r_in * sweep)) — at ANY slice count (v0.9.183 census: 80
+	# facets at 25.9 deg and 80 at 62.7 deg, nothing between). Slicing only
+	# shrinks the sawtooth: at one quad per step a climbing capsule locked
+	# against the first crease (the v0.9.29 "stuck on touch" report); at 4
+	# per step it climbs (test_character_walks_up_curved_ramp).
+	# Walkability is bounded by the TRUE slope at the walker's radius: inside
+	# the radius where it passes floor_max_angle no ramp is walkable, and a
+	# band just outside locks too (v0.9.183 report stairs, default 45-degree
+	# CharacterBody3D walking up from the floor: limit at 0.31 of the width
+	# from the inner edge, walkable from 0.48). Radial rings giving each facet
+	# its local slope moved that only to 0.44, for 4x the triangles.
 	const SLICES_PER_STEP := 4
 	var total: int = num_steps * SLICES_PER_STEP
 

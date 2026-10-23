@@ -161,8 +161,10 @@ static func front_exterior_report(faces: PackedVector3Array) -> Dictionary:
 
 ## NOTE on walkability: there is NO sound facet-slope cap for a tessellated
 ## helicoidal ramp — facets containing the short inner chord have a structural
-## gradient >= the design slope at the inner radius no matter how fine the
-## tessellation, and crease direction (not facet slope) decides whether a
+## gradient >= the design slope at the inner radius no matter how finely the
+## SWEEP is sliced (radial rings would bound it, but measured in v0.9.183 they
+## barely widen the walkable band; see create_curved_stairs_ramp), and crease
+## direction (not facet slope) decides whether a
 ## character wedges. Character climb/containment tests in
 ## test_pb_collider_audit.gd are the behavioral regression lock for that.
 

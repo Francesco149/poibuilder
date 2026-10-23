@@ -48,6 +48,13 @@ re-derived from shape defaults → floating wall at 2x size. Anything derived
 (params, colliders, bakes) is generated in the same pass, from the same
 data.
 
+Same class, v0.9.183: the curved-stairs RAMP comes from its own generator
+that re-implements the mesh generator's geometry, and it never took the
+`axis_swap` parameter the mesh applies — on deep-rect stairs the collider was
+the stairs' mirror image (walk through the steps, blocked at their foot). A
+generator for derived geometry takes EVERY parameter the visual one takes;
+test the two side by side (drop rays over the render mesh's own faces).
+
 ## 7. Improper reverts
 
 "Revert X" means `git reset`/`git revert` to the known-good commit, re-run
