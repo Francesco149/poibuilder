@@ -849,7 +849,8 @@ static func create_curved_stairs_ramp(
 	inner_radius: float = 0.5,
 	circumference: float = 180.0,
 	steps: int = 8,
-	sides: bool = true
+	sides: bool = true,
+	swap_axes: bool = false
 ) -> PackedVector3Array:
 	var num_steps: int = maxi(1, steps)
 	var hh: float = height * 0.5
@@ -951,11 +952,19 @@ static func create_curved_stairs_ramp(
 		add_tri.call(rb0, rb2, rb1)
 		add_tri.call(rb0, rb3, rb2)
 
-	# Negative curvature: mirror along X (flips handedness) and re-reverse
-	# winding so fronts stay outward — mirrors the visual-mesh flip above.
+	# Negative curvature: mirror along X; swap_axes (deep rects): exchange X/Z.
+	# The SAME two reflections as the visual mesh above — a ramp that skips
+	# one is the mirror image of the stairs (walk through the steps, blocked
+	# by an invisible wall where they start). Each reflection flips
+	# handedness, so the winding is re-reversed when EXACTLY ONE applies.
 	if is_flipped:
 		for i in range(ramp.size()):
 			ramp[i].x = -ramp[i].x
+	if swap_axes:
+		for i in range(ramp.size()):
+			var sp := ramp[i]
+			ramp[i] = Vector3(sp.z, sp.y, sp.x)
+	if is_flipped != swap_axes:
 		for i in range(0, ramp.size(), 3):
 			var tmp := ramp[i + 1]
 			ramp[i + 1] = ramp[i + 2]

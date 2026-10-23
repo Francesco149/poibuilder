@@ -397,7 +397,8 @@ func _build_curved_stairs_ramp_shape() -> Shape3D:
 		maxf(0.0, float(params.get("inner_radius", 0.5))),
 		float(params.get("curvature", 180.0)),
 		maxi(1, int(params.get("steps", 8))),
-		float(params.get("sides", 1.0)) > 0.5)
+		float(params.get("sides", 1.0)) > 0.5,
+		float(params.get("axis_swap", 0.0)) > 0.5)
 	if faces.is_empty():
 		return mesh.create_trimesh_shape()
 	var shape := ConcavePolygonShape3D.new()

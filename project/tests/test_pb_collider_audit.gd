@@ -348,8 +348,8 @@ func test_character_walks_up_curved_ramp():
 # physics space holds exactly one staircase (shared spaces contaminate rays).
 # ------------------------------------------------------------------------------
 
-func _mk_variant(inner_radius: float, curvature: float, sides: bool) -> PBMesh:
-	var data := PBShapeComplex.create_curved_stairs(1.5, 2.0, inner_radius, curvature, DEF_STEPS, sides)
+func _mk_variant(inner_radius: float, curvature: float, sides: bool, swap := false) -> PBMesh:
+	var data := PBShapeComplex.create_curved_stairs(1.5, 2.0, inner_radius, curvature, DEF_STEPS, sides, swap)
 	data.shape_id = &"curved_stair"
 	data.shape_params = {
 		"stair_width": 1.5,
@@ -358,6 +358,7 @@ func _mk_variant(inner_radius: float, curvature: float, sides: bool) -> PBMesh:
 		"curvature": curvature,
 		"steps": DEF_STEPS,
 		"sides": 1.0 if sides else 0.0,
+		"axis_swap": 1.0 if swap else 0.0,
 	}
 	var pb := PBMesh.new()
 	add_child_autofree(pb)
@@ -365,8 +366,8 @@ func _mk_variant(inner_radius: float, curvature: float, sides: bool) -> PBMesh:
 	pb.rebuild()
 	return pb
 
-func _audit_variant(label: String, inner_radius: float, curvature: float, sides: bool) -> void:
-	var pb := _mk_variant(inner_radius, curvature, sides)
+func _audit_variant(label: String, inner_radius: float, curvature: float, sides: bool, swap := false) -> void:
+	var pb := _mk_variant(inner_radius, curvature, sides, swap)
 	var faces := _collider_faces(pb)
 	assert_true(faces.size() > 0, "%s: ramp faces generated" % label)
 	var vol := PBColliderAudit.signed_volume(faces)
@@ -432,3 +433,146 @@ func test_ramp_variant_flipped():
 
 func test_ramp_variant_no_sides():
 	await _audit_variant("no_sides", 0.5, 180.0, false)
+
+# Deep drag rects set axis_swap (the visual mesh exchanges X/Z). The ramp
+# ignored it until v0.9.183 and came out as the stairs' MIRROR IMAGE: the
+# drop rays over the treads miss or land at the wrong height.
+func test_ramp_variant_swapped():
+	await _audit_variant("swapped", 0.5, 180.0, true, true)
+
+func test_ramp_variant_swapped_flipped():
+	# Two reflections: handedness restored, winding must NOT be re-reversed.
+	await _audit_variant("swapped_flipped", 0.5, -120.0, true, true)
+
+# ------------------------------------------------------------------------------
+# The v0.9.183 report, verbatim: a quarter-turn stair dragged on a deep rect
+# (axis_swap) with the curvature typed as 90 in the params modal. The inner
+# part was not solid and the player had to jump onto the ramp — a capsule
+# with the playground player's shape walked through the inner treads and was
+# blocked at the bottom everywhere else.
+# ------------------------------------------------------------------------------
+
+const REPORT_PARAMS := {
+	"axis_swap": 1.0,
+	"curvature": 90.0,
+	"height": 4.0,
+	"inner_radius": 1.3125374201188056,
+	"sides": 1.0,
+	"stair_width": 3.937612260356417,
+	"steps": 20,
+}
+
+## The params modal's path: PBShapeParams.build, then assign the data.
+func _mk_report_stairs() -> PBMesh:
+	var data := PBShapeParams.build(&"curved_stair", REPORT_PARAMS)
+	data.shape_params = REPORT_PARAMS.duplicate()
+	var pb := PBMesh.new()
+	add_child_autofree(pb)
+	pb.pb_mesh_data = data
+	pb.rebuild()
+	return pb
+
+## Per tread (bottom to top): {inner, outer, y} — the midpoints of the
+## tread's inner (shorter) and outer arc chords, from the RENDER data. A
+## point at radial fraction f across the tread is inner.lerp(outer, f).
+func _tread_lanes(pb: PBMesh) -> Array:
+	var data := pb.pb_mesh_data
+	var out := []
+	for face in data.faces:
+		var idx: PackedInt32Array = face.indexes
+		var p0: Vector3 = data.positions[idx[0]]
+		var n: Vector3 = (data.positions[idx[1]] - p0).cross(data.positions[idx[2]] - p0)
+		if n.length_squared() < 1e-10 or absf(n.normalized().y) < 0.95:
+			continue
+		var c: Array = []
+		for j in idx:
+			if not c.has(data.positions[j]):
+				c.append(data.positions[j])
+		if c.size() != 4:
+			continue
+		var best := [0, 1]
+		var best_d := INF
+		for i in range(4):
+			for k in range(i + 1, 4):
+				var d: float = (c[i] - c[k]).length()
+				if d < best_d:
+					best_d = d
+					best = [i, k]
+		var rest := []
+		for i in range(4):
+			if not best.has(i):
+				rest.append(i)
+		out.append({
+			"inner": (c[best[0]] + c[best[1]]) * 0.5,
+			"outer": (c[rest[0]] + c[rest[1]]) * 0.5,
+			"y": p0.y,
+		})
+	out.sort_custom(func(a, b): return a["y"] < b["y"])
+	return out
+
+## Walks a capsule shaped like the playground player (r 0.4, h 1.8, default
+## 45-degree floor_max_angle, 5 m/s, project gravity) from the floor in front
+## of the first tread up the lane at radial fraction f. Returns the number of
+## treads reached.
+func _walk_lane(lanes: Array, f: float, floor_y: float) -> int:
+	_mk_ground(floor_y)
+	var ch := _mk_capsule_character(0.4, 1.8)
+	var pts: Array = []
+	for t in lanes:
+		pts.append((t["inner"] as Vector3).lerp(t["outer"], f))
+	var away: Vector3 = pts[0] - pts[1]
+	away.y = 0.0
+	var start: Vector3 = (pts[0] as Vector3) + away.normalized() * 1.2
+	start.y = floor_y + 0.91
+	ch.global_position = start
+	await get_tree().physics_frame
+	var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	var dt := 1.0 / float(Engine.physics_ticks_per_second)
+	var k := 0
+	for frame in range(300):
+		if k >= pts.size():
+			break
+		var tgt: Vector3 = pts[k]
+		var d := Vector3(tgt.x - ch.global_position.x, 0.0, tgt.z - ch.global_position.z)
+		if d.length() < 0.35:
+			k += 1
+			continue
+		var dir := d.normalized()
+		if not ch.is_on_floor():
+			ch.velocity.y -= gravity * dt
+		ch.velocity.x = dir.x * 5.0
+		ch.velocity.z = dir.z * 5.0
+		ch.move_and_slide()
+		await get_tree().physics_frame
+	return k
+
+func test_report_swapped_quarter_turn_ramp_under_every_tread():
+	var pb := _mk_report_stairs()
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var space := pb.get_world_3d().direct_space_state
+	var lanes := _tread_lanes(pb)
+	assert_eq(lanes.size(), 20, "tread discovery")
+	var step_h := 4.0 / 20.0
+	var body := pb.get_collider_body()
+	var bad := 0
+	var probes := 0
+	for t in lanes:
+		for f in [0.1, 0.3, 0.5, 0.7, 0.9]:
+			# A nudge off the exact lane keeps the ray off the ramp's slice
+			# seams (a ray down a shared triangle edge can slip between them).
+			var p: Vector3 = (t["inner"] as Vector3).lerp(t["outer"], f) + Vector3(0.0013, 0, 0.0007)
+			var hit := _ray_down(space, p.x, p.z)
+			probes += 1
+			if hit.is_empty() or hit["collider"] != body \
+					or absf(hit["position"].y - (t["y"] - step_h * 0.5)) > 0.08:
+				bad += 1
+	assert_eq(bad, 0, "%d/%d drop rays over the visible treads miss the ramp or hit it at the wrong height" % [bad, probes])
+
+func test_report_swapped_quarter_turn_ramp_walkable_from_the_floor():
+	var pb := _mk_report_stairs()
+	var lanes := _tread_lanes(pb)
+	# Mid lane: 38 deg average slope — walkable on foot, no jump.
+	var reached := await _walk_lane(lanes, 0.5, -2.0)
+	assert_eq(reached, lanes.size(), "player capsule walks from the floor to the top tread (reached %d/%d)" % [reached, lanes.size()])
+

@@ -3,6 +3,33 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.183 — curved-stairs ramp collider: mirrored on swapped stairs
+
+Report: a quarter-turn curved stair (curvature typed as 90 in the params
+modal) had a non-solid inner part, and the player had to jump to get onto
+the solid part — walking into it did not climb it.
+
+- **The ramp ignored `axis_swap`.** A drag rect deeper than wide sets
+  `axis_swap` (v0.9.138 rect fill): the visual mesh exchanges X and Z, but
+  `create_curved_stairs_ramp` had no such parameter and
+  `PBMesh._build_curved_stairs_ramp_shape` never passed it, so the collider
+  was the stairs' MIRROR IMAGE. Reproduced headlessly on the reported scene
+  with the playground player's capsule: on the inner lane it walked straight
+  through all 20 visible treads at floor height; on the mid and outer lanes
+  it stood blocked at the bottom for 584–592 of 600 frames. 34/100 drop rays
+  over the visible treads missed the stair collider, and 36 more hit it
+  more than 0.15 m off. The ramp now applies the same two reflections
+  (negative curvature, axis swap) as the mesh, re-reversing the winding when
+  exactly one applies. After the fix: 0/100 off, mid and outer lanes climb
+  all 20 treads with no stuck frame. The exported `Collider_*` mesh reads
+  the same shape, so `.glb`/`.pbm` exports were mirrored too and are fixed
+  by the same change.
+
+Tests: `test_pb_collider_audit.gd` gains swapped and swapped+flipped
+variants of the shell/concordance audit, and two tests on the reported
+params (drop rays under every tread at five radial lanes; the player
+capsule walking up from the floor). All four fail on v0.9.182.
+
 ## v0.9.182 — the scaling audit: paint storage, surface cap, picking, Trim Walls
 
 An audit of how the plugin scales to bigger maps and heavier painting, with
