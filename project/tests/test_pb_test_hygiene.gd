@@ -133,3 +133,23 @@ func test_scene_wide_face_picks_use_the_shared_helper() -> void:
 	var fn: Dictionary = _functions(copy)[0]
 	assert_true(scene_loop.search(fn["text"]) != null and (fn["text"] as String).contains("pick_face("),
 			"a hand-written scene loop is detected")
+
+## INCIDENT (v0.9.182): masks and decal windows were plain ImageTextures,
+## which save RAW (one decal window made the demo map 48 MB). They are
+## PBMaskTextures now (zstd storage); a new creation site that goes back to
+## ImageTexture.create_from_image saves that mask raw again, silently.
+func test_mask_and_decal_textures_are_created_as_pb_mask_textures() -> void:
+	var offenders := PackedStringArray()
+	for path in _scripts_under("res://addons/poibuilder"):
+		var lines := FileAccess.get_file_as_string(path).split("\n")
+		for i in range(lines.size()):
+			var line: String = lines[i]
+			var sets_mask := line.contains("_mask\" %") or line.contains("\"stamp_layer_texture\"")
+			if sets_mask and line.contains("set_shader_parameter(") and line.contains("ImageTexture.create_from_image("):
+				offenders.append("%s:%d" % [path, i + 1])
+	assert_eq(offenders.size(), 0,
+			"masks/decal windows must be PBMaskTexture.from_image (compressed storage): %s" % ", ".join(offenders))
+	# The rule sees the shape it guards against.
+	var sample := 'mat.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(img))'
+	assert_true(sample.contains("_mask\" %") and sample.contains("ImageTexture.create_from_image("),
+			"the pattern matches a raw mask creation")
