@@ -269,6 +269,29 @@ Tests: storage suite (shrinks to the live size, paint stays put, undo
 restores, idempotent); GUI case OPTIMIZE-PAINT (2048 → 256, "4.0 MB → 0.1 MB",
 Ctrl+Z restores). GUI harness failures=0.
 
+### The modern GLB paint bake runs on raw bytes: 2.5x faster, byte-identical
+
+`bake_face_composite` (the modern export's "Bake into textures") read every
+base/layer/mask/decal texel with `get_pixel()` (four per layer for the
+bilinear mask) and wrote with `set_pixel()`, across the whole face even where
+no layer had any weight: 22.7 s for one 8 m face at 2048x2048. It now works on
+raw byte buffers — reads through a table of the exact float32 values
+`get_pixel()` produces, writes with `set_pixel()`'s own conversion — and skips
+each layer outside the padded bounding box of its mask's painted texels (where
+its smoothstep weight is 0 anyway). Same face: **8.9 s, output byte-identical**
+(same hash; pinned by a per-pixel oracle test).
+
+Also fixed on the way: the bake dropped each layer's roughness (the live
+shader's blend-edge width) and baked every edge at the 0.8 default.
+
+The export's default stays "Bake into textures" (the v0.9.160 decision: any
+glTF consumer shows the paint); "Include splat data" already ships the live
+stack for engines — Godot included — that blend it themselves, with no bake.
+
+Tests: `test_pb_export_tile_baker.gd` — the raw-byte bake equals a get_pixel /
+set_pixel oracle byte for byte (non-RGBA8 layer, non-default roughness,
+decal), and the baked edge width follows the layer roughness.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

@@ -235,3 +235,125 @@ func test_baked_blend_edge_is_smooth_not_blocky() -> void:
 		levels[snappedf(baked.get_pixel(x, mid).r, 0.001)] = true
 	assert_true(levels.size() > 40,
 			"the baked blend edge must be a smooth ramp, not mask texel blocks (only %d levels)" % levels.size())
+
+# ── The raw-byte bake is the per-pixel bake, byte for byte (v0.9.182) ───────
+
+## The ORACLE: the face composite written the straightforward way —
+## get_pixel() reads, set_pixel() writes — which is what bake_face_composite
+## computed before it moved onto raw byte buffers (22.7 s -> 8.9 s for an 8 m
+## face). Any drift in the fast path's conversions shows up as a byte diff.
+func _oracle_bake(data: PBMeshData, face: PBFace) -> Image:
+	var state := PBSplat.collect_face_paint_state(data, face)
+	var res := PBSplat.bake_resolution(data, face, 2048)
+	var base_img: Image = null
+	var bt = (data.get_face_material(face) as ShaderMaterial).get_shader_parameter("base_texture")
+	if bt is Texture2D:
+		base_img = (bt as Texture2D).get_image()
+	var base_col: Color = state["base_color"]
+	var b := PBSplat.get_face_planar_bounds(data, face)
+	var out := Image.create(res.x, res.y, false, Image.FORMAT_RGBA8)
+	var idx := face.get_indexes()
+	for y in range(res.y):
+		var mv := (float(y) + 0.5) / float(res.y)
+		for x in range(res.x):
+			var mu := (float(x) + 0.5) / float(res.x)
+			# UV1 by solving barycentrics directly (the reference definition).
+			var uv1 := Vector2(NAN, NAN)
+			for t in range(0, idx.size(), 3):
+				var pu := PackedFloat32Array()
+				var pv := PackedFloat32Array()
+				for k in range(3):
+					var p := data.positions[idx[t + k]]
+					pu.append(((b["u"] as Vector3).dot(p) - float(b["min_u"])) / float(b["range_u"]))
+					pv.append(((b["v"] as Vector3).dot(p) - float(b["min_v"])) / float(b["range_v"]))
+				var w := PBTileBaker._bake_weights(pu, pv, mu, mv)
+				var wa := 1.0 - w.x - w.y
+				if w.x >= -0.001 and w.y >= -0.001 and wa >= -0.001:
+					uv1 = data.textures0[idx[t]] * wa + data.textures0[idx[t + 1]] * w.x + data.textures0[idx[t + 2]] * w.y
+					break
+			var c := base_col
+			var base_alpha := 1.0
+			if base_img != null:
+				if uv1.x == uv1.x:
+					c = PBTileBaker._sample_image_repeat(base_img, uv1.x, uv1.y) * base_col
+					base_alpha = c.a
+				else:
+					base_alpha = base_col.a
+			for L in state["layers"]:
+				var mask: Image = L["mask_image"]
+				var weight := PBTileBaker._sample_mask_bilinear(mask, mu, mv)
+				var edge_w: float = lerpf(maxf(1.5 / float(mask.get_width()) * 2.0, 0.02), 0.48, float(L["roughness"]))
+				var blend := smoothstep(0.5 - edge_w, 0.5 + edge_w, weight)
+				if blend <= 0.0:
+					continue
+				var lc := PBTileBaker._sample_image_repeat((L["texture"] as Texture2D).get_image(), uv1.x, uv1.y) * (L["color"] as Color)
+				var a: float = blend * lc.a
+				c = Color(c.r + (lc.r - c.r) * a, c.g + (lc.g - c.g) * a, c.b + (lc.b - c.b) * a, c.a)
+			var dimg: Image = state["decal_layer_image"]
+			var win: Rect2 = state["decal_window"]
+			if dimg != null:
+				var du := (mu - win.position.x) / win.size.x
+				var dv := (mv - win.position.y) / win.size.y
+				if du >= 0.0 and du <= 1.0 and dv >= 0.0 and dv <= 1.0:
+					var d := PBTileBaker._sample_image_clamp(dimg, du, dv)
+					if d.a > 0.001:
+						c = Color(c.r + (d.r - c.r) * d.a, c.g + (d.g - c.g) * d.a, c.b + (d.b - c.b) * d.a, maxf(c.a, d.a))
+			c.a = maxf(c.a, base_alpha)
+			out.set_pixel(x, y, c)
+	return out
+
+func test_raw_byte_bake_matches_the_per_pixel_oracle_byte_for_byte() -> void:
+	var data: PBMeshData = PBShapeGenerators.create_plane(1.0, 1.0, 1, 1)
+	PBUv.refresh_mesh_uvs(data, true)
+	var face := data.faces[0]
+	var base := StandardMaterial3D.new()
+	var base_img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	for y in range(16):
+		for x in range(16):
+			base_img.set_pixel(x, y, Color(float(x) / 15.0, float(y) / 15.0, 0.3, 1.0))
+	base.albedo_texture = ImageTexture.create_from_image(base_img)
+	base.albedo_color = Color(0.9, 0.95, 1.0, 1.0)
+	var mat := PBSplat.create_splat_material(base)
+	data.set_face_material(face, mat)
+	PBSplat.ensure_face_splat_bounds(data, face)
+	var l1_img := Image.create(8, 8, false, Image.FORMAT_RGB8)  # a non-RGBA8 layer texture
+	l1_img.fill(Color(0.2, 0.8, 0.4))
+	var l1 := PBSplat.add_layer(mat, ImageTexture.create_from_image(l1_img), Color(1, 1, 1, 0.9), 0.3, 256)
+	var l2_img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	l2_img.fill(Color(0.9, 0.1, 0.1, 0.7))
+	var l2 := PBSplat.add_layer(mat, ImageTexture.create_from_image(l2_img), Color.WHITE, 0.8, 256)
+	PBSplat.paint_face_splat(data, face, mat, l1, Vector3(-0.2, 0, -0.1), 0.25, 0.7, 1.0, false, {})
+	PBSplat.paint_face_splat(data, face, mat, l2, Vector3(0.25, 0, 0.2), 0.15, 0.0, 0.8, false, {})
+	var stamp := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	stamp.fill(Color(0.1, 0.2, 0.9, 0.6))
+	PBSplat.paste_decal(data, Vector3(0.0, 0, 0.3), Vector3.UP, 0.0, 0.2, 1.0, stamp)
+	var fast := PBTileBaker.bake_face_composite(data, face, 2048)
+	var oracle := _oracle_bake(data, face)
+	assert_eq(fast.get_size(), oracle.get_size())
+	assert_true(fast.get_data() == oracle.get_data(),
+			"the raw-byte composite is byte-identical to the per-pixel one")
+
+func test_bake_edge_width_follows_the_layer_roughness() -> void:
+	# The bake dropped each layer's roughness and blended every edge at 0.8.
+	var widths: Array = []
+	for rough in [0.1, 0.9]:
+		var data: PBMeshData = PBShapeGenerators.create_plane(1.0, 1.0, 1, 1)
+		PBUv.refresh_mesh_uvs(data, true)
+		var face := data.faces[0]
+		var mat := PBSplat.create_splat_material()
+		data.set_face_material(face, mat)
+		PBSplat.ensure_face_splat_bounds(data, face)
+		var white := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+		white.fill(Color.WHITE)
+		var layer := PBSplat.add_layer(mat, ImageTexture.create_from_image(white), Color.WHITE, rough, 256)
+		PBSplat.paint_face_splat(data, face, mat, layer, Vector3.ZERO, 0.3, 1.0, 1.0, false, {})
+		var baked := PBTileBaker.bake_face_composite(data, face, 2048)
+		var partial := 0
+		var mid := baked.get_height() / 2
+		for x in range(baked.get_width()):
+			var r := baked.get_pixel(x, mid).r
+			var base_r := baked.get_pixel(0, mid).r
+			if absf(r - base_r) > 0.02 and r < 0.98:
+				partial += 1
+		widths.append(partial)
+	assert_gt(int(widths[1]), int(widths[0]), "a rougher layer bakes a wider blend edge (%s)" % str(widths))

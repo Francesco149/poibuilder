@@ -383,6 +383,9 @@ static func _prepare_layer_data(paint_state: Dictionary) -> Array:
 			"image": img,
 			"mask_image": mask,
 			"color": layer.get("color", Color.WHITE),
+			# The live shader widens a layer's blend edge with its roughness;
+			# dropping it here baked every layer at the 0.8 default.
+			"roughness": layer.get("roughness", 0.8),
 		})
 	return out
 
@@ -645,7 +648,7 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	# A face is PLANAR, so within one triangle the barycentric weights are
 	# affine in (mu, mv) and the UV1 is affine with them. The bake therefore
 	# precomputes each triangle's affine coefficients ONCE (see
-	# _bake_affine_tris) and walks them incrementally per scanline, instead of
+	# the composite loop) and evaluates them per texel, instead of
 	# solving a 2x2 system per texel — measured 12x on that term, which
 	# dominated a 2048x2048 bake.
 	var tri_a := PackedVector2Array()
@@ -685,24 +688,78 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	if tri_uv.is_empty():
 		return null
 
-	var out := Image.create(res.x, res.y, false, Image.FORMAT_RGBA8)
+	# The composite runs on RAW BYTES: one get_pixel() per base texel, four per
+	# layer mask and one set_pixel() per output texel were most of a 2048x2048
+	# bake (22.7 s for an 8 m face). Reads go through BAKE_BYTE_TO_FLOAT, the
+	# exact float32 value Image.get_pixel() produces for a byte, and writes
+	# repeat Image.set_pixel()'s conversion, so the output is byte-identical
+	# to the per-pixel version it replaced (pinned by the tile-baker tests).
+	var lut := _byte_to_float_lut()
+	var w_out := res.x
+	var out_b := PackedByteArray()
+	out_b.resize(w_out * res.y * 4)
 
-	# Flatten the layer stack once (Dictionary pluck per pixel showed up in the
-	# profile), and precompute each layer's edge width.
-	var layer_masks: Array[Image] = []
-	var layer_imgs: Array[Image] = []
+	var base_b := PackedByteArray()
+	var base_w := 0
+	var base_h := 0
+	if base_image != null and not base_image.is_empty():
+		var bi := _rgba8_copy(base_image)
+		base_b = bi.get_data()
+		base_w = bi.get_width()
+		base_h = bi.get_height()
+	var has_base := base_w > 0 and base_h > 0
+
+	# Flatten the layer stack once, and find where each layer can contribute:
+	# outside the bounding box of its mask's nonzero texels (padded by the
+	# bilinear footprint) its weight is 0, so its smoothstep blend is 0 and the
+	# layer is skipped — exactly what the per-pixel test did, without the work.
+	var layer_masks: Array[PackedByteArray] = []
+	var layer_mask_size: Array[Vector2i] = []
+	var layer_imgs: Array[PackedByteArray] = []
+	var layer_img_size: Array[Vector2i] = []
 	var layer_cols: PackedColorArray = PackedColorArray()
 	var layer_edge: PackedFloat32Array = PackedFloat32Array()
+	var layer_box: Array[Rect2i] = []  # output-pixel rect the layer may touch
 	for ld in layer_data:
 		var mask: Image = ld.get("mask_image")
 		var l_img: Image = ld.get("image")
-		if mask == null or l_img == null:
+		if mask == null or l_img == null or mask.is_empty() or l_img.is_empty():
 			continue
-		var fw: float = 1.5 / float(mask.get_width())
-		layer_masks.append(mask)
-		layer_imgs.append(l_img)
+		var mask_r8 := mask
+		if mask.get_format() != Image.FORMAT_R8:
+			mask_r8 = Image.new()
+			mask_r8.copy_from(mask)
+			mask_r8.convert(Image.FORMAT_R8)
+		var mb := mask_r8.get_data()
+		var mw := mask_r8.get_width()
+		var mh := mask_r8.get_height()
+		var used := _nonzero_texel_rect(mb, mw, mh)
+		if used.size.x <= 0:
+			continue  # an empty mask contributes nowhere
+		var limg := _rgba8_copy(l_img)
+		var fw: float = 1.5 / float(mw)
+		layer_masks.append(mb)
+		layer_mask_size.append(Vector2i(mw, mh))
+		layer_imgs.append(limg.get_data())
+		layer_img_size.append(Vector2i(limg.get_width(), limg.get_height()))
 		layer_cols.append(ld.get("color", Color.WHITE))
 		layer_edge.append(lerpf(maxf(fw * 2.0, 0.02), 0.48, float(ld.get("roughness", 0.8))))
+		# Mask texel t covers bilinear sample positions within one texel of
+		# its centre; map that span to output pixels with a one-pixel margin.
+		var x0 := int(floor((float(used.position.x) - 1.0) / float(mw) * float(res.x))) - 1
+		var x1 := int(ceil((float(used.end.x) + 1.0) / float(mw) * float(res.x))) + 1
+		var y0 := int(floor((float(used.position.y) - 1.0) / float(mh) * float(res.y))) - 1
+		var y1 := int(ceil((float(used.end.y) + 1.0) / float(mh) * float(res.y))) + 1
+		layer_box.append(Rect2i(x0, y0, x1 - x0, y1 - y0))
+
+	var decal_b := PackedByteArray()
+	var decal_w := 0
+	var decal_h := 0
+	if decal_image != null and not decal_image.is_empty():
+		var di := _rgba8_copy(decal_image)
+		decal_b = di.get_data()
+		decal_w = di.get_width()
+		decal_h = di.get_height()
 
 	# The out image is square in practice, but res.x/res.y are independent; the
 	# sample coordinates must each use their OWN axis count.
@@ -710,41 +767,67 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 	var inv_out_v := 1.0 / maxf(float(res.y), 1.0)
 	var decal_win_pos := decal_window.position
 	var decal_win_size := decal_window.size
-	var has_decal := decal_image != null
+	var has_decal := decal_w > 0
 	var layer_count := layer_masks.size()
 	var tri_count := tri_uv.size() / 3
-	var mu0 := 0.5 * inv_out_u
 
 	for y in range(res.y):
 		var mv := (float(y) + 0.5) * inv_out_v
 		var decal_dv := (mv - decal_win_pos.y) / decal_win_size.y
+		var row_layers: Array[int] = []
+		for li in range(layer_count):
+			if y >= layer_box[li].position.y and y < layer_box[li].end.y:
+				row_layers.append(li)
+		var o := y * w_out * 4
 		for x in range(res.x):
 			var mu := (float(x) + 0.5) * inv_out_u
-			# The UV1 of a mask-space point is the same for every layer, and
-			# the mask/decal lookups take (mu, mv) directly, so each is
-			# resolved ONCE per texel rather than once per layer.
-			var uv1 := _bake_bary_at(tri_a, tri_b, tri_c, tri_uv, mu, mv, tri_count)
+			# UV1 at this mask-space point: the first triangle containing it
+			# (weights within -0.001), NaN outside the face.
+			var uv1 := Vector2(NAN, NAN)
+			for t in range(tri_count):
+				var ta := tri_a[t]
+				var tb := tri_b[t]
+				var tc := tri_c[t]
+				var wb := ta.x * mu + tb.x * mv + tc.x
+				if wb < -0.001:
+					continue
+				var wc := ta.y * mu + tb.y * mv + tc.y
+				if wc < -0.001:
+					continue
+				var wa := 1.0 - wb - wc
+				if wa < -0.001:
+					continue
+				var ti := t * 3
+				uv1 = tri_uv[ti] * wa + tri_uv[ti + 1] * wb + tri_uv[ti + 2] * wc
+				break
 			var inside := uv1.x == uv1.x # NaN (outside the face) is never equal to itself
 			var c := base_color
 			var base_alpha := 1.0
-			if base_image != null:
+			if has_base:
 				if inside:
-					c = _sample_image_repeat(base_image, uv1.x, uv1.y) * base_color
+					var bo := (posmod(int(floor(uv1.y * base_h)), base_h) * base_w
+							+ posmod(int(floor(uv1.x * base_w)), base_w)) * 4
+					c = Color(lut[base_b[bo]], lut[base_b[bo + 1]], lut[base_b[bo + 2]], lut[base_b[bo + 3]]) * base_color
 					base_alpha = c.a
 				else:
 					base_alpha = base_color.a
 
 			var decal_du := (mu - decal_win_pos.x) / decal_win_size.x
-			for li in range(layer_count):
-				var mask: Image = layer_masks[li]
-				var weight := _sample_mask_bilinear(mask, mu, mv)
+			for li in row_layers:
+				if x < layer_box[li].position.x or x >= layer_box[li].end.x:
+					continue
+				var msize: Vector2i = layer_mask_size[li]
+				var weight := _mask_bilinear_bytes(layer_masks[li], msize.x, msize.y, mu, mv, lut)
 				var edge_w: float = layer_edge[li]
 				var blend := smoothstep(0.5 - edge_w, 0.5 + edge_w, weight)
 				if blend <= 0.0:
 					continue
 				var l_col: Color = layer_cols[li]
-				var l_img: Image = layer_imgs[li]
-				var layer_col := _sample_image_repeat(l_img, uv1.x, uv1.y) * l_col
+				var isize: Vector2i = layer_img_size[li]
+				var lb: PackedByteArray = layer_imgs[li]
+				var lo := (posmod(int(floor(uv1.y * isize.y)), isize.y) * isize.x
+						+ posmod(int(floor(uv1.x * isize.x)), isize.x)) * 4
+				var layer_col := Color(lut[lb[lo]], lut[lb[lo + 1]], lut[lb[lo + 2]], lut[lb[lo + 3]]) * l_col
 				var a: float = blend * layer_col.a
 				c = Color(
 					c.r + (layer_col.r - c.r) * a,
@@ -754,7 +837,9 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 
 			if has_decal and decal_du >= 0.0 and decal_du <= 1.0 \
 					and decal_dv >= 0.0 and decal_dv <= 1.0:
-				var d_col := _sample_image_clamp(decal_image, decal_du, decal_dv)
+				var do_ := (clampi(int(floor(decal_dv * decal_h)), 0, decal_h - 1) * decal_w
+						+ clampi(int(floor(decal_du * decal_w)), 0, decal_w - 1)) * 4
+				var d_col := Color(lut[decal_b[do_]], lut[decal_b[do_ + 1]], lut[decal_b[do_ + 2]], lut[decal_b[do_ + 3]])
 				if d_col.a > 0.001:
 					c = Color(
 						c.r + (d_col.r - c.r) * d_col.a,
@@ -762,8 +847,84 @@ static func bake_face_composite(mesh_data: PBMeshData, face: PBFace, max_size: i
 						c.b + (d_col.b - c.b) * d_col.a,
 						maxf(c.a, d_col.a))
 			c.a = maxf(c.a, base_alpha)
-			out.set_pixel(x, y, c)
+			# Image.set_pixel's RGBA8 conversion: truncate(clamp(v * 255)).
+			out_b[o] = int(clampf(c.r * 255.0, 0.0, 255.0))
+			out_b[o + 1] = int(clampf(c.g * 255.0, 0.0, 255.0))
+			out_b[o + 2] = int(clampf(c.b * 255.0, 0.0, 255.0))
+			out_b[o + 3] = int(clampf(c.a * 255.0, 0.0, 255.0))
+			o += 4
+	var out := Image.create_from_data(res.x, res.y, false, Image.FORMAT_RGBA8, out_b)
 	return out
+
+## byte -> the float32 Image.get_pixel() returns for it (byte / 255.0 rounded
+## to float32), as a 256-entry table the raw-byte bake reads through.
+static var _bake_lut: PackedFloat32Array = PackedFloat32Array()
+
+static func _byte_to_float_lut() -> PackedFloat32Array:
+	if _bake_lut.size() != 256:
+		_bake_lut.resize(256)
+		for i in range(256):
+			_bake_lut[i] = float(i) / 255.0
+	return _bake_lut
+
+## An RGBA8 copy of `img` (the same pixels get_pixel() would read).
+static func _rgba8_copy(img: Image) -> Image:
+	if img.get_format() == Image.FORMAT_RGBA8 and not img.has_mipmaps():
+		return img
+	var copy := Image.new()
+	copy.copy_from(img)
+	if copy.has_mipmaps():
+		copy.clear_mipmaps()
+	copy.convert(Image.FORMAT_RGBA8)
+	return copy
+
+## The bounding rect of a single-channel buffer's nonzero texels (size 0 when
+## all are zero). Empty rows are found by a C++ count, so mostly-unpainted
+## masks cost little.
+static func _nonzero_texel_rect(bytes: PackedByteArray, w: int, h: int) -> Rect2i:
+	var x0 := w
+	var x1 := -1
+	var y0 := h
+	var y1 := -1
+	for y in range(h):
+		var row := bytes.slice(y * w, (y + 1) * w)
+		if row.count(0) == w:
+			continue
+		y0 = mini(y0, y)
+		y1 = y
+		for x in range(w):
+			if row[x] != 0:
+				x0 = mini(x0, x)
+				break
+		for x in range(w - 1, -1, -1):
+			if row[x] != 0:
+				x1 = maxi(x1, x)
+				break
+	if y1 < 0:
+		return Rect2i()
+	return Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+
+## _sample_mask_bilinear on a raw R8 buffer (same arithmetic; texel values
+## through the get_pixel-exact table).
+static func _mask_bilinear_bytes(mask: PackedByteArray, w: int, h: int, u: float, v: float,
+		lut: PackedFloat32Array) -> float:
+	var fx := u * float(w) - 0.5
+	var fy := v * float(h) - 0.5
+	var x0 := int(floor(fx))
+	var y0 := int(floor(fy))
+	var tx := fx - float(x0)
+	var ty := fy - float(y0)
+	var x0c := clampi(x0, 0, w - 1)
+	var x1c := clampi(x0 + 1, 0, w - 1)
+	var y0c := clampi(y0, 0, h - 1)
+	var y1c := clampi(y0 + 1, 0, h - 1)
+	var r0: float = lut[mask[y0c * w + x0c]]
+	var r1: float = lut[mask[y0c * w + x1c]]
+	var r2: float = lut[mask[y1c * w + x0c]]
+	var r3: float = lut[mask[y1c * w + x1c]]
+	var top := r0 + (r1 - r0) * tx
+	var bot := r2 + (r3 - r2) * tx
+	return top + (bot - top) * ty
 
 ## Wrapped/clamped pixel reads (the base and layer textures tile, masks and the
 ## decal layer do not).
@@ -815,7 +976,7 @@ static func _sample_mask_bilinear(mask: Image, u: float, v: float) -> float:
 ## Barycentric weights (of corners 1 and 2) for mask-space point (mu, mv) in the
 ## triangle whose corners are (pu[i], pv[i]). This is the REFERENCE definition:
 ## the bake's affine coefficients are a 3-point fit of exactly this function
-## (see _bake_bary_at), so the fast path cannot silently diverge from it.
+## (in the composite loop), so the fast path cannot silently diverge from it.
 static func _bake_weights(pu: PackedFloat32Array, pv: PackedFloat32Array,
 		mu: float, mv: float) -> Vector2:
 	var e0x := pu[1] - pu[0]
@@ -827,30 +988,3 @@ static func _bake_weights(pu: PackedFloat32Array, pv: PackedFloat32Array,
 	var ry := mv - pv[0]
 	return Vector2((rx * e1y - ry * e1x) / den, (ry * e0x - rx * e0y) / den)
 
-## UV1 at a mask-space point, from the per-triangle affine coefficients built
-## by the caller. Returns Vector2(NAN, NAN) when the point falls outside every
-## triangle (the caller tests `x == x`, which is false only for NaN).
-##
-## Each triangle contributes three coefficient pairs (see the builder) for the
-## corner weights wb/wc and the corner UVs. This is the hot loop of a large
-## bake — millions of calls — so it divides by nothing and touches no
-## Dictionary.
-static func _bake_bary_at(tri_a: PackedVector2Array, tri_b: PackedVector2Array,
-		tri_c: PackedVector2Array, tri_uv: PackedVector2Array,
-		mu: float, mv: float, tri_count: int) -> Vector2:
-	for t in range(tri_count):
-		var a := tri_a[t]
-		var b := tri_b[t]
-		var c := tri_c[t]
-		var wb := a.x * mu + b.x * mv + c.x
-		if wb < -0.001:
-			continue
-		var wc := a.y * mu + b.y * mv + c.y
-		if wc < -0.001:
-			continue
-		var wa := 1.0 - wb - wc
-		if wa < -0.001:
-			continue
-		var i := t * 3
-		return tri_uv[i] * wa + tri_uv[i + 1] * wb + tri_uv[i + 2] * wc
-	return Vector2(NAN, NAN)
