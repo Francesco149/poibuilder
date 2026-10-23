@@ -24,7 +24,7 @@ adds a few KB to a scene, not ~90 KB. Maps made with older versions load and
 paint as before and shrink the first time you save them. (A map saved with
 this version needs this version or newer to open its paint.)
 
-**Optimize Paint.** Maps painted with older versions (v0.9.180 and before)
+**Optimize Paint.** Maps painted with older versions (the v0.9.167 release and earlier)
 carry masks of up to 2048×2048 per face, which make the brush slow on big
 faces. The **Optimize Paint** button in the paint section shrinks the selected
 meshes' oversized masks to the size the brush now uses — much faster painting,
