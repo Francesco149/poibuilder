@@ -766,14 +766,17 @@ static func _export_modern_pb_mesh(pb: PBMesh, parent: Node, lights: Array[Light
 		meshes = _build_modern_baked_splat_mesh(mesh_data, settings)
 		_prof_add("modern paint bake", t_splat)
 	if meshes.is_empty():
-		var am := mesh_data.to_array_mesh()
-		# glTF has no representation for custom ShaderMaterials: a splat material
-		# exports as its base look. In BAKE mode that is the fallback for faces
-		# whose paint could not be composited (non-opaque materials, empty).
-		for s in range(am.get_surface_count()):
-			if PBSplat.is_splat_material(am.surface_get_material(s)):
-				am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
-		meshes = _chunk_mesh_surfaces(am)
+		# Every chunk of the data: a single to_array_mesh() stops at the
+		# engine's 256-surface limit, and re-chunking AFTER it could not bring
+		# the dropped surfaces back.
+		for am in mesh_data.to_array_meshes():
+			# glTF has no representation for custom ShaderMaterials: a splat material
+			# exports as its base look. In BAKE mode that is the fallback for faces
+			# whose paint could not be composited (non-opaque materials, empty).
+			for s in range(am.get_surface_count()):
+				if PBSplat.is_splat_material(am.surface_get_material(s)):
+					am.surface_set_material(s, _standard_from_splat(am.surface_get_material(s)))
+			meshes.append_array(_chunk_mesh_surfaces(am))
 
 	# If bake lighting is toggled on, bake vertex colors directly onto the ArrayMesh surfaces
 	if settings.bake_lighting:
@@ -1188,11 +1191,15 @@ static func _get_collider_mesh(pb: PBMesh) -> Mesh:
 				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
 				return am
 
-	if pb.mesh != null:
-		return _merge_collider_surfaces(pb.mesh)
-	elif pb.pb_mesh_data != null:
-		return _merge_collider_surfaces(pb.pb_mesh_data.to_array_mesh())
-	return null
+	# Every render chunk: a mesh past 256 surfaces draws its overflow through
+	# internal chunk nodes, and `pb.mesh` alone is only the first of them.
+	var render_meshes: Array[Mesh] = pb.get_render_meshes()
+	if render_meshes.is_empty() and pb.pb_mesh_data != null:
+		for chunk in pb.pb_mesh_data.to_array_meshes():
+			render_meshes.append(chunk)
+	if render_meshes.size() == 1:
+		return _merge_collider_surfaces(render_meshes[0])
+	return _merge_collider_meshes(render_meshes)
 
 ## A collider is GEOMETRY, so its material splits must not split the export: a
 ## painted face owning its own material used to turn one collider node into
@@ -1202,19 +1209,26 @@ static func _get_collider_mesh(pb: PBMesh) -> Mesh:
 static func _merge_collider_surfaces(mesh: Mesh) -> Mesh:
 	if mesh == null or mesh.get_surface_count() <= 1:
 		return mesh
+	return _merge_collider_meshes([mesh])
+
+## Every triangle of every surface of `meshes` as ONE unindexed surface.
+static func _merge_collider_meshes(meshes: Array) -> Mesh:
 	var tris := PackedVector3Array()
-	for s in range(mesh.get_surface_count()):
-		var arrays := mesh.surface_get_arrays(s)
-		var sv: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays[Mesh.ARRAY_VERTEX] != null else PackedVector3Array()
-		if sv.is_empty():
+	for mesh in meshes:
+		if mesh == null:
 			continue
-		var si: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
-		if si.is_empty():
-			tris.append_array(sv)
-		else:
-			for idx in si:
-				if idx >= 0 and idx < sv.size():
-					tris.append(sv[idx])
+		for s in range((mesh as Mesh).get_surface_count()):
+			var arrays := (mesh as Mesh).surface_get_arrays(s)
+			var sv: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX] if arrays[Mesh.ARRAY_VERTEX] != null else PackedVector3Array()
+			if sv.is_empty():
+				continue
+			var si: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+			if si.is_empty():
+				tris.append_array(sv)
+			else:
+				for idx in si:
+					if idx >= 0 and idx < sv.size():
+						tris.append(sv[idx])
 	if tris.is_empty():
 		return null
 	var merged := ArrayMesh.new()

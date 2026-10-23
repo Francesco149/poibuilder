@@ -615,15 +615,38 @@ func set_authored_normals(normals: PackedVector3Array) -> bool:
 	_normals = normals.duplicate()
 	return true
 
+## Godot's per-mesh surface limit (RenderingServer MAX_MESH_SURFACES = 256).
+## The engine refuses a 257th surface with only a logged error, and the faces
+## on it vanish — a mesh with more than 255 painted faces (each painted face
+## is its own material, so its own surface) lost faces in the editor and in
+## the shipped scene. to_array_meshes() splits past this into chunks.
+const MAX_SURFACES_PER_MESH := 256
+## From this many surfaces on, each surface carries only the vertices its own
+## faces index. Below it every surface takes the whole vertex arrays (a cheap
+## C++ copy; the duplication is at most 3x). Above it the duplication was
+## surfaces x vertices: 400 painted faces on a 1,600-vertex floor uploaded
+## 409,600 vertices and spent 152 ms per rebuild.
+const COMPACT_SURFACES_FROM := 4
+
 ## Compiles this PBMeshData into a Godot ArrayMesh.
 ## If existing is provided, clears its surfaces and reuses it; otherwise instantiates a new ArrayMesh.
 ## Faces are grouped by submesh_index into distinct surfaces.
+## A mesh needing more than MAX_SURFACES_PER_MESH surfaces only fits partly
+## in one ArrayMesh: this returns the FIRST chunk — renderers use
+## to_array_meshes() (PBMesh draws every chunk).
 func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false) -> ArrayMesh:
+	return to_array_meshes(use_cached_indices, existing)[0]
+
+## Compiles this PBMeshData into one or more ArrayMeshes of at most
+## MAX_SURFACES_PER_MESH surfaces each (always at least one, possibly empty).
+## `existing`, when given, is cleared and reused as the first chunk.
+func to_array_meshes(use_cached_indices: bool = false, existing: ArrayMesh = null) -> Array[ArrayMesh]:
 	var mesh: ArrayMesh = existing if existing != null else ArrayMesh.new()
 	mesh.clear_surfaces()
+	var chunks: Array[ArrayMesh] = [mesh]
 
 	if positions.is_empty() or faces.is_empty():
-		return mesh
+		return chunks
 
 	# Internal data is CCW-from-outside (Unity/ProBuilder convention), so
 	# calculate_normals() cross products point OUTWARD. Godot front faces are
@@ -695,6 +718,7 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 
 		submesh_indices.sort()
 		_submesh_keys_cache = submesh_indices
+		var compact := submesh_indices.size() >= COMPACT_SURFACES_FROM
 
 		for s_idx in submesh_indices:
 			var group_faces: Array = submesh_faces[s_idx]
@@ -708,38 +732,58 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 						indices.append(fi[tri_i + 2])
 						indices.append(fi[tri_i + 1])
 						indices.append(fi[tri_i])
-			_submesh_indices_cache[s_idx] = indices
+			# Compacted surfaces index their own vertex list: `map` holds the
+			# source vertex for each local one (empty = the whole arrays).
+			var map := PackedInt32Array()
+			if compact:
+				var local_of: Dictionary = {}
+				for k in range(indices.size()):
+					var src: int = indices[k]
+					if not local_of.has(src):
+						local_of[src] = map.size()
+						map.append(src)
+					indices[k] = local_of[src]
+			_submesh_indices_cache[s_idx] = {"indices": indices, "map": map}
 
 	var vc: int = positions.size()
+	var has_uv1: bool = not textures0.is_empty() and textures0.size() == vc
+	var has_uv2: bool = not textures1.is_empty() and textures1.size() == vc
+	var has_colors: bool = not colors.is_empty() and colors.size() == vc
+	var has_tangents: bool = not tangents.is_empty() and tangents.size() == vc * 4
+	# A custom vertex channel must declare its own format through the
+	# surface flags; RG_FLOAT = two full floats per vertex (the mask UV).
+	var surface_flags: int = (Mesh.ARRAY_CUSTOM_RG_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
+			if use_splat_uvs else 0
 	for s_idx in _submesh_keys_cache:
-		var indices: PackedInt32Array = _submesh_indices_cache.get(s_idx, PackedInt32Array())
+		var entry: Dictionary = _submesh_indices_cache.get(s_idx, {})
+		var indices: PackedInt32Array = entry.get("indices", PackedInt32Array())
 		if indices.is_empty():
 			continue
+		var map: PackedInt32Array = entry.get("map", PackedInt32Array())
 
 		var arrays: Array = []
 		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = positions
-		arrays[Mesh.ARRAY_NORMAL] = normals
-
-		if not textures0.is_empty() and textures0.size() == vc:
-			arrays[Mesh.ARRAY_TEX_UV] = textures0
-		if not textures1.is_empty() and textures1.size() == vc:
-			arrays[Mesh.ARRAY_TEX_UV2] = textures1
-		if use_splat_uvs:
-			arrays[Mesh.ARRAY_CUSTOM0] = custom0
-
-		if not colors.is_empty() and colors.size() == vc:
-			arrays[Mesh.ARRAY_COLOR] = colors
-
-		if not tangents.is_empty() and tangents.size() == vc * 4:
-			arrays[Mesh.ARRAY_TANGENT] = tangents
-
+		if map.is_empty():
+			arrays[Mesh.ARRAY_VERTEX] = positions
+			arrays[Mesh.ARRAY_NORMAL] = normals
+			if has_uv1:
+				arrays[Mesh.ARRAY_TEX_UV] = textures0
+			if has_uv2:
+				arrays[Mesh.ARRAY_TEX_UV2] = textures1
+			if use_splat_uvs:
+				arrays[Mesh.ARRAY_CUSTOM0] = custom0
+			if has_colors:
+				arrays[Mesh.ARRAY_COLOR] = colors
+			if has_tangents:
+				arrays[Mesh.ARRAY_TANGENT] = tangents
+		else:
+			_fill_compacted_arrays(arrays, map, normals, custom0, use_splat_uvs,
+					has_uv1, has_uv2, has_colors, has_tangents)
 		arrays[Mesh.ARRAY_INDEX] = indices
 
-		# A custom vertex channel must declare its own format through the
-		# surface flags; RG_FLOAT = two full floats per vertex (the mask UV).
-		var surface_flags: int = (Mesh.ARRAY_CUSTOM_RG_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT) \
-				if use_splat_uvs else 0
+		if mesh.get_surface_count() >= MAX_SURFACES_PER_MESH:
+			mesh = ArrayMesh.new()
+			chunks.append(mesh)
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [], {}, surface_flags)
 		var surf_idx: int = mesh.get_surface_count() - 1
 		var mat: Material = null
@@ -755,9 +799,83 @@ func to_array_mesh(existing: ArrayMesh = null, use_cached_indices: bool = false)
 	# Authored lightmap metadata rides on the generated ArrayMesh: the
 	# LightmapGI baker reads the size hint off the mesh it bakes.
 	if lightmap_size_hint != Vector2i.ZERO:
-		mesh.lightmap_size_hint = lightmap_size_hint
+		for chunk in chunks:
+			chunk.lightmap_size_hint = lightmap_size_hint
 
-	return mesh
+	return chunks
+
+## How many surfaces the build makes: one per material slot in use.
+func surface_count() -> int:
+	var seen: Dictionary = {}
+	for face in faces:
+		if face != null:
+			seen[face.submesh_index] = true
+	return seen.size()
+
+## Every triangle of the mesh as a flat position list (3 per triangle), in
+## the RENDERED winding (the reversal to_array_mesh applies) — what picking
+## and collision consumers need without going through the render chunks.
+func get_triangle_soup() -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var n := positions.size()
+	for face in faces:
+		if face == null:
+			continue
+		var idx: PackedInt32Array = face.get_indexes()
+		for t in range(0, idx.size() - 2, 3):
+			if idx[t] < n and idx[t + 1] < n and idx[t + 2] < n:
+				out.append(positions[idx[t + 2]])
+				out.append(positions[idx[t + 1]])
+				out.append(positions[idx[t]])
+	return out
+
+## Gathers one compacted surface's vertex attributes: element i is the source
+## vertex map[i] (custom0 is the flattened RG pair, two floats per vertex).
+func _fill_compacted_arrays(arrays: Array, map: PackedInt32Array, normals: PackedVector3Array,
+		custom0: PackedFloat32Array, use_splat_uvs: bool, has_uv1: bool, has_uv2: bool,
+		has_colors: bool, has_tangents: bool) -> void:
+	var n := map.size()
+	var pos := PackedVector3Array()
+	pos.resize(n)
+	var nrm := PackedVector3Array()
+	nrm.resize(n)
+	for i in range(n):
+		pos[i] = positions[map[i]]
+		nrm[i] = normals[map[i]]
+	arrays[Mesh.ARRAY_VERTEX] = pos
+	arrays[Mesh.ARRAY_NORMAL] = nrm
+	if has_uv1:
+		var uv := PackedVector2Array()
+		uv.resize(n)
+		for i in range(n):
+			uv[i] = textures0[map[i]]
+		arrays[Mesh.ARRAY_TEX_UV] = uv
+	if has_uv2:
+		var uv2 := PackedVector2Array()
+		uv2.resize(n)
+		for i in range(n):
+			uv2[i] = textures1[map[i]]
+		arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	if use_splat_uvs:
+		var c0 := PackedFloat32Array()
+		c0.resize(n * 2)
+		for i in range(n):
+			c0[i * 2] = custom0[map[i] * 2]
+			c0[i * 2 + 1] = custom0[map[i] * 2 + 1]
+		arrays[Mesh.ARRAY_CUSTOM0] = c0
+	if has_colors:
+		var col := PackedColorArray()
+		col.resize(n)
+		for i in range(n):
+			col[i] = colors[map[i]]
+		arrays[Mesh.ARRAY_COLOR] = col
+	if has_tangents:
+		var tan := PackedFloat32Array()
+		tan.resize(n * 4)
+		for i in range(n):
+			for f in range(4):
+				tan[i * 4 + f] = tangents[map[i] * 4 + f]
+		arrays[Mesh.ARRAY_TANGENT] = tan
 
 
 ## Cached default material reference.

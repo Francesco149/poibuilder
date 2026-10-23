@@ -56,6 +56,13 @@ under the cursor (deferred; the engine is mid-selection-change).
   `tests/test_pb_winding.gd` — do not "fix" winding without reading it.
 - `PBMath.average(positions, indexes)` is the canonical centroid — use it
   instead of inline sum/div loops.
+- Building: `to_array_meshes()` makes one surface per material slot in use,
+  chunked at `MAX_SURFACES_PER_MESH` (256 — Godot drops surface 257+ with
+  only a logged error); `PBMesh` draws chunks 2+ through INTERNAL unowned
+  `MeshInstance3D` children (`get_render_meshes()`). From 4 surfaces on each
+  surface carries only its own vertices. Anything that needs the mesh's
+  GEOMETRY reads the data (`get_triangle_soup()`) or every render mesh —
+  never `node.mesh` alone, which is only the first chunk.
 - Mutating a mesh: modify → `invalidate_caches()` → `calculate_normals()` →
   `node.rebuild()` → `node.update_gizmos()` (or go through a mesh op +
   `_finish_mesh_op`, which does all of it).

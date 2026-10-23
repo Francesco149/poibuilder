@@ -139,10 +139,13 @@ func set_pb_mesh_data(value: PBMeshData) -> void:
 func rebuild() -> void:
 	if pb_mesh_data == null:
 		mesh = null
+		_sync_overflow_chunks([])
 		_needs_rebuild = false
 		_update_collider()
 		return
-	mesh = pb_mesh_data.to_array_mesh()
+	var chunks := pb_mesh_data.to_array_meshes()
+	mesh = chunks[0]
+	_sync_overflow_chunks(chunks)
 	_needs_rebuild = false
 	_update_collider()
 	mesh_rebuilt.emit()
@@ -154,9 +157,71 @@ func rebuild_positions() -> void:
 		mesh = null
 		_needs_rebuild = false
 		return
-	mesh = pb_mesh_data.to_array_mesh(null, true)
+	var chunks := pb_mesh_data.to_array_meshes(true)
+	mesh = chunks[0]
+	_sync_overflow_chunks(chunks)
 	_needs_rebuild = false
 	mesh_rebuilt.emit()
+
+# ==============================================================================
+# Overflow chunks (meshes past the engine's 256-surface limit)
+# ==============================================================================
+
+## Name prefix of the internal chunk children (never saved: no owner).
+const OVERFLOW_CHUNK_PREFIX := "_PBSurfaceChunk"
+
+## The surfaces past PBMeshData.MAX_SURFACES_PER_MESH, drawn by internal
+## MeshInstance3D children: an ArrayMesh refuses its 257th surface (only a
+## logged error), and every face on it used to vanish. The children are
+## internal and unowned — not in get_children(), never saved, no editor
+## gizmo — and inherit transform and visibility; the rendering properties
+## below are mirrored on every rebuild.
+var _overflow_chunks: Array[MeshInstance3D] = []
+
+## Every mesh this node renders: `mesh` plus the overflow chunks. Consumers
+## that read the RENDERED geometry (colliders from render meshes, audits)
+## must walk all of them.
+func get_render_meshes() -> Array[Mesh]:
+	var out: Array[Mesh] = []
+	if mesh != null:
+		out.append(mesh)
+	for chunk in _overflow_chunks:
+		if is_instance_valid(chunk) and chunk.mesh != null:
+			out.append(chunk.mesh)
+	return out
+
+func _sync_overflow_chunks(chunks: Array) -> void:
+	var needed: int = maxi(chunks.size() - 1, 0)
+	if needed == 0 and _overflow_chunks.is_empty():
+		return
+	while _overflow_chunks.size() > needed:
+		var gone: MeshInstance3D = _overflow_chunks.pop_back()
+		if is_instance_valid(gone):
+			remove_child(gone)
+			gone.queue_free()
+	while _overflow_chunks.size() < needed:
+		var chunk := MeshInstance3D.new()
+		chunk.name = "%s%d" % [OVERFLOW_CHUNK_PREFIX, _overflow_chunks.size() + 1]
+		add_child(chunk, false, Node.INTERNAL_MODE_BACK)
+		_overflow_chunks.append(chunk)
+	for i in range(needed):
+		var chunk := _overflow_chunks[i]
+		chunk.mesh = chunks[i + 1]
+		chunk.layers = layers
+		chunk.cast_shadow = cast_shadow
+		chunk.gi_mode = gi_mode
+		chunk.gi_lightmap_scale = gi_lightmap_scale
+		chunk.material_override = material_override
+		chunk.material_overlay = material_overlay
+		chunk.transparency = transparency
+		chunk.extra_cull_margin = extra_cull_margin
+		chunk.lod_bias = lod_bias
+		chunk.ignore_occlusion_culling = ignore_occlusion_culling
+		chunk.visibility_range_begin = visibility_range_begin
+		chunk.visibility_range_end = visibility_range_end
+		chunk.visibility_range_begin_margin = visibility_range_begin_margin
+		chunk.visibility_range_end_margin = visibility_range_end_margin
+		chunk.visibility_range_fade_mode = visibility_range_fade_mode
 
 const STAMP_CONTAINER_NAME := "PBStamps"
 
@@ -237,17 +302,24 @@ func _update_collider() -> void:
 
 	var shape: Shape3D = null
 	match collider_type:
-		ColliderType.ACCURATE:
-			shape = mesh.create_trimesh_shape()
 		ColliderType.RAMP:
 			if is_stairs():
 				shape = _build_stairs_ramp_shape()
 			else:
-				shape = mesh.create_trimesh_shape()
+				shape = _build_trimesh_shape()
 		_:
-			shape = mesh.create_trimesh_shape()
+			shape = _build_trimesh_shape()
 
 	col_shape.shape = shape
+
+## The geometry-accurate collider, from the DATA's triangles: `mesh` is only
+## the first render chunk of a mesh past 256 surfaces, and its
+## create_trimesh_shape() left every overflow face without collision. Same
+## triangles and winding as the render; no surface read-back.
+func _build_trimesh_shape() -> Shape3D:
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(pb_mesh_data.get_triangle_soup())
+	return shape
 
 func _get_or_create_body() -> StaticBody3D:
 	var body := get_node_or_null(NodePath(COLLIDER_BODY_NAME)) as StaticBody3D

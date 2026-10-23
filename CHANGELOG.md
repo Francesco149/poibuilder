@@ -95,6 +95,36 @@ Tests: new suite `test_pb_paint_topology.gd` (extrude/subdivide/inset/bevel
 paint, sharing vs privatising, sibling expansion, single-write stamps, detach
 materials, UV2 alignment).
 
+### Meshes past 256 materials stop losing faces; surfaces stop copying every vertex
+
+Every painted face is its own material, so its own surface — and two things
+broke as that grew (measured on a 40x40 m floor of 400 painted 2 m faces):
+
+- **Faces vanished past 256 surfaces.** Godot refuses an ArrayMesh's 257th
+  surface with only a logged error. The floor kept 256 surfaces: 144 faces
+  were simply not drawn (editor and shipped scene alike), and the last
+  surface was re-materialed by every refused one. The exporter had already
+  met this and chunks its OUTPUT (`SurfaceChunker`); the live mesh never did.
+  `PBMeshData.to_array_meshes()` now chunks at `MAX_SURFACES_PER_MESH` and
+  `PBMesh` draws the overflow through internal, unowned `MeshInstance3D`
+  children (never saved, not in `get_children()`, rendering properties
+  mirrored on rebuild; `get_render_meshes()` lists them all). The editor
+  collider, the gizmo's click-pick triangles and the collider export now come
+  from the data's triangles (`get_triangle_soup()`) or every chunk, the modern
+  GLB export chunks from the data (it re-chunked AFTER the cap had already
+  dropped surfaces), and a CSG operand past the cap is refused with a message
+  instead of returning a mesh with holes.
+- **Every surface carried the whole vertex arrays.** 400 surfaces x 1,600
+  vertices = 409,600 uploaded vertices for a 1,600-vertex mesh. From
+  `COMPACT_SURFACES_FROM` (4) surfaces on, each surface carries only the
+  vertices its faces index (the remap is cached with the index buffers, so the
+  drag fast path stays a gather).
+
+Same floor, before → after: surfaces drawn 256 → 400, uploaded vertices
+409,600 → 1,600, rebuild (with collider) 152 → 16.5 ms.
+
+Tests: new suite `test_pb_mesh_build_scaling.gd`. GUI harness failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

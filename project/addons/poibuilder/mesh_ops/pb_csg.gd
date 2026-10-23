@@ -33,6 +33,13 @@ static func perform_boolean(mesh_a: PBMeshData, mesh_b: PBMeshData, op: BooleanO
 	if not boundary_b.is_empty():
 		return {"success": false, "error": "Mesh B is non-manifold (has %d open boundary edges)" % boundary_b.size()}
 
+	# A CSG operand is ONE mesh, which holds at most 256 surfaces (one per
+	# material): past that the extra faces would silently drop out of the
+	# result. Refuse instead of returning a mesh with holes.
+	for operand in [["A", mesh_a], ["B", mesh_b]]:
+		if (operand[1] as PBMeshData).surface_count() > PBMeshData.MAX_SURFACES_PER_MESH:
+			return {"success": false, "error": "Mesh %s has more than %d materials (painted faces each count as one) — too many for a boolean" % [operand[0], PBMeshData.MAX_SURFACES_PER_MESH]}
+
 	var csg := CSGCombiner3D.new()
 
 	var csg_a := CSGMesh3D.new()

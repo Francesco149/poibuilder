@@ -408,7 +408,10 @@ func _redraw(gizmo) -> void:
 		var mesh_id: int = node.mesh.get_instance_id()
 		if int(node.get_meta("_pb_pick_mesh_id", -1)) != mesh_id:
 			node.set_meta("_pb_pick_mesh_id", mesh_id)
-			var pick_tmesh: TriangleMesh = node.mesh.generate_triangle_mesh()
+			# From the DATA, not node.mesh: a mesh past 256 surfaces renders
+			# through overflow chunks, and their faces must stay clickable.
+			var pick_tmesh := TriangleMesh.new()
+			pick_tmesh.create_from_faces(mesh_data.get_triangle_soup())
 			node.set_meta("_pb_pick_tmesh", pick_tmesh)
 			# Feeding a 943k-triangle sculpt into the gizmo's click picking on
 			# every redraw stalls the editor; cap it like the hover picker.
