@@ -153,3 +153,102 @@ func test_owned_material_copy_keeps_pixels_and_decal_window() -> void:
 			"and the decal window mapping")
 	assert_true(owned.get_shader_parameter("layer_%d_mask" % layer) is ImageTexture,
 			"a privatised material is live")
+
+# ── Compressed storage (PBMaskTexture) ──────────────────────────────────────
+
+const SAVE_DIR := "user://pb_storage_tests"
+
+func _save_and_reload(node: Node, file_name: String) -> Dictionary:
+	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+	var path := SAVE_DIR.path_join(file_name)
+	var packed := PackedScene.new()
+	assert_eq(packed.pack(node), OK, "fixture: the scene packs")
+	assert_eq(ResourceSaver.save(packed, path), OK, "fixture: the scene saves")
+	var text := FileAccess.get_file_as_string(path)
+	var loaded := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var inst := loaded.instantiate()
+	add_child_autofree(inst)
+	return {"text": text, "size": text.length(), "root": inst}
+
+func _painted_floor(segs: int) -> PBMesh:
+	var mesh := PBMesh.new()
+	mesh.name = "PaintedFloor"
+	add_child_autofree(mesh)
+	var data := PBShapeGenerators.create_plane(float(segs) * 2.0, float(segs) * 2.0, segs, segs)
+	mesh.pb_mesh_data = data
+	# A placeholder layer albedo: the only raw images in the file must be ones
+	# the test did not make (none).
+	var tex := PlaceholderTexture2D.new()
+	for face in data.faces:
+		var mat := PBSplat.ensure_face_owned_material(data, face)
+		PBSplat.ensure_face_splat_bounds(data, face)
+		var layer := PBSplat.ensure_layer_for_texture(mat, tex, PBSplat.live_mask_resolution_for(data, face).x)
+		PBSplat.paint_face_splat(data, face, mat, layer,
+				PBMath.average(data.positions, face.get_distinct_indexes()), 0.6, 0.5, 1.0)
+	PBSplat.sync_mesh_mask_textures(data)  # headless: textures from the CPU cache
+	mesh.rebuild()
+	return mesh
+
+func test_masks_save_compressed_and_reload_pixel_exact() -> void:
+	var mesh := _painted_floor(2)
+	var data := mesh.pb_mesh_data
+	var before: Array = []
+	for f in data.faces:
+		var m := data.get_face_material(f) as ShaderMaterial
+		assert_true(m.get_shader_parameter("layer_1_mask") is PBMaskTexture, "masks are PBMaskTextures")
+		before.append(hash(PBSplat.get_layer_mask_image(m, 1).get_data()))
+	var out := _save_and_reload(mesh, "masks_roundtrip.tscn")
+	assert_false((out["text"] as String).contains('type="Image"'), "no raw Image sub-resources in the file")
+	assert_true((out["text"] as String).contains("packed = {"), "the masks are stored packed")
+	var reloaded := (out["root"] as PBMesh).pb_mesh_data
+	for i in range(reloaded.faces.size()):
+		var m := reloaded.get_face_material(reloaded.faces[i]) as ShaderMaterial
+		assert_eq(hash(PBSplat.get_layer_mask_image(m, 1).get_data()), before[i], "face %d's mask survives the round trip" % i)
+
+## The budget that catches a storage regression: each painted face cost ~87 KB
+## of raw mask in a .tscn (86.6 MB for 400 faces with two layers). Packed, a
+## soft 0.6 m dab on a 2 m face is ~8 KB of mask; with the face's material
+## and geometry ~10.5 KB in all.
+func test_a_painted_floor_stays_inside_its_scene_budget() -> void:
+	var mesh := _painted_floor(10)
+	var out := _save_and_reload(mesh, "floor_budget.tscn")
+	var per_face_kb := float(out["size"]) / 1024.0 / 100.0
+	assert_lt(per_face_kb, 16.0, "%.1f KB per painted face (raw masks were ~87 KB)" % per_face_kb)
+
+func test_old_scenes_plain_masks_convert_before_a_save() -> void:
+	var f := _painted_cube(true)
+	var mat: ShaderMaterial = f["mat"]
+	var layer: int = f["layer"]
+	# What a v0.9.181-and-older scene loads as: plain ImageTextures.
+	var mask_hash := hash(PBSplat.get_layer_mask_image(mat, layer).get_data())
+	mat.set_shader_parameter("layer_%d_mask" % layer, ImageTexture.create_from_image(PBSplat.get_layer_mask_image(mat, layer)))
+	mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(PBSplat.get_decal_layer_image(mat)))
+	assert_eq(PBSplat.adopt_compressed_storage(mat), 2, "mask and decal convert")
+	assert_true(mat.get_shader_parameter("layer_%d_mask" % layer) is PBMaskTexture)
+	assert_true(mat.get_shader_parameter("stamp_layer_texture") is PBMaskTexture)
+	assert_eq(hash(PBSplat.get_layer_mask_image(mat, layer).get_data()), mask_hash, "same pixels")
+	assert_eq(PBSplat.adopt_compressed_storage(mat), 0, "already converted: nothing to do")
+
+func test_a_plain_image_texture_scene_still_loads_and_paints() -> void:
+	# The v0.9.167 release's format: masks are plain ImageTextures.
+	var f := _painted_cube()
+	var mesh: PBMesh = f["mesh"]
+	var mat: ShaderMaterial = f["mat"]
+	var layer: int = f["layer"]
+	mat.set_shader_parameter("layer_%d_mask" % layer, ImageTexture.create_from_image(PBSplat.get_layer_mask_image(mat, layer)))
+	var out := _save_and_reload(mesh, "release_format.tscn")
+	assert_true((out["text"] as String).contains('type="Image"'), "fixture: saved in the old raw form")
+	var data := (out["root"] as PBMesh).pb_mesh_data
+	var top := -1
+	for fi in range(data.faces.size()):
+		if PBSplat.is_splat_material(data.get_face_material(data.faces[fi])):
+			top = fi
+	var m2 := data.get_face_material(data.faces[top]) as ShaderMaterial
+	var before := PBSplat.get_layer_mask_image(m2, layer).get_data()
+	var painted := 0
+	for b in before:
+		if b > 0:
+			painted += 1
+	assert_gt(painted, 0, "the old-format paint is there after loading")
+	assert_true(PBSplat.paint_face_splat(data, data.faces[top], m2, layer, Vector3(-0.6, 1.0, -0.6), 0.3, 0.0, 1.0),
+			"and it paints")

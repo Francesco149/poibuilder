@@ -480,7 +480,7 @@ static func add_layer(mat: ShaderMaterial, texture: Texture2D, color: Color = Co
 	var mask_img := Image.create(mask_res, mask_res, false, Image.FORMAT_R8)
 	mask_img.fill(Color(0, 0, 0, 1))
 
-	var mask_tex := ImageTexture.create_from_image(mask_img)
+	var mask_tex := PBMaskTexture.from_image(mask_img)
 
 	mat.set_shader_parameter("layer_%d_enabled" % slot, true)
 	mat.set_shader_parameter("layer_%d_texture" % slot, texture)
@@ -573,7 +573,7 @@ static func get_layer_mask_image(mat: ShaderMaterial, layer_idx: int, target_res
 	var init_h := target_res.y if target_res.y > 0 else DEFAULT_MASK_RES
 	var new_img := Image.create(init_w, init_h, false, Image.FORMAT_R8)
 	new_img.fill(Color(0, 0, 0, 1))
-	var new_tex := ImageTexture.create_from_image(new_img)
+	var new_tex := PBMaskTexture.from_image(new_img)
 	mat.set_shader_parameter("layer_%d_mask" % layer_idx, new_tex)
 	_set_cached_image(mat, cache_key, new_img)
 	mask_state_version += 1
@@ -754,7 +754,7 @@ static func _realloc_decal_window(mat: ShaderMaterial, old_img: Image, old_uv: R
 		img.blit_rect(scaled, Rect2i(0, 0, scaled.get_width(), scaled.get_height()), dst)
 
 	mat.set_shader_parameter("stamp_layer_enabled", true)
-	mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(img))
+	mat.set_shader_parameter("stamp_layer_texture", PBMaskTexture.from_image(img))
 	mat.set_shader_parameter("stamp_layer_uv_offset", rect.position)
 	mat.set_shader_parameter("stamp_layer_uv_scale", Vector2(1.0 / span_uv.x, 1.0 / span_uv.y))
 	_set_cached_image(mat, "stamp", img)
@@ -3122,7 +3122,7 @@ static func clone_splat_material(source: ShaderMaterial, cold: bool = false) -> 
 				var cloned_img := Image.new()
 				cloned_img.copy_from(src_img)
 				if not cold:
-					clone.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(cloned_img))
+					clone.set_shader_parameter("layer_%d_mask" % i, PBMaskTexture.from_image(cloned_img))
 				_set_cached_image(clone, "layer_%d" % i, cloned_img)
 	# Clone the decal layer if it exists (window mapping included)
 	if source.get_shader_parameter("stamp_layer_enabled") == true:
@@ -3132,7 +3132,7 @@ static func clone_splat_material(source: ShaderMaterial, cold: bool = false) -> 
 			var cloned_stamp_img := Image.new()
 			cloned_stamp_img.copy_from(src_stamp_img)
 			if not cold:
-				clone.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(cloned_stamp_img))
+				clone.set_shader_parameter("stamp_layer_texture", PBMaskTexture.from_image(cloned_stamp_img))
 			_set_cached_image(clone, "stamp", cloned_stamp_img)
 		var clone_off = source.get_shader_parameter("stamp_layer_uv_offset")
 		var clone_scale = source.get_shader_parameter("stamp_layer_uv_scale")
@@ -3250,6 +3250,47 @@ static func _sample_image_clamp(img: Image, u: float, v: float) -> Color:
 	var y := clampi(int(floor(v * img.get_height())), 0, img.get_height() - 1)
 	return img.get_pixel(x, y)
 
+## Moves a material's masks and decal window onto PBMaskTexture (compressed
+## storage), keeping every pixel: scenes saved before v0.9.182 carry plain
+## ImageTextures, which save RAW. Pixels come from the CPU cache when the
+## material has been painted (fresher than a texture read-back), else from the
+## texture itself. Already-converted textures are left alone, so this is cheap
+## to run before every save. Returns how many textures were converted.
+static func adopt_compressed_storage(mat: ShaderMaterial) -> int:
+	if mat == null or not is_splat_material(mat):
+		return 0
+	var converted := 0
+	var slots: Array = []
+	for i in range(1, MAX_LAYERS + 1):
+		if mat.get_shader_parameter("layer_%d_enabled" % i) == true:
+			slots.append(["layer_%d_mask" % i, "layer_%d" % i])
+	if has_decal_layer(mat):
+		slots.append(["stamp_layer_texture", "stamp"])
+	for slot in slots:
+		var tex = mat.get_shader_parameter(slot[0])
+		if not (tex is ImageTexture) or tex is PBMaskTexture:
+			continue
+		var img := _get_cached_image(mat, slot[1])
+		if img == null:
+			img = _pending_uploads.get(tex)
+		if img == null:
+			img = (tex as ImageTexture).get_image()
+		if img == null or img.is_empty():
+			continue
+		mat.set_shader_parameter(slot[0], PBMaskTexture.from_image(img))
+		converted += 1
+	return converted
+
+## adopt_compressed_storage for every splat material of a mesh.
+static func adopt_mesh_compressed_storage(mesh_data: PBMeshData) -> int:
+	if mesh_data == null:
+		return 0
+	var converted := 0
+	for mat in mesh_data.materials:
+		if is_splat_material(mat):
+			converted += adopt_compressed_storage(mat as ShaderMaterial)
+	return converted
+
 ## Recreates the GPU mask/stamp textures from the CPU image cache.
 ## ImageTexture.update() does not survive a HEADLESS ResourceSaver round trip
 ## (get_image() returns the stale pre-update image there), so call this before
@@ -3264,8 +3305,8 @@ static func sync_mask_textures(mat: ShaderMaterial) -> void:
 			continue
 		var img := _get_cached_image(mat, "layer_%d" % i)
 		if img != null:
-			mat.set_shader_parameter("layer_%d_mask" % i, ImageTexture.create_from_image(img))
+			mat.set_shader_parameter("layer_%d_mask" % i, PBMaskTexture.from_image(img))
 	if has_decal_layer(mat):
 		var stamp_img := _get_cached_image(mat, "stamp")
 		if stamp_img != null:
-			mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(stamp_img))
+			mat.set_shader_parameter("stamp_layer_texture", PBMaskTexture.from_image(stamp_img))

@@ -141,6 +141,18 @@ keyed by material instance id and pruned of freed materials
 (`prune_image_cache`); do not add another static image store that is never
 pruned.
 
+## Invariant 2c — masks are PBMaskTextures (compressed storage, v0.9.182)
+
+Every mask (`layer_N_mask`) and decal window (`stamp_layer_texture`) PBSplat
+creates is a `PBMaskTexture` (`core/pb_mask_texture.gd`): an ImageTexture at
+runtime, saved as zstd (`packed`) instead of raw bytes. A new creation site
+must use `PBMaskTexture.from_image`, or that mask saves raw again (the storage
+suite's per-face scene budget catches it). Old scenes' plain ImageTextures are
+converted by `adopt_compressed_storage` in the plugin's `_apply_changes`
+(pre-save). Readers keep treating masks as `ImageTexture`/`Texture2D`. The
+script path `res://addons/poibuilder/core/pb_mask_texture.gd` is now part of
+the scene-compatibility contract (saved scenes reference it).
+
 ## Invariant 3 — a decal's upright frame is WORLD-referenced, so the write needs the node transform
 
 `PBSplat.get_stamp_basis()` answers a WORLD question: which way is "up" as the

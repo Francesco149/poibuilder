@@ -1515,6 +1515,13 @@ func _restore_scrolling_base_offsets() -> void:
 ## diff. Restore it; the next frame animates again.
 func _apply_changes() -> void:
 	_restore_scrolling_base_offsets()
+	# Paint saves compressed: masks/decals still on plain ImageTextures (a
+	# scene from before v0.9.182) move to PBMaskTexture, which stores zstd
+	# instead of raw bytes. Converted ones are skipped, so this is cheap.
+	var scene_root := get_editor_interface().get_edited_scene_root()
+	if scene_root != null:
+		for pb in PBPicking.collect_pbmeshes(scene_root):
+			PBSplat.adopt_mesh_compressed_storage(pb.pb_mesh_data)
 
 func _register_scrolling_mat(mat: StandardMaterial3D) -> void:
 	if not _animated_materials.has(mat):

@@ -125,7 +125,7 @@ static func _build_material(record: Dictionary, base_dir: String) -> ShaderMater
 			continue
 		# The mask travels as an image; keep it in the CPU cache so painting,
 		# undo snapshots and the bakers see it exactly like a live mask.
-		mat.set_shader_parameter("layer_%d_mask" % slot, ImageTexture.create_from_image(mask_img))
+		mat.set_shader_parameter("layer_%d_mask" % slot, PBMaskTexture.from_image(mask_img))
 		PBSplat._set_cached_image(mat, "layer_%d" % slot, mask_img)
 	var decal_path := _sidecar_path(base_dir, String(record.get("decal", "")))
 	var decal_img := _load_sidecar_image(decal_path)
@@ -133,7 +133,7 @@ static func _build_material(record: Dictionary, base_dir: String) -> ShaderMater
 		if decal_img.get_format() != Image.FORMAT_RGBA8:
 			decal_img.convert(Image.FORMAT_RGBA8)
 		mat.set_shader_parameter("stamp_layer_enabled", true)
-		mat.set_shader_parameter("stamp_layer_texture", ImageTexture.create_from_image(decal_img))
+		mat.set_shader_parameter("stamp_layer_texture", PBMaskTexture.from_image(decal_img))
 		PBSplat._set_cached_image(mat, "stamp", decal_img)
 		# Window rect (older records have none: the decal covered the face).
 		var rect = record.get("decal_rect", null)

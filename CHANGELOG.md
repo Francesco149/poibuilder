@@ -196,6 +196,38 @@ frames — read it mid-animation. Now:
 Tests: `test_pb_scrolling_scan.gd`; GUI case SCROLL-SAVE. GUI harness
 failures=0.
 
+### Paint saves compressed: the demo map 48 MB → 9.3 MB
+
+Splat masks and decal windows were plain ImageTextures, which a scene stores
+as RAW bytes (base64 in a .tscn): the demo map's one 3136x2304 decal window
+made it 48 MB and 9.5 s to parse, and a 40x40 m floor of 400 painted faces
+saved 86.6 MB. They are `PBMaskTexture`s now — an ImageTexture at runtime
+(painting is unchanged) whose saved form is zstd-compressed bytes (`packed`)
+instead of the engine's raw `image` property.
+
+| | raw (before) | packed |
+|---|---|---|
+| demo map .tscn | 48 MB, 9.5 s to parse | 9.3 MB, 1.8 s (the rest is embedded facade textures) |
+| painted 2 m face (mask + material + geometry) | ~87 KB | ~10.5 KB |
+| demo courtyard decal window | 27.6 MB | 736 KB, encoded in ~25 ms |
+
+zstd over WebP-lossless (`PortableCompressedTexture2D`) on purpose: WebP packs
+~2x tighter but encoded ~60x slower — 1.4 s added to the save after any decal
+edit, 13 ms per touched mask.
+
+**Compatibility.** Scenes from earlier versions (the v0.9.167 release's plain
+ImageTexture masks) load and paint exactly as before; the editor's pre-save
+hook (`PBSplat.adopt_compressed_storage`) moves their masks to the packed form,
+so an old map shrinks on its first save. Headless builders get it through
+`sync_mesh_mask_textures`. The reverse does not hold: a scene SAVED by this
+version needs v0.9.182+ (an older build has no `PBMaskTexture` script and
+loads those masks blank).
+
+Tests: storage suite (round trip pixel-exact, a per-face scene budget, old
+format converts before a save, an old-format scene loads and paints); GUI
+case MASK-SAVE (on the real renderer, the GPU read-back a save performs
+matches the painted pixels exactly). GUI harness failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

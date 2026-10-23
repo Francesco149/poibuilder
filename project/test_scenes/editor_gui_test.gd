@@ -2691,6 +2691,54 @@ func _run() -> void:
 	plugin.animate_scrolling_textures = sc_was_on
 	await _frames(4)
 
+	# ── MASK-SAVE: painted masks save compressed and read back exact ────────
+	# Masks are PBMaskTextures that store zstd instead of raw bytes; a save
+	# reads the pixels back through get_image(), which on the real renderer
+	# is the GPU texture that update() wrote — headless cannot see that path.
+	var ms_mesh := PBMesh.new()
+	ms_mesh.name = "GuiTestMaskSave"
+	ms_mesh.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 0.2, 2))
+	root.add_child(ms_mesh)
+	ms_mesh.owner = root
+	var ms_data := ms_mesh.pb_mesh_data
+	var ms_top := -1
+	for fi in range(ms_data.faces.size()):
+		if PBMath.normal_from_positions(ms_data.positions, ms_data.faces[fi].get_indexes()).y > 0.99:
+			ms_top = fi
+	var ms_face := ms_data.faces[ms_top]
+	var ms_mat := PBSplat.ensure_face_owned_material(ms_data, ms_face)
+	var ms_layer := PBSplat.ensure_layer_for_texture(ms_mat, PlaceholderTexture2D.new(),
+			PBSplat.live_mask_resolution_for(ms_data, ms_face).x)
+	ms_mesh.rebuild()
+	await _frames(4)
+	var ms_ctx := {}
+	for k in range(6):
+		PBSplat.paint_face_splat(ms_data, ms_face, ms_mat, ms_layer, Vector3(-0.6 + 0.2 * k, 0.1, 0.1), 0.35, 0.5, 1.0, false, ms_ctx)
+		await _frames(1)  # each dab's upload flushes on a drawn frame
+	await _frames(4)
+	plugin._apply_changes()
+	var ms_cpu_hash := hash(PBSplat.get_layer_mask_image(ms_mat, ms_layer).get_data())
+	var ms_scene := PackedScene.new()
+	var ms_path := "user://pb_gui_mask_save.tscn"
+	if ms_scene.pack(ms_mesh) == OK and ResourceSaver.save(ms_scene, ms_path) == OK:
+		var ms_text := FileAccess.get_file_as_string(ms_path)
+		var ms_loaded := (ResourceLoader.load(ms_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate() as PBMesh
+		var ms_lmat := ms_loaded.pb_mesh_data.get_face_material(ms_loaded.pb_mesh_data.faces[ms_top]) as ShaderMaterial
+		var ms_img := (ms_lmat.get_shader_parameter("layer_%d_mask" % ms_layer) as Texture2D).get_image()
+		if ms_text.contains("packed = {") and not ms_text.contains('type="Image"'):
+			_pass("MASK-SAVE: the mask is saved packed, no raw image (%d bytes)" % ms_text.length())
+		else:
+			_fail("MASK-SAVE: the saved scene still carries a raw image")
+		if ms_img != null and hash(ms_img.get_data()) == ms_cpu_hash:
+			_pass("MASK-SAVE: the reloaded mask matches the painted pixels exactly")
+		else:
+			_fail("MASK-SAVE: the reloaded mask differs from what was painted")
+		ms_loaded.free()
+	else:
+		_fail("MASK-SAVE: fixture — the mesh did not pack/save")
+	ms_mesh.queue_free()
+	await _frames(4)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.
