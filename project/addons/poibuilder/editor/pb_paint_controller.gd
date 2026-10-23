@@ -173,6 +173,9 @@ var blocked_reason: String = ""
 var is_stroke_active: bool = false
 var stroke_dirty: bool = false
 var stroke_snapshot_before: PBMeshData = null
+## Faces whose splat material this stroke already made private (see
+## _ensure_face_splat_material).
+var _stroke_owned_faces: Dictionary = {}
 var _stroke_meshes: Dictionary = {} # PBMesh -> {"before": PBMeshData, "dirty": bool}
 # semantics for paint, once-per-pixel for erase). Fresh per stroke.
 var _stroke_ctx: Dictionary = {}
@@ -535,6 +538,7 @@ func begin_stroke() -> void:
 	is_stroke_active = true
 	stroke_dirty = false
 	_stroke_meshes.clear()
+	_stroke_owned_faces.clear()
 	_register_stroke_mesh(target_mesh)
 	stroke_snapshot_before = _stroke_meshes[target_mesh]["before"] if _stroke_meshes.has(target_mesh) else null
 	_stroke_ctx = {}
@@ -797,6 +801,7 @@ func end_stroke() -> void:
 			}
 
 	_stroke_meshes.clear()
+	_stroke_owned_faces.clear()
 
 	if not to_commit.is_empty():
 		_commit_multi_mesh_action("Paint Texture Splat", to_commit)
@@ -911,7 +916,19 @@ func get_stamp_image() -> Image:
 func _ensure_face_splat_material(mesh: PBMesh, face: PBFace) -> ShaderMaterial:
 	var current_mat := mesh.pb_mesh_data.get_face_material(face)
 	if PBSplat.is_splat_material(current_mat):
-		return current_mat as ShaderMaterial
+		# A splat material SHARED with other faces becomes this face's own
+		# before the brush writes into it — otherwise the stroke paints every
+		# face wearing it (the decal path always privatised; the splat brush
+		# did not). The sharing scan is O(faces), so it runs once per face
+		# per stroke.
+		if _stroke_owned_faces.has(face):
+			return current_mat as ShaderMaterial
+		_stroke_owned_faces[face] = true
+		var owned := PBSplat.ensure_face_owned_material(mesh.pb_mesh_data, face)
+		if owned != current_mat:
+			mesh.rebuild()
+			mesh.update_gizmos()
+		return owned
 
 	# Convert to splat material
 	var splat_mat := PBSplat.create_splat_material(current_mat)

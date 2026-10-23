@@ -1070,15 +1070,20 @@ func _begin_drag(node: PBMesh, ids: PackedInt32Array, shift: bool) -> void:
 
 	# Topology-creating gestures undo via whole-mesh snapshots — capture the
 	# pre-op state before mutating.
+	var paint_sources: Dictionary = {}
 	if _drag_gesture == DragGesture.EXTRUDE_MOVE \
 			or _drag_gesture == DragGesture.INSET_SCALE:
 		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
+		paint_sources = PBSplat.capture_paint_sources(mesh_data)
 
 	match _drag_gesture:
 		DragGesture.EXTRUDE_MOVE:
 			_begin_extrude_move(mesh_data, ids)
 		DragGesture.INSET_SCALE:
 			_begin_inset(mesh_data, ids)
+	# The gesture created its faces just now: settle their paint before the
+	# first preview frame (an extruded side must not show the cap's paint).
+	PBSplat.settle_derived_faces(mesh_data, paint_sources)
 
 	if not _drag_union_override.is_empty():
 		_drag_union = _drag_union_override
@@ -2103,7 +2108,9 @@ func begin_center_drag(node: PBMesh, ids: PackedInt32Array, inset: bool,
 	if inset:
 		_drag_gesture = DragGesture.CENTER_INSET
 		_drag_before_op = PBCommand.copy_mesh_data(mesh_data)
+		var paint_sources := PBSplat.capture_paint_sources(mesh_data)
 		_begin_inset(mesh_data, ids)
+		PBSplat.settle_derived_faces(mesh_data, paint_sources)
 		if _drag_gesture != DragGesture.CENTER_INSET:
 			# Faces were not inset-able — degrade to uniform scale.
 			_drag_before_op = null

@@ -2062,6 +2062,7 @@ func _on_operation_requested(op_name: String) -> void:
 				result = PBMeshOps.bevel_edges(mesh_data, edge_ids, eff_amount, op_bevel_segments)
 
 			if result.get("ok", false):
+				cmd.settle_paint()
 				if tool_overlay != null:
 					_start_bevel_modal(mesh, is_face_bevel, faces_to_bevel, edges_to_bevel, float(result.get("max_amount", shortest_l)), eff_amount, result.get("new_face_ids", PackedInt32Array()), pre_snapshot)
 					return
@@ -4541,6 +4542,7 @@ func _update_bevel_preview() -> void:
 		return
 	var mesh_data := _bevel_session_node.pb_mesh_data
 	PBCommand.restore_mesh_data(mesh_data, _bevel_session_snapshot)
+	var paint_sources := PBSplat.capture_paint_sources(mesh_data)
 	var result: Dictionary
 	if _bevel_session_is_face_bevel:
 		result = PBMeshOps.bevel_faces(mesh_data, _bevel_session_faces, op_bevel_amount, op_bevel_segments)
@@ -4551,6 +4553,8 @@ func _update_bevel_preview() -> void:
 		result = PBMeshOps.bevel_edges(mesh_data, edge_ids, op_bevel_amount, op_bevel_segments)
 	if result.get("ok", false):
 		_bevel_session_last_new_faces = result.get("new_face_ids", PackedInt32Array())
+	# The preview IS the committed state (the commit snapshots it as-is).
+	PBSplat.settle_derived_faces(mesh_data, paint_sources)
 	_bevel_session_node.rebuild()
 	_bevel_session_node.update_gizmos()
 

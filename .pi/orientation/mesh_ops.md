@@ -40,6 +40,20 @@ length.
   rebuild_welds()` BEFORE snapshotting, or the next grab's union carries the
   unmoved bases ("moving the extruded face moves the whole part").
 
+## Paint and per-vertex author data through ops (v0.9.182)
+
+- Faces an op creates inherit their source's MATERIAL; if that is a splat
+  material, `PBSplat.settle_derived_faces` decides whether the paint continues
+  (parallel plane → source rect) or drops (base material). `CmdMeshOp` runs it
+  before the redo snapshot; gesture and modal paths call it themselves
+  (`capture_paint_sources` BEFORE the op, settle AFTER). Bypass CmdMeshOp and
+  you must do the same.
+- Every per-vertex channel the author owns (`textures0`, `textures1` = UV2,
+  `colors`, `tangents`) must ride through `_dup_position_at`, `_append_copy`
+  and `_compact`. A channel left one size off is dropped for the WHOLE mesh at
+  build time. A new channel needs all three.
+- Ops that move faces into a new PBMeshData (detach) carry the materials.
+
 ## Winding invariants (regressions here shipped 8+ times)
 
 - Internal data CCW-from-outside; outward normals; `to_array_mesh()`

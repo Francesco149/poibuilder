@@ -106,7 +106,7 @@ func test_preview_texture_reads_a_cold_snapshot() -> void:
 	var snap_mat := snap.get_face_material(snap.faces[(f["data"] as PBMeshData).faces.find(f["face"])])
 	var live_prev := PBSplat.build_preview_texture(f["mat"], 32).get_image()
 	var snap_prev := PBSplat.build_preview_texture(snap_mat, 32).get_image()
-	assert_eq(snap_prev.get_data(), live_prev.get_data(),
+	assert_eq(hash(snap_prev.get_data()), hash(live_prev.get_data()),
 			"the UV-editor composite is the same for a live material and its cold snapshot")
 
 # ── The CPU image cache forgets dead materials ──────────────────────────────

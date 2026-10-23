@@ -30,11 +30,32 @@ func _init(p_mesh: PBMeshData = null, p_name: String = "Mesh Operation",
 	command_name = p_name
 	if target_mesh != null:
 		before = PBCommand.copy_mesh_data(target_mesh)
+		_paint_sources = PBSplat.capture_paint_sources(target_mesh)
+
+## Pre-op paint bookkeeping (empty for a mesh without paint): the faces the op
+## creates inherit or drop their source face's paint in capture_after.
+var _paint_sources: Dictionary = {}
 
 ## Call AFTER mutating target_mesh to capture the redo state.
 func capture_after() -> void:
 	if target_mesh != null:
+		# Before the snapshot, so redo restores the settled state.
+		settle_paint()
+		_release_paint_sources()
 		after = PBCommand.copy_mesh_data(target_mesh)
+
+## Settles the paint of the faces the op created (PBSplat.settle_derived_faces).
+## capture_after does this; call it directly when the op's result is shown
+## before the command is captured (the bevel modal's first preview).
+func settle_paint() -> void:
+	if target_mesh != null:
+		PBSplat.settle_derived_faces(target_mesh, _paint_sources)
+
+## Called by capture_after once the op is settled: the sources hold the
+## pre-op faces and LIVE splat materials, and a command lives as long as its
+## undo step — keeping them would pin those materials' GPU textures there.
+func _release_paint_sources() -> void:
+	_paint_sources = {}
 
 func _apply_snapshot(snapshot: PBMeshData) -> void:
 	if target_mesh == null or snapshot == null:

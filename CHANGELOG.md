@@ -61,6 +61,40 @@ twenty strokes with the history cleared **285.8 MB** was still resident.
 
 Tests: new suite `test_pb_paint_storage.gd`.
 
+### Painted faces survive topology ops; detach keeps materials; ops keep UV2
+
+- **Ops spread paint onto faces that never had it.** Every op copies a face's
+  material onto the faces it creates, but a fresh PBFace has no
+  `splat_bounds`, so each new face mapped the source's WHOLE mask onto its
+  own rect: extrude a painted floor and every side showed the floor's paint
+  squeezed onto it. `PBSplat.settle_derived_faces` (run by `CmdMeshOp` before
+  its redo snapshot, by the extrude/inset gestures at drag begin and by the
+  bevel preview) settles them: a new face on a plane PARALLEL to its source
+  (split half, inset ring, extruded cap) inherits the source's mask rect, so
+  the paint continues; any other new face gets the unpainted base material
+  (an existing one of the mesh when it matches — no new material per op).
+- **One material, one mapping.** Faces may share a splat material only
+  through the same rect on parallel planes — what a split leaves. They keep
+  sharing (each shows its part of the one mask, strokes cross the seam
+  seamlessly, subdividing a painted floor no longer multiplies materials and
+  draw calls); a face mapping it differently gets a private copy before
+  anything writes into it. The splat BRUSH never privatised (only decals
+  did), so brushing a face that shared its material repainted the others.
+  A paint-time bounds expansion now moves every same-mapping sibling to the
+  grown rect, and a stamp across split pieces writes their shared window once.
+- **Detach dropped every material.** The detached mesh started with an empty
+  material list, so its faces fell back to the default material (textures
+  and paint gone). It now carries the materials its faces wore (splat ones
+  copied, so the two meshes never share a paint layer).
+- **Ops dropped the author's UV2.** No op maintained `textures1`, so the
+  first extrude left it one size off and the build dropped the lightmap
+  unwrap for the whole mesh. `_dup_position_at`, `_append_copy` and the
+  compaction now carry it like UV1.
+
+Tests: new suite `test_pb_paint_topology.gd` (extrude/subdivide/inset/bevel
+paint, sharing vs privatising, sibling expansion, single-write stamps, detach
+materials, UV2 alignment).
+
 ## v0.9.181 — the stamp lands where the preview shows it on a rotated mesh
 
 ### Fixed: stamps/decal dabs were rotated by the node's own yaw

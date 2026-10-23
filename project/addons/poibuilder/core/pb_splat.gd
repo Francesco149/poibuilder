@@ -948,6 +948,17 @@ static func _expand_splat_bounds_if_needed(
 			and absf(new_min_v - old_min_v) < 0.0001 and absf(new_max_v - old_max_v) < 0.0001:
 		return get_face_planar_bounds(mesh_data, face)
 
+	# Faces sharing this material through the SAME (old) rect must move to the
+	# grown rect with it: the masks below are re-anchored for everyone wearing
+	# the material, and a sibling left on the old rect would see its paint
+	# shift (see ensure_face_owned_material for why siblings exist).
+	var old_bounds := get_face_planar_bounds(mesh_data, face)
+	var siblings: Array[PBFace] = []
+	for f in mesh_data.faces:
+		if f != null and f != face and mesh_data.get_face_material(f) == splat_mat \
+				and _same_mapping(old_bounds, get_face_planar_bounds(mesh_data, f)):
+			siblings.append(f)
+
 	# Bounds grew — reposition existing mask images so old paint stays put.
 	var old_range_u := maxf(old_max_u - old_min_u, 0.0001)
 	var old_range_v := maxf(old_max_v - old_min_v, 0.0001)
@@ -1022,10 +1033,13 @@ static func _expand_splat_bounds_if_needed(
 			splat_mat.set_shader_parameter("stamp_layer_uv_offset", new_off)
 			splat_mat.set_shader_parameter("stamp_layer_uv_scale", new_sc)
 
-	# Persist the expanded bounds.
-	face.splat_bounds = PackedFloat32Array([new_min_u, new_max_u, new_min_v, new_max_v])
-	# Refresh the splat UVs for this face so the shader maps the mask
-	# through the new bounds.  Only this face's vertices are touched;
+	# Persist the expanded bounds (on every face sharing the mapping).
+	var grown := PackedFloat32Array([new_min_u, new_max_u, new_min_v, new_max_v])
+	face.splat_bounds = grown
+	for sib in siblings:
+		sib.splat_bounds = grown.duplicate()
+	# Refresh the splat UVs for those faces so the shader maps the mask
+	# through the new bounds.  Only their vertices are touched;
 	# ensure_mesh_splat_uv would redo every face.
 	var final_bounds := get_face_planar_bounds(mesh_data, face)
 	if not final_bounds.is_empty():
@@ -1038,12 +1052,15 @@ static func _expand_splat_bounds_if_needed(
 		var vc := mesh_data.positions.size()
 		if mesh_data.splat_uvs.size() != vc:
 			mesh_data.splat_uvs.resize(vc)
-		for idx in face.get_distinct_indexes():
-			if idx >= 0 and idx < vc:
-				var p: Vector3 = mesh_data.positions[idx]
-				mesh_data.splat_uvs[idx] = Vector2(
-						(u_ax.dot(p) - fb_min_u) / fb_range_u,
-						(v_ax.dot(p) - fb_min_v) / fb_range_v)
+		var refreshed: Array[PBFace] = [face]
+		refreshed.append_array(siblings)
+		for f in refreshed:
+			for idx in f.get_distinct_indexes():
+				if idx >= 0 and idx < vc:
+					var p: Vector3 = mesh_data.positions[idx]
+					mesh_data.splat_uvs[idx] = Vector2(
+							(u_ax.dot(p) - fb_min_u) / fb_range_u,
+							(v_ax.dot(p) - fb_min_v) / fb_range_v)
 	# Signal the paint controller to rebuild the mesh so the shader
 	# picks up the new CUSTOM0 splat UVs.
 	bounds_expanded_mesh = mesh_data
@@ -2016,6 +2033,10 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 	# AABB.intersects() treats touching edges as a miss.
 	stamp_box = stamp_box.grow(0.0005)
 
+	# Faces sharing one material share one mapping (ensure_face_owned_material),
+	# so the window is written ONCE per material — a second write would paste
+	# the stamp twice over the same pixels.
+	var seen_mats: Dictionary = {}
 	for face in mesh_data.faces:
 		if face == null:
 			continue
@@ -2048,8 +2069,9 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		if not paint_block_reason(mesh_data.get_face_material(face)).is_empty():
 			continue
 		var mat := ensure_face_owned_material(mesh_data, face)
-		if mat == null:
+		if mat == null or seen_mats.has(mat):
 			continue
+		seen_mats[mat] = true
 		ensure_face_splat_bounds(mesh_data, face)
 		var bounds := get_face_planar_bounds(mesh_data, face)
 		if bounds.is_empty():
@@ -2749,14 +2771,21 @@ static func ensure_face_splat_bounds(mesh_data: PBMeshData, face: PBFace) -> voi
 	])
 
 ## Returns the face's splat material, first giving the face a PRIVATE copy of
-## it when other faces use the same instance. Masks (and the decal layer) are
-## per-material images mapped through each face's own planar rect, so a shared
-## material would make one face's paint appear on every other face using it.
+## it when another face wears the same instance through a DIFFERENT mapping.
+## Masks (and the decal layer) are per-material images mapped through each
+## face's planar rect, so a material shared across different rects would make
+## one face's paint appear, displaced, on every other face using it.
+##
+## Faces that share one mapping — the same persisted rect on parallel planes,
+## which is what a split of a painted face leaves (settle_derived_faces) — keep
+## sharing: each shows its own part of the one mask, a stroke crosses the seam
+## between them seamlessly, and subdividing a painted floor does not multiply
+## its materials (or its draw calls).
 static func ensure_face_owned_material(mesh_data: PBMeshData, face: PBFace) -> ShaderMaterial:
 	if mesh_data == null or face == null:
 		return null
 	var current := mesh_data.get_face_material(face)
-	if is_splat_material(current) and not _is_material_shared(mesh_data, face, current):
+	if is_splat_material(current) and not _material_shared_with_other_mapping(mesh_data, face, current):
 		return current as ShaderMaterial
 
 	# A shared splat material is privatised as a full copy (layers, masks,
@@ -2772,11 +2801,135 @@ static func ensure_face_owned_material(mesh_data: PBMeshData, face: PBFace) -> S
 	mesh_data.set_face_material(face, shell)
 	return shell
 
-static func _is_material_shared(mesh_data: PBMeshData, face: PBFace, mat: Material) -> bool:
+static func _material_shared_with_other_mapping(mesh_data: PBMeshData, face: PBFace, mat: Material) -> bool:
+	var mine := get_face_planar_bounds(mesh_data, face)
 	for f in mesh_data.faces:
 		if f != null and f != face and mesh_data.get_face_material(f) == mat:
-			return true
+			if not _same_mapping(mine, get_face_planar_bounds(mesh_data, f)):
+				return true
 	return false
+
+## Two planar-bounds dicts describe the same mask mapping: parallel planes and
+## the same rect.
+static func _same_mapping(a: Dictionary, b: Dictionary) -> bool:
+	if a.is_empty() or b.is_empty():
+		return false
+	if (a["normal"] as Vector3).dot(b["normal"] as Vector3) < 0.999:
+		return false
+	return absf(float(a["min_u"]) - float(b["min_u"])) < 0.0001 \
+			and absf(float(a["max_u"]) - float(b["max_u"])) < 0.0001 \
+			and absf(float(a["min_v"]) - float(b["min_v"])) < 0.0001 \
+			and absf(float(a["max_v"]) - float(b["max_v"])) < 0.0001
+
+# ==============================================================================
+# Painted faces through topology ops
+# ==============================================================================
+
+## What a topology op needs to know, BEFORE it runs, to settle the paint of the
+## faces it is about to create (see settle_derived_faces): the face objects that
+## exist now, and for every splat material the plane orientation + mask rect of
+## the face(s) wearing it. Returns {} for a mesh without paint (the common case
+## pays one scan of the material list).
+static func capture_paint_sources(mesh_data: PBMeshData) -> Dictionary:
+	if mesh_data == null:
+		return {}
+	var any_splat := false
+	for m in mesh_data.materials:
+		if is_splat_material(m):
+			any_splat = true
+			break
+	if not any_splat:
+		return {}
+	var existing: Dictionary = {}
+	var by_mat: Dictionary = {}
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		existing[face] = true
+		var mat := mesh_data.get_face_material(face)
+		if not is_splat_material(mat):
+			continue
+		# The rect the face's paint maps through right now: its persisted
+		# bounds, or (a face painted before bounds were persisted) its live
+		# geometry — which is exactly what it renders with today.
+		var bounds := get_face_planar_bounds(mesh_data, face)
+		if bounds.is_empty():
+			continue
+		if not by_mat.has(mat):
+			by_mat[mat] = []
+		by_mat[mat].append({
+			"normal": bounds["normal"],
+			"bounds": PackedFloat32Array([bounds["min_u"], bounds["max_u"], bounds["min_v"], bounds["max_v"]]),
+		})
+	return {"faces": existing, "by_mat": by_mat}
+
+## Settles the paint of faces a topology op created (call after the op, before
+## its undo "after" snapshot). Ops copy the source face's MATERIAL onto the
+## faces they make, but a fresh PBFace has no splat_bounds, so every new face
+## mapped the source's WHOLE mask onto its own rect: extrude a painted floor
+## and each side face showed the floor's paint squeezed onto it — and brushing
+## a side repainted the floor through the shared material.
+##
+## A new face on a plane PARALLEL to a face wearing the same splat material
+## (a split half, an inset ring, an extruded cap) takes that face's mask rect:
+## the paint continues across it exactly where it was. Any other new face (an
+## extrude side, a bevel band) gets the unpainted base material instead.
+## Returns the number of faces settled.
+static func settle_derived_faces(mesh_data: PBMeshData, sources: Dictionary) -> int:
+	if mesh_data == null or sources.is_empty():
+		return 0
+	var existing: Dictionary = sources.get("faces", {})
+	var by_mat: Dictionary = sources.get("by_mat", {})
+	var settled := 0
+	var unpainted: Dictionary = {}  # splat material -> Array[PBFace]
+	for face in mesh_data.faces:
+		if face == null or existing.has(face) or face.splat_bounds.size() == 4:
+			continue
+		var mat := mesh_data.get_face_material(face)
+		if not is_splat_material(mat):
+			continue
+		var normal := PBMath.normal_from_positions(mesh_data.positions, face.get_indexes())
+		var inherited := false
+		for src in by_mat.get(mat, []):
+			if (src["normal"] as Vector3).dot(normal) > 0.999:
+				face.splat_bounds = (src["bounds"] as PackedFloat32Array).duplicate()
+				inherited = true
+				break
+		if not inherited:
+			if not unpainted.has(mat):
+				unpainted[mat] = []
+			unpainted[mat].append(face)
+		settled += 1
+	for mat in unpainted:
+		mesh_data.set_faces_material(unpainted[mat], unpainted_material_for(mesh_data, mat as ShaderMaterial))
+	if settled > 0:
+		mesh_data.invalidate_caches()
+	return settled
+
+## The non-splat material a splat material was painted over: an existing
+## StandardMaterial3D of the mesh (or the default material) with the same
+## albedo texture and colour, else a new one carrying the splat's base look.
+static func unpainted_material_for(mesh_data: PBMeshData, splat_mat: ShaderMaterial) -> Material:
+	var base_tex = splat_mat.get_shader_parameter("base_texture") if splat_mat != null else null
+	var base_col_v = splat_mat.get_shader_parameter("base_color") if splat_mat != null else null
+	var base_col: Color = base_col_v if base_col_v is Color else Color.WHITE
+	var rough_v = splat_mat.get_shader_parameter("roughness") if splat_mat != null else null
+	var candidates: Array = []
+	if mesh_data != null:
+		candidates.append_array(mesh_data.materials)
+	candidates.append(PBMeshData.get_default_material())
+	for m in candidates:
+		if m is StandardMaterial3D and (m as StandardMaterial3D).albedo_texture == base_tex \
+				and (m as StandardMaterial3D).albedo_color.is_equal_approx(base_col):
+			return m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = base_tex
+	mat.albedo_color = base_col
+	mat.roughness = float(rough_v) if rough_v != null else 0.8
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	if splat_mat != null and splat_mat.resource_name.begins_with("Splat_"):
+		mat.resource_name = splat_mat.resource_name.trim_prefix("Splat_")
+	return mat
 # ==============================================================================
 # Legacy decal nodes (migration into the decal layer)
 # ==============================================================================

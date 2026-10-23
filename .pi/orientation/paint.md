@@ -114,6 +114,21 @@ a shared material goes through it too) and it must carry the window mapping
 with the decal pixels — a clone that drops it renders the content stretched
 over the whole face.
 
+## Invariant 2a — faces sharing a splat material share ONE mapping (v0.9.182)
+
+Several faces may wear one splat material only when they map it through the
+same `splat_bounds` rect on parallel planes (what splitting a painted face
+leaves). `ensure_face_owned_material` keeps such sharing and privatises a face
+that maps the material differently; the splat brush calls it once per face per
+stroke. Consequences you must keep:
+- a bounds expansion moves EVERY same-mapping sibling to the grown rect
+  (`_expand_splat_bounds_if_needed` collects them before re-anchoring);
+- decal writes go once per material (`_decal_targets` dedupes) — the window is
+  shared;
+- topology ops settle the faces they create through
+  `capture_paint_sources` / `settle_derived_faces` (CmdMeshOp does it in
+  `capture_after`; a new op path that bypasses CmdMeshOp must call them).
+
 ## Invariant 2b — undo snapshots are COLD (v0.9.182)
 
 `PBCommand.copy_mesh_data` clones splat materials with `cold = true`: the

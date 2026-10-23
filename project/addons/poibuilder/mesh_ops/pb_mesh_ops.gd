@@ -375,6 +375,12 @@ static func detach_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> D
 		return _fail("Detach faces: invalid selection")
 
 	var detached := PBMeshData.new()
+	# The faces take their materials along: the detached mesh used to start
+	# with an EMPTY material list, so every slot fell back to the default
+	# material — detaching a textured or painted face lost its look. Splat
+	# materials are copied (live: the new node renders them now) so the two
+	# meshes never share one paint layer.
+	var slot_of: Dictionary = {}  # source Material -> slot in detached.materials
 	for fi in face_ids:
 		var face := mesh_data.faces[fi]
 		var local := {}
@@ -385,6 +391,12 @@ static func detach_faces(mesh_data: PBMeshData, face_ids: PackedInt32Array) -> D
 		for idx in face.get_indexes():
 			remapped.append(local[idx])
 		copy.set_indexes(remapped)
+		var mat := mesh_data.get_face_material(face)
+		if not slot_of.has(mat):
+			slot_of[mat] = detached.materials.size()
+			detached.materials.append(PBSplat.clone_splat_material(mat as ShaderMaterial)
+					if PBSplat.is_splat_material(mat) else mat)
+		copy.submesh_index = int(slot_of[mat])
 		detached.faces.append(copy)
 
 	var removed := {}
@@ -2212,6 +2224,8 @@ static func _append_copy(target: PBMeshData, src: PBMeshData, src_idx: int) -> i
 	target.positions.append(src.positions[src_idx])
 	if src.textures0.size() == src.positions.size() and target.textures0.size() == vc:
 		target.textures0.append(src.textures0[src_idx])
+	if src.textures1.size() == src.positions.size() and target.textures1.size() == vc:
+		target.textures1.append(src.textures1[src_idx])
 	if src.colors.size() == src.positions.size() and target.colors.size() == vc:
 		target.colors.append(src.colors[src_idx])
 	if src.tangents.size() == src.positions.size() * 4 and target.tangents.size() == vc * 4:
@@ -2230,6 +2244,12 @@ static func _dup_position_at(mesh_data: PBMeshData, at: Vector3, src: int) -> in
 	mesh_data.positions.append(at)
 	if mesh_data.textures0.size() == vc:
 		mesh_data.textures0.append(mesh_data.textures0[src])
+	# UV2 (the author's lightmap unwrap) rides along like UV1: an op that
+	# grew positions without it left textures1 one size off, and the build
+	# then dropped UV2 for the WHOLE mesh (or, after a compaction that
+	# happened to even the sizes out, scrambled it).
+	if mesh_data.textures1.size() == vc:
+		mesh_data.textures1.append(mesh_data.textures1[src])
 	if mesh_data.colors.size() == vc:
 		mesh_data.colors.append(mesh_data.colors[src])
 	if mesh_data.tangents.size() == vc * 4:
@@ -2320,6 +2340,8 @@ static func _compact(mesh_data: PBMeshData) -> Dictionary:
 	mesh_data.positions = new_positions
 	if mesh_data.textures0.size() == old_count:
 		mesh_data.textures0 = _remap_packed_vector2(mesh_data.textures0, remap)
+	if mesh_data.textures1.size() == old_count:
+		mesh_data.textures1 = _remap_packed_vector2(mesh_data.textures1, remap)
 	if mesh_data.colors.size() == old_count:
 		mesh_data.colors = _remap_packed_color(mesh_data.colors, remap)
 	if mesh_data.tangents.size() == old_count * 4:
