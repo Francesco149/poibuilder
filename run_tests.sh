@@ -14,6 +14,11 @@
 #   3. FAILS if any SCRIPT ERROR appears in the output, even when GUT is green.
 #   4. FAILS if the number of discovered test suites differs from the number
 #      of test_*.gd files on disk (silent-skip guard).
+#   5. FAILS if the run's memory high-water mark (reported by the post-run
+#      hook tests/hooks/pb_post_run.gd) passes 75 % of the guard's memory
+#      cap, or if paint uploads were left queued — a suite creeping toward
+#      the cap is reported as such, instead of OOM-dying later in whichever
+#      test tips it over.
 #
 # Usage:
 #   ./run_tests.sh                  # the full suite — the only accepted way
@@ -84,7 +89,7 @@ cleanup_container() {
 }
 trap cleanup_container EXIT
 
-echo "== [1/4] Refreshing imports/class cache (editor boot smoke test) =="
+echo "== [1/5] Refreshing imports/class cache (editor boot smoke test) =="
 if ! run_guarded "$PROJECT_DIR" timeout 180 godot-mono --headless --editor --quit-after 100 > /tmp/pb_import.log 2>&1; then
   echo "WARN: editor run exited nonzero (may be benign headless teardown)"
 fi
@@ -94,11 +99,12 @@ if grep -q "SCRIPT ERROR" /tmp/pb_import.log; then
   FAIL=1
 fi
 
-echo "== [2/4] Running GUT suite (hard timeout ${PB_TEST_TIMEOUT}s) =="
+echo "== [2/5] Running GUT suite (hard timeout ${PB_TEST_TIMEOUT}s) =="
 LOG=/tmp/pb_gut.log
 GUT_RC=0
 GODOT_DISABLE_LEAK_CHECKS=1 run_guarded "$PROJECT_DIR" timeout "$PB_TEST_TIMEOUT" godot-mono --headless -s addons/gut/gut_cmdln.gd \
-    -gdir=res://tests -ginclude_subdirs -gexit "$@" > "$LOG" 2>&1 || GUT_RC=$?
+    -gdir=res://tests -ginclude_subdirs -gexit \
+    -gpost_run_script=res://tests/hooks/pb_post_run.gd "$@" > "$LOG" 2>&1 || GUT_RC=$?
 if [ "$GUT_RC" -ne 0 ]; then
   FAIL=1
   if [ "$GUT_RC" -eq 124 ]; then
@@ -112,7 +118,10 @@ if [ "$GUT_RC" -ne 0 ]; then
     # grep a 20k-line log.
     {
       echo "-- failing tests --"
-      strip_ansi "$LOG" | awk '/^res:\/\/tests\//{suite=$0} /^\* /{name=$0} /\[Failed\]/{key=suite" "name; if (!(key in seen)) {seen[key]=1; print suite"  "name}}' | head -25
+      # GUT names a test "* test_x" while running and "- test_x" in its
+      # closing summary; read both (normalized) or the summary's suite line
+      # pairs with a stale running-section name and lists a test that passed.
+      strip_ansi "$LOG" | awk '/^res:\/\/tests\//{suite=$0} /^[*-] test/{name=substr($0, 3)} /\[Failed\]/{key=suite" "name; if (!(key in seen)) {seen[key]=1; print suite"  * "name}}' | head -25
     } >&2
   else
     # No summary line at all: the process died before GUT could report — a
@@ -130,14 +139,14 @@ if [ "$GUT_RC" -ne 0 ]; then
   fi
 fi
 
-echo "== [3/4] Checking for script errors inside the test run =="
+echo "== [3/5] Checking for script errors inside the test run =="
 if grep -q "SCRIPT ERROR" "$LOG"; then
   echo "FAIL: script errors during test run (GUT may have silently skipped a script):" >&2
   grep -A4 "SCRIPT ERROR" "$LOG" | head -30 >&2
   FAIL=1
 fi
 
-echo "== [4/4] Verifying every test script was discovered =="
+echo "== [4/5] Verifying every test script was discovered =="
 # grep -c prints 0 AND exits 1 on a zero-match file, so `|| echo 0` fired
 # too and produced "0\n0" — the guard disabled itself exactly when results.xml
 # held no suites (the case it exists for). grep's own zero IS the count.
@@ -150,6 +159,32 @@ if [ "$#" -gt 0 ]; then
 elif [ "$TESTFILES" -ne "$SUITECOUNT" ]; then
   echo "FAIL: script count mismatch — a test script was skipped (parse error or class resolution failure)" >&2
   FAIL=1
+fi
+
+echo "== [5/5] Checking memory headroom =="
+# The guard's cap in MB (same parsing as tools/godot_guard.sh: <n>G or <n>M).
+CAP_SPEC="${GUARD_MEM:-2G}"
+CAP_NUM="${CAP_SPEC//[!0-9]/}"
+case "$CAP_SPEC" in
+  *M|*m) CAP_MB=$CAP_NUM ;;
+  *) CAP_MB=$(( CAP_NUM * 1024 )) ;;
+esac
+BUDGET_MB=$(( CAP_MB * 3 / 4 ))
+PEAK_MB=$(grep -o 'PB_MEMORY_PEAK_MB=[0-9]*' "$LOG" | tail -1 | cut -d= -f2)
+PENDING=$(grep -o 'PB_SPLAT_PENDING_UPLOADS=[0-9]*' "$LOG" | tail -1 | cut -d= -f2)
+if [ -z "$PEAK_MB" ]; then
+  echo "   (no memory report — the post-run hook did not run; see the failures above)"
+else
+  echo "   static memory peak: ${PEAK_MB} MB   budget: ${BUDGET_MB} MB (75 % of the ${CAP_MB} MB guard cap)"
+  if [ "$PEAK_MB" -gt "$BUDGET_MB" ]; then
+    echo "FAIL: the run's memory high-water mark is over budget — something retains memory across tests." >&2
+    echo "      Find it with per-suite probes (see .pi/orientation/testing.md, 'Memory headroom')." >&2
+    FAIL=1
+  fi
+  if [ -n "$PENDING" ] && [ "$PENDING" -ne 0 ]; then
+    echo "FAIL: ${PENDING} paint texture uploads were left queued at the end of a headless run (nothing ever flushes them)." >&2
+    FAIL=1
+  fi
 fi
 
 echo "== Summary =="

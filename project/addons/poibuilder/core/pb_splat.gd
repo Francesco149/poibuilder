@@ -183,9 +183,17 @@ static var mask_state_version: int = 0
 
 static var _pending_uploads: Dictionary = {}
 static var _frame_flush_connected := false
+static var _headless: bool = DisplayServer.get_name() == "headless"
 
 static func _queue_texture_upload(tex: ImageTexture, img: Image) -> void:
 	if tex == null or img == null:
+		return
+	# The headless display server never draws, so frame_pre_draw never fires:
+	# a queued upload there was never flushed and the queue kept every painted
+	# texture and image alive for the life of the process (builders, bake
+	# scripts, the test suite). Nothing renders headless — update in place.
+	if _headless:
+		tex.update(img)
 		return
 	_pending_uploads[tex] = img
 	if PBPaintProfile.hooks():
@@ -250,8 +258,12 @@ static func _set_cached_image(mat: ShaderMaterial, key: String, img: Image) -> v
 ## New materials registered in the image cache since the last sweep.
 static var _cache_inserts_since_prune := 0
 ## Every this many new materials, the cache drops the images of materials
-## that no longer exist.
-const CACHE_PRUNE_INTERVAL := 64
+## that no longer exist (the paint controller also prunes at every stroke
+## start, which is when the previous stroke's dropped snapshots die). A sweep
+## is an id-validity check per entry — far cheaper than the decal windows a
+## lagging prune keeps alive (58 dead snapshots of one 60 m decal stroke test
+## held 773 MB at the old interval of 64).
+const CACHE_PRUNE_INTERVAL := 16
 
 ## Drops the cached CPU images of materials that have been freed. The cache is
 ## keyed by instance id and nothing else ever removed an entry, so every undo

@@ -539,6 +539,9 @@ func begin_stroke() -> void:
 	stroke_dirty = false
 	_stroke_meshes.clear()
 	_stroke_owned_faces.clear()
+	# The previous strokes' dropped undo snapshots are dead by now; drop their
+	# cached pixels before this stroke makes new ones.
+	PBSplat.prune_image_cache()
 	_register_stroke_mesh(target_mesh)
 	stroke_snapshot_before = _stroke_meshes[target_mesh]["before"] if _stroke_meshes.has(target_mesh) else null
 	_stroke_ctx = {}

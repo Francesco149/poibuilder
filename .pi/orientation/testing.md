@@ -2,6 +2,8 @@
 
 ## The gates (`run_tests.sh`, the only accepted runner)
 
+(Gate 5, memory headroom, is described in its own section below.)
+
 1. Editor boot under `--headless --editor` refreshes the class cache (new
    `class_name` scripts are only registered by a filesystem scan) and fails
    on any SCRIPT ERROR — this also boots the plugin, so registration errors
@@ -72,6 +74,30 @@ appears" bug).
 - Rendered probes are how visual claims get evidence: `project/test_scenes/`
   keeps the durable ones (`decal_probe.gd`, `emitter_probe.gd`), each printing
   the numbers behind what it drew.
+
+## Memory headroom (gate 5, v0.9.182)
+
+The suite runs under the guard's memory cap (2 GB default). An OOM kill
+truncates the log and names whichever test tipped it over — in v0.9.182 that
+was a 60 m decal test, dying for memory two UNRELATED suites had retained. So
+the runner now fails EARLY: the post-run hook (`tests/hooks/pb_post_run.gd`)
+reports `OS.get_static_memory_peak_usage()` and the runner fails a run whose
+peak passes 75 % of the cap (and one that left paint uploads queued — nothing
+flushes them headless). The suite peaked at ~0.7 GB after the round's fixes.
+
+When the gate trips, find the retainer with per-suite probes: a throwaway
+`tests/test_<suite>_zmem.gd` after each suite printing
+`OS.get_static_memory_usage()` (they sort right after their suite), one run,
+diff the numbers, then `after_each` prints inside the worst suite. Delete the
+probes before committing. Known retainers:
+- **GUT keeps every value assertion's arguments.** `assert_eq` on two 64 KB
+  image buffers retained ~143 MB. Compare buffers with `hash()` or
+  `assert_true(a == b)`; `test_pb_test_hygiene.gd` enforces this.
+- **Static caches keyed by objects** keep those objects alive for the whole
+  run (and the whole editor session). Key by instance id and prune, like
+  `PBSplat.prune_image_cache`.
+- **Anything flushed on `frame_pre_draw`** never flushes headless — the
+  display server never draws.
 
 ## Writing tests
 

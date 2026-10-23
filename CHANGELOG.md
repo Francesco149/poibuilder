@@ -95,6 +95,35 @@ Tests: new suite `test_pb_paint_topology.gd` (extrude/subdivide/inset/bevel
 paint, sharing vs privatising, sibling expansion, single-write stamps, detach
 materials, UV2 alignment).
 
+### The test suite stops dying of memory, and says so before it would
+
+Adding this round's suites made the full run die with **status 137 (OOM)**
+under the guard's 2 GB cap — in `test_decal_stroke_fades_out_inside_the_window`,
+which was not the cause. Per-suite memory probes found three retainers:
+
+- **GUT keeps every value assertion's arguments.** `assert_eq` on two 64 KB
+  mask buffers retained ~143 MB (two such asserts in the new suites). They
+  compare `hash()`es now, and the new `test_pb_test_hygiene.gd` fails any
+  `assert_eq/ne/_deep/same` handed a raw `.get_data()` buffer.
+- **Dead undo snapshots outlived their prune.** The 60 m decal test's 58
+  dropped snapshots held 773 MB because the cache only swept every 64 new
+  entries. The paint controller now prunes at every stroke start (when the
+  previous strokes' snapshots have died) and the interval is 16.
+- **Uploads queued for a frame that never comes.** `frame_pre_draw` never
+  fires on the headless display server, so `_pending_uploads` held every
+  painted texture and image for the life of the process (builders, bake
+  scripts, the suite). Headless runs update in place.
+
+Peak static memory of the full suite: OOM (>2 GB) → **679 MB**.
+
+New gate 5 in `run_tests.sh`: a GUT post-run hook
+(`tests/hooks/pb_post_run.gd`) reports the run's static-memory high-water mark
+and the splat caches, and the runner FAILS a run whose peak passes 75 % of the
+guard's cap or that left uploads queued — creep is reported as creep, not as an
+OOM in whichever test tips it over. The runner's failing-test list also stopped
+naming a passing test (it paired GUT's closing summary with a stale test name).
+`testing.md` has the probe recipe ("Memory headroom").
+
 ## v0.9.181 — the stamp lands where the preview shows it on a rotated mesh
 
 ### Fixed: stamps/decal dabs were rotated by the node's own yaw

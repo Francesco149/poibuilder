@@ -2035,6 +2035,11 @@ func test_stroke_interpolation_accessors() -> void:
 ## the painted pixels, a flush must drain it, and a cold image cache must
 ## prefer the queued image over the texture's stale pixels.
 func test_dab_uploads_coalesce_per_frame() -> void:
+	# The queue is the EDITOR's path (a display that draws frames); headless
+	# runs upload inline (see test_headless_uploads_never_queue). Exercise the
+	# queue as the editor runs it.
+	var was_headless := PBSplat._headless
+	PBSplat._headless = false
 	var data := PBShapeGenerators.create_plane(4.0, 4.0, 1, 1)
 	PBUv.refresh_mesh_uvs(data, true)
 	var mesh := PBMesh.new()
@@ -2082,3 +2087,17 @@ func test_dab_uploads_coalesce_per_frame() -> void:
 	assert_eq(cold, PBSplat._pending_uploads[tex] if PBSplat._pending_uploads.has(tex) else cold,
 		"A cold read during a pending upload returns the queued image")
 	PBSplat._flush_pending_uploads()
+	PBSplat._headless = was_headless
+
+## REGRESSION (v0.9.182): frame_pre_draw never fires on the headless display
+## server, so queued uploads were never flushed — the queue held every painted
+## texture and its image for the life of the process (44 MB by mid-suite).
+func test_headless_uploads_never_queue() -> void:
+	if DisplayServer.get_name() != "headless":
+		pass_test("only meaningful on the headless display server")
+		return
+	var mat := PBSplat.create_splat_material()
+	var layer := PBSplat.add_layer(mat, null, Color.WHITE, 0.8, 32)
+	var tex := mat.get_shader_parameter("layer_%d_mask" % layer) as ImageTexture
+	PBSplat._queue_texture_upload(tex, PBSplat.get_layer_mask_image(mat, layer))
+	assert_false(PBSplat._pending_uploads.has(tex), "headless: updated in place, nothing retained")
