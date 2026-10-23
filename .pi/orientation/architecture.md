@@ -82,6 +82,12 @@ under the cursor (deferred; the engine is mid-selection-change).
 - Draw materials: wireframe/hover/selection opacities are user settings
   (`poibuilder/display/*`); strokes/fills scale with camera distance
   (`_live_stroke_offset/_live_fill_offset`) so overlays read at any zoom.
+  They re-derive only on a redraw: the plugin's `_refresh_camera_scaled_gizmos`
+  redraws the nodes that draw such overlays (selection, creation/n-gon/Trim
+  Walls previews and hosts) when the camera moves. PBMesh has NO `_process`
+  (it used to run one per mesh per frame, shipped games included) — a new
+  camera-scaled overlay on another node must be added to
+  `_camera_scaled_gizmo_nodes`.
 
 ## State (`editor/pb_editor.gd` — state only, no algorithms)
 

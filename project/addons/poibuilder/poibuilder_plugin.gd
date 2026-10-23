@@ -1334,6 +1334,7 @@ func _process(delta: float) -> void:
 			for m in to_erase:
 				_animated_materials.erase(m)
 
+	_refresh_camera_scaled_gizmos()
 	if grid_view == null:
 		return
 	var wants := show_grid_should_draw() and grid.show_grid
@@ -1362,6 +1363,62 @@ func _process(delta: float) -> void:
 	grid_view.set_creation_cursor(
 		gizmo_plugin.creation_hover_point if gizmo_plugin != null else Vector3.ZERO,
 		armed and not host_drew)
+## Editor camera position at each node's last camera-driven gizmo refresh.
+var _gizmo_cam_pos: Dictionary = {}  # instance id -> Vector3
+
+## Gizmo strokes and face fills are sized by camera distance (the gizmo
+## plugin's _live_stroke_offset/_live_fill_offset) and only re-derive on a
+## redraw, so the nodes that DRAW such overlays are redrawn while the camera
+## moves relative to them. Every PBMesh used to do this from its own
+## _process — a script call per mesh per frame, in the editor and in shipped
+## games, for meshes that draw nothing camera-scaled at all.
+func _refresh_camera_scaled_gizmos() -> void:
+	var cam: Camera3D = null
+	for i in range(2):
+		var vp3: Viewport = get_editor_interface().get_editor_viewport_3d(i)
+		if vp3 != null:
+			cam = vp3.get_camera_3d()
+			if cam != null:
+				break
+	if cam == null:
+		return
+	var pos := cam.global_position
+	for node in _camera_scaled_gizmo_nodes():
+		var id := node.get_instance_id()
+		var last: Variant = _gizmo_cam_pos.get(id)
+		if last == null or pos.distance_to(last) > maxf(0.02, pos.distance_to(node.global_position) * 0.008):
+			_gizmo_cam_pos[id] = pos
+			node.update_gizmos()
+	if _gizmo_cam_pos.size() > 64:
+		for dead in _gizmo_cam_pos.keys().filter(func(k): return not is_instance_id_valid(k)):
+			_gizmo_cam_pos.erase(dead)
+
+## The PBMeshes currently drawing camera-scaled overlays: the selection
+## (element highlights), the creation preview and hover host, the n-gon
+## preview, and the Trim Walls preview / hover / chosen walls.
+func _camera_scaled_gizmo_nodes() -> Array[PBMesh]:
+	var out: Array[PBMesh] = []
+	var sel := get_editor_interface().get_selection()
+	if sel != null:
+		for n in sel.get_selected_nodes():
+			if n is PBMesh:
+				out.append(n as PBMesh)
+	var extra: Array = []
+	if gizmo_plugin != null:
+		extra.append(gizmo_plugin.creation_hover_node)
+		extra.append(gizmo_plugin.trim_walls_hover_node)
+		for w in gizmo_plugin.trim_walls_chosen:
+			extra.append(w.get("mesh"))
+	if shape_creator != null:
+		extra.append(shape_creator.preview_node)
+	if ngon_drawer != null:
+		extra.append(ngon_drawer.preview_node)
+	extra.append(_trim_walls_preview)
+	for n in extra:
+		if n is PBMesh and is_instance_valid(n) and n.is_inside_tree() and not out.has(n):
+			out.append(n as PBMesh)
+	return out
+
 ## The grid renders while any PoiBuilder context is active (a PBMesh is
 ## selected — object mode included — or shape creation is armed, or drawing
 ## on an elevated/custom grid, or grid settings panel is open).

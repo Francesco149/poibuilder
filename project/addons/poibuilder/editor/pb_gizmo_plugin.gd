@@ -136,6 +136,10 @@ var _creation_fill_material: StandardMaterial3D
 ## Live overlay sizes, recomputed at the top of _redraw from the camera
 ## distance (see STROKE_SCREEN_SCALE). Helpers read these instead of the
 ## constants so every stroke/fill normalizes with zoom.
+## Redraw count per PBMesh instance id (diagnostics; the GUI harness checks
+## that a camera move redraws the overlay-drawing nodes and nothing else).
+var redraws_by_node: Dictionary = {}
+
 var _live_stroke_offset: float = THICK_LINE_OFFSET
 var _live_fill_offset: float = 0.004
 
@@ -368,6 +372,7 @@ func _redraw(gizmo) -> void:
 	var node := gizmo.get_node_3d() as PBMesh
 	if node == null:
 		return
+	redraws_by_node[node.get_instance_id()] = int(redraws_by_node.get(node.get_instance_id(), 0)) + 1
 	# Overlay sizing: strokes and fills scale with CAMERA DISTANCE so they
 	# read identically at any zoom — a fixed world-space stroke towers over
 	# the mesh up close, and a fixed fill offset floats visibly off it.

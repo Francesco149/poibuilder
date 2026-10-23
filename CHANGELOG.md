@@ -160,6 +160,20 @@ of meshes triangle-tested: < 3 of 500), a hygiene rule that fails any new
 hand-written scene pick loop, and a GUI harness case PAINT-OCCLUSION (a box in
 front of the selected wall gets the paint). GUI harness failures=0.
 
+### PBMesh stops running a script every frame
+
+Every PBMesh had a `_process` that asked the editor for its camera each frame
+and redrew its gizmo when the camera moved — a script call per mesh per frame
+in the editor, AND in shipped games (it returned early there, after the
+call). Only a few nodes draw camera-scaled overlays (the selection, creation
+previews and hover hosts, Trim Walls highlights), so the plugin's `_process`
+now refreshes exactly those (`_refresh_camera_scaled_gizmos`) and PBMesh has
+no `_process` at all.
+
+GUI harness case CAMERA-REFRESH: zooming the editor camera redraws the
+selected mesh (19 redraws over a 2.74 m move) and never an unselected one, and
+no PBMesh is processing. GUI harness failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

@@ -2589,6 +2589,67 @@ func _run() -> void:
 	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
 	await _frames(6)
 
+	# ── CAMERA-REFRESH: only overlay-drawing nodes follow the camera ────────
+	# Overlay strokes/fills scale with camera distance and re-derive on a
+	# redraw. Every PBMesh used to redraw itself from its own _process (a
+	# script call per mesh per frame, shipped games included); the plugin now
+	# refreshes only the nodes that draw scaled overlays — the selection here.
+	var cr_cam: Camera3D = vp.get_camera_3d()
+	var cr_xf := cr_cam.global_transform
+	var cr_aim := Vector2(float(vp.size.x) * 0.5, minf(140.0, float(vp.size.y) * 0.2))
+	var cr_sel := PBMesh.new()
+	cr_sel.name = "GuiTestCamSelected"
+	cr_sel.pb_mesh_data = PBShapeGenerators.create_box(Vector3.ONE)
+	root.add_child(cr_sel)
+	cr_sel.owner = root
+	cr_sel.global_transform = Transform3D(cr_xf.basis, cr_cam.project_position(cr_aim, 4.0))
+	var cr_other := PBMesh.new()
+	cr_other.name = "GuiTestCamOther"
+	cr_other.pb_mesh_data = PBShapeGenerators.create_box(Vector3.ONE)
+	root.add_child(cr_other)
+	cr_other.owner = root
+	cr_other.global_transform = Transform3D(cr_xf.basis, cr_cam.project_position(cr_aim + Vector2(160, 0), 4.0))
+	await _frames(6)
+	sel.clear()
+	sel.add_node(cr_sel)
+	await _frames(12)
+	var cr_gp = plugin.gizmo_plugin
+	var cr_sel_before := int(cr_gp.redraws_by_node.get(cr_sel.get_instance_id(), 0))
+	var cr_other_before := int(cr_gp.redraws_by_node.get(cr_other.get_instance_id(), 0))
+	var cr_cam_before := cr_cam.global_position
+	var cr_wheel_pt := _window_pos(vp, host, cr_cam.project_position(cr_aim, 4.0))
+	for i in range(6):
+		var w := InputEventMouseButton.new()
+		w.button_index = MOUSE_BUTTON_WHEEL_DOWN
+		w.pressed = true
+		w.factor = 1.0
+		w.position = cr_wheel_pt
+		w.global_position = cr_wheel_pt
+		Input.parse_input_event(w)
+		await _frames(3)
+	await _frames(10)
+	var cr_moved := cr_cam.global_position.distance_to(cr_cam_before)
+	var cr_sel_after := int(cr_gp.redraws_by_node.get(cr_sel.get_instance_id(), 0))
+	var cr_other_after := int(cr_gp.redraws_by_node.get(cr_other.get_instance_id(), 0))
+	if cr_moved < 0.01:
+		_fail("CAMERA-REFRESH: fixture — the wheel did not move the editor camera")
+	elif cr_sel_after > cr_sel_before:
+		_pass("CAMERA-REFRESH: the selected mesh's overlay follows the camera (%d redraws over a %.2f m move)" % [cr_sel_after - cr_sel_before, cr_moved])
+	else:
+		_fail("CAMERA-REFRESH: the selected mesh was not redrawn while the camera moved %.2f m" % cr_moved)
+	if cr_moved >= 0.01 and cr_other_after == cr_other_before:
+		_pass("CAMERA-REFRESH: an unselected mesh is not redrawn by camera moves")
+	elif cr_moved >= 0.01:
+		_fail("CAMERA-REFRESH: the unselected mesh was redrawn %d times by the camera move" % (cr_other_after - cr_other_before))
+	if not cr_other.is_processing():
+		_pass("CAMERA-REFRESH: PBMesh nodes do not run _process")
+	else:
+		_fail("CAMERA-REFRESH: a PBMesh is processing every frame")
+	sel.clear()
+	cr_sel.queue_free()
+	cr_other.queue_free()
+	await _frames(6)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.
