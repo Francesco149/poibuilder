@@ -251,6 +251,24 @@ The fixture (`tests/fixtures/release_v0_9_167/`, 26 KB) is committed on
 purpose: it cannot be regenerated from the current tree — that would compare
 the code with itself. Its README says how to make one for a newer release.
 
+### Optimize Paint: shrink old oversized masks, on request
+
+The live-mask policy (density-clamped to 128..256 px) only applies to masks
+created under it: a mask never shrinks on its own, so maps painted on the
+v0.9.167 release keep masks of up to 2048x2048 (it sized them at 256
+texels/m) — and per-dab cost is the mask's pixel footprint (a 10 cm sweep on
+an 8 m face: 30 ms at 2048, 0.7 ms at 256). A new **Optimize Paint** button
+in the Material dock's paint section (`PBSplat.optimize_mesh_paint`) shrinks
+the selected meshes' oversized splat masks to their live size (Lanczos), the
+mapping unchanged, as one undoable action, and reports the saving. It is a
+command, not a load-time migration, because detail finer than the new texel
+does not survive (the export bake upsamples from what is left). Decal
+windows are left alone.
+
+Tests: storage suite (shrinks to the live size, paint stays put, undo
+restores, idempotent); GUI case OPTIMIZE-PAINT (2048 → 256, "4.0 MB → 0.1 MB",
+Ctrl+Z restores). GUI harness failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

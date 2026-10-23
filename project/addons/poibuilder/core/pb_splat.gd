@@ -3250,6 +3250,48 @@ static func _sample_image_clamp(img: Image, u: float, v: float) -> Color:
 	var y := clampi(int(floor(v * img.get_height())), 0, img.get_height() - 1)
 	return img.get_pixel(x, y)
 
+## Shrinks every splat mask of `mesh_data` that is larger than its face's
+## LIVE size (live_mask_resolution_for) down to it — the opt-in counterpart
+## of the rule that masks only ever grow. Scenes painted under older policies
+## carry masks up to 2048x2048 (the v0.9.167 release sized them at 256
+## texels/m), and per-dab cost is the mask's pixel footprint: a 10 cm sweep on
+## an 8 m face costs 30 ms at 2048 and 0.7 ms at 256. The mapping is
+## unchanged (a mask covers the same rect at any size); fine detail finer than
+## the new texel does not survive, which is why this is a command, not a
+## load-time migration. Decal windows are left alone (they have their own
+## density budget). Returns {masks, bytes_before, bytes_after}.
+static func optimize_mesh_paint(mesh_data: PBMeshData) -> Dictionary:
+	var out := {"masks": 0, "bytes_before": 0, "bytes_after": 0}
+	if mesh_data == null:
+		return out
+	var done: Dictionary = {}
+	for face in mesh_data.faces:
+		if face == null:
+			continue
+		var mat := mesh_data.get_face_material(face)
+		if not is_splat_material(mat) or done.has(mat):
+			continue
+		done[mat] = true
+		var sm := mat as ShaderMaterial
+		var target := live_mask_resolution_for(mesh_data, face)
+		for i in range(1, MAX_LAYERS + 1):
+			if sm.get_shader_parameter("layer_%d_enabled" % i) != true:
+				continue
+			var img := get_layer_mask_image(sm, i)
+			if img == null or (img.get_width() <= target.x and img.get_height() <= target.y):
+				continue
+			out["bytes_before"] += img.get_data_size()
+			var small := Image.new()
+			small.copy_from(img)
+			small.resize(mini(img.get_width(), target.x), mini(img.get_height(), target.y), Image.INTERPOLATE_LANCZOS)
+			_set_cached_image(sm, "layer_%d" % i, small)
+			sm.set_shader_parameter("layer_%d_mask" % i, PBMaskTexture.from_image(small))
+			out["bytes_after"] += small.get_data_size()
+			out["masks"] += 1
+	if out["masks"] > 0:
+		mask_state_version += 1
+	return out
+
 ## Moves a material's masks and decal window onto PBMaskTexture (compressed
 ## storage), keeping every pixel: scenes saved before v0.9.182 carry plain
 ## ImageTextures, which save RAW. Pixels come from the CPU cache when the

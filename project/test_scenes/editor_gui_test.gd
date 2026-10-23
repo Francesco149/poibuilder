@@ -2747,6 +2747,46 @@ func _run() -> void:
 	ms_mesh.queue_free()
 	await _frames(4)
 
+	# ── OPTIMIZE-PAINT: the dock shrinks oversized masks, undo restores ─────
+	var op_mesh := PBMesh.new()
+	op_mesh.name = "GuiTestOptimize"
+	op_mesh.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 0.2, 2))
+	root.add_child(op_mesh)
+	op_mesh.owner = root
+	var op_data := op_mesh.pb_mesh_data
+	var op_top := -1
+	for fi in range(op_data.faces.size()):
+		if PBMath.normal_from_positions(op_data.positions, op_data.faces[fi].get_indexes()).y > 0.99:
+			op_top = fi
+	var op_mat := PBSplat.ensure_face_owned_material(op_data, op_data.faces[op_top])
+	var op_layer := PBSplat.add_layer(op_mat, PlaceholderTexture2D.new(), Color.WHITE, 0.8, 2048)
+	PBSplat.paint_face_splat(op_data, op_data.faces[op_top], op_mat, op_layer, Vector3(0.3, 0.1, 0.3), 0.4, 0.0, 1.0)
+	op_mesh.rebuild()
+	sel.clear()
+	sel.add_node(op_mesh)
+	await _frames(8)
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+	await _frames(4)
+	dock_ps._btn_optimize_paint.pressed.emit()
+	await _frames(6)
+	var op_live := op_data.get_face_material(op_data.faces[op_top]) as ShaderMaterial
+	var op_w := PBSplat.get_layer_mask_image(op_live, op_layer).get_width()
+	if op_w < 2048 and dock_ps._lbl_optimize_result.text.contains("mask"):
+		_pass("OPTIMIZE-PAINT: the selected mesh's 2048 mask shrank to %d (%s)" % [op_w, dock_ps._lbl_optimize_result.text])
+	else:
+		_fail("OPTIMIZE-PAINT: mask width %d, result '%s'" % [op_w, dock_ps._lbl_optimize_result.text])
+	_press_undo()
+	await _frames(8)
+	var op_back := op_data.get_face_material(op_data.faces[op_top]) as ShaderMaterial
+	if PBSplat.get_layer_mask_image(op_back, op_layer).get_width() == 2048:
+		_pass("OPTIMIZE-PAINT: undo brings the original 2048 mask back")
+	else:
+		_fail("OPTIMIZE-PAINT: after undo the mask is %d wide" % PBSplat.get_layer_mask_image(op_back, op_layer).get_width())
+	sel.clear()
+	op_mesh.queue_free()
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+	await _frames(4)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.

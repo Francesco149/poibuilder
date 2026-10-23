@@ -121,6 +121,8 @@ var _spin_brush_opacity: Range
 var _chk_erase: CheckBox
 var _spin_paint_layer: Range
 var _btn_clear_layer: Button
+var _btn_optimize_paint: Button = null
+var _lbl_optimize_result: Label = null
 
 # Stamp Tool Controls
 var _active_stamp_label: Label
@@ -672,6 +674,17 @@ func _build_ui() -> void:
 	_btn_clear_layer.pressed.connect(_on_clear_layer_pressed)
 	paint_action_row.add_child(_btn_clear_layer)
 	_paint_tool_section.add_child(paint_action_row)
+
+	var optimize_row := HBoxContainer.new()
+	_btn_optimize_paint = Button.new()
+	_btn_optimize_paint.text = "Optimize Paint"
+	_btn_optimize_paint.tooltip_text = "Shrinks the selected meshes' oversized splat masks (older versions painted them at up to 2048x2048) to the current live size: faster painting, smaller scenes. Fine detail below the new texel size is lost — undo brings it back."
+	_btn_optimize_paint.pressed.connect(_on_optimize_paint_pressed)
+	optimize_row.add_child(_btn_optimize_paint)
+	_lbl_optimize_result = Label.new()
+	_lbl_optimize_result.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
+	optimize_row.add_child(_lbl_optimize_result)
+	_paint_tool_section.add_child(optimize_row)
 
 	var paint_hint := Label.new()
 	paint_hint.text = "LMB drag in the viewport to paint. 'Splat layers' blends the selected palette texture into a layer's mask (the source picker above does not apply there). 'Decal layer' paints pixels 1:1 with the surface — the palette image, or a flat colour with the picker; Erase rubs either back out."
@@ -1369,6 +1382,39 @@ func _on_open_decal_brush_pressed() -> void:
 		paint_controller.paint_target = PBPaintController.PaintTarget.DECAL
 	_set_dock_mode(DockMode.PAINT)
 
+
+## Optimize Paint: every selected PBMesh (the paint target when nothing is
+## selected), one undoable action.
+func _on_optimize_paint_pressed() -> void:
+	if paint_controller == null:
+		return
+	var meshes: Array[PBMesh] = []
+	var selection = EditorInterface.get_selection() if Engine.is_editor_hint() else null
+	if selection != null:
+		for n in selection.get_selected_nodes():
+			if n is PBMesh and (n as PBMesh).pb_mesh_data != null:
+				meshes.append(n as PBMesh)
+	if meshes.is_empty() and paint_target_mesh() != null:
+		meshes.append(paint_target_mesh())
+	var entries: Dictionary = {}
+	var masks := 0
+	var before_b := 0
+	var after_b := 0
+	for mesh in meshes:
+		var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+		var res := PBSplat.optimize_mesh_paint(mesh.pb_mesh_data)
+		if int(res["masks"]) == 0:
+			continue
+		masks += int(res["masks"])
+		before_b += int(res["bytes_before"])
+		after_b += int(res["bytes_after"])
+		entries[mesh] = {"before": before, "after": PBCommand.copy_mesh_data(mesh.pb_mesh_data)}
+	if entries.is_empty():
+		_lbl_optimize_result.text = "Nothing to optimize"
+		return
+	paint_controller._commit_multi_mesh_action("Optimize Paint", entries)
+	_lbl_optimize_result.text = "%d mask(s): %.1f MB -> %.1f MB" % [masks,
+			float(before_b) / 1048576.0, float(after_b) / 1048576.0]
 
 func _on_clear_all_stamps_pressed() -> void:
 	var mesh := paint_target_mesh()

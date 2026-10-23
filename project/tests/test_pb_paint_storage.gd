@@ -252,3 +252,43 @@ func test_a_plain_image_texture_scene_still_loads_and_paints() -> void:
 	assert_gt(painted, 0, "the old-format paint is there after loading")
 	assert_true(PBSplat.paint_face_splat(data, data.faces[top], m2, layer, Vector3(-0.6, 1.0, -0.6), 0.3, 0.0, 1.0),
 			"and it paints")
+
+# ── Optimize Paint (opt-in mask downsampling) ───────────────────────────────
+
+func test_optimize_shrinks_oversized_masks_and_keeps_the_paint_in_place() -> void:
+	var mesh := PBMesh.create_cube(2.0)
+	add_child_autofree(mesh)
+	var data := mesh.pb_mesh_data
+	PBSplat.ensure_mesh_splat_uv(data)
+	var top := -1
+	for fi in range(data.faces.size()):
+		if PBMath.normal_from_positions(data.positions, data.faces[fi].get_indexes()).y > 0.99:
+			top = fi
+	var face := data.faces[top]
+	var mat := PBSplat.ensure_face_owned_material(data, face)
+	# An old build's mask: 2048x2048 on a 2 m face (the live size is 256).
+	var layer := PBSplat.add_layer(mat, PlaceholderTexture2D.new(), Color.WHITE, 0.8, 2048)
+	PBSplat.paint_face_splat(data, face, mat, layer, Vector3(0.5, 1.0, 0.5), 0.4, 0.0, 1.0)
+	var bounds := PBSplat.get_face_planar_bounds(data, face)
+	var probe := Vector3(0.5, 1.0, 0.5)
+	var u := ((bounds["u"] as Vector3).dot(probe) - float(bounds["min_u"])) / float(bounds["range_u"])
+	var v := ((bounds["v"] as Vector3).dot(probe) - float(bounds["min_v"])) / float(bounds["range_v"])
+	var snap := PBCommand.copy_mesh_data(data)
+	var res := PBSplat.optimize_mesh_paint(data)
+	assert_eq(int(res["masks"]), 1, "the oversized mask is resized")
+	var img := PBSplat.get_layer_mask_image(mat, layer)
+	assert_eq(img.get_size(), PBSplat.live_mask_resolution_for(data, face), "down to the face's live size")
+	assert_true(mat.get_shader_parameter("layer_%d_mask" % layer) is PBMaskTexture, "with a compressed-storage texture")
+	assert_gt(img.get_pixel(int(u * (img.get_width() - 1)), int(v * (img.get_height() - 1))).r, 0.9,
+			"the paint stays where it was painted")
+	assert_lt(int(res["bytes_after"]), int(res["bytes_before"]) / 32, "64x fewer pixels")
+	assert_eq(int(PBSplat.optimize_mesh_paint(data)["masks"]), 0, "a second run has nothing to do")
+	PBCommand.restore_mesh_data(data, snap)
+	var restored := data.get_face_material(data.faces[top]) as ShaderMaterial
+	assert_eq(PBSplat.get_layer_mask_image(restored, layer).get_width(), 2048, "undo brings the original back")
+
+func test_optimize_leaves_masks_at_their_live_size_alone() -> void:
+	var f := _painted_cube(true)
+	var before := hash(PBSplat.get_layer_mask_image(f["mat"], f["layer"]).get_data())
+	assert_eq(int(PBSplat.optimize_mesh_paint(f["data"])["masks"]), 0)
+	assert_eq(hash(PBSplat.get_layer_mask_image(f["mat"], f["layer"]).get_data()), before, "untouched")
