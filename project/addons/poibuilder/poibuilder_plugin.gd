@@ -1307,7 +1307,10 @@ var _grid_drawn_last := false
 
 func _process(delta: float) -> void:
 	# Live animated scrolling textures in 3D editor viewport
-	if animate_scrolling_textures:
+	if animate_scrolling_textures and _export_dialog != null and _export_dialog.is_exporting():
+		# The export reads uv1_offset across many frames: hold the authored one.
+		_restore_scrolling_base_offsets()
+	elif animate_scrolling_textures:
 		_scroll_time += delta
 		var now_msec := Time.get_ticks_msec()
 		if now_msec - _last_scroll_scan_msec > 1500:
@@ -1484,28 +1487,34 @@ func scan_scrolling_materials() -> void:
 		scene_root = get_editor_interface().get_edited_scene_root()
 	if scene_root == null:
 		return
-	_scan_node_scrolling_materials(scene_root)
+	var present: Dictionary = {}
+	for mat in PBUv.collect_scrolling_materials(scene_root):
+		present[mat] = true
+		_register_scrolling_mat(mat)
+	# A material that left the scene (node deleted, material replaced, scene
+	# switched) gets its authored offset back and leaves the registry. The
+	# registry holds the material itself, so the old "is_instance_valid"
+	# check could never drop one: removed materials stayed alive, animating.
+	for mat in _animated_materials.keys():
+		if not present.has(mat):
+			if is_instance_valid(mat):
+				(mat as StandardMaterial3D).uv1_offset = _animated_materials[mat]["base_offset"]
+			_animated_materials.erase(mat)
 
-func _scan_node_scrolling_materials(node: Node) -> void:
-	if node is PBMesh:
-		var pb: PBMesh = node
-		if pb.pb_mesh_data != null:
-			for mat in pb.pb_mesh_data.materials:
-				if mat is StandardMaterial3D and PBUv.has_scroll(mat):
-					_register_scrolling_mat(mat)
-	elif node is MeshInstance3D:
-		var mi: MeshInstance3D = node
-		if mi.material_override is StandardMaterial3D and PBUv.has_scroll(mi.material_override):
-			_register_scrolling_mat(mi.material_override)
-		if mi.mesh != null:
-			for s in range(mi.mesh.get_surface_count()):
-				var mat := mi.get_surface_override_material(s)
-				if mat == null:
-					mat = mi.mesh.surface_get_material(s)
-				if mat is StandardMaterial3D and PBUv.has_scroll(mat):
-					_register_scrolling_mat(mat)
-	for child in node.get_children():
-		_scan_node_scrolling_materials(child)
+## Puts every animated material back on its AUTHORED offset (the registry is
+## kept; the next frame resumes the animation).
+func _restore_scrolling_base_offsets() -> void:
+	for mat in _animated_materials:
+		if is_instance_valid(mat):
+			(mat as StandardMaterial3D).uv1_offset = _animated_materials[mat]["base_offset"]
+
+## The editor calls this right before saving (and before running the game or
+## switching scene tabs). The scrolling animation writes uv1_offset on the
+## REAL material every frame, so a save captured whatever phase it had
+## reached: the authored offset drifted save after save and every save was a
+## diff. Restore it; the next frame animates again.
+func _apply_changes() -> void:
+	_restore_scrolling_base_offsets()
 
 func _register_scrolling_mat(mat: StandardMaterial3D) -> void:
 	if not _animated_materials.has(mat):

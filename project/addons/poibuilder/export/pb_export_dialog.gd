@@ -12,6 +12,12 @@ extends ConfirmationDialog
 
 signal export_completed(path: String, mode: int)
 
+## True while an export runs (it spans frames): the editor's scrolling-texture
+## animation holds the authored offsets meanwhile, or the export would read
+## whatever phase the animation had reached.
+func is_exporting() -> bool:
+	return _is_exporting
+
 var _mode_option: OptionButton
 var _chk_subdivide: CheckBox
 var _spin_grid_size: SpinBox

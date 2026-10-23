@@ -310,6 +310,36 @@ static func get_scroll_speed(mat: Material) -> Vector2:
 static func has_scroll(mat: Material) -> bool:
 	return get_scroll_speed(mat) != Vector2.ZERO
 
+## Every scrolling StandardMaterial3D used under `root` (a PBMesh's data
+## materials; a plain mesh's override and surface materials), deduplicated, in
+## one C++ tree walk — the editor's animation rescans this periodically, and
+## the GDScript recursion it replaced walked every node of the scene.
+static func collect_scrolling_materials(root: Node) -> Array[StandardMaterial3D]:
+	var out: Array[StandardMaterial3D] = []
+	if root == null:
+		return out
+	var seen: Dictionary = {}
+	var nodes: Array = [root]
+	nodes.append_array(root.find_children("*", "MeshInstance3D", true, false))
+	for node in nodes:
+		var candidates: Array = []
+		if node is PBMesh:
+			var pb := node as PBMesh
+			if pb.pb_mesh_data != null:
+				candidates.append_array(pb.pb_mesh_data.materials)
+		elif node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			candidates.append(mi.material_override)
+			if mi.mesh != null:
+				for s in range(mi.mesh.get_surface_count()):
+					var surf := mi.get_surface_override_material(s)
+					candidates.append(surf if surf != null else mi.mesh.surface_get_material(s))
+		for mat in candidates:
+			if mat is StandardMaterial3D and not seen.has(mat) and has_scroll(mat):
+				seen[mat] = true
+				out.append(mat as StandardMaterial3D)
+	return out
+
 ## Writes (or clears, with Vector2.ZERO) the material's scroll speed and keeps
 ## the glTF `extras` mirror in sync so an exported GLB carries the animation
 ## through to the retro converters.

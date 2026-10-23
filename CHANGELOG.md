@@ -174,6 +174,28 @@ GUI harness case CAMERA-REFRESH: zooming the editor camera redraws the
 selected mesh (19 redraws over a 2.74 m move) and never an unselected one, and
 no PBMesh is processing. GUI harness failures=0.
 
+### Scrolling textures: saves stop storing the animation's phase
+
+The editor animates scrolling textures by writing `uv1_offset` on the REAL
+material every frame, and nothing put the authored value back: every save
+stored whatever phase the animation had reached (the authored offset drifted
+save after save, every save was a diff), and an export — which runs over many
+frames — read it mid-animation. Now:
+
+- `_apply_changes()` (the editor calls it right before saving) restores the
+  authored offsets; the next frame animates again;
+- while an export runs (`PBExportDialog.is_exporting()`) the offsets are held
+  at their authored values;
+- the registry was keyed by the material and only dropped "invalid" ones —
+  impossible while it held them — so a material removed from the scene stayed
+  alive and animating. Each scan now rebuilds it from what the scene uses and
+  restores what left;
+- the 1.5 s rescan is one C++ walk (`PBUv.collect_scrolling_materials`)
+  instead of a GDScript recursion over every node of the scene.
+
+Tests: `test_pb_scrolling_scan.gd`; GUI case SCROLL-SAVE. GUI harness
+failures=0.
+
 ### The test suite stops dying of memory, and says so before it would
 
 Adding this round's suites made the full run die with **status 137 (OOM)**

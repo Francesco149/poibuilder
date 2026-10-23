@@ -2650,6 +2650,47 @@ func _run() -> void:
 	cr_other.queue_free()
 	await _frames(6)
 
+	# ── SCROLL-SAVE: a save never captures the animation's phase ───────────
+	# The editor animates scrolling textures by writing uv1_offset on the
+	# REAL material every frame, so every save stored a random phase (the
+	# authored offset drifted save after save). _apply_changes (called right
+	# before a save) restores it; a material that leaves the scene leaves the
+	# registry with its authored offset back.
+	var sc_was_on: bool = plugin.animate_scrolling_textures
+	plugin.animate_scrolling_textures = true
+	var sc_mat := StandardMaterial3D.new()
+	sc_mat.uv1_offset = Vector3(0.25, 0.5, 0.0)
+	PBUv.set_scroll_speed(sc_mat, Vector2(0.7, 0.0))
+	var sc_mesh := PBMesh.new()
+	sc_mesh.name = "GuiTestScroll"
+	var sc_data := PBMeshData.create_cube(1.0)
+	sc_data.set_faces_material(sc_data.faces, sc_mat)
+	sc_mesh.pb_mesh_data = sc_data
+	root.add_child(sc_mesh)
+	sc_mesh.owner = root
+	plugin.scan_scrolling_materials()
+	await _frames(20)
+	if not sc_mat.uv1_offset.is_equal_approx(Vector3(0.25, 0.5, 0.0)):
+		_pass("SCROLL-SAVE: the material animates in the editor (offset %s)" % sc_mat.uv1_offset)
+	else:
+		_fail("SCROLL-SAVE: fixture — the scrolling material never animated")
+	plugin._apply_changes()
+	if sc_mat.uv1_offset.is_equal_approx(Vector3(0.25, 0.5, 0.0)):
+		_pass("SCROLL-SAVE: before a save the authored offset is back")
+	else:
+		_fail("SCROLL-SAVE: a save would store offset %s" % sc_mat.uv1_offset)
+	sc_mesh.queue_free()
+	await _frames(4)
+	plugin.scan_scrolling_materials()
+	await _frames(4)
+	if not plugin._animated_materials.has(sc_mat) and sc_mat.uv1_offset.is_equal_approx(Vector3(0.25, 0.5, 0.0)):
+		_pass("SCROLL-SAVE: a removed material leaves the registry with its authored offset")
+	else:
+		_fail("SCROLL-SAVE: removed material still registered=%s offset=%s" % [
+			str(plugin._animated_materials.has(sc_mat)), sc_mat.uv1_offset])
+	plugin.animate_scrolling_textures = sc_was_on
+	await _frames(4)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.
