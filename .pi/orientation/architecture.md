@@ -1,6 +1,6 @@
 # Architecture — How The Plugin Is Put Together
 
-## Bootstrap (`poibuilder_plugin.gd`, ~3000 lines, the EditorPlugin)
+## Bootstrap (`poibuilder_plugin.gd`, ~4800 lines, the EditorPlugin)
 
 `_enter_tree` order matters (later wiring assumes earlier):
 1. `set_input_event_forwarding_always_enabled()` — shape creation must work

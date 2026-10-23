@@ -19,6 +19,18 @@ floor. Select the object you want to win ambiguous, overlapping spots.
 Multi-layer texture splatting.
 :::
 
+**Saving painted maps.** Paint masks are stored compressed, so a painted face
+adds a few KB to a scene, not ~90 KB. Maps made with older versions load and
+paint as before and shrink the first time you save them. (A map saved with
+this version needs this version or newer to open its paint.)
+
+**Optimize Paint.** Maps painted with older versions (v0.9.180 and before)
+carry masks of up to 2048×2048 per face, which make the brush slow on big
+faces. The **Optimize Paint** button in the paint section shrinks the selected
+meshes' oversized masks to the size the brush now uses — much faster painting,
+smaller scenes. Detail finer than the new mask texel is lost; it is one undo
+step, so try it and Ctrl+Z if a soft edge suffers.
+
 :::video clips/paint-splat.mp4
 The brush writes weights, not new geometry.
 :::

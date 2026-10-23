@@ -5,14 +5,16 @@
 ## trace identified as the dominant bottleneck on the iGPU.
 ##
 ## The tests time repeated dab/segment walks on cubes of known size, on the
-## UNIFORM live mask every face now paints on (PBSplat.MASK_RESOLUTION), under
-## both hard and soft brush. They verify:
+## live mask every face paints on — its world size at TEXELS_PER_METER,
+## clamped to [MASK_MIN_RESOLUTION, MASK_RESOLUTION] (density-clamped since
+## v0.9.180; a uniform square was tried first) — under both hard and soft
+## brush. They verify:
 ## 1. Per-dab cost stays inside a generous envelope (50 ms first dab, 20 ms
 ##    subsequent — headless is faster than the real editor, so these are
 ##    worst-case bounds, not tight ones).
 ## 2. Per-dab cost does NOT scale with the face's world size: that coupling
 ##    (a mask sized at 256 texels/m) is exactly what made a 3 m face the
-##    laggiest thing the painter could brush, and it is what the uniform mask
+##    laggiest thing the painter could brush, and it is what the clamp
 ##    removed. Measured here, headlessly.
 ##
 ## The row-skip scanline bookkeeping is deliberately NOT asserted as a speedup:

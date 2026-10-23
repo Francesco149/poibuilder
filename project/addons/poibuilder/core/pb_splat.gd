@@ -1191,17 +1191,15 @@ static func _paint_face_splat_walk(mesh_data: PBMeshData, face: PBFace, splat_ma
 	if mask_img.get_format() != Image.FORMAT_R8:
 		mask_img.convert(Image.FORMAT_R8)
 	# ── Stroke-cached byte buffer ─────────────────────────────────────────
-	# Image.get_data() copies the ENTIRE mask (256 KB for a 512x512 R8) on
-	# every call.  A stroke that visits the same face 60-150 times (one dab
-	# per rendered frame) was spending 30-75 MB of memcpy on data it already
-	# held: the bytes are modified in place by every previous dab of the
-	# same stroke.  Caching the buffer in stroke_ctx and calling get_data()
-	# once — on the first dab that touches each mask — eliminates the
-	# per-dab copy.  set_data() still runs when the loop dirties a pixel
-	# (the Image must be current for the queued texture upload), but only
-	# one set_data per dab vs one get+set was the dominant fixed overhead
-	# on small-footprint dabs (the iGPU trace: 0.43 ms per 845-px dab,
-	# ~40 % of which was the two 256 KB copies).
+	# Image.get_data() hands out the mask's buffer, and the first write to it
+	# copies the WHOLE mask (copy-on-write). Fetching it per dab paid that
+	# copy AND a set_data per dab; the stroke now fetches once per mask and
+	# keeps the buffer in stroke_ctx (the iGPU trace: 0.43 ms per 845-px dab,
+	# ~40 % of which was the two copies).
+	# Not zero-copy, though: set_data() makes the Image SHARE this buffer, so
+	# the next dab's first write still copies the mask once (copy-on-write).
+	# That is 64 KB at the live ceiling (256x256) — negligible — but 4 MB on
+	# a 2048x2048 mask from an older scene (Optimize Paint shrinks those).
 	var stroke: Dictionary = stroke_ctx.get(mask_img.get_instance_id(), {})
 	if stroke.is_empty() or stroke.get("w", 0) != w or stroke.get("h", 0) != h:
 		var bytes_init := mask_img.get_data()
