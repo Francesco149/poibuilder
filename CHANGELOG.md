@@ -3,6 +3,39 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.182 — the scaling audit: paint storage, surface cap, picking, Trim Walls
+
+An audit of how the plugin scales to bigger maps and heavier painting, with
+every finding reproduced by a headless probe before it was fixed. Compatibility
+contract for this round: scenes saved by the current public release
+(`nightly` = `de492fe`, v0.9.167) must keep loading and painting.
+
+### Trim Walls: four geometry bugs behind the "finicky" reports
+
+- **The colinearity test was not a distance.** `merge_colinear` compared
+  `|rel| - |rel·dir|`, which shrinks as the along-wall gap grows, so a
+  pilaster 0.3 m proud of a 6 m wall read as colinear. Wall clicked first:
+  the pilaster lost its trim. Pilaster clicked first: the WHOLE wall's trim
+  sat 0.3 m off the wall. Now the true perpendicular offset, and runs placed
+  at different heights never merge.
+- **Every closed ring had one malformed corner.** The chain repeats its first
+  point to close, and `extrude_profile_along_path` framed that point twice —
+  square, unmitred, along each run — so the two strips at the closing corner
+  tapered from 5 cm to 7 cm deep and overlapped (measured: offsets
+  (0, -0.071) / (0.071, 0) instead of (0.05, -0.05)). The sweep now drops a
+  repeated closing point.
+- **Overlapping wall cubes never closed.** Chaining only joined the chain to
+  the remaining runs, never its tail back to its head; walls meeting exactly
+  closed by coincidence, but cubes overlapping past the corners (the usual
+  blockout) left that corner overshooting 0.2 m both ways. The ring now tries
+  the tail→head mitre.
+- **The mitre bound the docs promised was computed and never used**
+  (`len1`/`len2`): a corner may now never fall behind a run's own start.
+  Crossings also sort by their position ALONG the wall (the x-then-z key with
+  a tolerance was not a strict order for walls a hair off the z axis).
+
+Tests: seven new cases in `test_pb_trim_walls.gd`; all seven fail on v0.9.181.
+
 ## v0.9.181 — the stamp lands where the preview shows it on a rotated mesh
 
 ### Fixed: stamps/decal dabs were rotated by the node's own yaw

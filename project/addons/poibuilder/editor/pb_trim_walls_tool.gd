@@ -165,10 +165,13 @@ static func run_segments_at_height(poly: PackedVector3Array, base_y: float) -> A
 	# crossings out of order and boundary-order pairing produced slivers
 	# and dropped pier runs. Sorted crossings always alternate in/out on a
 	# simple polygon, so consecutive pairs are the interior spans.
+	# The sort key is the position ALONG the wall (its horizontal in-plane
+	# direction): an x-then-z key with a tolerance is not a strict order for
+	# a wall a hair off the z axis — near pairs compared by z, far pairs by
+	# x, and the two disagreed when x decreased along the wall.
+	var line_dir := _horizontal_line_dir(poly)
 	xs.sort_custom(func(p, q):
-		if absf((p as Vector3).x - (q as Vector3).x) > 0.000001:
-			return (p as Vector3).x < (q as Vector3).x
-		return (p as Vector3).z < (q as Vector3).z)
+		return line_dir.dot(p as Vector3) < line_dir.dot(q as Vector3))
 	for i in range(0, xs.size() - 1, 2):
 		var a: Vector3 = xs[i]
 		var b: Vector3 = xs[i + 1]
@@ -179,6 +182,24 @@ static func run_segments_at_height(poly: PackedVector3Array, base_y: float) -> A
 	out.sort_custom(func(x, y):
 		return (x["a"] as Vector3).distance_to(x["b"]) > (y["a"] as Vector3).distance_to(y["b"]))
 	return out
+
+## The horizontal direction running along a wall polygon's plane (UP x the
+## Newell normal). Falls back to +X for a (near-)horizontal polygon, which
+## has no single along-the-wall direction.
+static func _horizontal_line_dir(poly: PackedVector3Array) -> Vector3:
+	var n := Vector3.ZERO
+	var count := poly.size()
+	for i in range(count):
+		var p0: Vector3 = poly[i]
+		var p1: Vector3 = poly[(i + 1) % count]
+		n.x += (p0.y - p1.y) * (p0.z + p1.z)
+		n.y += (p0.z - p1.z) * (p0.x + p1.x)
+		n.z += (p0.x - p1.x) * (p0.y + p1.y)
+	var d := Vector3.UP.cross(n)
+	d.y = 0.0
+	if d.length_squared() < 0.000001:
+		return Vector3.RIGHT
+	return d.normalized()
 
 ## Merges colinear overlapping runs — two wall cubes in a line carry trim on
 ## their VISIBLE run only, never doubled up.
@@ -217,8 +238,18 @@ static func merge_colinear(segments: Array) -> Array:
 			var o: Dictionary = normalized[j]
 			if o["dir"].dot(dir) < 0.9999:
 				continue
-			var o_perp: Vector3 = (o["a"] as Vector3) - run_a
-			if o_perp.length() - absf(o_perp.dot(dir)) > JOINT_TOLERANCE:
+			# Same LINE: the true perpendicular offset (horizontal AND
+			# cross-section height) must vanish. `length - |parallel part|`
+			# is not that distance — it shrinks with the along-wall gap, so a
+			# pilaster 0.3 m proud of its wall a few metres along read as
+			# colinear and its run was swallowed (or, clicked first, dragged
+			# the whole wall's trim 0.3 m off the wall).
+			var o_rel: Vector3 = (o["a"] as Vector3) - run_a
+			if (o_rel - dir * o_rel.dot(dir)).length() > JOINT_TOLERANCE:
+				continue
+			# Runs placed at different heights (different floor/ceiling
+			# probes) are different strips even when their lines coincide.
+			if absf(float(o.get("y", 0.0)) - float(normalized[i].get("y", 0.0))) > 0.02:
 				continue
 			var lo1: float = dir.dot(o["a"] - run_a)
 			var hi1: float = dir.dot(o["b"] - run_a)
@@ -482,6 +513,18 @@ static func _chain_and_mitre(segments: Array) -> Array[Dictionary]:
 					remaining.remove_at(k)
 					grew = true
 					break
+		# Close the ring: the loop above only joins the chain to REMAINING
+		# runs, never its own tail back to its head. Walls meeting exactly
+		# still closed by coincidence (tail.b == head.a), but wall cubes
+		# overlapping past the corner — the usual blockout — left that one
+		# corner unmitred, both runs overshooting it.
+		var ring_closed := false
+		if chain.size() >= 3:
+			var join_ring := _mitre_join(chain[chain.size() - 1], chain[0])
+			if not join_ring.is_empty():
+				chain[chain.size() - 1]["mitred_end"] = join_ring["corner"]
+				chain[0]["mitred_start"] = join_ring["corner"]
+				ring_closed = true
 		var pts := PackedVector3Array()
 		var first: Dictionary = chain[0]
 		var last: Dictionary = chain[chain.size() - 1]
@@ -499,7 +542,7 @@ static func _chain_and_mitre(segments: Array) -> Array[Dictionary]:
 		var end_pt: Vector3 = last.get("mitred_end", last["b"])
 		end_pt.y = float(last.get("y", end_pt.y))
 		pts.append(end_pt)
-		var closed: bool = pts[0].distance_to(pts[pts.size() - 1]) <= JOINT_TOLERANCE
+		var closed: bool = ring_closed or pts[0].distance_to(pts[pts.size() - 1]) <= JOINT_TOLERANCE
 		if closed:
 			pts[pts.size() - 1] = pts[0]
 		paths.append({"points": pts, "closed": closed,
@@ -533,9 +576,18 @@ static func _mitre_join(seg: Dictionary, next_seg: Dictionary) -> Dictionary:
 		return {}
 	var t: float = ((b.x - a.x) * d2.z - (b.z - a.z) * d2.x) / denom
 	var corner := a + d1 * t
-	var len1: float = (seg["a"] as Vector3).distance_to(a)
-	var len2: float = b.distance_to(next_seg["b"] as Vector3)
 	if corner.distance_to(a) > MAX_MITRE_EXTENT or corner.distance_to(b) > MAX_MITRE_EXTENT:
+		return {}
+	# Bounded by the segment lengths: the corner must stay strictly inside
+	# both runs' remaining spans (measured from any mitre already applied to
+	# their OTHER end). A corner behind a short run's start would turn it
+	# inside out — the strip folds back over itself.
+	var seg_start: Vector3 = seg.get("mitred_start", seg["a"])
+	var next_end: Vector3 = next_seg.get("mitred_end", next_seg["b"])
+	var flat_corner := Vector2(corner.x, corner.z)
+	if d1.dot(Vector3(flat_corner.x - seg_start.x, 0.0, flat_corner.y - seg_start.z)) <= JOINT_TOLERANCE:
+		return {}
+	if d2.dot(Vector3(next_end.x - flat_corner.x, 0.0, next_end.z - flat_corner.y)) <= JOINT_TOLERANCE:
 		return {}
 	corner.y = (float(seg.get("y", 0.0)) + float(next_seg.get("y", 0.0))) * 0.5
 	return {"corner": corner}

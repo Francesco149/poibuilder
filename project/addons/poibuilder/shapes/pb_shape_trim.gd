@@ -161,6 +161,13 @@ static func extrude_profile_along_path(profile_pts: PackedVector2Array, path: Pa
 		smooth_profile_segments: PackedInt32Array = PackedInt32Array()) -> PBMeshData:
 	if profile_pts.size() < 2 or path.size() < 2:
 		return null
+	# A closed path wraps on its own (the last node connects back to the
+	# first). Callers that close a ring by repeating its first point (the
+	# Trim Walls chains do) would otherwise sweep a zero-length closing
+	# segment and frame the closing corner twice — once along each run,
+	# unmitred, so both strips there tapered 41 % deeper and overlapped.
+	if closed and path.size() > 3 and path[path.size() - 1].distance_to(path[0]) < 0.0001:
+		path = path.slice(0, path.size() - 1)
 
 	var n_pts: int = path.size()
 	var n_prof: int = profile_pts.size()

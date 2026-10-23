@@ -525,3 +525,152 @@ func test_top_drops_short_runs_when_longer_exist():
 	solo.toggle_wall(reveal, _face_with_normal(reveal, Vector3(0, 0, 1)))
 	var solo_data := solo.build()
 	assert_ne(solo_data, null, "an all-short build (door/stair alone) keeps its runs")
+
+# ── v0.9.182 audit regressions ───────────────────────────────────────────────
+
+## A 4x4 room of 0.2 m wall cubes, room-side faces chosen. `overlap` extends
+## every cube past the corners (the usual blockout habit).
+func _room_tool(overlap: float) -> PBTrimWallsTool:
+	var tool := PBTrimWallsTool.new()
+	tool.arm()
+	tool.params["height"] = 0.1
+	tool.params["depth"] = 0.05
+	tool.params["profile"] = 0.0
+	var span := 4.0 + 2.0 * overlap
+	var south := _wall(Vector3(span, 3, 0.2), Vector3(2, 1.5, -0.1))
+	var north := _wall(Vector3(span, 3, 0.2), Vector3(2, 1.5, 4.1))
+	var west := _wall(Vector3(0.2, 3, span), Vector3(-0.1, 1.5, 2))
+	var east := _wall(Vector3(0.2, 3, span), Vector3(4.1, 1.5, 2))
+	for pair in [[south, Vector3(0, 0, 1)], [east, Vector3(-1, 0, 0)],
+			[north, Vector3(0, 0, -1)], [west, Vector3(1, 0, 0)]]:
+		tool.toggle_wall(pair[0], _face_with_normal(pair[0], pair[1]))
+	return tool
+
+## The deepest profile vertices around `corner` (horizontal offsets, cm-snapped).
+## A mitred ring sits on the corner's bisector: |dx| == |dz| for every one.
+func _corner_offsets(md: PBMeshData, corner: Vector3) -> Array:
+	var seen := {}
+	for p in md.positions:
+		var flat := Vector2(p.x - corner.x, p.z - corner.z)
+		if flat.length() > 0.05 and flat.length() < 0.15:
+			seen[Vector2(snappedf(flat.x, 0.001), snappedf(flat.y, 0.001))] = true
+	return seen.keys()
+
+func _degenerate_faces(md: PBMeshData) -> int:
+	var n := 0
+	for f in md.faces:
+		var idx := f.get_indexes()
+		var area := 0.0
+		for t in range(0, idx.size(), 3):
+			area += (md.positions[idx[t + 1]] - md.positions[idx[t]]).cross(
+					md.positions[idx[t + 2]] - md.positions[idx[t]]).length()
+		if area < 0.000001:
+			n += 1
+	return n
+
+func _assert_all_corners_mitred(md: PBMeshData, label: String) -> void:
+	for corner in [Vector3(0, 0, 0), Vector3(4, 0, 0), Vector3(4, 0, 4), Vector3(0, 0, 4)]:
+		var offsets := _corner_offsets(md, corner)
+		assert_false(offsets.is_empty(), "%s: corner %s has profile vertices" % [label, corner])
+		for o in offsets:
+			assert_almost_eq(absf((o as Vector2).x), absf((o as Vector2).y), 0.002,
+					"%s: corner %s is mitred on its bisector (offset %s)" % [label, corner, o])
+
+## REGRESSION (v0.9.182): the closing corner of every ring was framed twice
+## (the repeated closing point), unmitred — two square ends along each run,
+## and the two strips meeting there tapered 41 % deeper. The other three
+## corners were fine, which is why a corner-presence test passed.
+func test_closed_ring_mitres_its_closing_corner():
+	var tool := _room_tool(0.0)
+	var data := tool.build()
+	assert_ne(data, null)
+	assert_true(tool.last_paths[0]["closed"])
+	_assert_all_corners_mitred(data, "exact room")
+	assert_eq(_degenerate_faces(data), 0, "no zero-length closing segment")
+
+## REGRESSION (v0.9.182): wall cubes overlapping past the corners never
+## closed into a ring — chaining joined runs to the REMAINING ones only, so
+## the last corner kept both runs overshooting it (a butt-cross, no mitre).
+func test_overlapping_wall_cubes_close_into_a_mitred_ring():
+	var tool := _room_tool(0.2)
+	var data := tool.build()
+	assert_ne(data, null)
+	assert_eq(tool.last_paths.size(), 1, "one perimeter")
+	assert_true(tool.last_paths[0]["closed"], "the overlapping room closes")
+	_assert_all_corners_mitred(data, "overlapping room")
+	for p in data.positions:
+		assert_true(p.x > -0.001 and p.x < 4.001 and p.z > -0.001 and p.z < 4.001,
+				"no run overshoots into the wall cubes (%s)" % p)
+
+## REGRESSION (v0.9.182): the colinearity test measured `|rel| - |parallel|`,
+## which shrinks with the along-wall gap — a pilaster 0.3 m proud of its wall
+## read as colinear. Clicked after the wall, its run was swallowed; clicked
+## FIRST, it dragged the whole wall's trim 0.3 m off the wall.
+func test_pilaster_in_front_of_a_wall_keeps_both_runs_in_either_click_order():
+	var wall := _wall(Vector3(6, 3, 0.2), Vector3(3, 1.5, -0.1))     # face +Z at z=0
+	var pilaster := _wall(Vector3(1, 3, 0.3), Vector3(3, 1.5, 0.15))  # front +Z at z=0.3
+	for order in [[wall, pilaster], [pilaster, wall]]:
+		var tool := PBTrimWallsTool.new()
+		tool.arm()
+		for m in order:
+			tool.toggle_wall(m, _face_with_normal(m, Vector3(0, 0, 1)))
+		tool.build()
+		var on_wall := 0
+		var on_pilaster := 0
+		for path in tool.last_paths:
+			for q in (path["points"] as PackedVector3Array):
+				if absf(q.z) < 0.01:
+					on_wall += 1
+				elif absf(q.z - 0.3) < 0.01:
+					on_pilaster += 1
+				else:
+					fail_test("a run point sits off both faces: %s" % q)
+		assert_gt(on_wall, 0, "the wall keeps its own run (first=%s)" % order[0].name)
+		assert_gt(on_pilaster, 0, "the pilaster keeps its own run (first=%s)" % order[0].name)
+
+func test_colinear_merge_rejects_parallel_offsets_and_other_heights():
+	var wall_run := {"a": Vector3(0, 0, 0), "b": Vector3(10, 0, 0), "dir": Vector3(1, 0, 0), "y": 0.0}
+	var proud := {"a": Vector3(4, 0, 0.3), "b": Vector3(6, 0, 0.3), "dir": Vector3(1, 0, 0), "y": 0.0}
+	assert_eq(PBTrimWallsTool.merge_colinear([wall_run, proud]).size(), 2,
+			"a run 0.3 m in front is a different line")
+	var raised := {"a": Vector3(4, 0, 0), "b": Vector3(12, 0, 0), "dir": Vector3(1, 0, 0), "y": 0.4}
+	assert_eq(PBTrimWallsTool.merge_colinear([wall_run, raised]).size(), 2,
+			"a run placed 0.4 m higher is a different strip")
+
+## REGRESSION (v0.9.182): crossings were sorted x-then-z with a 1e-6
+## tolerance — not a strict order for a wall a hair off the z axis with x
+## falling along it, so a doorway's crossings could pair wrongly.
+func test_doorway_crossings_pair_on_a_wall_slightly_off_axis():
+	var eps := 5e-7
+	var pts := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 2), Vector2(2, 2), Vector2(2, 0),
+			Vector2(4, 0), Vector2(4, 3), Vector2(0, 3)]
+	var poly := PackedVector3Array()
+	for p2 in pts:
+		poly.append(Vector3(-eps * p2.x, p2.y, p2.x))
+	var segs := PBTrimWallsTool.run_segments_at_height(poly, 1.0)
+	assert_eq(segs.size(), 2, "the doorway splits the run in two")
+	if segs.size() == 2:
+		assert_almost_eq((segs[0]["a"] as Vector3).distance_to(segs[0]["b"]), 2.0, 0.001, "pier after the door")
+		assert_almost_eq((segs[1]["a"] as Vector3).distance_to(segs[1]["b"]), 1.0, 0.001, "pier before the door")
+
+## The documented bound: a mitre corner may never fall behind a run's own
+## start (the short run would fold back over itself).
+func test_mitre_join_never_turns_a_short_run_inside_out():
+	var short_run := {"a": Vector3(0, 0, 0), "b": Vector3(0.1, 0, 0), "dir": Vector3(1, 0, 0), "y": 0.0}
+	var next_run := {"a": Vector3(-0.2, 0, 0), "b": Vector3(-0.2, 0, 2), "dir": Vector3(0, 0, 1), "y": 0.0}
+	assert_true(PBTrimWallsTool._mitre_join(short_run, next_run).is_empty(),
+			"the corner lies behind the short run's start: no mitre")
+	var long_run := {"a": Vector3(-2, 0, 0), "b": Vector3(0.1, 0, 0), "dir": Vector3(1, 0, 0), "y": 0.0}
+	var corner_run := {"a": Vector3(0.0, 0, 0.05), "b": Vector3(0.0, 0, 2), "dir": Vector3(0, 0, 1), "y": 0.0}
+	var j := PBTrimWallsTool._mitre_join(long_run, corner_run)
+	assert_false(j.is_empty(), "an ordinary corner still mitres")
+
+func test_closed_sweep_ignores_a_repeated_closing_point():
+	var profile := PBShapeTrim.get_profile_points(PBShapeTrim.ProfileType.CHAMFER, 0.05, 0.1, 4, false, false)
+	var ring := PackedVector3Array([Vector3(0, 0, 0), Vector3(4, 0, 0), Vector3(4, 0, 4), Vector3(0, 0, 4)])
+	var with_dup := ring.duplicate()
+	with_dup.append(ring[0])
+	var a := PBShapeTrim.extrude_profile_along_path(profile, ring, Vector3.UP, true)
+	var b := PBShapeTrim.extrude_profile_along_path(profile, with_dup, Vector3.UP, true)
+	assert_eq(b.faces.size(), a.faces.size(), "same sweep either way")
+	assert_eq(b.positions, a.positions, "identical geometry")
