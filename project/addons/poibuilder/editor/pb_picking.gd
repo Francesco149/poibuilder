@@ -621,9 +621,9 @@ static func collect_pbmeshes(root: Node) -> Array[PBMesh]:
 
 ## THE scene-wide face pick: the nearest PBMesh face along a world ray, across
 ## `meshes`. Every viewport tool that asks "which surface is under the
-## cursor" goes through here — the plugin had six hand-copied loops, two with
+## cursor" goes through here — the plugin had seven hand-copied loops, two with
 ## an AABB prefilter and two with a visibility check, so the paint brush
-## ray-tested every triangle of every mesh in GDScript (50 ms per pick at 500
+## ray-tested every triangle of every mesh in GDScript (10 ms per pick at 500
 ## meshes, up to 64 picks per motion event), and shape creation snapped onto
 ## hidden meshes.
 ##   - Hidden meshes (not visible in tree) and `exclude`d ones never hit.
@@ -631,9 +631,9 @@ static func collect_pbmeshes(root: Node) -> Array[PBMesh]:
 ##     box starts behind the best hit is skipped without a triangle test.
 ##   - `face_filter(hit) -> bool` rejects hits (Trim Walls skips floors);
 ##     the nearest ACCEPTED face wins.
-##   - The nearest hit wins outright — no mesh is preferred (the paint pick
-##     used to return the selected mesh when the ray met it ANYWHERE, so the
-##     brush painted through whatever stood in front of it).
+##   - The nearest hit wins. (A caller that prefers a mesh — the paint brush
+##     gives the SELECTED mesh priority, a documented behaviour — picks that
+##     mesh first and falls back to this.)
 ## Returns {mesh, face_index, point, normal (world, geometric), distance}, or
 ## {} on a miss.
 static func scene_ray_pick(meshes: Array, ray_origin: Vector3, ray_dir: Vector3,

@@ -130,9 +130,9 @@ Tests: new suite `test_pb_mesh_build_scaling.gd`. GUI harness failures=0.
 Seven hand-copied "which PBMesh face is under the cursor" loops (shape
 creation, creation hover, n-gon cursor, n-gon begin, Trim Walls, paint,
 material drag-and-drop) had drifted apart: two prefiltered meshes by AABB,
-three skipped hidden meshes, and the paint pick returned the SELECTED mesh
-whenever the ray met it anywhere — the brush painted through whatever stood in
-front of it. They are all `PBPicking.scene_ray_pick` now:
+three skipped hidden meshes, and the paint pick ray-tested every triangle of
+every mesh in GDScript on each interpolated stroke step. They are all
+`PBPicking.scene_ray_pick` now:
 
 - nearest hit wins outright; hidden and `exclude`d meshes never hit (shape
   creation used to snap onto hidden meshes); an optional `face_filter` lets
@@ -142,7 +142,13 @@ front of it. They are all `PBPicking.scene_ray_pick` now:
   best hit; `collect_pbmeshes` is one C++ `find_children` walk;
 - a paint motion event prepares the scene once per frame
   (`prepare_scene_candidates`) and reuses it for the cursor pick and every
-  interpolated stroke pick.
+  interpolated stroke pick;
+- the paint brush keeps its DOCUMENTED priority (docs: Paint & stamps): the
+  selected mesh takes the brush wherever the ray meets it, even behind another
+  mesh, so a floor can be painted around the props standing on it; with no
+  hit on the selection, the nearest surface wins. (A first pass of this round
+  read that priority as a bug and removed it; it was restored once the docs
+  showed it is intended.)
 
 Measured with a live tree (a ray across rows of wall boxes): 500 meshes
 10.1 → 0.59 ms per paint pick, 2000 meshes 39.1 → 3.2 ms. (Correction to
@@ -157,8 +163,9 @@ plain-picked, and the cache is keyed by instance id with a change stamp.
 
 Tests: new suite `test_pb_scene_pick.gd` (it pins a pick's cost as the number
 of meshes triangle-tested: < 3 of 500), a hygiene rule that fails any new
-hand-written scene pick loop, and a GUI harness case PAINT-OCCLUSION (a box in
-front of the selected wall gets the paint). GUI harness failures=0.
+hand-written scene pick loop, and a GUI harness case PAINT-PRIORITY (nothing
+selected: the nearest mesh takes the cursor; the mesh behind selected: it wins
+and a click paints it, not the box in front). GUI harness failures=0.
 
 ### PBMesh stops running a script every frame
 

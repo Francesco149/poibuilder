@@ -150,7 +150,9 @@ submit clear BEFORE set, or the set is wiped.
 - Scene-wide "which surface is under the cursor" (creation, n-gon, Trim
   Walls, paint, material drop): `PBPicking.scene_ray_pick` and nothing else —
   nearest hit wins, hidden/excluded meshes never hit, AABB prefilter
-  nearest-first, optional `face_filter`. `test_pb_test_hygiene.gd` fails a
+  nearest-first, optional `face_filter`. The paint brush layers its DOCUMENTED
+  selected-mesh priority on top (the selection wins wherever the ray meets it,
+  even behind another mesh — user docs, Paint & stamps); do not "fix" that. `test_pb_test_hygiene.gd` fails a
   function that loops over `collect_pbmeshes` and calls `pick_face` itself.
 - Hover: `_forward_3d_gui_input` observes motion, never consumes; hover is
   skipped while buttons are held or a drag is active; hover id changes

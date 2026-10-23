@@ -2529,10 +2529,12 @@ func _run() -> void:
 	plugin.editor.active_mesh = null
 	sprite.queue_free()
 
-	# ── PAINT-OCCLUSION: the brush paints what the cursor SEES ──────────────
-	# The paint pick returned the SELECTED mesh whenever the ray met it
-	# anywhere, so with a big wall selected the brush painted it THROUGH a box
-	# standing in front of it (v0.9.182: one scene-wide pick, nearest wins).
+	# ── PAINT-PRIORITY: the selected mesh wins; otherwise the nearest ──────
+	# Documented paint behaviour (docs: Paint & stamps): the SELECTED mesh
+	# takes the brush wherever the ray meets it, even behind another mesh —
+	# paint a floor around the props standing on it without converting them.
+	# With nothing selected the nearest surface wins (v0.9.182: one shared,
+	# AABB-prefiltered scene pick behind both).
 	var occ_cam: Camera3D = vp.get_camera_3d()
 	var occ_xf := occ_cam.global_transform
 	var occ_aim := Vector2(float(vp.size.x) * 0.5, minf(140.0, float(vp.size.y) * 0.2))
@@ -2551,38 +2553,44 @@ func _run() -> void:
 	occ_front.rebuild()
 	occ_back.rebuild()
 	await _frames(10)
-	plugin.editor.active_mesh = occ_back  # the SELECTED mesh is the one behind
 	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
 	pc_ps.paint_target = PBPaintController.PaintTarget.SPLAT
 	pc_ps.paint_texture = ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
-	await _frames(6)
 	var occ_pt := _window_pos(vp, host, occ_cam.project_position(occ_aim, 3.0))
+	# Nothing selected: the nearest surface takes the cursor.
+	plugin.editor.active_mesh = null
+	await _frames(6)
 	_mouse_motion(occ_pt)
 	await _frames(6)
 	if pc_ps.target_mesh == occ_front:
-		_pass("PAINT-OCCLUSION: the cursor lands on the mesh in front, not the selected one behind")
+		_pass("PAINT-PRIORITY: with nothing selected the nearest mesh takes the cursor")
 	else:
-		_fail("PAINT-OCCLUSION: cursor target=%s (front=%s, selected-behind=%s)" % [
-			str(pc_ps.target_mesh), str(occ_front), str(occ_back)])
-	var back_mat_before: Material = occ_back.pb_mesh_data.get_face_material(occ_back.pb_mesh_data.faces[0])
-	_mouse_button(occ_pt, true)
+		_fail("PAINT-PRIORITY: nothing selected, cursor target=%s (front=%s)" % [str(pc_ps.target_mesh), str(occ_front)])
+	# The mesh BEHIND selected: it wins, and a click paints it, not the box.
+	plugin.editor.active_mesh = occ_back
 	await _frames(6)
-	_mouse_button(occ_pt, false)
+	_mouse_motion(occ_pt + Vector2(1, 0))
+	await _frames(6)
+	if pc_ps.target_mesh == occ_back:
+		_pass("PAINT-PRIORITY: the selected mesh wins under the cursor even behind another mesh")
+	else:
+		_fail("PAINT-PRIORITY: selected-behind, cursor target=%s (selected=%s)" % [str(pc_ps.target_mesh), str(occ_back)])
+	_mouse_button(occ_pt + Vector2(1, 0), true)
+	await _frames(6)
+	_mouse_button(occ_pt + Vector2(1, 0), false)
 	await _frames(6)
 	var front_painted := false
 	for f in occ_front.pb_mesh_data.faces:
 		if PBSplat.is_splat_material(occ_front.pb_mesh_data.get_face_material(f)):
 			front_painted = true
-	var back_untouched := true
+	var back_painted := false
 	for f in occ_back.pb_mesh_data.faces:
 		if PBSplat.is_splat_material(occ_back.pb_mesh_data.get_face_material(f)):
-			back_untouched = false
-	if front_painted and back_untouched \
-			and occ_back.pb_mesh_data.get_face_material(occ_back.pb_mesh_data.faces[0]) == back_mat_before:
-		_pass("PAINT-OCCLUSION: a click paints the front mesh and leaves the selected one alone")
+			back_painted = true
+	if back_painted and not front_painted:
+		_pass("PAINT-PRIORITY: the click paints the selected mesh and leaves the box in front alone")
 	else:
-		_fail("PAINT-OCCLUSION: front painted=%s, selected-behind untouched=%s" % [
-			str(front_painted), str(back_untouched)])
+		_fail("PAINT-PRIORITY: selected painted=%s, box in front painted=%s" % [str(back_painted), str(front_painted)])
 	plugin.editor.active_mesh = null
 	occ_front.queue_free()
 	occ_back.queue_free()

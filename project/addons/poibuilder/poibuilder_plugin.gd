@@ -4370,13 +4370,24 @@ func _pick_paint_surface_ray(camera: Camera3D, screen_pos: Vector2) -> Dictionar
 	if frame != _paint_pick_frame:
 		_paint_pick_frame = frame
 		_paint_pick_candidates = PBPicking.prepare_scene_candidates(PBPicking.collect_pbmeshes(scene_root))
-	# The nearest surface wins — the selected mesh used to be returned whenever
-	# the ray met it ANYWHERE, so the brush painted through whatever stood in
-	# front of it.
+		_paint_pick_selected = []
+		for entry in _paint_pick_candidates:
+			if editor != null and entry[1] == editor.active_mesh:
+				_paint_pick_selected = [entry]
+	# The SELECTED mesh wins wherever the ray meets it, even behind another
+	# mesh — documented paint behaviour (docs: Paint & stamps): with a floor
+	# selected you paint the floor around and under the props standing on it
+	# instead of converting the props. Everything else: nearest surface wins.
+	if not _paint_pick_selected.is_empty():
+		var on_selected := PBPicking.scene_ray_pick_prepared(_paint_pick_selected, ray_o, ray_d)
+		if not on_selected.is_empty():
+			return on_selected
 	return PBPicking.scene_ray_pick_prepared(_paint_pick_candidates, ray_o, ray_d)
 
-## The paint pick's prepared scene and the process frame it belongs to.
+## The paint pick's prepared scene (and its entry for the selected mesh) and
+## the process frame it belongs to.
 var _paint_pick_candidates: Array = []
+var _paint_pick_selected: Array = []
 var _paint_pick_frame: int = -1
 # ==============================================================================
 # Shape Params modal (create + edit sessions)
