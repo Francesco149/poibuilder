@@ -31,7 +31,13 @@ unverified and were not fixes. Any viewport-interaction change (picking,
 mode switching, drags, creation, modals) extends this harness with a case —
 copy an existing block (mouse: `_window_pos`/`_motion`/`_click`; keys:
 `_press_and_release_key`; assertions read `plugin.editor.*` and
-`gizmo.get_subgizmo_selection()`). Known engine limit: the transform gizmo
+`gizmo.get_subgizmo_selection()`). The dock LAYOUT is project state
+(`.godot/editor/editor_layout.cfg`), not HOME: the runners pin
+`test_scenes/editor_gui_layout.cfg` for the run and restore the user's file
+(`tools/pin_editor_layout.sh`). Viewport cases move with dock widths, so
+compute aim pixels AFTER any dock-mode switch (a mode switch can resize the
+viewport), and change the pinned layout only on purpose, re-running the whole
+harness. Known engine limit: the transform gizmo
 itself cannot be engaged by synthesized events on 4.7.2 (hit-test internals)
 — drag deliveries are driven through the plugin instead; state that
 limitation when a change depends on engine-side gizmo composition.
