@@ -3,6 +3,76 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.185 — a paste into another scene cannot edit the scene it came from
+
+### Fixed: cross-scene paste shared the source scene's faces and materials
+
+v0.9.184 found this and left it open. When the paste target is a different
+scene file, the dock remaps resources (`_create_remap_for_resource`): a
+shallow `duplicate()` of each built-in Resource reachable through
+Resource-valued properties. PBMeshData's faces, shared vertices and
+materials are ARRAYS, which the remap never enters, so the paste got a NEW
+data object holding the SOURCE scene's `faces` array, PBFace objects, and
+paint and plain materials. Editing the paste (moving faces, re-texturing,
+painting) edited the other open scene in memory, and that scene's next save
+wrote the edit. v0.9.184's claim could not see it: the copy is a new object
+with no claim.
+
+- `PBFace.claimed_by_data` (runtime-only, not copied by `copy_from`):
+  `claim_mesh_data` stamps faces[0] with its data's id. A data whose first
+  face another live data still holds is a shallow copy and takes a deep one.
+  It costs one lookup per node on entering the tree, and no plugin op puts one
+  face object into two live datas (detach, merge and the snapshots all use
+  `duplicate_face`), so the check cannot misfire on the plugin's own ops.
+- The deep copy also gives the paste its own copy (`duplicate(true)`) of
+  every material BUILT INTO A DIFFERENT SCENE FILE, so not even an inspector
+  edit reaches the source scene. Faces that shared one keep sharing the one
+  copy. Materials of the edited scene, saved `.tres` files and never-saved
+  ones stay shared, so same-scene Ctrl+D is unchanged.
+- Foreign materials alone never trigger a copy: an inherited scene's base
+  nodes wear the base file's materials and must keep their data (a copy would
+  be saved into the inheriting scene as an override). Instanced sub-scene
+  content stays excluded as before.
+
+Per the report's intent, editing every copy of an object across scenes
+together is what an instanced sub-scene is for. A paste is independent.
+
+Tests: four new cases in `test_pb_duplicate_mesh.gd`. The cross-scene paste
+cannot edit the source's faces, face materials or paint; the paste gets its own
+copy of the source scene's material (an inspector edit stays in scene B);
+foreign materials alone do not privatise; same-scene Ctrl+D keeps its scene's
+materials shared. The first two fail with the fix neutered. GUI case
+PASTE-OTHER-SCENE: a real Ctrl+C / Ctrl+V through the dock's remap path
+(the harness scene's file is renamed between copy and paste, so the dock
+takes the cross-scene branch). The paste owns its faces, editing it leaves the
+source alone, and it wears its own material copy.
+
+### Fixed: the GUI harness ran against the user's saved dock layout
+
+Godot keeps the dock layout per PROJECT (`.godot/editor/editor_layout.cfg`),
+not in HOME, so the harness's isolated HOME never covered it. It inherited the
+layout of the last editor session and wrote its own back on exit. After a
+`./trace_paint.sh` session, PAINT-PRIORITY failed 3 of 3 runs: the case aimed before
+switching the dock to Paint mode, the switch widened the dock, and the stored
+pixel's ray passed 12 degrees beside the box. With no saved layout at all, 13
+cases failed. The runners now pin `test_scenes/editor_gui_layout.cfg` for
+the run and restore the user's file (`tools/pin_editor_layout.sh`), and
+PAINT-PRIORITY switches mode first and aims at the box's own position.
+failures=0 both with the user's layout (restored byte-identical) and with
+none.
+
+### Retired: "Painting small faces is laggy"
+
+The reference iGPU (UHD 630) re-ran the interactive trace (`./trace_paint.sh`,
+37 s, 7 strokes, 2510 frames). Frames ran at p50 16.4 ms, p90 16.8 ms and p99
+21.3 ms. Of 13 attributable hitches, 0 were paint-handler-bound and 6 were
+render/editor-side. One 806 ms first-stroke stall spent 0.6% of its time in the
+paint handler (editor/renderer one-time cost). The painter's verdict was
+smooth. The known-issues entry is retired; the paint page notes the one-time
+first-stroke stall.
+
+`./run_tests.sh`: 1269 tests, 82 suites, passing. GUI harness failures=0.
+
 ## v0.9.184 — a duplicated mesh owns its data; scrolling copies stop leaking; Bake Boost defaults to 1
 
 ### Changed: Bake Boost defaults to 1.0, and it is not quite modulate-2x

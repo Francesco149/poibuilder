@@ -192,3 +192,121 @@ func test_scroll_speed_on_a_copy_leaves_the_originals_gltf_extras() -> void:
 	PBUv.set_scroll_speed(copy, Vector2.ZERO)
 	assert_true(original.has_meta(PBUv.GLTF_EXTRAS_META), "clearing the copy leaves the original's extras")
 	assert_false(copy.has_meta(PBUv.GLTF_EXTRAS_META))
+
+# ── v0.9.185: a paste into ANOTHER scene ─────────────────────────────────────
+
+const SCENE_A := "res://pb_test_paste_scene_a.tscn"
+const SCENE_B := "res://pb_test_paste_scene_b.tscn"
+
+## Scene A as the editor holds it after a tab switch: claimed, out of the tree.
+## Faces wear a material BUILT INTO A's file; the top face is painted.
+func _source_scene() -> Dictionary:
+	var a_root := Node3D.new()
+	a_root.scene_file_path = SCENE_A
+	add_child_autofree(a_root)
+	get_tree().edited_scene_root = a_root
+	var src := PBMesh.new()
+	src.pb_mesh_data = PBShapeGenerators.create_box(Vector3(2, 0.2, 2))
+	var plain := StandardMaterial3D.new()
+	plain.resource_path = SCENE_A + "::StandardMaterial3D_pbpaste"
+	var data := src.pb_mesh_data
+	data.set_faces_material(data.faces, plain)
+	a_root.add_child(src)
+	src.owner = a_root
+	src.claim_mesh_data()
+	var top := -1
+	for fi in range(data.faces.size()):
+		if PBMath.normal_from_positions(data.positions, data.faces[fi].get_indexes()).y > 0.99:
+			top = fi
+	var splat := PBSplat.ensure_face_owned_material(data, data.faces[top])
+	var layer := PBSplat.ensure_layer_for_texture(splat, PlaceholderTexture2D.new(),
+			PBSplat.live_mask_resolution_for(data, data.faces[top]).x)
+	PBSplat.paint_face_splat(data, data.faces[top], splat, layer, Vector3(-0.5, 0.1, 0.0), 0.35, 0.5, 1.0, false, {})
+	a_root.get_parent().remove_child(a_root)   # the tab switch
+	return {"src": src, "plain": plain, "top": top, "layer": layer, "a_root": a_root}
+
+## What the dock's cross-scene paste does (scene_tree_dock.cpp _paste_nodes):
+## Node.duplicate plus a resource remap that SHALLOW-duplicates the data.
+func _paste_into_scene_b(src: PBMesh) -> PBMesh:
+	var b_root := Node3D.new()
+	b_root.scene_file_path = SCENE_B
+	add_child_autofree(b_root)
+	get_tree().edited_scene_root = b_root
+	var pasted := src.duplicate() as PBMesh
+	pasted.pb_mesh_data = src.pb_mesh_data.duplicate()
+	b_root.add_child(pasted)
+	return pasted
+
+func test_a_paste_into_another_scene_cannot_edit_the_source_scene() -> void:
+	var a := _source_scene()
+	var src: PBMesh = a["src"]
+	var sdata := src.pb_mesh_data
+	var top: int = a["top"]
+	var layer: int = a["layer"]
+	var src_splat := sdata.get_face_material(sdata.faces[top]) as ShaderMaterial
+	var src_mask := hash(PBSplat.get_layer_mask_image(src_splat, layer).get_data())
+	var pasted := _paste_into_scene_b(src)
+	assert_same(pasted.pb_mesh_data.faces[0], sdata.faces[0],
+			"fixture: the remap's shallow copy still holds the source scene's faces")
+	assert_true(pasted.claim_mesh_data(), "the paste takes its own deep copy")
+	var pdata := pasted.pb_mesh_data
+	assert_ne(pdata.faces[0], sdata.faces[0])
+	# Edit the paste every way PoiBuilder edits a mesh.
+	pdata.faces[1].uv_scale = Vector2(7, 7)
+	pdata.set_faces_material([pdata.faces[2]], StandardMaterial3D.new())
+	var p_splat := pdata.get_face_material(pdata.faces[top]) as ShaderMaterial
+	assert_ne(p_splat, src_splat, "the paint material is the paste's own")
+	PBSplat.paint_face_splat(pdata, pdata.faces[top], p_splat, layer, Vector3(0.5, 0.1, 0.0), 0.35, 0.5, 1.0, false, {})
+	assert_eq(sdata.faces[1].uv_scale, Vector2.ONE, "the source scene's faces are untouched")
+	assert_same(sdata.get_face_material(sdata.faces[2]), a["plain"], "and its face materials")
+	assert_eq(hash(PBSplat.get_layer_mask_image(src_splat, layer).get_data()), src_mask, "and its paint")
+
+func test_a_paste_gets_its_own_copy_of_the_source_scenes_materials() -> void:
+	var a := _source_scene()
+	var src: PBMesh = a["src"]
+	var plain: StandardMaterial3D = a["plain"]
+	var pasted := _paste_into_scene_b(src)
+	pasted.claim_mesh_data()
+	var pdata := pasted.pb_mesh_data
+	var mine := pdata.get_face_material(pdata.faces[0]) as StandardMaterial3D
+	assert_ne(mine, plain, "a material built into scene A is copied, not shared")
+	assert_false(mine.resource_path.begins_with(SCENE_A), "the copy belongs to no other scene")
+	assert_same(pdata.get_face_material(pdata.faces[1]), mine, "faces that shared it share the one copy")
+	mine.albedo_color = Color.RED   # an inspector edit in scene B
+	assert_eq(plain.albedo_color, Color.WHITE, "never reaches scene A")
+
+func test_foreign_materials_alone_do_not_privatise() -> void:
+	# An inherited scene's base nodes wear the BASE file's materials; nothing
+	# is shared with another live data, so they must keep their data (a copy
+	# would be saved as an override into the inheriting scene).
+	var root := Node3D.new()
+	root.scene_file_path = SCENE_B
+	add_child_autofree(root)
+	get_tree().edited_scene_root = root
+	var pb := PBMesh.new()
+	pb.pb_mesh_data = PBShapeGenerators.create_plane(1.0, 1.0, 1, 1)
+	var base_mat := StandardMaterial3D.new()
+	base_mat.resource_path = SCENE_A + "::StandardMaterial3D_pbbase"
+	pb.pb_mesh_data.set_faces_material(pb.pb_mesh_data.faces, base_mat)
+	var data := pb.pb_mesh_data
+	root.add_child(pb)
+	pb.owner = root
+	assert_false(pb.claim_mesh_data())
+	assert_same(pb.pb_mesh_data, data)
+
+func test_same_scene_duplicate_keeps_its_scenes_materials_shared() -> void:
+	var root := Node3D.new()
+	root.scene_file_path = SCENE_A
+	add_child_autofree(root)
+	get_tree().edited_scene_root = root
+	var pb := PBMesh.new()
+	pb.pb_mesh_data = PBShapeGenerators.create_plane(1.0, 1.0, 1, 1)
+	var own := StandardMaterial3D.new()
+	own.resource_path = SCENE_A + "::StandardMaterial3D_pbown"
+	pb.pb_mesh_data.set_faces_material(pb.pb_mesh_data.faces, own)
+	root.add_child(pb)
+	pb.owner = root
+	pb.claim_mesh_data()
+	var dup := _editor_duplicate(pb)
+	assert_same(dup.pb_mesh_data.get_face_material(dup.pb_mesh_data.faces[0]), own,
+			"Ctrl+D within the scene keeps one shared material")

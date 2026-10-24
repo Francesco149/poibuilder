@@ -73,20 +73,64 @@ func _ready() -> void:
 ## holds its data takes a deep copy. Nodes inside an instanced sub-scene share
 ## their scene's data by design and keep it (instance roots too). Editor-only
 ## (from _enter_tree); a game spawning copies at runtime never edits them.
+##
+## A paste into ANOTHER scene arrives differently: the dock's resource remap
+## gives it a NEW data object, but a shallow one (Resource.duplicate) whose
+## faces, shared vertices and materials arrays are still the source scene's,
+## so editing the paste edited the other scene. faces[0] carries the id of the
+## data that claimed it; a data whose first face another live data still holds
+## is a shallow copy and takes a deep one too. The deep copy also duplicates
+## every material built into a DIFFERENT scene file, so not even an inspector
+## edit reaches the source scene.
 ## Returns true when it privatised.
 func claim_mesh_data() -> bool:
 	if pb_mesh_data == null:
 		return false
 	var privatised := false
-	var holder: PBMesh = null
-	if pb_mesh_data.claimed_by != 0:
-		holder = instance_from_id(pb_mesh_data.claimed_by) as PBMesh
-	if holder != null and holder != self and holder.pb_mesh_data == pb_mesh_data and holder.is_inside_tree() \
-			and not _is_instanced_content():
-		pb_mesh_data = PBCommand.copy_mesh_data_live(pb_mesh_data)
+	if not _is_instanced_content() and (_data_held_by_another_node() or _faces_held_by_another_data()):
+		pb_mesh_data = _private_copy(pb_mesh_data)
 		privatised = true
 	pb_mesh_data.claimed_by = get_instance_id()
+	if not pb_mesh_data.faces.is_empty() and pb_mesh_data.faces[0] != null:
+		pb_mesh_data.faces[0].claimed_by_data = pb_mesh_data.get_instance_id()
 	return privatised
+
+func _data_held_by_another_node() -> bool:
+	if pb_mesh_data.claimed_by == 0:
+		return false
+	var holder := instance_from_id(pb_mesh_data.claimed_by) as PBMesh
+	return holder != null and holder != self and holder.pb_mesh_data == pb_mesh_data and holder.is_inside_tree()
+
+func _faces_held_by_another_data() -> bool:
+	if pb_mesh_data.faces.is_empty() or pb_mesh_data.faces[0] == null:
+		return false
+	var face: PBFace = pb_mesh_data.faces[0]
+	if face.claimed_by_data == 0 or face.claimed_by_data == pb_mesh_data.get_instance_id():
+		return false
+	var other := instance_from_id(face.claimed_by_data) as PBMeshData
+	return other != null and other.faces.has(face)
+
+## Deep copy for this node: geometry, faces and paint (copy_mesh_data_live),
+## plus a local copy of each material built into another scene file (one per
+## distinct material, so faces that shared one keep sharing it). Materials of
+## this scene, saved .tres files and never-saved ones stay shared.
+func _private_copy(data: PBMeshData) -> PBMeshData:
+	var copy := PBCommand.copy_mesh_data_live(data)
+	var tree := get_tree()
+	var own_scene := tree.edited_scene_root.scene_file_path if tree != null and tree.edited_scene_root != null else ""
+	var localised: Dictionary = {}
+	for i in range(copy.materials.size()):
+		var m := copy.materials[i]
+		if m == null or not _is_built_into_other_scene(m, own_scene):
+			continue
+		if not localised.has(m):
+			localised[m] = m.duplicate(true)
+		copy.materials[i] = localised[m]
+	return copy
+
+static func _is_built_into_other_scene(res: Resource, own_scene: String) -> bool:
+	var sep := res.resource_path.find("::")
+	return sep >= 0 and res.resource_path.substr(0, sep) != own_scene
 
 ## True for a node that belongs to an instanced sub-scene of the edited scene
 ## (owned by an instance root, or an instance root itself).

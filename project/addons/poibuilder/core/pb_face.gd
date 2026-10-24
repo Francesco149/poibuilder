@@ -65,6 +65,11 @@ extends Resource
 # Backing & Lazy-Cached Fields
 # ==============================================================================
 
+## Instance id of the PBMeshData that claimed this face (set on faces[0] only;
+## 0 = none). Not serialized, not copied by copy_from: PBMesh.claim_mesh_data
+## uses it to spot a pasted data whose faces are still another data's.
+var claimed_by_data: int = 0
+
 var _indexes: PackedInt32Array = PackedInt32Array()
 var _distinct_indexes: PackedInt32Array = PackedInt32Array()
 var _edges: Array[PBEdge] = []

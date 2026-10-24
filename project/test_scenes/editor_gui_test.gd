@@ -2894,6 +2894,62 @@ func _run() -> void:
 	plugin.animate_scrolling_textures = ds_was_on
 	await _frames(4)
 
+	# ── PASTE-OTHER-SCENE: a paste into another scene cannot edit this one ──
+	# The dock remaps resources when the paste target is a DIFFERENT scene
+	# file (clipboard_source_scene != target), and the remap's copy of the
+	# data is shallow: faces and materials stayed the source scene's. The
+	# harness has one scene, so the target is made "different" by renaming
+	# its file between Ctrl+C and Ctrl+V — the dock's real remap path runs.
+	var po_path := root.scene_file_path
+	var po_src := PBMesh.new()
+	po_src.name = "GuiTestPasteSrc"
+	po_src.pb_mesh_data = PBShapeGenerators.create_box(Vector3(1, 1, 1))
+	var po_mat := StandardMaterial3D.new()
+	po_mat.resource_path = po_path + "::StandardMaterial3D_guipaste"
+	po_src.pb_mesh_data.set_faces_material(po_src.pb_mesh_data.faces, po_mat)
+	root.add_child(po_src)
+	po_src.owner = root
+	sel.clear()
+	sel.add_node(po_src)
+	await _frames(6)
+	await _press_ctrl(KEY_C)
+	await _frames(4)
+	root.scene_file_path = "res://test_scenes/__gui_paste_target.tscn"
+	sel.clear()
+	sel.add_node(root)
+	await _frames(6)
+	await _press_ctrl(KEY_V)
+	await _frames(6)
+	root.scene_file_path = po_path
+	var po_paste: PBMesh = null
+	for c in root.find_children("GuiTestPasteSrc*", "PBMesh", true, false):
+		if c != po_src:
+			po_paste = c
+	if po_paste == null:
+		_fail("PASTE-OTHER-SCENE: fixture — Ctrl+C / Ctrl+V did not paste the mesh")
+	else:
+		var pd := po_paste.pb_mesh_data
+		var sd := po_src.pb_mesh_data
+		if pd != sd and pd.faces[0] != sd.faces[0] and not is_same(pd.faces, sd.faces):
+			_pass("PASTE-OTHER-SCENE: the pasted mesh owns its faces")
+		else:
+			_fail("PASTE-OTHER-SCENE: the paste shares the source scene's faces (data same=%s, face0 same=%s)"
+				% [str(pd == sd), str(pd.faces[0] == sd.faces[0])])
+		pd.faces[0].uv_scale = Vector2(3, 3)
+		if sd.faces[0].uv_scale == Vector2.ONE:
+			_pass("PASTE-OTHER-SCENE: editing the paste leaves the source scene's mesh alone")
+		else:
+			_fail("PASTE-OTHER-SCENE: editing the paste changed the source mesh")
+		var pm := pd.get_face_material(pd.faces[0])
+		if pm != po_mat and pm != null and not pm.resource_path.begins_with(po_path):
+			_pass("PASTE-OTHER-SCENE: the paste wears its own copy of the source scene's material")
+		else:
+			_fail("PASTE-OTHER-SCENE: the paste shares the source scene's material %s" % pm)
+		po_paste.queue_free()
+	sel.clear()
+	po_src.queue_free()
+	await _frames(4)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.
