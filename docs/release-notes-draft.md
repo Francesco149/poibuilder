@@ -1,4 +1,4 @@
-# PoiBuilder v0.9.184 — release notes (DRAFT)
+# PoiBuilder v0.9.185 — release notes (DRAFT)
 
 Changes since **v0.9.167**, the current `nightly` / Asset Library release.
 This is still an **alpha**.
@@ -40,15 +40,24 @@ This is still an **alpha**.
   path instead of stamping dozens of overlapping dabs (3–4× on big faces).
   Small faces paint about 4× faster than before. The work is spread across
   frames so the editor stays responsive, and fast strokes are continuous
-  instead of dotted.
+  instead of dotted. A trace of real painting on that GPU now runs at the
+  editor's frame rate (16.4 ms median, 21.3 ms at the 99th percentile), so the
+  "small faces are laggy" known issue is closed. The first stroke of a session
+  can still stall once for under a second.
 - **Big maps hold up.** A mesh with more than 256 painted faces no longer
   silently drops faces. Rebuilding such a mesh is ~9× faster. Picking under
   the cursor no longer slows down as the map grows (500 objects: 10 ms →
   0.6 ms per paint pick).
-- **Duplicates are independent.** Ctrl+D (or copy-paste within a scene) used
-  to leave the copy *linked* to the original's mesh data, so editing one
-  quietly changed the other. Re-texturing a copied scrolling plane stopped the
-  original from scrolling, and both exported with the same texture.
+- **Duplicates and pastes are independent.** Ctrl+D (or copy-paste within a
+  scene) used to leave the copy *linked* to the original's mesh data, so
+  editing one quietly changed the other. Re-texturing a copied scrolling plane
+  stopped the original from scrolling, and both exported with the same
+  texture. Pasting into a *different* scene was worse: editing the paste
+  edited the scene you copied it from, and that scene's next save kept the
+  change. Every copy now gets its own mesh data and paint, and a paste into
+  another scene gets its own copies of that scene's materials. To keep
+  several copies of an object in sync, save it as its own scene and
+  instance it.
 
 ## Fixed
 
@@ -119,8 +128,8 @@ This is still an **alpha**.
 
 - **A stamp cannot span two objects.** It covers several faces of one mesh,
   but stops at object boundaries. Workaround: merge the objects first.
-- **Painting can still hitch on old integrated GPUs.** It is much improved;
-  the remaining hitches measured were mostly the editor's own viewport
-  redraw.
+- **Trim Walls at Top placement around doors and arches** does not produce
+  one continuous cornice. Use Bottom placement for loops with openings (see
+  the Trims page).
 
-Full details: `CHANGELOG.md` (v0.9.168 – v0.9.184).
+Full details: `CHANGELOG.md` (v0.9.168 – v0.9.185).
