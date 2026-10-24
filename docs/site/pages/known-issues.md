@@ -26,8 +26,8 @@ Duplicate the stamp per object as a last resort.
 **Where:** splat/decal painting in the editor — **old / integrated GPUs
 only**. On the machines used for the current benchmark baseline (an RTX
 5060 desktop) this is NOT observable: small faces paint as smoothly as big
-ones at any brush size. It shows up on the five-year-old integrated-GPU
-laptop that serves as the worst-case machine in the
+ones at any brush size. It shows up on the five-year-old integrated GPU
+(an Intel UHD 630 in a desktop) that serves as the worst-case machine in the
 [performance](performance.html) table.
 
 Brushing over a small face (a 0.5 m tile, a trim strip) runs noticeably
@@ -54,7 +54,10 @@ cursor path as one capsule instead of stamping ~25 overlapping discs; picking
 is allocation-free; sweeps queue and drain under a per-frame budget). Note that
 the scanline "row-skip" bookkeeping those rounds added was measured at **3-7%**
 in v0.9.180 — it is not what made large painting fast, and the changelog no
-longer says it was. The note stays until the reference laptop re-runs the
-interactive trace: the last trace's verdict was that most remaining hitches
-were render/editor-side (the iGPU viewport redraw), which no paint-path change
-can shrink.
+longer says it was. Since v0.9.182 the brush's per-frame pick also stops
+growing with the map: it tries objects nearest-first and skips the rest
+(500 objects: 10.1 ms → 0.59 ms per pick), so the brush's own cost no longer
+grows with the number of objects. The note stays until the reference machine
+re-runs the interactive trace: the last trace's verdict was that most
+remaining hitches were render/editor-side (the iGPU viewport redraw), which no
+paint-path change can shrink.
