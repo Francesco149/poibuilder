@@ -193,13 +193,13 @@ func _build_ui() -> void:
 
 	var lbl_boost := Label.new()
 	lbl_boost.text = "Bake Boost:"
-	lbl_boost.tooltip_text = "Modulate-2x: baked vertex colors are multiplied by this (saturating at 1.0). Lifts shadows and mid-tones of dusk/night bakes the way retro hardware's modulate stages did; sunlit areas ride the clamp. 1.0 disables."
+	lbl_boost.tooltip_text = "Baked vertex colors are multiplied by this (saturating at 1.0). 2.0 lifts the shadows and mid-tones of a dusk/night bake like an old-school modulate-2x, but caps at the texture's own colour instead of overbrighting: on a daylit map every surface lit past half flattens to its bare texture. 1.0 (default) keeps the bake as computed."
 	hb_light_ops.add_child(lbl_boost)
 	_spin_bake_boost = SpinBox.new()
 	_spin_bake_boost.min_value = 1.0
 	_spin_bake_boost.max_value = 4.0
 	_spin_bake_boost.step = 0.5
-	_spin_bake_boost.value = 2.0
+	_spin_bake_boost.value = 1.0
 	_spin_bake_boost.tooltip_text = lbl_boost.tooltip_text
 	hb_light_ops.add_child(_spin_bake_boost)
 	root_vb.add_child(hb_light_ops)

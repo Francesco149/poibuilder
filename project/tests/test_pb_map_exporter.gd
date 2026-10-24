@@ -886,9 +886,9 @@ func test_modern_glb_bake_embeds_painted_pixels() -> void:
 ## (CUSTOM0 -> TEXCOORD_2 -> CUSTOM0), each painted face's material carries a
 ## `poi_splat` record, and the masks/decal ride as sidecar PNGs. The round trip
 ## must reproduce the painted pixels.
-## Modulate-2x: settings.bake_boost multiplies the baked vertex colors
-## (saturating at 1.0) in the retro export tree — brighter shadows and
-## mid-tones, sunlit areas ride the clamp.
+## settings.bake_boost multiplies the baked vertex colors (saturating at
+## 1.0) in the retro export tree — brighter shadows and mid-tones, sunlit
+## areas ride the clamp. Default 1.0 (v0.9.184): the bake as computed.
 func test_bake_boost_multiplies_vertex_colors() -> void:
 	var root := Node3D.new()
 	autofree(root)
@@ -936,8 +936,8 @@ func test_bake_boost_multiplies_vertex_colors() -> void:
 	assert_almost_eq(boosted_mean, expected_mean, 0.02,
 			"Bake boost must multiply the baked colors per-component (saturating)")
 	assert_true(max_component <= 1.0001, "Boosted colors must stay clamped at 1.0")
-	assert_eq(PBMapExporter.ExportSettings.new().bake_boost, 2.0,
-			"Modulate-2x must be the default")
+	assert_eq(PBMapExporter.ExportSettings.new().bake_boost, 1.0,
+			"The default export leaves the bake as computed (no boost)")
 
 ## glTF lights cannot carry shadows, so a shadow-casting light tags its export
 ## node with `extras.poi_shadow` — and the tag survives a GLB round trip, so a

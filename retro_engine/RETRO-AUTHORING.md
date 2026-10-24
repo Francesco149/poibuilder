@@ -168,6 +168,7 @@ So:
 |---|---|---|
 | Quad subdivision / grid size | on / 1.0 m | tile alignment, vertex lighting resolution, geometry count |
 | Bake lighting / shadows / AO | on / on / 16 samples, 1.5 m, 0.4 | vertex colours; AO samples and distance are the cost (export time) and the look |
+| Bake boost | 1.0 | multiplies the baked light, saturating at 1.0, before the texture multiply: `tex × min(boost × light, 1)`. 2.0 lifts a dusk/night bake's shadows exactly like a hardware modulate-2x, but never overbrights past the texture, so a daylit map flattens (every surface lit past half shows its bare texture). Default 2.0 before v0.9.184; side-by-side shots on the docs' Export page |
 | Bake textures / tile resolution | on / 128 px | sharpness of painted areas vs atlas capacity (128 px tiles → 16 per 512 atlas; 256 px → 4) |
 | Max texture size / POT | 512 / on | retro engines and this one want power-of-two; the cap is enforced by bilinear resize |
 | Billboards / colliders / lights | on | whether those node types reach the file |

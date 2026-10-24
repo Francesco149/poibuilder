@@ -83,12 +83,15 @@ class ExportSettings extends RefCounted:
 	var ao_distance: float = 1.5
 	var ao_intensity: float = 0.4
 	var ambient_color: Color = Color(0.42, 0.42, 0.46)
-	## Modulate-2x, the old-school brightness lift: multiplies the baked
-	## vertex colors by this factor (saturating at 1.0) before they are
-	## packed. Dusk/night bakes sit far below the cap, so 2.0 lifts their
-	## shadows and mid-tones while sunlit areas ride the clamp — what the
-	## modulate stages of retro hardware did. 1.0 disables.
-	var bake_boost: float = 2.0
+	## Brightness lift for dark bakes: multiplies the baked vertex colors by
+	## this factor, saturating at 1.0, before they are packed. 2.0 matches a
+	## hardware modulate-2x (PS1/PS2 vertex colour 0x80 = 1.0, D3D
+	## MODULATE2X) wherever the doubled light stays at or below 1.0, which is
+	## a dusk/night bake's shadows and mid-tones. Above that it CAPS at the
+	## texture's own colour where the hardware would overbright, so a
+	## daylit map flattens: every surface lit past half shows its bare
+	## texture. 1.0 (the default since v0.9.184) leaves the bake as computed.
+	var bake_boost: float = 1.0
 	var bake_textures: bool = true
 	var tile_resolution: int = 128
 	var max_texture_size: int = 512
@@ -1422,8 +1425,9 @@ static func _apply_texture_plan_to_uvs(arrays: Array, plan_entry: Dictionary) ->
 	return arrays
 
 ## Applies settings.bake_boost to a baked color array: multiply + saturate.
-## modulate-2x semantics — values over 1.0 clamp, which is what makes the
-## lift read as "brighter shadows" instead of "brighter everything".
+## Values over 1.0 clamp, which is what makes the lift read as "brighter
+## shadows" instead of "brighter everything" (and what separates it from a
+## hardware modulate-2x, which doubles AFTER the texture multiply).
 static func _boost_baked_colors(colors: PackedColorArray, boost: float) -> PackedColorArray:
 	if boost <= 1.0:
 		return colors

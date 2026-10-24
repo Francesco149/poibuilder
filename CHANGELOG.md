@@ -3,7 +3,40 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
-## v0.9.184 — a duplicated mesh owns its data; scrolling copies stop leaking
+## v0.9.184 — a duplicated mesh owns its data; scrolling copies stop leaking; Bake Boost defaults to 1
+
+### Changed: Bake Boost defaults to 1.0, and it is not quite modulate-2x
+
+`ExportSettings.bake_boost` and the dialog's **Bake Boost** default to 1.0
+(was 2.0): retro exports (PBM and the retro GLB, which share the setting and
+must keep parity) ship the bake as computed. The v0.9.162 claim that the
+boost works "exactly as retro hardware's modulate stage did it" was checked
+and is only half true:
+
+- The baker clamps light to [0, 1], and the boost then computes
+  `tex × min(2L, 1)`: it doubles the LIGHT and saturates it before the
+  texture multiply. Hardware modulate-2x (PS1/PS2 vertex colour 0x80 = 1.0,
+  D3D MODULATE2X) doubles AFTER it: `min(2·tex·L, 1)`. The two are identical
+  wherever 2L ≤ 1. Above that the boost caps at the texture's own colour,
+  where the hardware overbrights up to 2x the texture.
+- The PSP renderer uses plain `GU_TFX_MODULATE` (no `GU_FRAGMENT_2X`), so on
+  the device the boost is exactly the first formula.
+- Measured on the demo map (`test_scenes/bake_boost_shots.gd`): at dusk the
+  mean baked light is 0.294 and 17.9% of baked channel values exceed 0.5; at
+  day, 0.553 and 47.6%. Rendered through the parity-checked Godot retro display,
+  boost 2 vs a simulated hardware 2x (albedo x2 on the boost-1 bake,
+  probed to render `min(2·tex·vc, 1)` exactly) differ by more than 8/255 on
+  23–49% of pixels at dusk and 41–71% at day, always brighter on the
+  hardware. At day, boost 2 barely raises the mean (plaza 0.493 → 0.523) but
+  flattens every surface lit past half to its bare texture, which erases
+  most cast shadows.
+
+Docs: a "Bake boost" section on the Export page with dusk (1 vs 2) and day
+(1 vs 2 vs the hardware reference) figures of the demo courtyard
+(`docs/site/assets/export-boost-*.png`, composed by `tools/boost_contact.py`
+from the shots script's renders); RETRO-AUTHORING's knob table and the
+performance page (its parity figures were measured on boost-2 exports)
+updated. `test_bake_boost_multiplies_vertex_colors` pins the new default.
 
 Report: duplicate a plane wearing a scrolling texture, change the copy's
 texture, and the ORIGINAL stops scrolling; export, and both planes come out

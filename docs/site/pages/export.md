@@ -44,6 +44,22 @@ Output: `.glb` as transport, and/or `.pbm` (the binary map). Both land in `proje
 One click to a retro .pbm map.
 :::
 
+## Bake boost
+
+**Bake Boost** in the Export dialog (retro formats: PBM and the retro-baked GLB) multiplies the baked light by a factor before it is written, saturating at 1.0. The default, **1.0**, ships the bake exactly as computed. **2.0** lifts a dark map: at dusk the demo courtyard's floor, walls and the HELLO WORLD sign come up out of the gloom.
+
+:::shot export-boost-dusk.png
+Dusk, the same courtyard exported twice. Boost 2 lifts the shadows and mid-tones. Coloured light turns paler where a channel saturates: the warm-lit top of the block on the left goes grey-white.
+:::
+
+The ceiling is what makes it a dusk/night tool. At 2.0, any surface lit past half already shows its bare texture, so a daylit map loses its shading and most of its cast shadows. Until v0.9.184 the default was 2.0; set it back to 2.0 to keep that look on an older map.
+
+:::shot export-boost-day.png
+Day: Boost 2 flattens every lit surface to its texture colour (the stairs, the waterfall wall). On the right, for comparison, is what modulate-2x hardware draws from the Boost 1 bake. That is not an export option.
+:::
+
+> [note] **Is Boost 2 the old-school modulate-2x?** Only in the shadows. Hardware that doubles (PS1/PS2 vertex colour 0x80 = 1.0, Direct3D's MODULATE2X) doubles *after* the texture multiply, `min(2 × texture × light, 1)`, so light above half overbrights past the texture's own colour, washing towards white. The boost doubles the light and caps it *before* the multiply, `texture × min(2 × light, 1)`. The two are identical wherever the doubled light stays at or below 1, and the boost never overbrights. On the demo map, 17.9% of the baked colour values sit above half at dusk (where the two part) and 47.6% at day. The shots are Godot's retro display, which matches the PSP renderer's plain texture × vertex-colour multiply.
+
 ## Scrolling textures
 
 A scrolling texture is a property of the **material**: the Material dock writes a speed (in texture repeats per second, per UV axis, signed — negative V falls down a wall) onto the material, and the editor viewport animates it live. The exports carry the *speed*, not the animation — whichever consumer wants motion applies the one-line recipe `uv(t) = uv(0) + t · speed`:

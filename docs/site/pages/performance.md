@@ -156,11 +156,11 @@ only under the consumer contract above — adding Godot lighting to a fully
 baked map double-lights it (the live preset measured +54% mean luminance
 at day), and the naive import even renders it black, because the bake's
 light rides in COLOR_0, which Godot's importer does not apply without
-`apply_baked_vertex_colors()` (the exporter ships this helper). The baked
-colors themselves carry a **modulate-2x boost** (ExportSettings
-`bake_boost`, default 2.0, saturating): the old-school lift that brightens
-shadows and mid-tones of dusk/night bakes while sunlit areas ride the
-clamp.
+`apply_baked_vertex_colors()` (the exporter ships this helper). These
+parity figures were measured on exports with the old default **Bake Boost**
+of 2.0, which both consumers read from the same baked colours. The default is
+1.0 since v0.9.184; see [Bake boost](export.html#bake-boost) for what it does
+and how it differs from a hardware modulate-2x.
 
 The PSP side is a different question with its own measurements — the
 device's frame budget, fill-rate cliff and per-map budgets live in the
