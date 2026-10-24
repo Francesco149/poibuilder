@@ -90,10 +90,20 @@ func claim_mesh_data() -> bool:
 	if not _is_instanced_content() and (_data_held_by_another_node() or _faces_held_by_another_data()):
 		pb_mesh_data = _private_copy(pb_mesh_data)
 		privatised = true
+	_stamp_claim()
+	return privatised
+
+## Records this node on its data (and the data on its first face). Also run by
+## the setter whenever the node is already in the tree: the shape creator's
+## preview node enters the tree FIRST and receives its final data afterwards,
+## so a claim taken only on entering left every created shape unclaimed, and a
+## Ctrl+D of it found nothing to conflict with (v0.9.186).
+func _stamp_claim() -> void:
+	if pb_mesh_data == null:
+		return
 	pb_mesh_data.claimed_by = get_instance_id()
 	if not pb_mesh_data.faces.is_empty() and pb_mesh_data.faces[0] != null:
 		pb_mesh_data.faces[0].claimed_by_data = pb_mesh_data.get_instance_id()
-	return privatised
 
 func _data_held_by_another_node() -> bool:
 	if pb_mesh_data.claimed_by == 0:
@@ -189,6 +199,7 @@ func set_pb_mesh_data(value: PBMeshData) -> void:
 		collider_type = ColliderType.ACCURATE
 	notify_property_list_changed()
 	if is_inside_tree():
+		_stamp_claim()
 		rebuild()
 ## Compiles pb_mesh_data into an ArrayMesh and assigns it to self.mesh.
 ## A FRESH ArrayMesh is built every time: mutating the previous mesh in place

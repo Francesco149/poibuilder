@@ -122,6 +122,67 @@ func test_export_carries_both_textures() -> void:
 	if pixels_by_speed.size() == 2:
 		assert_ne(pixels_by_speed.values()[0], pixels_by_speed.values()[1], "and two different textures")
 
+## The .pbm itself, on the reporter's exact flow: a created plane (data
+## assigned in the tree), Ctrl+D, the copy re-textured with the speed CARRIED
+## (both -2.75, so only the texture tells them apart). Each scrolling mesh in
+## the file must reference its own texture.
+func test_pbm_gives_each_plane_its_own_texture() -> void:
+	var root := Node3D.new()
+	add_child_autofree(root)
+	get_tree().edited_scene_root = root
+	var plane := PBMesh.new()
+	plane.name = "Shape_Plane"
+	root.add_child(plane)
+	plane.owner = root
+	var data := PBShapeGenerators.create_plane(2.4, 4.0, 1, 1)
+	data.set_faces_material(data.faces, _scrolling_material(TEX_A, Vector2(0, -2.75)))
+	plane.pb_mesh_data = data
+	var dup := _editor_duplicate(plane)
+	dup.position.z += 0.2
+	var core := StandardMaterial3D.new()
+	core.albedo_texture = load(TEX_B)
+	var prepared := PBApplyPrep.prepare(core, dup.pb_mesh_data.get_face_material(dup.pb_mesh_data.faces[0]))
+	dup.pb_mesh_data.set_faces_material(dup.pb_mesh_data.faces, prepared)
+	dup.rebuild()
+	var path := ProjectSettings.globalize_path("user://test_pb_duplicate_planes.pbm")
+	var settings := PBMapExporter.ExportSettings.new()
+	settings.export_mode = PBMapExporter.ExportMode.RETRO
+	settings.bake_textures = true
+	settings.export_colliders = false
+	assert_eq(PBMapExporter.export_retro_pbm(root, path, settings), OK)
+	var f := FileAccess.open(path, FileAccess.READ)
+	assert_not_null(f)
+	if f == null:
+		return
+	f.get_32(); f.get_32()
+	var num_textures := f.get_32()
+	var num_meshes := f.get_32()
+	f.get_32(); f.get_32()
+	for i in range(10):
+		f.get_float()   # spawn xyz + yaw, bounds min, bounds max
+	var tex_hash: Array = []
+	for ti in range(num_textures):
+		f.get_buffer(32)
+		f.get_16(); f.get_16(); f.get_16(); f.get_16()
+		tex_hash.append(hash(f.get_buffer(f.get_32())))
+	var scrolling_tex: Array = []
+	for mi in range(num_meshes):
+		f.get_buffer(32)
+		var tex_id := f.get_32()
+		var n_verts := f.get_32()
+		for i in range(6):
+			f.get_float()
+		var scroll := Vector2(f.get_float(), f.get_float())
+		f.seek(f.get_position() + n_verts * 24)
+		if scroll != Vector2.ZERO:
+			scrolling_tex.append(tex_id)
+	f.close()
+	DirAccess.remove_absolute(path)
+	assert_eq(scrolling_tex.size(), 2, "both planes export as scrolling meshes")
+	if scrolling_tex.size() == 2:
+		assert_ne(scrolling_tex[0], scrolling_tex[1], "each plane references its own texture")
+		assert_ne(tex_hash[scrolling_tex[0]], tex_hash[scrolling_tex[1]], "and the two textures differ")
+
 func test_reentering_the_tree_keeps_the_data() -> void:
 	var parts := _scene_with_plane()
 	var root: Node3D = parts[0]
@@ -310,3 +371,25 @@ func test_same_scene_duplicate_keeps_its_scenes_materials_shared() -> void:
 	var dup := _editor_duplicate(pb)
 	assert_same(dup.pb_mesh_data.get_face_material(dup.pb_mesh_data.faces[0]), own,
 			"Ctrl+D within the scene keeps one shared material")
+
+# ── v0.9.186: a shape whose data arrived while it was already in the tree ────
+
+func test_duplicate_of_a_created_shape_owns_its_data() -> void:
+	# The shape creator adds its preview node FIRST and hands it the final
+	# data afterwards (PBMesh setter, node in the tree). v0.9.185 claimed only
+	# on entering the tree, so that data stayed unclaimed and a Ctrl+D of the
+	# finished shape shared it — the reporter's second scratch scene.
+	var root := Node3D.new()
+	add_child_autofree(root)
+	get_tree().edited_scene_root = root
+	var shape := PBMesh.new()
+	shape.pb_mesh_data = PBShapeGenerators.create_box(Vector3(0.01, 0.01, 0.01))
+	root.add_child(shape)
+	shape.owner = root
+	shape.claim_mesh_data()
+	var final_data := PBShapeGenerators.create_plane(2.4, 4.0, 1, 1)
+	final_data.set_faces_material(final_data.faces, _scrolling_material(TEX_A, Vector2(0, -2.75)))
+	shape.pb_mesh_data = final_data          # the creator's in-tree assignment
+	var dup := _editor_duplicate(shape)
+	assert_ne(dup.pb_mesh_data, final_data, "the copy of a created shape owns its data")
+	assert_same(shape.pb_mesh_data, final_data, "the original keeps its own")

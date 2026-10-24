@@ -514,6 +514,14 @@ func _run() -> void:
 			var created := root.get_node_or_null(NodePath("Shape_Cube"))
 			if created != null:
 				_pass("CREATE: Shape_Cube node exists after confirm")
+				# The creator's node enters the tree with NO data and gets it
+				# later; the claim must still name it, or a Ctrl+D of the
+				# shape shares its data (v0.9.186).
+				var cdata: PBMeshData = (created as PBMesh).pb_mesh_data
+				if cdata != null and cdata.claimed_by == created.get_instance_id():
+					_pass("CREATE: the created shape's data is claimed by it")
+				else:
+					_fail("CREATE: the created shape's data is unclaimed (claimed_by=%s)" % (str(cdata.claimed_by) if cdata != null else "no data"))
 			else:
 				_fail("CREATE: no Shape_Cube node after confirm")
 
@@ -2828,12 +2836,16 @@ func _run() -> void:
 	plugin.animate_scrolling_textures = true
 	var ds_mat := StandardMaterial3D.new()
 	PBUv.set_scroll_speed(ds_mat, Vector2(0.0, -2.4))
+	# Built in the shape creator's order: the node joins the scene with NO
+	# data and receives it afterwards (v0.9.185 only claimed on entering, so
+	# this is the order that slipped through).
 	var ds_plane := PBMesh.new()
 	ds_plane.name = "GuiTestDupScroll"
-	ds_plane.pb_mesh_data = PBShapeGenerators.create_plane(2.2, 2.2, 1, 1)
-	ds_plane.pb_mesh_data.set_faces_material(ds_plane.pb_mesh_data.faces, ds_mat)
 	root.add_child(ds_plane)
 	ds_plane.owner = root
+	var ds_data := PBShapeGenerators.create_plane(2.2, 2.2, 1, 1)
+	ds_data.set_faces_material(ds_data.faces, ds_mat)
+	ds_plane.pb_mesh_data = ds_data
 	plugin.scan_scrolling_materials()
 	sel.clear()
 	sel.add_node(ds_plane)
