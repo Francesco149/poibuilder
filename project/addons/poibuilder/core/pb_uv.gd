@@ -357,8 +357,14 @@ static func set_scroll_speed(mat: Material, speed: Vector2) -> void:
 ## JSON (`_attach_meta_to_extras` in gltf_document.cpp), which is how a modern
 ## .glb consumer reads the animation. Values are [u, v] float pairs: Vector2 is
 ## not a JSON type, and a Stringified Vector2 would have to be parsed back out.
+## The dictionary is COPIED before writing: Resource.duplicate() shares
+## metadata dictionaries, so the dock's per-face material copies held the
+## original's very `extras` and writing in place re-timed the original's GLB
+## animation too.
 static func _sync_gltf_extras(mat: Material, speed: Vector2) -> void:
-	var extras: Dictionary = mat.get_meta(GLTF_EXTRAS_META, {}) if mat.has_meta(GLTF_EXTRAS_META) else {}
+	var extras: Dictionary = {}
+	if mat.has_meta(GLTF_EXTRAS_META) and mat.get_meta(GLTF_EXTRAS_META) is Dictionary:
+		extras = (mat.get_meta(GLTF_EXTRAS_META) as Dictionary).duplicate(true)
 	if speed == Vector2.ZERO:
 		extras.erase(SCROLL_META)
 		if extras.is_empty():

@@ -121,6 +121,22 @@ func _press_undo() -> void:
 	up.pressed = false
 	Input.parse_input_event(up)
 
+## Ctrl+<key> through the input pipeline (editor shortcuts such as Duplicate).
+func _press_ctrl(keycode: Key) -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = keycode
+	ev.physical_keycode = keycode
+	ev.ctrl_pressed = true
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await _frames(2)
+	var up := InputEventKey.new()
+	up.keycode = keycode
+	up.physical_keycode = keycode
+	up.ctrl_pressed = true
+	up.pressed = false
+	Input.parse_input_event(up)
+
 func _press_redo() -> void:
 	var ev := InputEventKey.new()
 	ev.keycode = KEY_Y
@@ -2785,6 +2801,81 @@ func _run() -> void:
 	sel.clear()
 	op_mesh.queue_free()
 	dock_ps._set_dock_mode(PBMaterialDock.DockMode.MATERIAL)
+	await _frames(4)
+
+	# ── DUPLICATE-SCROLL: Ctrl+D gives the copy its own data ───────────────
+	# Reported: duplicate a scrolling plane, re-texture the copy, and the
+	# ORIGINAL stops scrolling (and both export the same texture). The
+	# editor's Duplicate shares Resource-valued properties, so both nodes
+	# edited one PBMeshData; the copy now takes its own on entering the tree.
+	var ds_was_on: bool = plugin.animate_scrolling_textures
+	plugin.animate_scrolling_textures = true
+	var ds_mat := StandardMaterial3D.new()
+	PBUv.set_scroll_speed(ds_mat, Vector2(0.0, -2.4))
+	var ds_plane := PBMesh.new()
+	ds_plane.name = "GuiTestDupScroll"
+	ds_plane.pb_mesh_data = PBShapeGenerators.create_plane(2.2, 2.2, 1, 1)
+	ds_plane.pb_mesh_data.set_faces_material(ds_plane.pb_mesh_data.faces, ds_mat)
+	root.add_child(ds_plane)
+	ds_plane.owner = root
+	plugin.scan_scrolling_materials()
+	sel.clear()
+	sel.add_node(ds_plane)
+	await _frames(8)
+	await _press_ctrl(KEY_D)   # SceneTreeDock's "scene_tree/duplicate" shortcut
+	await _frames(8)
+	var ds_dup: PBMesh = null
+	for c in root.get_children():
+		if c is PBMesh and c != ds_plane and String(c.name).begins_with("GuiTestDupScroll"):
+			ds_dup = c
+	if ds_dup == null:
+		_fail("DUPLICATE-SCROLL: fixture — Ctrl+D did not duplicate the plane")
+	else:
+		if ds_dup.pb_mesh_data != ds_plane.pb_mesh_data and ds_dup.pb_mesh_data.faces[0] != ds_plane.pb_mesh_data.faces[0]:
+			_pass("DUPLICATE-SCROLL: the Ctrl+D copy owns its own mesh data")
+		else:
+			_fail("DUPLICATE-SCROLL: the Ctrl+D copy shares the original's PBMeshData")
+		var ds_card := StandardMaterial3D.new()
+		ds_card.albedo_color = Color(0.9, 0.2, 0.2)
+		plugin.apply_faces_material(ds_dup, ds_dup.pb_mesh_data.faces, ds_card)
+		var ds_off0 := ds_mat.uv1_offset
+		await get_tree().create_timer(1.7).timeout   # past one periodic rescan
+		if plugin._animated_materials.has(ds_mat) and not ds_mat.uv1_offset.is_equal_approx(ds_off0) \
+				and ds_plane.pb_mesh_data.get_face_material(ds_plane.pb_mesh_data.faces[0]) == ds_mat:
+			_pass("DUPLICATE-SCROLL: re-texturing the copy leaves the original scrolling")
+		else:
+			_fail("DUPLICATE-SCROLL: the original stopped (registered=%s, offset %s -> %s)" % [
+				str(plugin._animated_materials.has(ds_mat)), ds_off0, ds_mat.uv1_offset])
+		var ds_carried: Material = ds_dup.pb_mesh_data.get_face_material(ds_dup.pb_mesh_data.faces[0])
+		if PBUv.get_scroll_speed(ds_carried) == Vector2(0.0, -2.4):
+			_pass("DUPLICATE-SCROLL: the copy's new texture carries the scroll")
+		else:
+			_fail("DUPLICATE-SCROLL: the copy's new material scrolls at %s" % PBUv.get_scroll_speed(ds_carried))
+		# The dock's speed change copies the face material WHILE it animates:
+		# the copy must take the authored offset (0), not the phase, and must
+		# not rewrite the source's glTF extras.
+		sel.clear()
+		sel.add_node(ds_dup)
+		await _frames(8)
+		dock_ps._spin_scroll_v.value = -1.15
+		dock_ps._on_scroll_apply_pressed()
+		await _frames(30)
+		var ds_slow := ds_dup.pb_mesh_data.get_face_material(ds_dup.pb_mesh_data.faces[0]) as StandardMaterial3D
+		plugin._apply_changes()
+		if ds_slow != null and ds_slow != ds_carried and is_equal_approx(PBUv.get_scroll_speed(ds_slow).y, -1.15) \
+				and ds_slow.uv1_offset.is_equal_approx(Vector3.ZERO):
+			_pass("DUPLICATE-SCROLL: a speed change made mid-animation saves the authored offset")
+		else:
+			_fail("DUPLICATE-SCROLL: the re-timed copy would save offset %s" % (ds_slow.uv1_offset if ds_slow != null else Vector3.INF))
+		if PBUv.scroll_from_extras(ds_carried.get_meta(PBUv.GLTF_EXTRAS_META, {})) == Vector2(0.0, -2.4):
+			_pass("DUPLICATE-SCROLL: the source material's GLB extras keep its own speed")
+		else:
+			_fail("DUPLICATE-SCROLL: the source's extras now say %s" % PBUv.scroll_from_extras(ds_carried.get_meta(PBUv.GLTF_EXTRAS_META, {})))
+		sel.clear()
+		ds_dup.queue_free()
+	sel.clear()
+	ds_plane.queue_free()
+	plugin.animate_scrolling_textures = ds_was_on
 	await _frames(4)
 
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────

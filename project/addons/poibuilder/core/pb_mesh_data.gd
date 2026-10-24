@@ -91,6 +91,11 @@ var _submesh_keys_cache: Array[int] = []
 var _position_face: Dictionary = {}
 var _position_face_valid: bool = false
 
+## Instance id of the PBMesh that edits this data in the open scene (0 = none
+## yet). Not serialized: PBMesh._claim_mesh_data uses it to spot a second node
+## holding the same resource (an editor Ctrl+D shares it) and privatise.
+var claimed_by: int = 0
+
 # ==============================================================================
 # Property Accessors (Computed, Read-Only)
 # ==============================================================================

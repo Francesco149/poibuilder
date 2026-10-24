@@ -2009,6 +2009,9 @@ func _apply_scroll_to_selection(speed: Vector2, action_name: String) -> void:
 		return
 
 	var before := PBCommand.copy_mesh_data(mesh.pb_mesh_data)
+	# The copies below must take the AUTHORED offset, not the animation's phase.
+	if plugin != null and plugin.has_method("restore_scrolling_base_offsets"):
+		plugin.restore_scrolling_base_offsets()
 	var changed := 0
 	for face in target_faces:
 		var mat: Material = mesh.pb_mesh_data.get_face_material(face)
@@ -2123,6 +2126,8 @@ func _on_face_opacity_changed(value: float) -> void:
 			var needs_copy := sm.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
 					or not sm.vertex_color_use_as_albedo
 			if needs_copy:
+				if plugin != null and plugin.has_method("restore_scrolling_base_offsets"):
+					plugin.restore_scrolling_base_offsets()
 				var dup: StandardMaterial3D = sm.duplicate()
 				dup.resource_path = ""
 				dup.vertex_color_use_as_albedo = true

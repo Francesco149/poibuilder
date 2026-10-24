@@ -102,7 +102,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.183"
+const VERSION := "0.9.184"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -1309,7 +1309,7 @@ func _process(delta: float) -> void:
 	# Live animated scrolling textures in 3D editor viewport
 	if animate_scrolling_textures and _export_dialog != null and _export_dialog.is_exporting():
 		# The export reads uv1_offset across many frames: hold the authored one.
-		_restore_scrolling_base_offsets()
+		restore_scrolling_base_offsets()
 	elif animate_scrolling_textures:
 		_scroll_time += delta
 		var now_msec := Time.get_ticks_msec()
@@ -1502,8 +1502,10 @@ func scan_scrolling_materials() -> void:
 			_animated_materials.erase(mat)
 
 ## Puts every animated material back on its AUTHORED offset (the registry is
-## kept; the next frame resumes the animation).
-func _restore_scrolling_base_offsets() -> void:
+## kept; the next frame resumes the animation). Call it before COPYING a scene
+## material too: a duplicate takes the live uv1_offset, so a copy made
+## mid-animation kept the phase (e.g. 459.14) as its authored offset and saved it.
+func restore_scrolling_base_offsets() -> void:
 	for mat in _animated_materials:
 		if is_instance_valid(mat):
 			(mat as StandardMaterial3D).uv1_offset = _animated_materials[mat]["base_offset"]
@@ -1514,7 +1516,7 @@ func _restore_scrolling_base_offsets() -> void:
 ## reached: the authored offset drifted save after save and every save was a
 ## diff. Restore it; the next frame animates again.
 func _apply_changes() -> void:
-	_restore_scrolling_base_offsets()
+	restore_scrolling_base_offsets()
 	# Paint saves compressed: masks/decals still on plain ImageTextures (a
 	# scene from before v0.9.182) move to PBMaskTexture, which stores zstd
 	# instead of raw bytes. Converted ones are skipped, so this is cheap.
@@ -1850,6 +1852,7 @@ func apply_faces_material(mesh: PBMesh, target_faces: Array, material: Material)
 		return
 
 	var previous: Material = mesh.pb_mesh_data.get_face_material(target_faces[0])
+	restore_scrolling_base_offsets()  # prepare() may copy a scene material
 	var prepared := PBApplyPrep.prepare(material, previous)
 	if prepared != material and logger:
 		logger.info("materials", "Applied material prepared: transparency/scroll carried from %s"

@@ -53,12 +53,48 @@ var _needs_rebuild: bool = false
 # Lifecycle
 # ==============================================================================
 
+func _enter_tree() -> void:
+	if Engine.is_editor_hint():
+		claim_mesh_data()
+
 func _ready() -> void:
 	if pb_mesh_data != null:
 		rebuild()
 		_migrate_legacy_stamps()
 	else:
 		_update_collider()
+
+## One PBMeshData per node in the edited scene. The editor's Duplicate (Ctrl+D)
+## and copy-paste go through Node.duplicate(), which SHARES Resource-valued
+## properties, and every PoiBuilder edit mutates the data in place: the copy's
+## re-texture or extrude rewrote the original's faces and materials without
+## rebuilding it (it stopped scrolling, kept a stale look, and both exported
+## from the one data). A node entering the tree while another in-tree node
+## holds its data takes a deep copy. Nodes inside an instanced sub-scene share
+## their scene's data by design and keep it (instance roots too). Editor-only
+## (from _enter_tree); a game spawning copies at runtime never edits them.
+## Returns true when it privatised.
+func claim_mesh_data() -> bool:
+	if pb_mesh_data == null:
+		return false
+	var privatised := false
+	var holder: PBMesh = null
+	if pb_mesh_data.claimed_by != 0:
+		holder = instance_from_id(pb_mesh_data.claimed_by) as PBMesh
+	if holder != null and holder != self and holder.pb_mesh_data == pb_mesh_data and holder.is_inside_tree() \
+			and not _is_instanced_content():
+		pb_mesh_data = PBCommand.copy_mesh_data_live(pb_mesh_data)
+		privatised = true
+	pb_mesh_data.claimed_by = get_instance_id()
+	return privatised
+
+## True for a node that belongs to an instanced sub-scene of the edited scene
+## (owned by an instance root, or an instance root itself).
+func _is_instanced_content() -> bool:
+	if not scene_file_path.is_empty():
+		return true
+	var tree := get_tree()
+	return owner != null and tree != null and owner != tree.edited_scene_root
 
 ## (No _process: the camera-scaled gizmo refresh that used to run here — a
 ## script call per PBMesh per frame, in the editor AND in shipped games — is

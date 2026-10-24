@@ -3,6 +3,69 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.184 — a duplicated mesh owns its data; scrolling copies stop leaking
+
+Report: duplicate a plane wearing a scrolling texture, change the copy's
+texture, and the ORIGINAL stops scrolling; export, and both planes come out
+with the same texture. The reporter's scratch scene showed the cause in its
+saved form: `Shape_Plane` and `Shape_Plane2` both pointed at ONE
+`pb_mesh_data` sub-resource.
+
+### Fixed: Ctrl+D / copy-paste shared the PBMeshData
+
+The editor's Duplicate goes through `Node.duplicate()`, which shares
+Resource-valued properties (only `PROPERTY_USAGE_ALWAYS_DUPLICATE` copies, and
+that copy is shallow: faces would still be shared). Every PoiBuilder edit
+mutates the data in place, so the copy's re-texture rewrote the original's
+material slot without rebuilding it: the scroll scan reads the DATA, so the
+original's animated material left the registry (still drawn, frozen), and the
+exporter read both nodes from the one data.
+
+`PBMesh.claim_mesh_data()` (from `_enter_tree`, editor only) records the node
+on its data (`PBMeshData.claimed_by`, runtime-only, never saved) and gives a
+second in-tree holder a deep copy (`copy_mesh_data_live`). It runs before the
+dock's `set_owner`, so it sees the copy unowned. Nodes inside an instanced
+sub-scene keep sharing their scene's data (privatising would save an
+override into the parent scene). A scene SAVED while shared, like the
+reporter's, is split again on open: the editor sets `edited_scene_root`
+before the loaded scene enters the tree, and the second holder takes a copy
+of the saved data. Its look follows the data, so the copy shows what the
+data held rather than its stale saved ArrayMesh.
+
+Not fixed, found on the way: a paste into a DIFFERENT scene goes through the
+dock's resource remap, a shallow `duplicate()` of the data that still shares
+the `faces` array with the source scene (probe: `is_same(copy.faces,
+data.faces)` is true). The claim cannot see that (the copy is a new object).
+
+### Fixed: a scrolling material copied mid-animation saved the phase
+
+The dock's scroll Apply copies each face's material while the editor
+animation is writing its `uv1_offset`, so the copy took the live phase as
+its authored offset and saved it (the scratch scene: `uv1_offset = (0,
+459.14, 0)`; the GUI case without the fix: 863.44). The v0.9.182 save fix
+restores only what the registry recorded, which for the copy WAS the phase.
+`restore_scrolling_base_offsets()` (now public) runs before the dock's scroll
+and opacity copies and before `apply_faces_material`'s prepare.
+
+### Fixed: a copy's scroll speed rewrote the original's GLB extras
+
+`Resource.duplicate()` shares metadata dictionaries, and
+`PBUv._sync_gltf_extras` wrote into the copy's `extras` in place, which was
+the ORIGINAL's dictionary: re-timing a copy re-timed the original's
+`poi_uv_scroll` in every GLB export (the .pbm reads the separate
+`poi_uv_scroll` meta, so the two exports disagreed). The dictionary is
+copied before writing.
+
+Tests: new suite `test_pb_duplicate_mesh.gd` (8 tests; 5 fail with the fixes
+neutered, the other 3 pin what must NOT privatise: re-entry, instanced
+content, and the engine's sharing itself). GUI case DUPLICATE-SCROLL: a real
+Ctrl+D through the SceneTreeDock shortcut, re-texture the copy through
+`apply_faces_material`, the original keeps animating, then a dock speed
+change mid-animation saves the authored offset and leaves the source's
+extras alone. With the fixes neutered, 4 of its 5 checks fail (the
+copy-carries-the-scroll check passes either way). `./run_tests.sh`: 1265 tests,
+82 suites, passing. GUI harness failures=0.
+
 ## v0.9.183 — curved-stairs ramp collider: mirrored on swapped stairs
 
 Report: a quarter-turn curved stair (curvature typed as 90 in the params
