@@ -33,7 +33,11 @@ if [ -z "${DISPLAY:-}" ]; then
 fi
 
 HARNESS_HOME="$(mktemp -d /tmp/pb_paint_perf_home.XXXXXX)"
-trap 'rm -rf "$HARNESS_HOME"' EXIT
+# The dock layout lives in the PROJECT, not in HOME: pin the harness's own
+# for the run and give the user's back afterwards (tools/pin_editor_layout.sh).
+source "$(dirname "$PWD")/tools/pin_editor_layout.sh"
+pin_editor_layout "$PWD" "$HARNESS_HOME"
+trap 'restore_editor_layout; rm -rf "$HARNESS_HOME"' EXIT
 
 OUT=$(mktemp /tmp/pb_paint_perf_out.XXXXXX)
 HOME="$HARNESS_HOME" PB_GUI_TEST=1 PB_PAINT_PERF=1 PB_PAINT_PROFILE=1 \

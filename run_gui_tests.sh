@@ -11,8 +11,12 @@
 # = number of failures.
 #
 # The harness runs with an ISOLATED HOME so it neither reads nor pollutes
-# your real editor settings (last-opened scenes, layout, editor settings),
-# and never trips crash-recovery prompts from either side.
+# your real editor settings, and never trips crash-recovery prompts from
+# either side. The dock LAYOUT (and last-opened scenes) is not in HOME but in
+# project/.godot/editor/editor_layout.cfg: the run pins the harness's own
+# (test_scenes/editor_gui_layout.cfg) and restores yours afterwards
+# (tools/pin_editor_layout.sh). Before v0.9.185 it read and overwrote yours,
+# and its viewport clicks moved with whatever dock widths you had saved.
 INTERACTIVE=0
 for arg in "$@"; do
     if [[ "$arg" == "--interactive" || "$arg" == "-i" ]]; then
@@ -29,7 +33,11 @@ set -uo pipefail
 cd "$(dirname "$0")/project"
 
 HARNESS_HOME="$(mktemp -d /tmp/pb_gui_home.XXXXXX)"
-trap 'rm -rf "$HARNESS_HOME"' EXIT
+# The dock layout lives in the PROJECT, not in HOME: pin the harness's own
+# for the run and give the user's back afterwards (tools/pin_editor_layout.sh).
+source "$(dirname "$PWD")/tools/pin_editor_layout.sh"
+pin_editor_layout "$PWD" "$HARNESS_HOME"
+trap 'restore_editor_layout; rm -rf "$HARNESS_HOME"' EXIT
 
 OUT=$(mktemp /tmp/pb_gui_out.XXXXXX)
 HOME="$HARNESS_HOME" LIBGL_ALWAYS_SOFTWARE=1 PB_GUI_TEST=1 \

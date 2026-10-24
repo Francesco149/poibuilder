@@ -2551,6 +2551,11 @@ func _run() -> void:
 	# paint a floor around the props standing on it without converting them.
 	# With nothing selected the nearest surface wins (v0.9.182: one shared,
 	# AABB-prefiltered scene pick behind both).
+	# Paint mode FIRST: switching the dock can widen it and so narrow the 3D
+	# viewport, and an aim pixel computed before that pointed 12 degrees off
+	# the box afterwards (v0.9.185; it depended on the saved dock layout).
+	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
+	await _frames(10)
 	var occ_cam: Camera3D = vp.get_camera_3d()
 	var occ_xf := occ_cam.global_transform
 	var occ_aim := Vector2(float(vp.size.x) * 0.5, minf(140.0, float(vp.size.y) * 0.2))
@@ -2569,10 +2574,9 @@ func _run() -> void:
 	occ_front.rebuild()
 	occ_back.rebuild()
 	await _frames(10)
-	dock_ps._set_dock_mode(PBMaterialDock.DockMode.PAINT)
 	pc_ps.paint_target = PBPaintController.PaintTarget.SPLAT
 	pc_ps.paint_texture = ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGBA8))
-	var occ_pt := _window_pos(vp, host, occ_cam.project_position(occ_aim, 3.0))
+	var occ_pt := _window_pos(vp, host, occ_front.global_position)
 	# Nothing selected: the nearest surface takes the cursor.
 	plugin.editor.active_mesh = null
 	await _frames(6)
@@ -2581,7 +2585,19 @@ func _run() -> void:
 	if pc_ps.target_mesh == occ_front:
 		_pass("PAINT-PRIORITY: with nothing selected the nearest mesh takes the cursor")
 	else:
-		_fail("PAINT-PRIORITY: nothing selected, cursor target=%s (front=%s)" % [str(pc_ps.target_mesh), str(occ_front)])
+		var occ_o := occ_cam.project_ray_origin(occ_aim)
+		var occ_d := occ_cam.project_ray_normal(occ_aim)
+		var occ_direct := PBPicking.scene_ray_pick([occ_front, occ_back], occ_o, occ_d)
+		var occ_fp := PBPicking.pick_face(occ_front.pb_mesh_data, occ_front.global_transform, occ_o, occ_d)
+		print("[GUI TEST] PAINT-PRIORITY diag: front face=%d dist=%.4f span=%s visible=%s front_xf=%s cam_xf=%s ray o=%s d=%s faces=%d tris=%d" % [
+			occ_fp.face_index, occ_fp.distance,
+			PBPicking.ray_aabb_span(occ_o, occ_d, occ_front.global_transform * occ_front.get_full_aabb()),
+			str(occ_front.is_visible_in_tree()), occ_front.global_transform, occ_cam.global_transform, occ_o, occ_d,
+			occ_front.pb_mesh_data.faces.size(), occ_front.pb_mesh_data.triangle_count()])
+		_fail("PAINT-PRIORITY: nothing selected, cursor target=%s (front=%s); camera moved %.3f m / %.2f deg since placement; active_mesh=%s; direct pick at the aim=%s; plugin last mouse %s vs aim %s"
+			% [str(pc_ps.target_mesh), str(occ_front), occ_cam.global_position.distance_to(occ_xf.origin),
+			rad_to_deg(occ_cam.global_basis.z.angle_to(occ_xf.basis.z)), str(plugin.editor.active_mesh),
+			str(occ_direct.get("mesh")), str(plugin._last_mouse_pos), str(occ_aim)])
 	# The mesh BEHIND selected: it wins, and a click paints it, not the box.
 	plugin.editor.active_mesh = occ_back
 	await _frames(6)
