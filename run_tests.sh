@@ -112,6 +112,7 @@ LOG=/tmp/pb_gut.log
 GUT_RC=0
 GODOT_DISABLE_LEAK_CHECKS=1 run_guarded "$PROJECT_DIR" timeout "$PB_TEST_TIMEOUT" godot-mono --headless -s addons/gut/gut_cmdln.gd \
     -gdir=res://tests -ginclude_subdirs -gexit \
+    -gpre_run_script=res://tests/hooks/pb_pre_run.gd \
     -gpost_run_script=res://tests/hooks/pb_post_run.gd "$@" > "$LOG" 2>&1 || GUT_RC=$?
 if [ "$GUT_RC" -ne 0 ]; then
   FAIL=1

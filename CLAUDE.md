@@ -125,10 +125,10 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.185** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.186** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool and the v0.9.182 scaling audit).
-- All headless tests passing (`./run_tests.sh`; 1269 tests, 23.5k+ assertions
-  across 82 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
+- All headless tests passing (`./run_tests.sh`; 1276 tests, 23.6k+ assertions
+  across 83 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
   real-editor GUI harness (`./run_gui_tests.sh`, failures=0).
 - Compatibility: maps made on the public release (`nightly` = v0.9.167) must
   keep loading — `tests/test_pb_release_compat.gd` checks a scene that

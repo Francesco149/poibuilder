@@ -61,6 +61,8 @@ func _ready() -> void:
 	if pb_mesh_data != null:
 		rebuild()
 		_migrate_legacy_stamps()
+		if not Engine.is_editor_hint():
+			PBScrollRuntime.register_mesh(self)   # scrolling faces move in play mode too
 	else:
 		_update_collider()
 

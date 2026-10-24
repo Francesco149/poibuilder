@@ -3,6 +3,58 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.186 — created shapes duplicate cleanly; scrolling textures move in play mode
+
+Report (a fresh scratch scene on v0.9.185): duplicating a scrolling plane and
+re-texturing the copy looked right in the editor, but in play mode nothing
+scrolled, and the .pbm gave both planes the same texture. The saved scene
+still had both planes on ONE `pb_mesh_data`.
+
+### Fixed: a Ctrl+D of a CREATED shape still shared its data
+
+v0.9.184's claim was taken only in `_enter_tree`. The shape creator adds its
+preview node to the scene with NO data and hands it the final data through
+the setter afterwards (`_make_preview_node`, then `_refresh_preview`), so
+every shape made with the creator stayed unclaimed, and a Ctrl+D found
+nothing to conflict with. The GUI case and the tests all assigned data before
+adding the node, so they passed while the bug stood. `PBMesh._stamp_claim()`
+now also runs from the setter whenever the node is in the tree. A Ctrl+D's
+copy receives its properties BEFORE entering the tree, so it never steals the
+claim. Opening a scene saved while shared, like this one, splits it again,
+but both nodes show what the shared data held (here Waterfall Core: the
+original's Waterfall Sheet had already been overwritten).
+
+Tests: `test_duplicate_of_a_created_shape_owns_its_data` (fails without the
+setter stamp), and `test_pbm_gives_each_plane_its_own_texture`, which builds
+the reporter's flow (created plane, Ctrl+D, re-texture with the carried
+-2.75 speed), writes a real .pbm and reads each scrolling mesh's texture id
+and pixels back. GUI: the CREATE case now checks that the drag-created
+Shape_Cube's data is claimed by its node, and DUPLICATE-SCROLL builds its
+plane in the creator's order. Without the stamp, both reproduce the report in
+the real editor (unclaimed, copy shares the data, original stops).
+
+### New: scrolling textures move in play mode
+
+Only the editor plugin ever animated scrolling materials, so a PoiBuilder
+scene run as the game showed them at rest. The release's per-mesh `_process`
+only refreshed gizmos, so this is not a regression. `PBScrollRuntime`: in a
+running game, `PBMesh._ready` registers its scrolling materials with one
+runner node per SceneTree (added to the root deferred, reused within the
+frame). The runner advances `uv1_offset` with the editor's formula
+(`fposmod(base + speed * t, 1000)`), animates a material shared by several
+meshes once, drops freed materials through weak refs, and stops processing
+when nothing is left. A scene without scrolling faces never creates it. The
+headless suite is not a game: `tests/hooks/pb_pre_run.gd` (new GUT pre-run
+hook) turns it off, since exports read `uv1_offset`.
+
+Verified on a copy of the reporter's scene run as the game: Waterfall Core
+moves at -2.75/s (`uv1_offset.y` 999.84 → 999.29 over 30 frames), with the
+runner in the tree. Tests: new suite `test_pb_scroll_runtime.gd` (the editor's
+formula, a shared material animates once, still meshes register nothing,
+freed materials leave, the suite switch is honoured).
+
+`./run_tests.sh`: 1276 tests, 83 suites, passing. GUI harness failures=0.
+
 ## v0.9.185 — a paste into another scene cannot edit the scene it came from
 
 ### Fixed: cross-scene paste shared the source scene's faces and materials

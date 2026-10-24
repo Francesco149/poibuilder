@@ -1,4 +1,4 @@
-# PoiBuilder v0.9.185 — release notes (DRAFT)
+# PoiBuilder v0.9.186 — release notes (DRAFT)
 
 Changes since **v0.9.167**, the current `nightly` / Asset Library release.
 This is still an **alpha**.
@@ -83,6 +83,9 @@ This is still an **alpha**.
   the cursor.
 
 **Scrolling textures**
+- Scrolling textures now move when you play a PoiBuilder scene as your game.
+  They used to animate only in the editor viewport, so a waterfall stood
+  still in play mode.
 - A save no longer stores whatever point the editor's scroll animation had
   reached (every save drifted the texture's offset and showed up as a diff),
   and exports read the authored offset.
@@ -132,4 +135,4 @@ This is still an **alpha**.
   one continuous cornice. Use Bottom placement for loops with openings (see
   the Trims page).
 
-Full details: `CHANGELOG.md` (v0.9.168 – v0.9.185).
+Full details: `CHANGELOG.md` (v0.9.168 – v0.9.186).
