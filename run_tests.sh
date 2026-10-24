@@ -90,9 +90,17 @@ cleanup_container() {
 trap cleanup_container EXIT
 
 echo "== [1/5] Refreshing imports/class cache (editor boot smoke test) =="
+# The editor boot rewrites the PROJECT's editor_layout.cfg on exit (it reset
+# the user's editor window screen/position on every run): keep theirs as it was.
+LAYOUT_FILE="$REPO_ROOT/project/.godot/editor/editor_layout.cfg"
+LAYOUT_BACKUP="$(mktemp /tmp/pb_layout_backup.XXXXXX)"
+HAD_LAYOUT=0
+if [ -f "$LAYOUT_FILE" ]; then cp -p "$LAYOUT_FILE" "$LAYOUT_BACKUP" && HAD_LAYOUT=1; fi
 if ! run_guarded "$PROJECT_DIR" timeout 180 godot-mono --headless --editor --quit-after 100 > /tmp/pb_import.log 2>&1; then
   echo "WARN: editor run exited nonzero (may be benign headless teardown)"
 fi
+if [ "$HAD_LAYOUT" = 1 ]; then cp -p "$LAYOUT_BACKUP" "$LAYOUT_FILE"; else rm -f "$LAYOUT_FILE"; fi
+rm -f "$LAYOUT_BACKUP"
 if grep -q "SCRIPT ERROR" /tmp/pb_import.log; then
   echo "FAIL: script errors during editor boot:" >&2
   grep -A4 "SCRIPT ERROR" /tmp/pb_import.log >&2
