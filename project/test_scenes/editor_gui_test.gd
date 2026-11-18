@@ -2962,6 +2962,61 @@ func _run() -> void:
 	po_src.queue_free()
 	await _frames(4)
 
+	# ── SCENE-DROP: prefabs drag into the 3D view with the plugin on ─────────
+	# User report (v0.9.186): with PoiBuilder enabled, scenes could not be
+	# dragged from the FileSystem into the 3D viewport. The material drop
+	# overlay sat above the engine's drop surface as a sibling and swallowed
+	# every drop it refused. A real drag of a saved scene must instance it.
+	var sd_plugin := _find_plugin(iface.get_base_control().get_parent())
+	if sd_plugin == null:
+		sd_plugin = _find_plugin(iface.get_base_control())
+	var sd_overlays: Array = sd_plugin.material_drop_overlays if sd_plugin != null else []
+	var sd_ok_parents := not sd_overlays.is_empty()
+	for ov in sd_overlays:
+		if ov.get_parent() == null or ov.get_parent().get_script() != null \
+				or ov.get_parent().get_class() != "Control":
+			sd_ok_parents = false
+	if sd_ok_parents:
+		_pass("SCENE-DROP: %d material drop overlay(s), each under its viewport's engine drop surface" % sd_overlays.size())
+	else:
+		_fail("SCENE-DROP: material drop overlays missing or not under the engine drop surface")
+	var sd_prefab_root := Node3D.new()
+	sd_prefab_root.name = "PBGuiDropPrefab"
+	var sd_packed := PackedScene.new()
+	sd_packed.pack(sd_prefab_root)
+	sd_prefab_root.free()
+	var sd_path := "user://pb_gui_drop_prefab.tscn"
+	ResourceSaver.save(sd_packed, sd_path)
+	sel.clear()
+	await _frames(3)
+	var sd_before := root.get_child_count()
+	var sd_src := Control.new()
+	iface.get_base_control().add_child(sd_src)
+	await _frames(1)
+	sd_src.force_drag({"type": "files", "files": PackedStringArray([sd_path])}, null)
+	var sd_pos := host.global_position + host.size * 0.5
+	_synthetic_press_depth += 1
+	for i in 4:
+		_mouse_motion(sd_pos + Vector2(i * 3, 0), false, true)
+		await _frames(2)
+	_mouse_button(sd_pos + Vector2(9, 0), false)
+	await _frames(6)
+	sd_src.queue_free()
+	var sd_dropped: Node = null
+	for c in root.get_children():
+		if String(c.name).begins_with("PBGuiDropPrefab"):
+			sd_dropped = c
+	if sd_dropped != null and root.get_child_count() == sd_before + 1:
+		_pass("SCENE-DROP: a scene dragged into the 3D view is instanced (plugin enabled)")
+		sd_dropped.get_parent().remove_child(sd_dropped)
+		sd_dropped.queue_free()
+	else:
+		_fail("SCENE-DROP: the dragged scene never reached Godot's drop handler (children %d -> %d)"
+			% [sd_before, root.get_child_count()])
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(sd_path))
+	sel.clear()
+	await _frames(3)
+
 	# ── Paint stroke perf bench (run_paint_perf.sh) ──────────────────────────
 	# Gated: runs only when PB_PAINT_PERF is set, so the standard GUI harness
 	# skips it. Measures fast strokes on the REAL GPU — never under xvfb.

@@ -655,6 +655,79 @@ func test_material_drop_overlay_routing_multi_face():
 		assert_eq(cube.get_face_material(f), test_mat, "Selected face gets dropped material")
 	assert_ne(cube.get_face_material(cube.faces[3]), test_mat, "Unselected face 3 untouched")
 
+## Mock of Node3DEditorViewport's children: a SubViewportContainer plus the
+## engine's plain `surface` Control that forwards drag-and-drop to the 3D
+## editor (SET_DRAG_FORWARDING_CD). Returns [subviewport, host, surface, log].
+func _make_mock_3d_viewport_host() -> Array:
+	var sv := SubViewport.new()
+	sv.size = Vector2i(400, 300)
+	add_child_autofree(sv)
+	var host := Control.new()
+	host.size = Vector2(400, 300)
+	sv.add_child(host)
+	host.add_child(SubViewportContainer.new())
+	var dropped: Array = []
+	var surface := Control.new()
+	surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	surface.set_drag_forwarding(Callable(),
+		func(_p, d): return d is Dictionary and d.get("type") == "files",
+		func(_p, d): dropped.append(d))
+	host.add_child(surface)
+	return [sv, host, surface, dropped]
+
+## Drags `data` across the mock viewport and releases it in the middle.
+func _drag_and_release(sv: SubViewport, host: Control, data: Variant) -> void:
+	var src := Control.new()
+	host.add_child(src)
+	src.force_drag(data, null)
+	await wait_process_frames(1)
+	var mm := InputEventMouseMotion.new()
+	mm.position = Vector2(200, 150)
+	mm.global_position = mm.position
+	sv.push_input(mm)
+	await wait_process_frames(1)
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.pressed = false
+	up.position = Vector2(200, 150)
+	up.global_position = up.position
+	sv.push_input(up)
+	await wait_process_frames(1)
+
+## The user report: with the plugin on, scenes/prefabs could not be dragged
+## into the 3D view. The overlay sat ABOVE the engine's drop surface as a
+## sibling, and a refused drop only climbs the parent chain — never reaching
+## the surface. find_drop_surface must pick the engine surface, and a scene
+## drop must arrive there with the overlay installed.
+func test_drop_overlay_lets_scene_drops_reach_the_engine():
+	var parts := _make_mock_3d_viewport_host()
+	var sv: SubViewport = parts[0]
+	var host: Control = parts[1]
+	var surface: Control = parts[2]
+	var dropped: Array = parts[3]
+	assert_eq(PBMaterialDropOverlay.find_drop_surface(host), surface,
+		"find_drop_surface picks the engine's plain drop surface")
+	var overlay := PBMaterialDropOverlay.new()
+	PBMaterialDropOverlay.find_drop_surface(host).add_child(overlay)
+	assert_eq(PBMaterialDropOverlay.find_drop_surface(host), surface,
+		"an installed overlay (scripted) is never mistaken for the surface")
+	await wait_process_frames(1)
+	await _drag_and_release(sv, host, {"type": "files", "files": ["res://main.tscn"]})
+	assert_eq(dropped.size(), 1, "a .tscn drop reaches the engine's handler through the overlay")
+	assert_eq(overlay.mouse_filter, Control.MOUSE_FILTER_IGNORE, "overlay inert again after the drag")
+
+## Control for the test above: the OLD layout (overlay as the surface's
+## sibling) must swallow the drop — otherwise the mock proves nothing.
+func test_drop_overlay_as_sibling_swallowed_scene_drops():
+	var parts := _make_mock_3d_viewport_host()
+	var sv: SubViewport = parts[0]
+	var host: Control = parts[1]
+	var dropped: Array = parts[3]
+	host.add_child(PBMaterialDropOverlay.new())
+	await wait_process_frames(1)
+	await _drag_and_release(sv, host, {"type": "files", "files": ["res://main.tscn"]})
+	assert_eq(dropped.size(), 0, "sibling layout reproduces the report (drop lost)")
+
 # ==============================================================================
 # 7. Material Dock UI & Selection Sync
 # ==============================================================================

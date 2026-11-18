@@ -3,6 +3,35 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.187 — scenes drop into the 3D view again; a dock that fits; edge-first placement
+
+User feedback (translated): "Super useful. Known small issues: with the plugin
+installed, scene prefabs can't be dragged straight into the 3D scene — it
+looks like pb_material_drop_overlay.gd causes it. The Material & UV panel is
+too wide and takes too much room; being able to resize it, including the
+material grid, would make it perfect."
+
+### Fixed: no scene, mesh or texture could be dropped into the 3D view
+
+The reporter was right about the file. The material drop overlay sat on the
+Node3DEditorViewport as a SIBLING above the engine's `surface` control (the
+one Godot forwards drag-and-drop through). During any drag it switches to
+MOUSE_FILTER_PASS, refuses everything that is not a material, and a refused
+drop only climbs the PARENT chain (`Viewport::_gui_drop`). So it never reached
+the engine's handler, and every non-material drop was lost. The overlay now
+goes UNDER `surface` (`PBMaterialDropOverlay.find_drop_surface`: the
+viewport's one plain, script-less Control), so whatever it refuses falls
+through to Godot: scenes instance, and materials dropped on plain meshes
+assign natively. It is also installed on all four 3D viewports (before, only
+viewport 0 took material drops in the 2/3/4-view layouts), and maps control
+pixels to viewport pixels when the 3D view renders at half resolution.
+
+Tests: `test_drop_overlay_lets_scene_drops_reach_the_engine` and its control
+`test_drop_overlay_as_sibling_swallowed_scene_drops` force a real GUI drag
+through a mock of the viewport's children. GUI harness SCENE-DROP drags a
+saved scene onto the real 3D view and asserts it is instanced. With the old
+parenting it fails (verified: "children 13 -> 13").
+
 ## v0.9.186 — created shapes duplicate cleanly; scrolling textures move in play mode
 
 Report (a fresh scratch scene on v0.9.185): duplicating a scrolling plane and

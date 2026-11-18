@@ -7,12 +7,36 @@
 ##
 ## Remains completely inert (MOUSE_FILTER_IGNORE) when not dragging, ensuring zero
 ## interference with normal viewport clicks, gizmo drags, or box selections.
+##
+## PARENTING IS LOAD-BEARING: the overlay must be a CHILD of the viewport's
+## `surface` control (the one the engine forwards drag-and-drop through to
+## Node3DEditorViewport), never its sibling. During a drag the overlay turns
+## MOUSE_FILTER_PASS, and a refused drop climbs to the PARENT chain
+## (Viewport::_gui_drop). As a sibling above `surface` that chain skipped the
+## engine's handler entirely, so with the plugin enabled no scene/prefab,
+## mesh or texture could be dropped into the 3D view at all (user report,
+## v0.9.186). Under `surface`, anything we refuse falls through to Godot's
+## own drop: scenes instance, materials on plain meshes assign natively.
 @tool
 class_name PBMaterialDropOverlay
 extends Control
 
 ## Reference to the main PoiBuilder plugin.
 var plugin: EditorPlugin = null
+## Which of the (up to four) 3D editor viewports this overlay covers.
+var viewport_index: int = 0
+
+## Finds the engine's drop-forwarding `surface` under a Node3DEditorViewport:
+## its only plain, script-less Control child (the other engine child is the
+## SubViewportContainer; plugin overlays carry scripts). Null when the layout
+## is unrecognised.
+static func find_drop_surface(viewport_host: Node) -> Control:
+	if viewport_host == null:
+		return null
+	for child in viewport_host.get_children():
+		if child.get_class() == "Control" and child.get_script() == null:
+			return child as Control
+	return null
 
 func _init() -> void:
 	name = "PBMaterialDropOverlay"
@@ -116,13 +140,18 @@ func _pick_pbmesh_face(screen_pos: Vector2) -> Dictionary:
 	if editor_if == null:
 		return {}
 
-	var viewport: SubViewport = editor_if.get_editor_viewport_3d(0)
+	var viewport: SubViewport = editor_if.get_editor_viewport_3d(viewport_index)
 	if viewport == null:
 		return {}
 
 	var camera: Camera3D = viewport.get_camera_3d()
 	if camera == null:
 		return {}
+
+	# The SubViewport can render below the control's size (the 3D view's
+	# half-resolution option): map control pixels to viewport pixels.
+	if size.x > 0.0 and size.y > 0.0:
+		screen_pos *= Vector2(viewport.size) / size
 
 	var ray_o: Vector3 = camera.project_ray_origin(screen_pos)
 	var ray_d: Vector3 = camera.project_ray_normal(screen_pos)

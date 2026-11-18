@@ -50,7 +50,9 @@ var toolbar: PBToolbar
 var material_dock: PBMaterialDock = null
 var uv_editor_panel: PBUvEditorPanel = null
 var _uv_bottom_button: Button = null
-var material_drop_overlay: PBMaterialDropOverlay = null
+## One material drop overlay per 3D editor viewport (the 2/3/4-view layouts
+## each need their own), each parented under that viewport's drop surface.
+var material_drop_overlays: Array[PBMaterialDropOverlay] = []
 var paint_controller: PBPaintController = PBPaintController.new()
 var _export_dialog: PBExportDialog = null
 var _cursor_extents_label: Label = null
@@ -102,7 +104,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.186"
+const VERSION := "0.9.187"
 
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
@@ -258,9 +260,7 @@ func _enter_tree():
 	mode_banner.z_index = 90
 	_add_overlay_to_3d_viewport(mode_banner)
 	# Material drag-and-drop overlay in the 3D viewport
-	material_drop_overlay = PBMaterialDropOverlay.new()
-	material_drop_overlay.plugin = self
-	_add_overlay_to_3d_viewport(material_drop_overlay)
+	_add_material_drop_overlays()
 	# Material & UV Dock panel (DOCK_SLOT_RIGHT_UL)
 	material_dock = PBMaterialDock.new()
 	material_dock.plugin = self
@@ -388,10 +388,12 @@ func _exit_tree():
 		_export_dialog = null
 
 
-	if material_drop_overlay != null:
-		if is_instance_valid(material_drop_overlay):
-			material_drop_overlay.queue_free()
-		material_drop_overlay = null
+	for drop_overlay in material_drop_overlays:
+		if is_instance_valid(drop_overlay):
+			if drop_overlay.get_parent() != null:
+				drop_overlay.get_parent().remove_child(drop_overlay)
+			drop_overlay.queue_free()
+	material_drop_overlays.clear()
 	if _cursor_extents_label != null:
 		if is_instance_valid(_cursor_extents_label) and _cursor_extents_label.get_parent() != null:
 			_cursor_extents_label.get_parent().remove_child(_cursor_extents_label)
@@ -472,6 +474,24 @@ func _add_overlay_to_3d_viewport(control: Control) -> void:
 		logger.warn("plugin", "Unexpected 3D viewport layout — tool overlay not created")
 		return
 	host.add_child(control)
+
+## Material drag-and-drop for every 3D viewport. Each overlay goes UNDER the
+## viewport's engine drop surface (see PBMaterialDropOverlay): what it refuses
+## — scenes, meshes, textures — must keep reaching Godot's own drop handler.
+func _add_material_drop_overlays() -> void:
+	for i in 4:
+		var viewport: SubViewport = get_editor_interface().get_editor_viewport_3d(i)
+		if viewport == null or viewport.get_parent() == null:
+			continue
+		var surface := PBMaterialDropOverlay.find_drop_surface(viewport.get_parent().get_parent())
+		if surface == null:
+			logger.warn("plugin", "3D viewport %d: no drop surface found — material drop disabled there" % i)
+			continue
+		var drop_overlay := PBMaterialDropOverlay.new()
+		drop_overlay.plugin = self
+		drop_overlay.viewport_index = i
+		surface.add_child(drop_overlay)
+		material_drop_overlays.append(drop_overlay)
 
 func _find_ancestor_of_class(node: Node, klass: String) -> Node:
 	var current := node
