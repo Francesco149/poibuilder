@@ -125,10 +125,11 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.186** (core phases 0–7, feature-gap sessions 1–9,
-  plus the Trim Walls click-walls tool and the v0.9.182 scaling audit).
-- All headless tests passing (`./run_tests.sh`; 1276 tests, 23.6k+ assertions
-  across 83 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
+- Current version: **v0.9.187** (core phases 0–7, feature-gap sessions 1–9,
+  plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, and the
+  v0.9.187 UI round: native EditorDock, edge-first placement).
+- All headless tests passing (`./run_tests.sh`; 1297 tests, 23.8k+ assertions
+  across 85 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
   real-editor GUI harness (`./run_gui_tests.sh`, failures=0).
 - Compatibility: maps made on the public release (`nightly` = v0.9.167) must
   keep loading — `tests/test_pb_release_compat.gd` checks a scene that
@@ -142,8 +143,10 @@ does **not** work — no compositor behind it, so the window is invisible.
   vertex snap, proportional editing), object tools (merge, mirror, pivots,
   freeze, Poibuilderize from MeshInstance3D/CSG incl. CSGCombiner3D), CSG
   booleans (union/subtract/intersect) with clean undo, smoothing groups &
-  auto-smooth, dedicated 2D UV editor, material dock with splatting/decal
-  stamps/sprite placer, retro PSP hardware exporter + viewers.
+  auto-smooth, dedicated 2D UV editor, material dock (a native EditorDock:
+  movable/floatable/bottom panel, card size + filter) with splatting/decal
+  stamps/sprite placer, opt-in edge-first (GoBuild-style) shape placement,
+  retro PSP hardware exporter + viewers.
 - Full historical development log: [CHANGELOG.md](CHANGELOG.md).
 
 ## Process rules (not duplicated in the orientation)
