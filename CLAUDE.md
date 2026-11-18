@@ -43,6 +43,10 @@ index, current status, and the process rules that are not area-specific.
 ./modern.sh [--play]        # 4k-asset modern-workflow playground
 ./bake_splat.sh <scene>     # bake splats down, free UV2 for lightmaps
 ./run_demo_map.sh [--play]  # the alpha demo map (docs walkthroughs + benchmark)
+./run_seashore.sh [--psp|--bench|--ppsspp]  # the PSP showpiece map (morphing sea,
+                            #   surf, sun path); --bench prices its own camera path
+python3 retro_engine/capture_pbm_poses.py map.pbm  # PPSSPP captures of a map's
+                            #   camera path on one sheet (looks only, never perf)
 ./run_bench.sh              # frame-pacing bench: PB scene vs retro GLB vs modern GLB
 ./run_bench.sh --profile    # ablation profile: what the PB frame cost is made of
 ./run_bench.sh --renderer vulkan   # the bench on forward_plus (GL is the default axis)
@@ -125,11 +129,13 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.187** (core phases 0–7, feature-gap sessions 1–9,
-  plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, and the
-  v0.9.187 UI round: native EditorDock, edge-first placement).
-- All headless tests passing (`./run_tests.sh`; 1297 tests, 23.8k+ assertions
-  across 85 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
+- Current version: **v0.9.188** (core phases 0–7, feature-gap sessions 1–9,
+  plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, the
+  v0.9.187 UI round: native EditorDock, edge-first placement, and the v0.9.188
+  seashore showpiece + open-map PSP runtime: GE vertex morphing, mesh
+  flipbooks, additive/decal meshes, camera path + attract mode, frustum cull).
+- All headless tests passing (`./run_tests.sh`; 1301 tests, 24.0k+ assertions
+  across 86 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
   real-editor GUI harness (`./run_gui_tests.sh`, failures=0).
 - Compatibility: maps made on the public release (`nightly` = v0.9.167) must
   keep loading — `tests/test_pb_release_compat.gd` checks a scene that

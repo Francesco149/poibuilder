@@ -3,6 +3,67 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.188 — the seashore: a PSP showpiece, and the open-map runtime it needed
+
+Request: "come up with a really impressive scene for the psp that pushes the
+limits of what the pipeline can do… a sea shore scene with convincing waves
+achieved with animated textures + particles… if there's also any improvements
+to the PSP focused pipeline (powerful easy primitives and engine
+optimizations) feel free to explore them."
+
+**The map** (`./run_seashore.sh`; builder `project/test_scenes/seashore_map_builder.gd`):
+an open tropical bay. A rolling sea (two Gerstner swells as GE vertex morphs,
+under an 8-frame animated water flipbook, fading into a flat far sea and the
+map's own fog); three staggered surf strips that break at the waterline, run
+up the beach and soak away, each with a spray burst timed to its break;
+translucent shallows whose alpha follows the water depth; rocks hit by
+wave-timed splashes inside pulsing foam rings; geometry palms swaying with
+blob shadows swaying in sync; a pier with a bobbing rowboat; far palm line,
+jungle backdrop, an island in the haze, gulls; a low sun with an additive
+glitter path and twinkling glints. Painted textures are low-res image-model
+generations (keyed, de-contaminated, PSP-sized by
+`retro_engine/gen_seashore_textures.py`, which also synthesises the
+loop-exact procedural ones).
+
+**New runtime primitives** (format: SPEC_RETRO_FORMAT.md §12–§14, all
+compatible additions inside PBM v3; authoring: `PBRetroFx`):
+- `mesh_fx` lump: **GE hardware vertex morphing** (≤ 8 vertex sets blended by
+  the GE's morph weights — zero CPU per vertex) in KEYFRAME and CYCLIC
+  (convex harmonic: travelling waves/sway with non-negative weights) modes;
+  **mesh flipbooks**; **additive**, **no-fog** and **decal** (depth-biased
+  overlay) meshes.
+- `camera_path` lump: the profiler sweeps a map's own poses (+ `_nomorph`,
+  `_noemit`, `_noalpha`, `_nocull` ablations per pose); the app flies them in
+  **attract mode** (12 s idle or Select+R; Select still hides the HUD) — an
+  unattended device now records itself.
+- `env` lump: per-map sky colour, fog, far and near planes.
+- Emitters: **spawn box** (`EMISSION_SHAPE_BOX`) and **burst phase**
+  (`poi_burst_phase`).
+
+**Engine fixes / optimizations:**
+- Per-mesh frustum cull (sphere vs frustum, the emitters' test). Knob `mesh_cull`.
+- **Depth-mask polarity**: the GE's `sceGuDepthMask(GU_TRUE)` disables writes;
+  the scene passes had it backwards, so depth was ALWAYS written and the
+  `depth_write` knob turned writes off. Behaviour unchanged, knob and docs
+  corrected (`dw_*_on` rows renamed `dw_*_off`).
+- **Cutouts draw as cutouts** (alpha test 0x80, blending off): the "white
+  halo around the trees" was cutout edges blending with the sky and writing
+  depth before the card behind them was drawn.
+- Light-bake occluder grid: unlit meshes (`poi_vertex_color = "unlit"`) never
+  occlude; triangles spanning > 2048 cells go to a directly-tested list. A
+  sky dome used to register ~20 M cell entries — the export OOM-killed at 2 GB
+  after 5 min; it now takes ~2 s.
+- Plain meshes: `poi_vertex_color` = `unlit` / `multiply`.
+
+**Tools:** `retro_engine/capture_pbm_poses.py` (PPSSPP captures of a map's
+camera path on one contact sheet — looks only), a `depth_test=` override.
+
+**Not yet measured on a PSP** (no device on USB this session): every runtime
+cost above. `./run_seashore.sh --bench` prices them. Open item: under PPSSPP
+the sun path does not show at grazing angles (a morphing copy of the sea grid
+vanished outright; the flat decal version shows only faintly); settle it on
+hardware before touching the renderer.
+
 ## v0.9.187 — scenes drop into the 3D view again; a dock that fits; edge-first placement
 
 User feedback (translated): "Super useful. Known small issues: with the plugin
