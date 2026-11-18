@@ -162,8 +162,11 @@ def radial(n, falloff, color, name, power=1.0):
     save(np.concatenate([rgb, a[..., None] * 255], axis=2), name)
 
 
-def spray_sheet(cell=64):
-    """Spray flipbook, 2x2 cells (spray_2x2_sheet.png), one burst's life:
+def spray_sheet(cell=32):
+    """Spray flipbook, 2x2 cells of 32 px (spray_2x2_sheet.png, 64x64 RGBA8888:
+    a flipbook atlas has no mip chain, so its whole footprint is the texture —
+    measured on the PSP, a 128x128 sheet put ~6 ms of GPU on the surf view).
+    One burst's life:
     a dense foam clump (frame 0) that tears into lacy fragments and flying
     droplets (frame 3). Soft alpha, white tops, blue-grey self-shaded
     undersides — a puff of spray is lit from above and dark underneath."""
@@ -202,7 +205,7 @@ def spray_sheet(cell=64):
             rad = dr * cell
             dens += 0.95 * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * rad * rad))
         # keep the cell's border transparent (no bleeding into a neighbour)
-        edge = np.clip(np.minimum(np.minimum(xx, cell - 1 - xx), np.minimum(yy, cell - 1 - yy)) / 4.0, 0, 1)
+        edge = np.clip(np.minimum(np.minimum(xx, cell - 1 - xx), np.minimum(yy, cell - 1 - yy)) / 2.0, 0, 1)
         a = np.clip(dens, 0, 1) * edge * fade
         # shading: lit from above, darker where the clump is thick and low
         shade = np.clip(1.0 - 0.35 * (yy / cell) * np.clip(dens, 0, 1.2), 0.6, 1.0)

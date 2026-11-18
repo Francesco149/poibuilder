@@ -309,7 +309,7 @@ static func _build_sky(root: Node3D) -> void:
 ## surface linearly between them, so a mesh sampling the wave anywhere else
 ## disagrees with the drawn sea by up to the swell's amplitude.
 const SEA_CELL := 4.0
-const SEA_NEAR_END := -84.0
+const SEA_NEAR_END := -60.0
 
 static func sea_grid_xs() -> Array:
 	var xs: Array = []
@@ -358,9 +358,9 @@ static func _build_sea(root: Node3D) -> void:
 	# Far sea: flat, big cells, the same flipbook (world-space UVs line up).
 	var f := Builder.new()
 	var rects := [
-		Rect2(-420, -420, 840, 336),   # x0, z0, w, d (z0 = far edge)
-		Rect2(-420, -84, 320, 72),
-		Rect2(100, -84, 320, 72),
+		Rect2(-420, -420, 840, 420.0 + SEA_NEAR_END),   # x0, z0, w, d (z0 = far edge)
+		Rect2(-420, SEA_NEAR_END, 320, -12.0 - SEA_NEAR_END),
+		Rect2(100, SEA_NEAR_END, 320, -12.0 - SEA_NEAR_END),
 	]
 	for r: Rect2 in rects:
 		var nx := maxi(2, int(r.size.x / 70.0))
@@ -630,10 +630,13 @@ static func _build_palms(root: Node3D) -> void:
 		# one sway for the whole tree: the trunk bends from its foot, the crown
 		# and the shadow follow its top with the SAME weights (same periods and
 		# phases), so they stay attached without sharing a mesh
+		# ONE period, the two axes a quarter-turn apart: an elliptical sway in
+		# one CYCLIC triplet (4 vertex sets on the GE instead of 7 — measured,
+		# morph fetch is the scene's second biggest cost on the device)
 		var per1 := 3.6 + 0.37 * i
-		var per2 := per1 * 1.618
+		var per2 := per1
 		var ph1 := 0.9 * i
-		var ph2 := 1.7 * i + 0.5
+		var ph2 := ph1 + PI * 0.5
 		var ax := Vector3(amp, 0, amp * 0.3)
 		var az := Vector3(-amp * 0.3, 0, amp * 0.8)
 
@@ -832,8 +835,9 @@ static func _build_shallows(root: Node3D) -> void:
 			b.quad(rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j])
 	var m := _mat("Shallows", "shallow_f0.png", BaseMaterial3D.TRANSPARENCY_ALPHA, true)
 	PBUv.set_scroll_speed(m, Vector2(0.0, 0.025))
+	# no morph: the swell is faded to ~0 over the shallows, and on the PSP
+	# every morphing vertex set is fetched whether it moves or not
 	_node(root, "Shallows", b, m, "unlit", {"decal": 16,
-		"morph": {"mode": "harmonic", "targets": swell_targets()},
 		"flipbook": {"frames": _frames("shallow_f", 8), "fps": 7.0},
 	})
 
@@ -1054,7 +1058,7 @@ static func _build_emitters(root: Node3D) -> void:
 		for half: int in [-1, 1]:
 			var bx := 24.0 * half
 			var e := _emitter(root, "Spray_%d_%s" % [s, "W" if half < 0 else "E"],
-				Vector3(bx, 0.15, shore_z(bx) - 0.6), "spray_2x2_sheet.png", 18, SURF_PERIOD, 1.0, false, 2, 2)
+				Vector3(bx, 0.15, shore_z(bx) - 0.6), "spray_2x2_sheet.png", 11, SURF_PERIOD, 0.8, false, 2, 2)
 			e.one_shot = true
 			# the burst fires at the strip's break: t_break = BREAK*P - phase
 			var t_break := fposmod(SURF_BREAK_T * SURF_PERIOD - surf_phase(s), SURF_PERIOD)
@@ -1070,7 +1074,7 @@ static func _build_emitters(root: Node3D) -> void:
 			pm.damping_min = 0.7
 			pm.damping_max = 0.9
 			_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.85), Color(1, 1, 1, 0.0), 0.06)
-			_scale_curve(pm, 0.6, 1.6, 2.6, 0.06)
+			_scale_curve(pm, 0.6, 1.5, 1.8, 0.06)
 			# the burst's life is the surf period, but it is only visible for
 			# ~2 s: 4 flipbook cycles play clump -> tatters while it is
 			pm.anim_speed_min = 4.0
@@ -1081,7 +1085,7 @@ static func _build_emitters(root: Node3D) -> void:
 		var r: Array = ROCKS[ri]
 		var c: Vector3 = r[0]
 		var e := _emitter(root, "RockSplash_%d" % ri, Vector3(c.x, 0.4, c.z + 1.0), "spray_2x2_sheet.png",
-			16, SURF_PERIOD, 1.3, false, 2, 2)
+			12, SURF_PERIOD, 1.1, false, 2, 2)
 		e.one_shot = true
 		var t_hit := _rock_hit_time(c) + 0.25
 		e.set_meta("poi_burst_phase", fposmod(-t_hit / SURF_PERIOD, 1.0))
@@ -1096,7 +1100,7 @@ static func _build_emitters(root: Node3D) -> void:
 		pm.damping_min = 0.5
 		pm.damping_max = 0.6
 		_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.95), Color(1, 1, 1, 0.0), 0.05)
-		_scale_curve(pm, 0.5, 1.5, 2.4, 0.05)
+		_scale_curve(pm, 0.5, 1.4, 1.9, 0.05)
 		pm.anim_speed_min = 5.0
 		pm.anim_speed_max = 5.0
 

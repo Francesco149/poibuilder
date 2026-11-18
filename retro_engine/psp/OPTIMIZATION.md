@@ -216,9 +216,8 @@ sharpness where it shows:
   side planes — the same conservative test the emitters use, a handful of dot
   products per mesh. The courtyard has everything in view and gains nothing;
   an open map does: PPSSPP's counters on the seashore map's glitter view read
-  10 166 submitted triangles without it and 7 560 with it. That is a triangle
-  COUNT, not a time — the device rows are `<pose>_nocull` in the map battery,
-  **not yet measured**. Knob: `mesh_cull=0`.
+  10 166 submitted triangles without it and 7 560 with it; on the device it
+  saves 0.85-2.0 ms per view of the seashore map (§6b). Knob: `mesh_cull=0`.
 - **No sorting of opaque meshes.** The exporters emit meshes in scene order;
   transparent surfaces are drawn in the order the blend needs, which is
   documented in `SPEC_RETRO_FORMAT.md`.
@@ -243,16 +242,56 @@ sharpness where it shows:
 
 ---
 
-## 6b. Open-map features (v0.9.188) — runtime cost NOT yet measured on a PSP
+## 6b. Open-map features (v0.9.188) — measured on the seashore map
 
-Added for the seashore map (`./run_seashore.sh`); every one has an ablation so
-one battery run prices it (`./run_seashore.sh --bench`, which sweeps the map's
-own camera path with `<pose>`, `_nomorph`, `_noemit`, `_noalpha`, `_nocull`
-rows). Until those rows exist, nothing below is a performance claim.
+Added for the seashore map (`./run_seashore.sh`). `./run_seashore.sh --bench`
+sweeps the map's own camera path with one ablation per feature. Device rows
+(PSP over PSPLink, 40-frame averages, ms saved by REMOVING the stage):
 
-| feature | what the CPU does | what the GE does | knob |
+| pose | frame (cpu+gpu) | draws | morph | emitters | alpha pass (incl. emitters) | frustum cull saves |
+|---|---|---|---|---|---|---|
+| Beach | 6.80 (6.70+0.11) | 86 | 1.44 | 0.95 | 2.71 | 1.54 |
+| Surf | 7.91 (7.72+0.19) | 99 | 2.02 | 1.70 | 3.70 | 1.14 |
+| Rocks | 5.74 (5.63+0.11) | 69 | 1.06 | 0.61 | 1.79 | 1.98 |
+| Overlook | 9.26 (9.16+0.10) | 122 | 2.58 | 1.92 | 4.35 | 0.01 |
+| Pier | 6.18 (6.07+0.11) | 83 | 1.18 | 0.86 | 2.19 | 1.82 |
+| Palms | 6.57 (5.84+0.73) | 78 | 1.87 | 0.12 | 1.91 | 0.85 |
+| Glitter | 10.14 (6.90+3.24) | 76 | 2.27 | 0.97 | 5.48 | 1.80 |
+
+Every view is inside the 16.67 ms budget (worst 10.1 ms = 99 fps). What the
+first battery taught (before → after, same views):
+
+- **Flipbook particle textures are the GPU cliff.** A flipbook atlas has no
+  mip chain (a level would mix frames), so its WHOLE size is the sampled
+  footprint. A 128x128 RGBA8888 spray sheet on big blended particles cost
+  6.4 ms gpu on the surf view (`Surf` 7.74 gpu vs `Surf_noemit` 1.32); at
+  64x64 with fewer, smaller particles the emitters cost 1.7 ms of frame there.
+  Overlook went 19.5 → 9.3 ms, Surf 17.7 → 7.9.
+- **GE morphing shows up as CPU time** (`_nomorph` saved 2.5-3.9 ms of *cpu*
+  and ~1 ms of gpu in the first run): the GE fetching N vertex sets competes
+  with the CPU for the shared bus while the list is being built — an
+  inference from where the time lands, not a separate measurement. Fetch is
+  proportional to sets x vertices, so: morph only what moves visibly (the
+  shallows dropped theirs — the swell is ~0 there), put both axes of a sway
+  on ONE period (one triplet = 4 sets instead of 7), and shrink the morphing
+  sea to where the swell is seen (z ≥ -60 m).
+- **The per-mesh frustum cull pays on an open map**: 0.85-2.0 ms per view
+  (0 at the overlook, which sees the whole bay). Knob `mesh_cull=0`.
+- **The CPU is the floor again**: 5.6-9.2 ms of display-list time at ~70-120
+  draws, i.e. per-draw CPU cost is what an open map spends next. Fewer, larger
+  meshes (merging same-material props) is the next lever.
+
+**Regression check on the courtyard map** (same day, same map file, the
+v0.9.187 engine vs v0.9.188, full battery sweep, frame ms): waterfall 8.29 →
+6.74, ramp 7.12 → 5.51, spawn 6.46 → 5.44, foliage 5.60 → 4.18, corner 5.39 →
+3.82 — every view faster, GPU identical to within 0.1 ms (the unblended
+cutouts cost nothing: `fol_base` gpu 0.48 vs 0.48), the CPU 1.0-1.6 ms lower
+from the frustum cull. NOTE: §1's table predates the courtyard's growth to
+~80 draws; its absolute numbers are no longer this map's.
+
+| feature | CPU | GE | knob |
 |---|---|---|---|
-| GE vertex morph (`mesh_fx` MORPH) | one `cosf` per target triplet, ≤ 8 register writes per mesh | fetches N vertex sets per vertex (N ≤ 8; the sea uses 7) | `morph=0` |
+| GE vertex morph (`mesh_fx` MORPH) | one `cosf` per triplet, ≤ 8 register writes per mesh | fetches N vertex sets per vertex | `morph=0` |
 | mesh flipbook | picks a texture id | one texture bind per flipbook mesh | — |
 | additive / no-fog / decal meshes | blend-func, fog and (decal) two matrix uploads per mesh | as any blended surface | — |
 | per-mesh frustum cull | ~10 flops per mesh | fewer draws | `mesh_cull=0` |

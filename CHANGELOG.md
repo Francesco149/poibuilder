@@ -58,11 +58,18 @@ compatible additions inside PBM v3; authoring: `PBRetroFx`):
 **Tools:** `retro_engine/capture_pbm_poses.py` (PPSSPP captures of a map's
 camera path on one contact sheet — looks only), a `depth_test=` override.
 
-**Not yet measured on a PSP** (no device on USB this session): every runtime
-cost above. `./run_seashore.sh --bench` prices them. Open item: under PPSSPP
-the sun path does not show at grazing angles (a morphing copy of the sea grid
-vanished outright; the flat decal version shows only faintly); settle it on
-hardware before touching the renderer.
+**Measured on a PSP** (`./run_seashore.sh --bench`, OPTIMIZATION.md §6b):
+the first battery had two views over budget — Overlook 19.5 ms, Surf 17.7 ms
+— and the ablations said why: the 128x128 spray flipbook (no mip chain by
+design) cost ~6.4 ms gpu, and morphing ~2.5-4 ms. After a 64x64 sheet with
+fewer particles, no morph on the shallows, one-period palm sway and a smaller
+morphing sea, every view fits with room: worst 10.1 ms (Glitter, 99 fps),
+Overlook 9.3, Surf 7.9. The frustum cull saves 0.85-2.0 ms per view.
+Courtyard regression A/B (v0.9.187 vs v0.9.188 engine, same map, same day):
+every view faster (waterfall 8.29 -> 6.74 ms, spawn 6.46 -> 5.44), GPU
+unchanged — the cutout and depth-knob changes cost nothing. Still
+open: why a MORPHING sun path vanished under PPSSPP (it ships flat, with a
+decal bias); not re-checked on the device.
 
 ## v0.9.187 — scenes drop into the 3D view again; a dock that fits; edge-first placement
 
