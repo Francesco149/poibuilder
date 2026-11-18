@@ -73,6 +73,20 @@ unchanged — the cutout and depth-knob changes cost nothing. Still
 open: why a MORPHING sun path vanished under PPSSPP (it ships flat, with a
 decal bias); not re-checked on the device.
 
+### Showcase v2: the hardware chapter (v0.9.188)
+
+`showcase_video/edl_v2.toml` replaces the borrowed 2.6 s v1 PSP bake with a
+16.8 s chapter cut from a new tripod take of the seashore map's attract-mode
+flythrough on a real PSP (beach, surf, rocks, palms, a 1:1 punch-in on the
+device HUD reading 59.9 fps / ~12,700 triangles, the sun path). Footage:
+`source/psp-seashore.mp4` -> `~/Videos/Recordings/poibuilder-psp-seashore-graded.mp4`
+(the raw iPhone .MOV is stored next to it). Film: 49.1 s.
+
+Pipeline fix: every segment and the README cut are now tagged SDR BT.709.
+Phone footage arrives tagged HLG/BT.2020 and those tags rode through the
+filter graph into the segment VUI — an HLG stretch inside an SDR film plays
+back with the wrong transfer curve. The relabel keeps the pixels as graded.
+
 ## v0.9.187 — scenes drop into the 3D view again; a dock that fits; edge-first placement
 
 User feedback (translated): "Super useful. Known small issues: with the plugin

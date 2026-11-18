@@ -95,15 +95,91 @@ region = "viewport"
 cursor = false
 fade_out = 0.3
 
+# ===========================================================================
+# HARDWARE: the seashore map on a real PSP (v0.9.188), one tripod take of the
+# app's attract-mode flythrough. source/psp-seashore.mp4 links to the graded
+# recording (~/Videos/Recordings/poibuilder-psp-seashore-graded.mp4; the raw
+# iPhone .MOV sits next to it). It arrives tagged HLG/BT.2020 but was graded
+# as seen on an SDR screen: the build relabels every segment BT.709 and the
+# grade below only adds depth to the PSP's screen.
+# ===========================================================================
+
 [[clip]]
-id = "t70-psp"
+id = "t70-psp-beach"
 kind = "video"
-# The v1 cut's baked PSP segment (graded and captioned already): the raw
-# recordings that source/psp-*.mp4 link to are no longer on this machine.
-file = "/opt/src/newbuilder/showcase_video/bake/segments/70-psp-court.mp4"
-at = 0.0
+file = "psp-seashore.mp4"
+at = 0.4
 dur = 2.6
 cursor = false
+zoom = [1.0, 1.04]
+fade_in = 0.25
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Hardware", text = "Exported to a real Sony PSP: a whole bay at 60 fps", at = 0.2 },
+]
+
+[[clip]]
+id = "t71-psp-surf"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 3.6
+dur = 3.0
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Water", text = "Rolling swell, breaking surf and spray, animated by the PSP's GPU", at = 0.2 },
+]
+
+[[clip]]
+id = "t72-psp-rocks"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 15.8
+dur = 2.8
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Effects", text = "Foam rings and splashes timed to every wave", at = 0.2 },
+]
+
+[[clip]]
+id = "t73-psp-palms"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 24.4
+dur = 2.8
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Wind", text = "Palms sway, and their shadows sway with them", at = 0.2 },
+]
+
+[[clip]]
+id = "t74-psp-hud"
+kind = "video"
+file = "psp-seashore.mp4"
+# A 1:1 punch-in on the PSP's screen: the app's own HUD (frame rate,
+# triangles, draws) legible over the palms, read off the device.
+at = 46.5
+dur = 2.6
+crop = [400, 150, 1100, 619]
+zoom = [1.0, 1.04]
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Measured", text = "60 fps on the device, around 12,800 triangles a frame", at = 0.2 },
+]
+
+[[clip]]
+id = "t75-psp-glitter"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 55.0
+dur = 3.0
+cursor = false
+zoom = [1.0, 1.03]
+fade_out = 0.4
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
 
 [[clip]]
 id = "t90-end"
@@ -112,4 +188,4 @@ dur = 2.4
 fade_in = 0.3
 fade_out = 0.5
 cursor = false
-card = { kicker = "Free and open source", title = "PoiBuilder", sub = "ProBuilder-style level building for Godot 4", bullets = ["Pure GDScript: drop the addon in and enable it", "github.com/Francesco149/poibuilder"] }
+card = { kicker = "Free and open source", title = "PoiBuilder", sub = "ProBuilder-style level building for Godot 4", bullets = ["Pure GDScript: drop the addon in and enable it", "Modern glTF export, and a retro export that runs on a real PSP", "github.com/Francesco149/poibuilder"] }

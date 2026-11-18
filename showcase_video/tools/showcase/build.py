@@ -340,12 +340,18 @@ def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
             "-frames:v", str(src.out_frames),
             "-c:v", "libx264", "-crf", "14", "-preset", "veryfast",
             "-pix_fmt", "yuv420p", "-r", str(proj.fps),
+            *BT709,
             "-g", "120", "-keyint_min", "60", "-sc_threshold", "0",
             str(out)]
     print(f"[clip] {clip.id}  ({src.label}, {src.out_frames} frames, {dur:.2f}s)")
     ffmpeg.run(cmd)
     _stamp(out).write_text(fingerprint(clip, proj, src))
     return out
+
+
+# The film's colour tags, stated on every encode (see clip_filter): SDR BT.709.
+BT709 = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+         "-color_range", "tv"]
 
 
 def concat(segments: list[Path], out: Path) -> Path:
@@ -364,7 +370,7 @@ def encode_readme(master: Path, out: Path, proj: edl.Project) -> Path:
                 "-i", str(master),
                 "-vf", f"scale={proj.readme_width}:{proj.readme_height}:flags=lanczos",
                 "-c:v", "libx264", "-crf", "29", "-preset", "slower",
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                "-pix_fmt", "yuv420p", *BT709, "-movflags", "+faststart",
                 "-an", str(out)])
     return out
 

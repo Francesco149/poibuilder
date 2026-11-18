@@ -253,6 +253,13 @@ def clip_filter(
         start = max(0.0, duration - fade_out)
         tail.append(f"fade=t=out:st={start:.3f}:d={fade_out:.3f}")
     tail.append(f"fps={fps}")
+    # Every segment is SDR BT.709, whatever its source claimed. Phone footage
+    # arrives tagged HLG / BT.2020 and is graded as seen on an SDR screen;
+    # left alone those tags ride through the filter graph into the segment's
+    # VUI, and one HLG-tagged stretch inside an SDR film plays back with the
+    # wrong transfer curve. This relabels — it does not convert — so the
+    # pixels stay exactly as graded.
+    tail.append("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv")
     tail.append("format=yuv420p")
     graph.append(f"[{vlabel}]{','.join(tail)}[vout]")
     return ";".join(graph)
