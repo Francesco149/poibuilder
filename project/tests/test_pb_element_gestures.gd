@@ -599,3 +599,78 @@ func test_shift_move_extrude_expands_conversion_groups():
 	logic.commit_subgizmos(mesh, _ids([seed]), false)
 	assert_eq(captured.get("ids", PackedInt32Array()).size(), 2,
 		"the commit selects the op output - both new caps, not just the seed")
+
+## REGRESSION (v0.9.189): the extrude's live-cursor cross-check measured the
+## pointer against the screen axis of the selection's FIRST VERTEX, not the
+## pivot the gizmo sits on (where the hand grabs it). On a big face seen in
+## perspective that corner projects at a different scale, so a cursor that
+## tracked the gizmo exactly was read as a far shorter pull, and the plugin
+## overrode the engine with it: the arched doorway's front n-gon, dragged a
+## full metre, extruded ~0.6 m and the cap lagged behind the pointer.
+func test_shift_move_extrude_follows_a_cursor_on_the_pivot():
+	var ed := PBEditor.new()
+	ed.tool_mode = PBEditor.ToolMode.MOVE
+	ed.select_mode = PBEditor.SelectMode.FACE
+	var logic := PBElementEditor.new()
+	logic.editor = ed
+	var mesh := PBMesh.new()
+	mesh.pb_mesh_data = PBShapeComplex.create_door(3.0, 3.2, 2.4, 0.5, 1.0, true, 8)
+	add_child_autofree(mesh)
+	ed.active_mesh = mesh
+	var md: PBMeshData = mesh.pb_mesh_data
+	# The front n-gon: most corners, furthest along +Z.
+	var front := -1
+	var best := -INF
+	for fi in range(md.faces.size()):
+		var idxs := md.faces[fi].get_distinct_indexes()
+		if idxs.size() < 5:
+			continue
+		var c := Vector3.ZERO
+		for i in idxs:
+			c += md.positions[i]
+		c /= float(idxs.size())
+		if c.z > best:
+			best = c.z
+			front = fi
+	assert_true(front >= 0, "the doorway has a front n-gon")
+	var front_z := best
+	# A camera off the doorway's left leg: the extrude's reference vertex
+	# (the face's first corner, on that leg) sits ~1.5x nearer the lens than
+	# the face's pivot, which is where a hand grabs the gizmo.
+	_viewport.size = Vector2i(1346, 783)
+	_camera.fov = 70.0
+	_camera.position = Vector3(-3.4, 1.9, 2.8)
+	_camera.look_at(Vector3(0.0, 1.6, 0.5), Vector3.UP)
+	var ids := _ids([front])
+	var pivot: Vector3 = logic.center_pivot(md, ids)
+	var start: Transform3D = logic.get_subgizmo_transform(md, mesh, front)
+	logic.track_mouse(_camera, _camera.unproject_position(pivot))
+	logic.set_subgizmo_transform_with_shift(mesh, ids, front, start, true)
+	# The cross-check measures from the face's centre (where the gizmo is),
+	# never from whichever corner happens to come first in the union.
+	var ref: Vector3 = logic._extrude_pivot_world
+	assert_almost_eq(ref.x, pivot.x, 0.05, "the extrude reference sits on the pivot (x)")
+	assert_almost_eq(ref.y, pivot.y, 0.25, "the extrude reference sits on the pivot (y)")
+	# The pointer stays on the gizmo as it travels a metre along +Z.
+	# Eased like a hand, and the pointer event lands one frame after the
+	# gizmo delivery it belongs to (the order the engine sees them in).
+	var prev := 0.0
+	for step in range(1, 53):
+		var x := float(step) / 52.0
+		var t := x * x * (3.0 - 2.0 * x)
+		logic.track_mouse(_camera, _camera.unproject_position(pivot + Vector3(0.0, 0.0, prev)))
+		logic.set_subgizmo_transform_with_shift(mesh, ids, front,
+			start.translated(Vector3(0.0, 0.0, t)), true)
+		prev = t
+	logic.commit_subgizmos(mesh, ids, false)
+	var cap_z := -INF
+	for fi in range(md.faces.size()):
+		var idxs := md.faces[fi].get_distinct_indexes()
+		if idxs.size() < 5:
+			continue
+		var c := Vector3.ZERO
+		for i in idxs:
+			c += md.positions[i]
+		cap_z = maxf(cap_z, c.z / float(idxs.size()))
+	assert_almost_eq(cap_z - front_z, 1.0, 0.08,
+		"the cap lands where the pointer took the gizmo (%.3f m)" % (cap_z - front_z))

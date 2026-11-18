@@ -3,6 +3,33 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.189 — showcase v2 grows into a full film; an extrude that follows the gizmo
+
+Request: "showcase v2 still needs more work. it doesn't showcase complex
+extrudes and how you can grab a whole n-gon face of a door for example. make
+it show all the things the original showcase did, but with a smoother more
+polished execution, plus new ui + features. short version for the readme,
+long version for yt and godot store video".
+
+### Fixed: a Shift+drag extrude of a big face came up short
+
+Found recording the new film: the doorway's front n-gon, dragged a full metre
+along +Z, extruded 0.6 m. The extrude cross-checks the engine's motion
+against the live cursor (the guard for the old "extrudes backwards" report)
+and takes the cursor's reading when the two disagree by more than 35%. That
+reading was measured at the selection's FIRST VERTEX (here the doorway's
+top-left corner), not at the pivot where the gizmo sits and the hand grabs
+it. With the camera 4.6 m from a 3 m face the corner projects ~25% larger
+and at a different angle, so a pointer that tracked the gizmo exactly read as
+~0.6-0.7 m, tripped the override, and grid snap settled it at 0.6 m. The
+reference is now the union's centre (`_drag_extrude_region_center`, already
+computed for the side-flip logic).
+
+Test: `test_shift_move_extrude_follows_a_cursor_on_the_pivot` (the doorway's
+front n-gon, the pointer riding the pivot with one-frame event lag): the
+reference must sit on the pivot (fails on the old code: it sat on the corner
+(-1.5, 1.6)) and the cap must land 1.0 m out.
+
 ## v0.9.188 — the seashore: a PSP showpiece, and the open-map runtime it needed
 
 Request: "come up with a really impressive scene for the psp that pushes the

@@ -1232,8 +1232,13 @@ func _begin_extrude_move(mesh_data: PBMeshData, ids: PackedInt32Array) -> void:
 	if mouse_has and mouse_camera != null and _drag_mesh != null \
 			and not _drag_union_override.is_empty():
 		_extrude_mouse_start = mouse_screen
+		# Measured at the union's centre — where the gizmo sits and the
+		# hand grabs it. The first union vertex (a far corner of a big
+		# n-gon) projects at a different screen scale and direction under
+		# perspective, read a full-length drag as ~60% of it, and the
+		# override below then cut the extrude short (v0.9.189).
 		_extrude_pivot_world = _drag_mesh.global_transform \
-			* mesh_data.positions[_drag_union_override[0]]
+			* _drag_extrude_region_center
 		_extrude_normal_world = (_drag_mesh.global_transform.basis
 			* _drag_extrude_normal).normalized()
 		var d1: Vector2 = mouse_camera.unproject_position(_extrude_pivot_world)

@@ -129,12 +129,12 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.188** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.189** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, the
   v0.9.187 UI round: native EditorDock, edge-first placement, and the v0.9.188
   seashore showpiece + open-map PSP runtime: GE vertex morphing, mesh
   flipbooks, additive/decal meshes, camera path + attract mode, frustum cull).
-- All headless tests passing (`./run_tests.sh`; 1301 tests, 24.0k+ assertions
+- All headless tests passing (`./run_tests.sh`; 1302 tests, 24.0k+ assertions
   across 86 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
   real-editor GUI harness (`./run_gui_tests.sh`, failures=0).
 - Compatibility: maps made on the public release (`nightly` = v0.9.167) must
