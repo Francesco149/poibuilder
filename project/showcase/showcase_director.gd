@@ -277,10 +277,19 @@ func glide(to: Vector2, n: int = 24, ease_mode := 0) -> void:
 func glide_world(world: Vector3, n: int = 24, ease_mode := 0) -> void:
 	await glide(w2s(world), n, ease_mode)
 
+## Last pointer position sent, so every motion carries its real `relative`
+## like hardware events do. Godot starts a GUI drag-and-drop by accumulating
+## `relative` past the drag threshold: with zero relatives (the old events) no
+## palette card could ever be dragged into the viewport.
+var _last_sent := Vector2(960.0, 540.0)
+
 func _send_motion(held := false) -> void:
 	var ev := InputEventMouseMotion.new()
 	ev.position = cursor
 	ev.global_position = cursor
+	ev.relative = cursor - _last_sent
+	ev.screen_relative = ev.relative
+	_last_sent = cursor
 	if held or _drag_down:
 		ev.button_mask = MOUSE_BUTTON_MASK_LEFT
 	ev.shift_pressed = _mods.get("shift", false)
@@ -1118,13 +1127,19 @@ func move_selection(world_motion: Vector3, n: int = 24, shift := false, ease_mod
 	# the element's local basis/origin), so world motions are converted once.
 	var basis_inv: Basis = mesh.global_transform.basis.inverse()
 	var local_motion: Vector3 = basis_inv * world_motion
+	# The pointer rides the pivot AS IT WAS when the drag began, like a hand
+	# that grabbed the gizmo there. Re-reading the pivot each frame (it moves
+	# with the selection) double-counted the motion, and since the editor
+	# verifies an extrude against the live cursor, the cap chased the pointer
+	# and ran away (0.6 m asked, 2.8 m delivered).
+	var pivot0: Vector3 = mesh.to_global(ed.center_pivot(mesh.pb_mesh_data, ids))
 	if shift:
 		await shift_held(true)
 	for i in range(n):
 		var t := _ease(float(i + 1) / float(maxi(n, 1)), ease_mode)
 		ed.set_subgizmo_transform_with_shift(mesh, ids, ids[0],
 			start.translated(local_motion * t), shift)
-		cursor = drag_cursor_for(world_motion * t)
+		cursor = w2s(pivot0 + world_motion * t)
 		_send_motion()
 		await frames(1)
 	ed.commit_subgizmos(mesh, ids, false)
@@ -1257,7 +1272,16 @@ func _region_snapshot() -> Dictionary:
 	if ov is Control and (ov as Control).visible:
 		out["overlay"] = _r((ov as Control).get_global_rect())
 	if plugin.material_dock != null:
-		out["material_dock"] = _r((plugin.material_dock as Control).get_global_rect())
+		var dock_rect := (plugin.material_dock as Control).get_global_rect()
+		out["material_dock"] = _r(dock_rect)
+		# The viewport and the Material & UV dock in one frame (the tour's UI
+		# chapters: a click in the dock and its result in the 3D view). The
+		# dock's tab strip rides along above its content.
+		if dock_rect.size.x > 0.0:
+			var both := host_rect.merge(dock_rect)
+			both.position.y = minf(host_rect.position.y, dock_rect.position.y - 30.0)
+			both.size.y = maxf(host_rect.end.y, dock_rect.end.y) - both.position.y
+			out["viewport_dock"] = _r(both)
 	var col = base.find_child("DockVSplitCenter", true, false)
 	if col is Control:
 		out["center_column"] = _r((col as Control).get_global_rect())

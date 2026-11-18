@@ -11,7 +11,9 @@
 # user's file back afterwards.
 #
 #   source "$REPO/tools/pin_editor_layout.sh"
-#   pin_editor_layout "$PROJECT_DIR" "$SCRATCH_DIR"   # SCRATCH_DIR keeps the backup
+#   pin_editor_layout "$PROJECT_DIR" "$SCRATCH_DIR" [LAYOUT_CFG]
+#       SCRATCH_DIR keeps the backup; LAYOUT_CFG defaults to the harness's
+#       test_scenes/editor_gui_layout.cfg (the showcase passes its own).
 #   trap 'restore_editor_layout; rm -rf "$SCRATCH_DIR"' EXIT
 
 pin_editor_layout() {
@@ -21,7 +23,7 @@ pin_editor_layout() {
     if [ -f "$_PB_LAYOUT" ]; then
         cp -p "$_PB_LAYOUT" "$_PB_LAYOUT_BACKUP"
     fi
-    cp "$1/test_scenes/editor_gui_layout.cfg" "$_PB_LAYOUT"
+    cp "${3:-$1/test_scenes/editor_gui_layout.cfg}" "$_PB_LAYOUT"
 }
 
 restore_editor_layout() {

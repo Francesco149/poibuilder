@@ -46,6 +46,17 @@ mkdir -p "$OUT"
 # Each shot owns its directory (frames/cursor/events), so a partial render
 # replaces exactly the beats it records and leaves the rest untouched.
 
+# PB_SHOWCASE_LAYOUT=<cfg>: pin a committed dock layout for the render (the
+# editor keeps its layout per PROJECT, so without this a render inherits
+# whatever the last editor session saved) and give the user's file back after.
+if [ -n "${PB_SHOWCASE_LAYOUT:-}" ]; then
+    LAYOUT_SCRATCH="$(mktemp -d /tmp/pb_showcase_layout.XXXXXX)"
+    source "$REPO/tools/pin_editor_layout.sh"
+    pin_editor_layout "$REPO/project" "$LAYOUT_SCRATCH" "$PB_SHOWCASE_LAYOUT"
+    trap 'restore_editor_layout; rm -rf "$LAYOUT_SCRATCH"' EXIT
+    echo "    layout: $PB_SHOWCASE_LAYOUT (pinned for the render)"
+fi
+
 LOG="$OUT/render.log"
 # Godot resolves res:// from the project directory found upward from the CWD;
 # without this it starts the Project Manager and never loads the scene.

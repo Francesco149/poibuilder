@@ -103,6 +103,36 @@ harness EDGE-CREATE drives the four real clicks: the setting is mirrored in
 the dock, the stages advance, and the created cube's x axis follows the
 clicked edge (x·edge = 1.0000) over the drawn 2.69 m x 1.50 m footprint.
 
+### Showcase v2 prototype (the shipped film is unchanged)
+
+`showcase_video/edl_v2.toml` + session `project/showcase/sessions/tour.gd`:
+a 35 s cut built as ONE continuous courtyard build in six longer takes (v1:
+~65 one-to-three-second clips, each on a fresh set). Each chapter starts
+where the last stopped. There are two framings: the 3D view alone, or the
+view with the Material & UV dock ("viewport_dock", a new director region)
+whenever the dock drives the action. The floating tool panel, banner and
+PoiBuilder toolbar are hidden, so the pointer never leaves the picture, and
+there is one caption per chapter. Shapes and materials are picked from dock
+cards, the placement style from the Shapes tab dropdown (keyboard on the
+real popup), a filtered card is DRAGGED onto a face, and the card slider
+shrinks the palette. 21/21 session checks pass. Build:
+`PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg ./showcase_video/render.sh tour`
+then `./showcase_video/build.sh --edl showcase_video/edl_v2.toml` (-> `out_v2/`).
+
+Director fixes found on the way (they apply to every session's next render):
+- `move_selection` placed the pointer on the selection's CURRENT pivot
+  every frame, which double-counts the motion. Since the editor verifies an
+  extrude against the live cursor, the cap chased the pointer (0.6 m asked,
+  2.8 m delivered). The pointer now rides the pivot captured at drag start.
+- Synthesized motion events carried no `relative`, and Godot starts a GUI
+  drag-and-drop by accumulating it, so no drag-and-drop could ever be
+  recorded. Motions now carry their real delta.
+- `render.sh` takes `PB_SHOWCASE_LAYOUT=<cfg>` to pin a committed dock layout
+  for the render (`tools/pin_editor_layout.sh` takes an optional layout file).
+
+Note: `showcase_video/source/psp-*.mp4` link to recordings that are no longer
+on this machine; v2 reuses v1's baked PSP segment.
+
 ## v0.9.186 — created shapes duplicate cleanly; scrolling textures move in play mode
 
 Report (a fresh scratch scene on v0.9.185): duplicating a scrolling plane and

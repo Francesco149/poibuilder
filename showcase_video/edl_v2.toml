@@ -1,0 +1,115 @@
+# Showcase v2 — PROTOTYPE timeline (the shipped film is edl.toml; untouched).
+#
+#   PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg ./showcase_video/render.sh tour
+#   ./showcase_video/build.sh --edl showcase_video/edl_v2.toml
+#
+# What changed against v1, on purpose:
+#   - ONE continuous build (session "tour"): a courtyard made chapter by
+#     chapter, each starting where the last stopped. Six longer takes instead
+#     of ~65 one-to-three-second clips, so no cut jumps the subject, the light
+#     or the pointer.
+#   - TWO framings only: the 3D view alone for pure geometry, and the 3D view
+#     WITH the Material & UV dock ("viewport_dock") whenever the dock drives
+#     what happens — the click in the dock and its result in one picture.
+#     No toolbar slivers or half-panels cropped at the frame edges.
+#   - One short caption per chapter, bottom-left, no arrows or callouts.
+#   - Clip ids are "t…" so v2 segments never overwrite v1's in bake/segments.
+
+[project]
+name = "poibuilder-showcase-v2"
+width = 1280
+height = 720
+fps = 60
+readme_width = 960
+out_dir = "out_v2"
+master = "poibuilder-showcase-v2.mp4"
+readme = "poibuilder-showcase-v2-960.mp4"
+poster = "poibuilder-showcase-v2-poster.png"
+
+[[clip]]
+id = "t00-title"
+kind = "card"
+dur = 1.6
+fade_in = 0.3
+fade_out = 0.3
+cursor = false
+card = { kicker = "Godot 4 editor plugin", title = "PoiBuilder", sub = "Build levels inside the editor" }
+
+[[clip]]
+id = "t10-shapes"
+at = 0.0
+dur = 4.70
+source = "tour:tour/shapes"
+region = "viewport_dock"
+fade_in = 0.25
+captions = [
+  { label = "Create", text = "Pick a shape in the dock, draw it on any surface", at = 0.3 },
+]
+
+[[clip]]
+id = "t20-edge"
+at = 0.0
+dur = 6.38
+source = "tour:tour/edge"
+region = "viewport_dock"
+captions = [
+  { label = "New", text = "Edge-first placement: click an edge at any angle, then depth and height", at = 0.2 },
+]
+
+[[clip]]
+id = "t30-extrude"
+at = 0.0
+dur = 4.58
+source = "tour:tour/extrude"
+region = "viewport"
+captions = [
+  { label = "Edit", text = "Select a face, Shift+drag to extrude", at = 0.2 },
+]
+
+[[clip]]
+id = "t40-materials"
+at = 0.0
+dur = 5.30
+source = "tour:tour/materials"
+region = "viewport_dock"
+captions = [
+  { label = "Materials", text = "Click a card to texture the selection, or drag it onto any face", at = 0.2 },
+]
+
+[[clip]]
+id = "t50-paint"
+at = 0.0
+dur = 3.15
+source = "tour:tour/paint"
+region = "viewport_dock"
+captions = [
+  { label = "Paint", text = "Blend texture layers straight from the palette", at = 0.2 },
+]
+
+[[clip]]
+id = "t60-finale"
+at = 0.0
+dur = 4.16
+source = "tour:tour/finale"
+region = "viewport"
+cursor = false
+fade_out = 0.3
+
+[[clip]]
+id = "t70-psp"
+kind = "video"
+# The v1 cut's baked PSP segment (graded and captioned already): the raw
+# recordings that source/psp-*.mp4 link to are no longer on this machine.
+file = "/opt/src/newbuilder/showcase_video/bake/segments/70-psp-court.mp4"
+at = 0.0
+dur = 2.6
+cursor = false
+
+[[clip]]
+id = "t90-end"
+kind = "card"
+dur = 2.4
+fade_in = 0.3
+fade_out = 0.5
+cursor = false
+card = { kicker = "Free and open source", title = "PoiBuilder", sub = "ProBuilder-style level building for Godot 4", bullets = ["Pure GDScript: drop the addon in and enable it", "github.com/Francesco149/poibuilder"] }
