@@ -1,7 +1,16 @@
 ## PBMaterialDock — Material picker, UV mapping, texture splatting & stamping dock for PoiBuilder.
 ##
-## Docks to the right of the 3D viewport (DOCK_SLOT_RIGHT_UL), to the left of the Inspector.
-## Toggleable from the PoiBuilder toolbar.
+## A native EditorDock (where the engine provides one): it opens below the
+## Inspector by default and can be moved to any dock slot, floated, or put in
+## the bottom panel (where the palette and the tools sit side by side). The
+## editor remembers where the user put it. Toggleable from the toolbar.
+##
+## Size (user feedback: "too wide, takes too much room"): nothing in the dock
+## may set a hard minimum width. The mode row collapses to icons, button
+## captions clip with an ellipsis (the tooltip has the full text), and the
+## palette/tools split, the card size (slider or Ctrl+wheel) and the filter
+## let the palette take as much or as little room as the user wants.
+## test_pb_material_dock_layout.gd holds the size budget.
 ##
 ## Modes:
 ## - Material & UV:
@@ -22,6 +31,18 @@ extends PanelContainer
 enum DockMode { MATERIAL, PAINT, STAMP, SPRITE, SHAPE, PARTICLE }
 const DEFAULT_MATERIAL_PATH := "res://addons/poibuilder/materials/pb_default_material.tres"
 const SETTING_DEFAULT_MATERIAL := "poibuilder/materials/default_material_path"
+
+## Palette card edge (px, before editor scale), adjustable like the
+## FileSystem dock's thumbnails. Persisted per project.
+const THUMB_MIN := 32
+const THUMB_MAX := 160
+const THUMB_DEFAULT := 64
+const THUMB_STEP := 8
+## Below this width the mode row drops its captions (icons + tooltips only).
+const COMPACT_MODE_WIDTH := 330.0
+## Per-project editor metadata section (EditorSettings.set_project_metadata —
+## the same store the engine's own docks keep their per-project state in).
+const META_SECTION := "poibuilder_dock"
 
 ## Emitted when the mode row switches tabs. The plugin owns what each mode
 ## ARMS in the viewport (sprite placement, shape placement) and drives the
@@ -51,6 +72,18 @@ var _btn_mode_stamp: Button
 var _btn_mode_sprite: Button
 var _btn_mode_shape: Button
 var _btn_mode_particle: Button
+var _mode_row: HFlowContainer
+## Mode button -> its full caption (restored when the row is wide enough).
+var _mode_captions: Dictionary = {}
+var _compact_modes: bool = false
+# UI Nodes - Layout
+## Palette above / tools below (vertical), or side by side in the bottom panel.
+var _split: SplitContainer
+var _tools_scroll: ScrollContainer
+var _filter_edit: LineEdit
+var _thumb_slider: HSlider
+var _thumb_size: int = THUMB_DEFAULT
+var _horizontal_layout: bool = false
 # UI Nodes - Materials Section
 var _scroll: ScrollContainer
 var _material_grid: HFlowContainer
@@ -145,13 +178,16 @@ var _syncing: bool = false
 
 func _init() -> void:
 	name = "Material & UV"
-	custom_minimum_size = Vector2(250, 320)
+	# No hard floor: the content decides (see the size notes at the top).
+	custom_minimum_size = Vector2.ZERO
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_load_default_material_setting()
 
 func _ready() -> void:
+	_thumb_size = clampi(int(_load_meta("thumb_size", THUMB_DEFAULT)), THUMB_MIN, THUMB_MAX)
 	_build_ui()
+	resized.connect(_update_compact_modes)
 	refresh_materials()
 	sync_selection()
 	_ensure_shape_previews.call_deferred()
@@ -280,9 +316,12 @@ func _build_ui() -> void:
 	root_vbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(root_vbox)
 
-	# 1. Mode Selector Segmented Row
-	var mode_row := HBoxContainer.new()
+	# 1. Mode Selector Segmented Row — a flow (wraps instead of forcing the
+	# dock wide) of flat icon toggles in one ButtonGroup; captions hide when
+	# the dock is narrow (_update_compact_modes).
+	var mode_row := HFlowContainer.new()
 	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_mode_row = mode_row
 
 	_btn_mode_mat = Button.new()
 	_btn_mode_mat.text = "Material & UV"
@@ -338,8 +377,37 @@ func _build_ui() -> void:
 	_btn_mode_particle.pressed.connect(func(): _set_dock_mode(DockMode.PARTICLE))
 	mode_row.add_child(_btn_mode_particle)
 
+	var mode_group := ButtonGroup.new()
+	for entry in [[_btn_mode_mat, "Material", ["StandardMaterial3D", "Material"]],
+			[_btn_mode_paint, "Paint", ["Paint", "Edit", "CanvasItem"]],
+			[_btn_mode_stamp, "Stamp", ["Decal"]],
+			[_btn_mode_sprite, "Sprite", ["Sprite3D"]],
+			[_btn_mode_shape, "Shapes", ["BoxMesh", "MeshInstance3D"]],
+			[_btn_mode_particle, "Particles", ["GPUParticles3D", "CPUParticles3D"]]]:
+		var b: Button = entry[0]
+		b.text = entry[1]
+		b.flat = true
+		b.button_group = mode_group
+		b.size_flags_horizontal = Control.SIZE_FILL
+		b.icon = _editor_icon(entry[2])
+		_mode_captions[b] = entry[1]
 	root_vbox.add_child(mode_row)
 	root_vbox.add_child(HSeparator.new())
+
+	# Palette and tools share one resizable split: drag the divider to give
+	# the material grid more or less room (vertical in a side dock, side by
+	# side in the bottom panel — set_horizontal_layout).
+	_split = SplitContainer.new()
+	_split.vertical = true
+	_split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_split.split_offset = int(_load_meta("split_offset", 0))
+	_split.dragged.connect(func(_offset: int): _save_meta("split_offset", _split.split_offset))
+	root_vbox.add_child(_split)
+	var palette_box := VBoxContainer.new()
+	palette_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	palette_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_split.add_child(palette_box)
 
 	# 2. Materials & Textures Palette Section Header + Actions
 	var mat_header := HBoxContainer.new()
@@ -349,37 +417,86 @@ func _build_ui() -> void:
 	mat_header.add_child(mat_title)
 
 	var btn_add := Button.new()
-	btn_add.text = "+ Add"
+	btn_add.name = "AddMaterialButton"
+	btn_add.flat = true
+	btn_add.icon = _editor_icon(["Add"])
+	if btn_add.icon == null:
+		btn_add.text = "+"
 	btn_add.tooltip_text = "Add material or texture from project..."
 	btn_add.pressed.connect(_on_add_material_pressed)
 	mat_header.add_child(btn_add)
 
 	var btn_refresh := Button.new()
-	btn_refresh.text = "↺"
+	btn_refresh.name = "RescanButton"
+	btn_refresh.flat = true
+	btn_refresh.icon = _editor_icon(["Reload"])
+	if btn_refresh.icon == null:
+		btn_refresh.text = "↺"
 	btn_refresh.tooltip_text = "Scan project for materials and textures"
 	btn_refresh.pressed.connect(refresh_materials)
 	mat_header.add_child(btn_refresh)
-	root_vbox.add_child(mat_header)
+	palette_box.add_child(mat_header)
 
-	# Material Cards Container
+	# Filter + card size (the FileSystem dock's pattern: filter box, size).
+	var view_row := HBoxContainer.new()
+	_filter_edit = LineEdit.new()
+	_filter_edit.name = "PaletteFilter"
+	_filter_edit.placeholder_text = "Filter"
+	_filter_edit.clear_button_enabled = true
+	_filter_edit.right_icon = _editor_icon(["Search"])
+	_filter_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_filter_edit.custom_minimum_size = Vector2(40, 0)
+	_filter_edit.tooltip_text = "Show only palette cards whose name contains this text"
+	_filter_edit.text_changed.connect(func(_t: String): _apply_palette_filter())
+	view_row.add_child(_filter_edit)
+	_thumb_slider = HSlider.new()
+	_thumb_slider.name = "ThumbnailSize"
+	_thumb_slider.min_value = THUMB_MIN
+	_thumb_slider.max_value = THUMB_MAX
+	_thumb_slider.step = THUMB_STEP
+	_thumb_slider.value = _thumb_size
+	_thumb_slider.custom_minimum_size = Vector2(56, 0)
+	_thumb_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_thumb_slider.tooltip_text = "Card size (Ctrl+wheel over the palette)"
+	_thumb_slider.value_changed.connect(func(v: float): set_thumbnail_size(int(v)))
+	view_row.add_child(_thumb_slider)
+	palette_box.add_child(view_row)
+
+	# Material Cards Container — takes whatever height the split gives it,
+	# at least one card row.
 	var mat_scroll := ScrollContainer.new()
-	mat_scroll.custom_minimum_size = Vector2(0, 130)
+	mat_scroll.name = "PaletteScroll"
 	mat_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root_vbox.add_child(mat_scroll)
+	mat_scroll.gui_input.connect(_on_palette_gui_input)
+	palette_box.add_child(mat_scroll)
+	_scroll = mat_scroll
 
 	_material_grid = HFlowContainer.new()
 	_material_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mat_scroll.add_child(_material_grid)
+	_update_palette_min_height()
 
-	root_vbox.add_child(HSeparator.new())
+	# Everything below the palette scrolls on its own, so a short dock still
+	# reaches every tool control.
+	_tools_scroll = ScrollContainer.new()
+	_tools_scroll.name = "ToolsScroll"
+	_tools_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tools_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tools_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_tools_scroll.custom_minimum_size = Vector2(0, 60)
+	_split.add_child(_tools_scroll)
+	var tools_vbox := VBoxContainer.new()
+	tools_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tools_scroll.add_child(tools_vbox)
 
 	# =========================================================================
 	# Section A: Material & UV Controls (Visible in MATERIAL mode)
 	# =========================================================================
 	_uv_and_tint_section = VBoxContainer.new()
 	_uv_and_tint_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root_vbox.add_child(_uv_and_tint_section)
+	tools_vbox.add_child(_uv_and_tint_section)
 
 	var uv_title := Label.new()
 	uv_title.text = "Face UV Tiling"
@@ -575,7 +692,7 @@ func _build_ui() -> void:
 	_paint_tool_section = VBoxContainer.new()
 	_paint_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_paint_tool_section.visible = false
-	root_vbox.add_child(_paint_tool_section)
+	tools_vbox.add_child(_paint_tool_section)
 
 	var paint_header := Label.new()
 	paint_header.text = "Paint Brush Settings"
@@ -649,6 +766,9 @@ func _build_ui() -> void:
 			paint_controller.brush_opacity = v
 	)
 	paint_grid.add_child(_spin_brush_opacity)
+	# (The layer spinner once went into the grid with no label, landing in
+	# the label column and shifting every row after it.)
+	paint_grid.add_child(_make_label("Layer:"))
 	_spin_paint_layer = _make_spinbox(1, 8, 1, 1)
 	_spin_paint_layer.value_changed.connect(func(v):
 		if paint_controller != null and not _syncing:
@@ -681,10 +801,13 @@ func _build_ui() -> void:
 	_btn_optimize_paint.tooltip_text = "Shrinks the selected meshes' oversized splat masks (older versions painted them at up to 2048x2048) to the current live size: faster painting, smaller scenes. Fine detail below the new texel size is lost — undo brings it back."
 	_btn_optimize_paint.pressed.connect(_on_optimize_paint_pressed)
 	optimize_row.add_child(_btn_optimize_paint)
+	_paint_tool_section.add_child(optimize_row)
+	# The result readout ("3 mask(s): 4.0 MB -> 0.1 MB") wraps on its own
+	# line: in the button's row it set the whole dock's minimum width.
 	_lbl_optimize_result = Label.new()
 	_lbl_optimize_result.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
-	optimize_row.add_child(_lbl_optimize_result)
-	_paint_tool_section.add_child(optimize_row)
+	_lbl_optimize_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_paint_tool_section.add_child(_lbl_optimize_result)
 
 	var paint_hint := Label.new()
 	paint_hint.text = "LMB drag in the viewport to paint. 'Splat layers' blends the selected palette texture into a layer's mask (the source picker above does not apply there). 'Decal layer' paints pixels 1:1 with the surface — the palette image, or a flat colour with the picker; Erase rubs either back out."
@@ -699,7 +822,7 @@ func _build_ui() -> void:
 	_stamp_tool_section = VBoxContainer.new()
 	_stamp_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_stamp_tool_section.visible = false
-	root_vbox.add_child(_stamp_tool_section)
+	tools_vbox.add_child(_stamp_tool_section)
 
 	var stamp_header := Label.new()
 	stamp_header.text = "Stamp Tool Settings"
@@ -804,7 +927,7 @@ func _build_ui() -> void:
 	_sprite_tool_section = VBoxContainer.new()
 	_sprite_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_sprite_tool_section.visible = false
-	root_vbox.add_child(_sprite_tool_section)
+	tools_vbox.add_child(_sprite_tool_section)
 
 	var sprite_header := Label.new()
 	sprite_header.text = "Billboard Sprite Settings"
@@ -871,7 +994,6 @@ func _build_ui() -> void:
 	_sprite_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_sprite_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sprite_tool_section.add_child(_sprite_hint)
-	root_vbox.add_child(HSeparator.new())
 
 	# =========================================================================
 	# Section E: Shape Placement Controls (Visible in SHAPE mode)
@@ -879,7 +1001,7 @@ func _build_ui() -> void:
 	_shape_tool_section = VBoxContainer.new()
 	_shape_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_shape_tool_section.visible = false
-	root_vbox.add_child(_shape_tool_section)
+	tools_vbox.add_child(_shape_tool_section)
 
 	var shape_header := Label.new()
 	shape_header.text = "Shape Palette"
@@ -906,7 +1028,6 @@ func _build_ui() -> void:
 	_shape_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_shape_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_shape_tool_section.add_child(_shape_hint)
-	root_vbox.add_child(HSeparator.new())
 
 	# =========================================================================
 	# Section F: Particle Placement Controls (Visible in PARTICLE mode)
@@ -914,7 +1035,7 @@ func _build_ui() -> void:
 	_particle_tool_section = VBoxContainer.new()
 	_particle_tool_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_particle_tool_section.visible = false
-	root_vbox.add_child(_particle_tool_section)
+	tools_vbox.add_child(_particle_tool_section)
 
 	var particle_header := Label.new()
 	particle_header.text = "Particle Palette"
@@ -942,7 +1063,6 @@ func _build_ui() -> void:
 	_particle_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_particle_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_particle_tool_section.add_child(_particle_hint)
-	root_vbox.add_child(HSeparator.new())
 
 	# Status / Selection feedback
 	_status_label = Label.new()
@@ -960,6 +1080,9 @@ func _build_ui() -> void:
 	# source row starts disabled: Splat layers is the default target and it
 	# always paints the palette texture).
 	_refresh_paint_widgets()
+	_make_shrinkable(tools_vbox)
+	_make_shrinkable(mat_header)
+	_update_compact_modes()
 
 # ==============================================================================
 # Mode Management
@@ -1078,7 +1201,7 @@ func _populate_shape_palette() -> void:
 		idx += 1
 		var card := Button.new()
 		card.name = "Shape_%s" % String(shape_id).capitalize()
-		card.custom_minimum_size = Vector2(64, 64)
+		card.custom_minimum_size = Vector2(_thumb_size, _thumb_size)
 		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		card.clip_text = true
@@ -1606,10 +1729,11 @@ func _rebuild_material_grid() -> void:
 				continue
 		var card := _create_material_card(mat)
 		_material_grid.add_child(card)
+	_apply_palette_filter()
 
 func _create_material_card(mat: Material) -> Control:
 	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(64, 64)
+	btn.custom_minimum_size = Vector2(_thumb_size, _thumb_size)
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	btn.clip_text = true
@@ -1620,6 +1744,7 @@ func _create_material_card(mat: Material) -> Control:
 	if mat_name.is_empty():
 		mat_name = "Material"
 
+	btn.set_meta("pb_card_name", mat_name.to_lower() + " " + _get_material_or_texture_path(mat).get_file().to_lower())
 	var tooltip := mat_name
 	match dock_mode:
 		DockMode.MATERIAL, DockMode.SHAPE:
@@ -1690,22 +1815,22 @@ func _create_material_card(mat: Material) -> Control:
 	if is_active_paint:
 		var pbadge := Label.new()
 		pbadge.text = "🖌"
-		pbadge.position = Vector2(48, 2)
+		_pin_badge_top_right(pbadge)
 		btn.add_child(pbadge)
 	elif is_active_stamp:
 		var sbadge := Label.new()
 		sbadge.text = "⎘"
-		sbadge.position = Vector2(48, 2)
+		_pin_badge_top_right(sbadge)
 		btn.add_child(sbadge)
 	elif is_active_sprite:
 		var spbadge := Label.new()
 		spbadge.text = "🌲"
-		spbadge.position = Vector2(48, 2)
+		_pin_badge_top_right(spbadge)
 		btn.add_child(spbadge)
 	elif is_active_particle:
 		var pebadge := Label.new()
 		pebadge.text = "✨"
-		pebadge.position = Vector2(48, 2)
+		_pin_badge_top_right(pebadge)
 		btn.add_child(pebadge)
 	return btn
 
@@ -2169,6 +2294,139 @@ func _commit_mesh_action(mesh: PBMesh, action_name: String, before: PBMeshData, 
 # ==============================================================================
 # UI Helpers
 # ==============================================================================
+
+## First of `names` the editor theme has as an icon (null outside the editor,
+## e.g. headless tests — callers fall back to text).
+func _editor_icon(names: Array) -> Texture2D:
+	if not Engine.is_editor_hint():
+		return null
+	var theme := EditorInterface.get_editor_theme()
+	if theme == null:
+		return null
+	for n in names:
+		if theme.has_icon(n, "EditorIcons"):
+			return theme.get_icon(n, "EditorIcons")
+	return null
+
+func _load_meta(key: String, default_value: Variant) -> Variant:
+	var settings = EditorInterface.get_editor_settings() if Engine.is_editor_hint() else null
+	if settings == null:
+		return default_value
+	return settings.get_project_metadata(META_SECTION, key, default_value)
+
+func _save_meta(key: String, value: Variant) -> void:
+	var settings = EditorInterface.get_editor_settings() if Engine.is_editor_hint() else null
+	if settings != null:
+		settings.set_project_metadata(META_SECTION, key, value)
+
+## Lets every caption under `root` shrink: buttons/check boxes clip with an
+## ellipsis and plain labels trim, so no single long caption sets the dock's
+## minimum width (the tooltip keeps the full text; wrapped hints already
+## shrink). A clipped control only gets its (tiny) minimum in a row unless it
+## expands, so multi-character buttons in rows are set to share the row;
+## one-glyph buttons (+, -, rotate arrows) and grid labels keep their size.
+## Palette cards are sized explicitly and skipped.
+func _make_shrinkable(root: Node) -> void:
+	for child in root.get_children():
+		var in_row := root is HBoxContainer
+		if child is Button and not (child is OptionButton) and not (child is ColorPickerButton):
+			var b := child as Button
+			if b.text.length() > 2:
+				b.clip_text = true
+				b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+				if b.tooltip_text.is_empty():
+					b.tooltip_text = b.text
+				if in_row:
+					b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		elif child is OptionButton:
+			var ob := child as OptionButton
+			ob.clip_text = true
+			ob.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			ob.fit_to_longest_item = false
+			# A clipped control in a grid/row cell only gets its minimum
+			# width unless it expands ("Spla" for "Splat layers").
+			ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		elif child is Label:
+			var l := child as Label
+			var sizes_itself := root is VBoxContainer \
+				or (l.size_flags_horizontal & Control.SIZE_EXPAND) != 0
+			if l.autowrap_mode == TextServer.AUTOWRAP_OFF and sizes_itself:
+				l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+				l.clip_text = true
+		if child != _shape_palette_grid:
+			_make_shrinkable(child)
+
+## Narrow dock: the mode row shows icons only (tooltips name the modes).
+## Without editor icons (headless) the captions always stay.
+func _update_compact_modes() -> void:
+	if _mode_row == null:
+		return
+	var compact := size.x > 0.0 and size.x < COMPACT_MODE_WIDTH
+	_compact_modes = compact
+	for b in _mode_captions:
+		var btn: Button = b
+		btn.text = "" if (compact and btn.icon != null) else String(_mode_captions[b])
+
+## Side-by-side layout (the bottom panel): palette left, tools right.
+func set_horizontal_layout(horizontal: bool) -> void:
+	_horizontal_layout = horizontal
+	if _split != null:
+		_split.vertical = not horizontal
+
+## Palette card edge in px; resizes the material and shape cards in place.
+func set_thumbnail_size(px: int) -> void:
+	px = clampi(snappedi(px, THUMB_STEP), THUMB_MIN, THUMB_MAX)
+	if px == _thumb_size and _thumb_slider != null and int(_thumb_slider.value) == px:
+		return
+	_thumb_size = px
+	if _thumb_slider != null and int(_thumb_slider.value) != px:
+		_thumb_slider.set_value_no_signal(px)
+	for grid in [_material_grid, _shape_palette_grid]:
+		if grid == null:
+			continue
+		for card in grid.get_children():
+			if card is Control:
+				(card as Control).custom_minimum_size = Vector2(px, px)
+	_update_palette_min_height()
+	_save_meta("thumb_size", px)
+
+func get_thumbnail_size() -> int:
+	return _thumb_size
+
+## The palette is never squeezed below one card row.
+func _update_palette_min_height() -> void:
+	if _scroll != null:
+		_scroll.custom_minimum_size = Vector2(0, _thumb_size + 8)
+
+## Ctrl+wheel over the palette resizes the cards (the FileSystem dock's
+## gesture); a plain wheel keeps scrolling.
+func _on_palette_gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or not mb.is_command_or_control_pressed():
+		return
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		set_thumbnail_size(_thumb_size + THUMB_STEP)
+		_scroll.accept_event()
+	elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		set_thumbnail_size(_thumb_size - THUMB_STEP)
+		_scroll.accept_event()
+
+## Hides palette cards that do not match the filter text.
+func _apply_palette_filter() -> void:
+	if _material_grid == null:
+		return
+	var needle := _filter_edit.text.strip_edges().to_lower() if _filter_edit != null else ""
+	for card in _material_grid.get_children():
+		if card is Control:
+			var key := str(card.get_meta("pb_card_name", ""))
+			(card as Control).visible = needle.is_empty() or key.contains(needle)
+
+## A status badge glued to a card's top-right corner (follows the card size).
+static func _pin_badge_top_right(badge: Control) -> void:
+	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	badge.offset_left = -18
+	badge.offset_right = -2
+	badge.offset_top = 2
 
 func _make_label(text: String) -> Label:
 	var l := Label.new()

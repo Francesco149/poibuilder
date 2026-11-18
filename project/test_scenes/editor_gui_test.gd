@@ -317,6 +317,9 @@ func _run() -> void:
 	cam.global_transform = Transform3D(Basis.IDENTITY, Vector3(1.5, 2.5, 4.0)) \
 		.looking_at(Vector3(1.5, 0, 0), Vector3.UP)
 	await _frames(10)
+	# Viewport geometry decides every aim pixel below: log it, so a layout
+	# shift (dock widths, toolbar rows, the bottom panel) is visible at once.
+	print("[GUI TEST] INFO 3D viewport rect %s" % str(host.get_global_rect()))
 
 	# ── Test 0: the ARMED cursor square exists with NO PBMesh in the scene ───
 	# Fresh-import regression: the gizmo path draws that square on a PBMesh's
@@ -458,7 +461,12 @@ func _run() -> void:
 			if rem_x < 0.001 and rem_z < 0.001 and hover_pt != Vector3.ZERO:
 				_pass("CREATE: ARMED hover vertex snapped to grid starting point")
 			else:
-				_fail("CREATE: ARMED hover vertex not snapped to grid (x=%.3f, z=%.3f, step=%.3f)" % [hover_pt.x, hover_pt.z, grid_step])
+				var under := get_tree().root.gui_get_hovered_control()
+				_fail("CREATE: ARMED hover vertex not snapped to grid (x=%.3f, z=%.3f, step=%.3f; cursor %s over %s)"
+					% [hover_pt.x, hover_pt.z, grid_step, str(start), str(under.get_path()) if under != null else "nothing"])
+				if not OS.get_environment("PB_GUI_SHOT_DIR").is_empty():
+					get_tree().root.get_texture().get_image().save_png(
+						OS.get_environment("PB_GUI_SHOT_DIR").path_join("create_armed_fail.png"))
 			_mouse_button(start, true)
 			await _frames(3)
 			for i in range(1, 5):
@@ -2961,6 +2969,83 @@ func _run() -> void:
 	sel.clear()
 	po_src.queue_free()
 	await _frames(4)
+
+	# ── DOCK-LAYOUT: the Material & UV dock is a native, narrow dock ─────────
+	# User feedback (v0.9.186): "the Material & UV panel is too wide". It was
+	# a 498 px-wide control, and every load moved the Inspector into a second
+	# right-hand column. Now: an EditorDock that leaves other docks alone and
+	# fits a narrow slot in every mode (measured with the editor's theme).
+	var dl_plugin := _find_plugin(iface.get_base_control().get_parent())
+	if dl_plugin == null:
+		dl_plugin = _find_plugin(iface.get_base_control())
+	var dl_dock: PBMaterialDock = dl_plugin.material_dock if dl_plugin != null else null
+	if dl_dock == null:
+		_fail("DOCK-LAYOUT: material dock not found")
+	else:
+		var shell := dl_dock.get_parent()
+		if shell != null and shell.get_class() == "EditorDock":
+			_pass("DOCK-LAYOUT: Material & UV is a native EditorDock")
+		else:
+			_fail("DOCK-LAYOUT: dock parent is %s, not an EditorDock" % (shell.get_class() if shell else "null"))
+		# The pinned layout puts Groups beside Material & UV in the right-UL
+		# slot and the Inspector in right-UR. Up to v0.9.186 the plugin moved
+		# every other dock out of right-UL on load; it must leave both alone.
+		var slot_of := func(n: Node) -> String:
+			var w: Node = n
+			while w != null and not (w is TabContainer):
+				w = w.get_parent()
+			return str(w.name) if w != null else "?"
+		var inspector_slot: String = slot_of.call(iface.get_inspector())
+		var dock_slot: String = slot_of.call(dl_dock)
+		var groups_slot := "?"
+		if dl_dock.get_parent() != null and dl_dock.get_parent().get_parent() != null:
+			for sib in dl_dock.get_parent().get_parent().get_children():
+				if str(sib.name) == "Groups":
+					groups_slot = dock_slot
+		if groups_slot == "DockSlotRightUL" and inspector_slot == "DockSlotRightUR" \
+				and dock_slot == "DockSlotRightUL":
+			_pass("DOCK-LAYOUT: the user's docks stay where the layout put them (Groups beside the dock, Inspector in %s)" % inspector_slot)
+		else:
+			_fail("DOCK-LAYOUT: docks moved — dock %s, Groups %s, Inspector %s (layout: UL, UL, UR)"
+				% [dock_slot, groups_slot, inspector_slot])
+		var dl_mode_before := dl_dock.dock_mode
+		var widest := 0.0
+		var widest_mode := -1
+		for m in [0, 1, 2, 3, 4, 5]:
+			dl_dock.set_dock_mode(m)
+			await _frames(3)
+			var w := dl_dock.get_combined_minimum_size().x
+			if w > widest:
+				widest = w
+				widest_mode = m
+		dl_dock.set_dock_mode(dl_mode_before)
+		await _frames(3)
+		var scale := EditorInterface.get_editor_scale()
+		if widest <= 240.0 * scale:
+			_pass("DOCK-LAYOUT: widest mode needs %.0f px (mode %d; was 498)" % [widest, widest_mode])
+		else:
+			dl_dock.set_dock_mode(widest_mode)
+			await _frames(3)
+			var rows: Array = []
+			for c in dl_dock.find_children("*", "Control", true, false):
+				var cc := c as Control
+				if cc.is_visible_in_tree() and not (cc is Container):
+					rows.append([cc.get_combined_minimum_size().x, cc.get_class(),
+						str(cc.get("text")) if cc.get("text") != null else str(cc.name)])
+			rows.sort_custom(func(x, y): return x[0] > y[0])
+			dl_dock.set_dock_mode(dl_mode_before)
+			_fail("DOCK-LAYOUT: mode %d needs %.0f px of width (budget %.0f); widest controls %s"
+				% [widest_mode, widest, 240.0 * scale, str(rows.slice(0, 5))])
+		var shot_dir := OS.get_environment("PB_GUI_SHOT_DIR")
+		if not shot_dir.is_empty():
+			get_tree().root.get_texture().get_image().save_png(shot_dir.path_join("dock_default.png"))
+			dl_dock.set_thumbnail_size(40)
+			dl_dock.set_dock_mode(PBMaterialDock.DockMode.PAINT)
+			await _frames(6)
+			get_tree().root.get_texture().get_image().save_png(shot_dir.path_join("dock_paint_small_cards.png"))
+			dl_dock.set_thumbnail_size(64)
+			dl_dock.set_dock_mode(dl_mode_before)
+			await _frames(3)
 
 	# ── SCENE-DROP: prefabs drag into the 3D view with the plugin on ─────────
 	# User report (v0.9.186): with PoiBuilder enabled, scenes could not be

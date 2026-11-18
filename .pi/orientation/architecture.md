@@ -16,9 +16,17 @@
    with a PoiBuilder context STOP the event, everything else PASSES so
    engine shortcuts keep working. Grid keys work with nothing selected.
 4. Toolbar (a row BELOW the 3D toolbar), tool overlay (floating panel in
-   the viewport), material dock (right-UL; other docks are reparented to
-   right-UR by `_setup_ideal_dock_layout`), UV editor bottom panel, export
-   dialog — all created and connected here.
+   the viewport), material dock (a native `EditorDock`,
+   `gui/docks/pb_material_editor_dock.gd`: default right-BL, layout key
+   "Material & UV", every layout incl. the bottom panel, where
+   `_update_layout` puts palette and tools side by side), UV editor bottom
+   panel, export dialog — all created and connected here. NEVER move the
+   user's other docks: up to v0.9.186 `_setup_ideal_dock_layout` reparented
+   the Inspector/Node/Groups into a second column on every load, which is
+   most of why users found the dock "too wide". The material drop overlays
+   (one per 3D viewport) are children of each viewport's engine `surface`
+   control, never its siblings: as a sibling a refused drop never reached
+   Godot's handler and no scene could be dropped into the 3D view.
 5. `add_node_3d_gizmo_plugin(gizmo_plugin)` — THE integration: element
    picking, rubber-band, transform drags, snapping, undo are driven BY the
    editor THROUGH the subgizmo API.

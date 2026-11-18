@@ -32,6 +32,49 @@ through a mock of the viewport's children. GUI harness SCENE-DROP drags a
 saved scene onto the real 3D view and asserts it is instanced. With the old
 parenting it fails (verified: "children 13 -> 13").
 
+### Changed: the Material & UV dock fits a narrow slot and resizes
+
+Measured before: the dock could not get narrower than **498 px** (a row of
+six text tabs) and needed **916 px** of height in Material mode (nothing
+scrolled). On top of that, every plugin load moved the Inspector, Node and
+Groups docks out of their slot into a second right-hand column, so the dock
+cost a whole column of screen.
+
+- **A native EditorDock** (`pb_material_editor_dock.gd`, Godot 4.6+; older
+  engines fall back to `add_control_to_dock`). It can be moved to any slot,
+  floated, or put in the bottom panel, where the palette and the tools sit
+  side by side. The editor remembers where it went. The layout key is
+  unchanged ("Material & UV"), so a saved position carries over. The default
+  slot for a fresh layout is below the Inspector.
+- **Other docks are never moved again** (`_setup_ideal_dock_layout` is gone).
+  A layout that the old version already rearranged stays as saved; drag the
+  Inspector back if you want one column.
+- **Mode row**: one exclusive group of flat buttons with the editor's own
+  icons, in a flow that wraps; below 330 px it shows icons only (tooltips
+  name each mode).
+- **Palette**: a filter box, a card-size slider (32-160 px, also Ctrl+wheel
+  over the palette like the FileSystem dock), and a draggable split between
+  the palette and the tools, which now scroll on their own. Card size and
+  split are saved per project (editor project metadata). The shape palette
+  uses the same card size, and status badges stay pinned to the card corner.
+- **Captions shrink**: long buttons and dropdowns clip with an ellipsis (the
+  tooltip keeps the full text), and the Optimize Paint readout wraps on its
+  own line (it alone set the dock to 257 px wide in the editor).
+- Fixed in passing: the paint-layer spinner had no label, sat in the grid's
+  label column and shifted every row after it. It is now "Layer:".
+
+Measured after, in the real editor: the widest mode needs 205 px; headless
+145-226 px wide, ~320-380 px tall.
+
+Tests: new suite `test_pb_material_dock_layout.gd` (size budget for every
+mode, the split, the bottom-panel layout, card size and clamping, Ctrl+wheel,
+filter, the mode group and its compact form, clipping, the paint grid). GUI
+harness DOCK-LAYOUT: the dock is an EditorDock, Groups and the Inspector stay
+where the pinned layout put them (the old code moved Groups), and every mode
+fits 240 px under the editor theme. The harness's pinned layout now states
+the two-column arrangement explicitly and keeps the bottom panel closed; see
+`.pi/orientation/testing.md` for why the CREATE aims needed it.
+
 ## v0.9.186 — created shapes duplicate cleanly; scrolling textures move in play mode
 
 Report (a fresh scratch scene on v0.9.185): duplicating a scrolling plane and

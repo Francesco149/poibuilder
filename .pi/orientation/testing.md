@@ -37,7 +37,12 @@ copy an existing block (mouse: `_window_pos`/`_motion`/`_click`; keys:
 (`tools/pin_editor_layout.sh`). Viewport cases move with dock widths, so
 compute aim pixels AFTER any dock-mode switch (a mode switch can resize the
 viewport), and change the pinned layout only on purpose, re-running the whole
-harness. Known engine limit: the transform gizmo
+harness. Since v0.9.187 the pinned layout keeps the BOTTOM PANEL CLOSED (a
+603 px-tall viewport; the run logs `INFO 3D viewport rect`): at 333 px the
+bottom-anchored PoiBuilder overlay sat within ~10 px of the CREATE aims, and
+a dock-width change that re-wrapped the toolbar put the aims under it (the
+symptom: "ARMED hover vertex not snapped", cursor over a PanelContainer).
+Known engine limit: the transform gizmo
 itself cannot be engaged by synthesized events on 4.7.2 (hit-test internals)
 — drag deliveries are driven through the plugin instead; state that
 limitation when a change depends on engine-side gizmo composition.

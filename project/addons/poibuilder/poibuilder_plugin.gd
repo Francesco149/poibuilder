@@ -48,6 +48,9 @@ var _trim_walls_last_click_pos: Vector2 = Vector2.ZERO
 var tool_overlay: PBToolOverlay
 var toolbar: PBToolbar
 var material_dock: PBMaterialDock = null
+## The EditorDock shell around material_dock (null on engines without
+## EditorDock, where the dock falls back to add_control_to_dock).
+var _material_editor_dock: Control = null
 var uv_editor_panel: PBUvEditorPanel = null
 var _uv_bottom_button: Button = null
 ## One material drop overlay per 3D editor viewport (the 2/3/4-view layouts
@@ -261,7 +264,9 @@ func _enter_tree():
 	_add_overlay_to_3d_viewport(mode_banner)
 	# Material drag-and-drop overlay in the 3D viewport
 	_add_material_drop_overlays()
-	# Material & UV Dock panel (DOCK_SLOT_RIGHT_UL)
+	# Material & UV dock: a native EditorDock (movable, floatable, bottom-panel
+	# capable, remembered by the editor's layout), below the Inspector unless
+	# the user put it somewhere else.
 	material_dock = PBMaterialDock.new()
 	material_dock.plugin = self
 	material_dock.editor = editor
@@ -270,8 +275,7 @@ func _enter_tree():
 	material_dock.sprite_placer = sprite_placer
 	material_dock.particle_placer = particle_placer
 	material_dock.dock_mode_changed.connect(_on_dock_mode_changed)
-	add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
-	_setup_ideal_dock_layout.call_deferred()
+	_add_material_dock()
 	# Dedicated 2D UV Editor Panel (Bottom dock)
 	uv_editor_panel = PBUvEditorPanel.new()
 	uv_editor_panel.editor = editor
@@ -368,7 +372,12 @@ func _exit_tree():
 		mode_banner = null
 
 	# Remove material dock and drop overlay
-	if material_dock != null:
+	if _material_editor_dock != null:
+		if is_instance_valid(_material_editor_dock):
+			call("remove_dock", _material_editor_dock)
+			_material_editor_dock.queue_free()
+		_material_editor_dock = null
+	elif material_dock != null:
 		remove_control_from_docks(material_dock)
 		if is_instance_valid(material_dock):
 			material_dock.queue_free()
@@ -1748,20 +1757,19 @@ func _on_display_reset() -> void:
 	_on_display_setting_changed(&"hover_opacity", 0.25)
 	tool_overlay.sync_display_settings(0.7, 0.7, 0.25, 0.25)
 
-## Focuses the Material & UV dock.
+## Focuses the Material & UV dock (opening it if the user closed it).
 func focus_material_dock() -> void:
 	if material_dock == null:
 		return
-	var editor_dock := material_dock.get_parent() as Control
-	if editor_dock != null:
-		editor_dock.show()
-		var tab_container := editor_dock.get_parent() as TabContainer
-		if tab_container != null:
-			tab_container.current_tab = editor_dock.get_index()
-			if tab_container.has_method("get_tab_bar"):
-				var tb = tab_container.call("get_tab_bar")
-				if tb != null and tb.has_method("grab_focus"):
-					tb.call("grab_focus", true)
+	if _material_editor_dock != null and is_instance_valid(_material_editor_dock):
+		_material_editor_dock.call("make_visible")
+	else:
+		var editor_dock := material_dock.get_parent() as Control
+		if editor_dock != null:
+			editor_dock.show()
+			var tab_container := editor_dock.get_parent() as TabContainer
+			if tab_container != null:
+				tab_container.current_tab = editor_dock.get_index()
 	material_dock.show()
 	material_dock.sync_selection()
 
@@ -1816,51 +1824,29 @@ func select_subgizmo_element(mesh: PBMesh, id: int) -> void:
 		else:
 			mesh.clear_subgizmo_selection()
 	mesh.update_gizmos()
-## Moves Inspector and other standard docks from DockSlotRightUL to DockSlotRightUR,
-## leaving DockSlotRightUL exclusively for PoiBuilder's Material & UV dock.
-func _setup_ideal_dock_layout() -> void:
-	if material_dock == null:
-		return
-	var editor_dock := material_dock.get_parent() as Control
-	if editor_dock == null:
-		return
-	var ul_container := editor_dock.get_parent() as TabContainer
-	if ul_container == null:
-		return
-
-	# Find the main split containing right_l_vsplit and right_r_vsplit
-	var vsplit_l := ul_container.get_parent()
-	if vsplit_l == null:
-		return
-	var main_hsplit := vsplit_l.get_parent()
-	if main_hsplit == null:
-		return
-
-	# Find right_r_vsplit and its DockSlotRightUR
-	var ur_container: TabContainer = null
-	for child in main_hsplit.get_children():
-		if child != vsplit_l and child.name == "DockVSplitRightR":
-			for sub in child.get_children():
-				if sub is TabContainer and sub.name == "DockSlotRightUR":
-					ur_container = sub
-					break
-			break
-
-	if ur_container == null:
-		return
-
-	# Move existing non-PoiBuilder docks (Inspector, Node, Groups, etc.)
-	# from DockSlotRightUL to DockSlotRightUR.
-	var to_move: Array[Node] = []
-	for child in ul_container.get_children():
-		if child != editor_dock and not (child is TabBar) and not (child is Popup):
-			to_move.append(child)
-
-	for node in to_move:
-		node.reparent(ur_container)
-
-	if ur_container.get_tab_count() > 0:
-		ur_container.current_tab = 0
+## Registers the Material & UV dock. Through EditorDock where the engine has
+## it (4.6+): default slot below the Inspector, every layout allowed, and the
+## layout key the dock was always saved under ("Material & UV"), so a
+## position the user already chose carries over. The user's other docks are
+## never moved — up to v0.9.186 every plugin load reparented the Inspector,
+## Node and Groups docks into a second right-hand column to give this dock a
+## slot of its own, which is most of why the dock "took too much room".
+func _add_material_dock() -> void:
+	if ClassDB.class_exists("EditorDock") and has_method("add_dock"):
+		var shell: Control = load("res://addons/poibuilder/gui/docks/pb_material_editor_dock.gd").new()
+		shell.set("title", "Material & UV")
+		shell.set("layout_key", "Material & UV")
+		shell.set("default_slot", ClassDB.class_get_integer_constant("EditorDock", "DOCK_SLOT_RIGHT_BL"))
+		shell.set("available_layouts", ClassDB.class_get_integer_constant("EditorDock", "DOCK_LAYOUT_ALL"))
+		var icon_path := "res://addons/poibuilder/icons/icon_materials.svg"
+		if ResourceLoader.exists(icon_path):
+			shell.set("dock_icon", load(icon_path))
+		shell.set("content", material_dock)
+		shell.add_child(material_dock)
+		call("add_dock", shell)
+		_material_editor_dock = shell
+	else:
+		add_control_to_dock(DOCK_SLOT_RIGHT_UL, material_dock)
 
 ## Applies a material to the given faces of a mesh with full undo/redo.
 ## The incoming material is PREPARED first (PBApplyPrep): texture transparency
