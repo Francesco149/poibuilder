@@ -1054,7 +1054,7 @@ static func _build_emitters(root: Node3D) -> void:
 		for half: int in [-1, 1]:
 			var bx := 24.0 * half
 			var e := _emitter(root, "Spray_%d_%s" % [s, "W" if half < 0 else "E"],
-				Vector3(bx, 0.15, shore_z(bx) - 0.6), "spray_puff.png", 18, SURF_PERIOD, 1.0, false)
+				Vector3(bx, 0.15, shore_z(bx) - 0.6), "spray_2x2_sheet.png", 18, SURF_PERIOD, 1.0, false, 2, 2)
 			e.one_shot = true
 			# the burst fires at the strip's break: t_break = BREAK*P - phase
 			var t_break := fposmod(SURF_BREAK_T * SURF_PERIOD - surf_phase(s), SURF_PERIOD)
@@ -1069,15 +1069,19 @@ static func _build_emitters(root: Node3D) -> void:
 			pm.gravity = Vector3(0, -4.0, 0)
 			pm.damping_min = 0.7
 			pm.damping_max = 0.9
-			_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.7), Color(1, 1, 1, 0.0), 0.06)
+			_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.85), Color(1, 1, 1, 0.0), 0.06)
 			_scale_curve(pm, 0.6, 1.6, 2.6, 0.06)
+			# the burst's life is the surf period, but it is only visible for
+			# ~2 s: 4 flipbook cycles play clump -> tatters while it is
+			pm.anim_speed_min = 4.0
+			pm.anim_speed_max = 4.0
 
 	# rock splashes, timed to the wave reaching each rock
 	for ri in SURF_ROCKS:
 		var r: Array = ROCKS[ri]
 		var c: Vector3 = r[0]
-		var e := _emitter(root, "RockSplash_%d" % ri, Vector3(c.x, 0.4, c.z + 1.0), "spray_puff.png",
-			16, SURF_PERIOD, 1.3, false)
+		var e := _emitter(root, "RockSplash_%d" % ri, Vector3(c.x, 0.4, c.z + 1.0), "spray_2x2_sheet.png",
+			16, SURF_PERIOD, 1.3, false, 2, 2)
 		e.one_shot = true
 		var t_hit := _rock_hit_time(c) + 0.25
 		e.set_meta("poi_burst_phase", fposmod(-t_hit / SURF_PERIOD, 1.0))
@@ -1091,8 +1095,10 @@ static func _build_emitters(root: Node3D) -> void:
 		pm.gravity = Vector3(0, -9.0, 0)
 		pm.damping_min = 0.5
 		pm.damping_max = 0.6
-		_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.85), Color(1, 1, 1, 0.0), 0.05)
+		_ramp(pm, Color(1, 1, 1, 0.0), Color(1, 1, 1, 0.95), Color(1, 1, 1, 0.0), 0.05)
 		_scale_curve(pm, 0.5, 1.5, 2.4, 0.05)
+		pm.anim_speed_min = 5.0
+		pm.anim_speed_max = 5.0
 
 	# sun glitter: tiny additive flashes in flat boxes along the sun path
 	var sd := sun_dir()
@@ -1114,15 +1120,18 @@ static func _build_emitters(root: Node3D) -> void:
 		_scale_curve(pm, 0.3, 1.0 + dist * 0.02, 0.2, 0.5)
 
 	# gulls: a lazy flock wheeling over the bay (2-frame flap flipbook)
-	var g := _emitter(root, "Gulls", Vector3(-5, 15, -28), "gull_2x1_sheet.png", 7, 22.0, 0.9, false, 2, 1)
+	# Gulls fly straight lines from the box: keep the cone FLAT (15 degrees,
+	# a hair upward) and the lives short enough that the steepest one still
+	# clears the dunes — an 80-degree cone flew a few into the sand.
+	var g := _emitter(root, "Gulls", Vector3(-5, 19, -28), "gull_2x1_sheet.png", 7, 13.0, 0.9, false, 2, 1)
 	var gp := g.process_material as ParticleProcessMaterial
 	gp.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	gp.emission_box_extents = Vector3(35, 4, 18)
-	gp.direction = Vector3(1, 0.05, 0.3)
-	gp.spread = 80.0
+	gp.emission_box_extents = Vector3(35, 3, 18)
+	gp.direction = Vector3(1, 0.06, 0.15)
+	gp.spread = 15.0
 	gp.initial_velocity_min = 2.0
 	gp.initial_velocity_max = 3.5
-	gp.gravity = Vector3.ZERO
+	gp.gravity = Vector3(0, 0.05, 0)
 	gp.damping_min = 0.0
 	gp.damping_max = 0.0
 	gp.angle_min = 0.0
@@ -1134,8 +1143,8 @@ static func _build_emitters(root: Node3D) -> void:
 	g.set_meta("poi_wobble_amp", 2.2)
 	g.set_meta("poi_wobble_freq", 0.09)
 	g.set_meta("poi_y_locked", true)
-	gp.anim_speed_min = 30.0   # wing beats per lifetime (the format's anim_loops)
-	gp.anim_speed_max = 30.0
+	gp.anim_speed_min = 18.0   # wing beats per lifetime (the format's anim_loops)
+	gp.anim_speed_max = 18.0
 
 
 # ── camera path / spawn ───────────────────────────────────────────────────

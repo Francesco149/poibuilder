@@ -7,8 +7,8 @@ Two kinds:
   gitignored (they are build output): the animated sea (an 8-frame flipbook
   that tiles in space AND loops in time exactly — every wave component has an
   integer number of cycles across the tile and over the loop), the lacy surf
-  foam band, the sun-glitter sparkle flipbook, a sun glow, a blob shadow and a
-  spray puff.
+  foam band, the sun-glitter sparkle flipbook, a sun glow, a blob shadow, a
+  spray puff and the spray flipbook (a clump tearing into droplets).
 
 * PAINTED, from source art (low-res image-model generations, kept out of git
   at 2048 px): sand, rock, palm bark, a palm frond, a whole palm for the
@@ -160,6 +160,58 @@ def radial(n, falloff, color, name, power=1.0):
     a = np.clip(falloff(d), 0, 1) ** power
     rgb = np.ones((n, n, 3)) * np.array(color, float)
     save(np.concatenate([rgb, a[..., None] * 255], axis=2), name)
+
+
+def spray_sheet(cell=64):
+    """Spray flipbook, 2x2 cells (spray_2x2_sheet.png), one burst's life:
+    a dense foam clump (frame 0) that tears into lacy fragments and flying
+    droplets (frame 3). Soft alpha, white tops, blue-grey self-shaded
+    undersides — a puff of spray is lit from above and dark underneath."""
+    r = np.random.default_rng(31)
+    yy, xx = np.mgrid[0:cell, 0:cell].astype(float)
+    # one shared cluster, so the four frames read as the same burst evolving
+    blobs = [(r.normal(0, 0.09), r.normal(0.03, 0.08), r.uniform(0.035, 0.075)) for _ in range(16)]
+    drops = [(r.normal(0, 0.22), r.normal(-0.04, 0.2), r.uniform(0.008, 0.018)) for _ in range(40)]
+    noise = r.standard_normal((cell, cell))
+    fy = np.fft.fftfreq(cell)[:, None] * cell
+    fx = np.fft.fftfreq(cell)[None, :] * cell
+    band = np.exp(-((np.hypot(fx, fy) - 11.0) / 4.0) ** 2)
+    lace = np.real(np.fft.ifft2(np.fft.fft2(noise) * band))
+    lace = (lace - lace.min()) / (lace.max() - lace.min())
+    sheet = np.zeros((cell * 2, cell * 2, 4))
+    rr = np.hypot(xx - cell * 0.5, yy - cell * 0.5) / cell
+    for f in range(4):
+        spread = 1.0 + 0.5 * f           # the burst expands...
+        tear = 0.12 + 0.13 * f           # ...tears into holes...
+        fade = 1.0 - 0.16 * f            # ...and thins out
+        dens = np.zeros((cell, cell))
+        for bx, by, br in blobs:
+            cx = (0.5 + bx * spread) * cell
+            cy = (0.5 + by * spread) * cell
+            rad = br * cell * (1.0 + 0.2 * f)
+            dens += np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * rad * rad))
+        clump = np.clip((dens - 0.35) / 0.55, 0, 1)
+        clump = clump * clump * (3 - 2 * clump)
+        if f:
+            clump *= np.clip((lace - tear) * 4.0 + 0.2, 0, 1)
+        envelope = np.exp(-(rr / (0.26 + 0.05 * f)) ** 4)
+        dens = clump * envelope
+        for dx, dy, dr in drops[: 8 + f * 10]:
+            cx = (0.5 + dx * (0.7 + 0.45 * f)) * cell
+            cy = (0.5 + dy * (0.7 + 0.45 * f)) * cell
+            rad = dr * cell
+            dens += 0.95 * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * rad * rad))
+        # keep the cell's border transparent (no bleeding into a neighbour)
+        edge = np.clip(np.minimum(np.minimum(xx, cell - 1 - xx), np.minimum(yy, cell - 1 - yy)) / 4.0, 0, 1)
+        a = np.clip(dens, 0, 1) * edge * fade
+        # shading: lit from above, darker where the clump is thick and low
+        shade = np.clip(1.0 - 0.35 * (yy / cell) * np.clip(dens, 0, 1.2), 0.6, 1.0)
+        rgb = np.stack([shade * 245, shade * 250, shade * 255 + 0 * shade], axis=2)
+        rgb = rgb * (0.93 + 0.07 * shade[..., None])
+        ox, oy = (f % 2) * cell, (f // 2) * cell
+        sheet[oy:oy + cell, ox:ox + cell, :3] = rgb
+        sheet[oy:oy + cell, ox:ox + cell, 3] = a * 255
+    save(sheet, "spray_2x2_sheet.png")
 
 
 # ── painted (from source art) ────────────────────────────────────────────
@@ -332,6 +384,7 @@ def main():
     radial(64, lambda d: np.clip(1 - d, 0, 1) ** 2.2 + 0.25 * np.exp(-d * 6), (255, 244, 214), "sun_glow.png")
     radial(32, lambda d: 1 - d, (20, 24, 30), "blob_shadow.png", power=1.6)
     radial(32, lambda d: 1 - d, (255, 255, 255), "spray_puff.png", power=1.4)
+    spray_sheet()
     if args.src:
         painted(args.src)
     print("wrote", sorted(os.listdir(OUT)))
