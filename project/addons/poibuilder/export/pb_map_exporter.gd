@@ -36,6 +36,11 @@ const PBM_EMIT_ADDITIVE := 1
 const PBM_EMIT_Y_LOCKED := 2
 const PBM_EMIT_VEL_ALIGN := 4
 const PBM_EMIT_PHASE_ALIGN := 8
+## Spawn inside an axis-aligned box (half extents in the record's reserved
+## floats) instead of the spawn_radius ball — Godot's EMISSION_SHAPE_BOX.
+const PBM_EMIT_SPAWN_BOX := 16
+## With PHASE_ALIGN: the burst's phase rides the record's reserved byte.
+const PBM_EMIT_BURST_PHASE := 32
 ## Binary layout of one PbmEmitter record (pbm.h / the specification).
 const PBM_EMITTER_SIZE_BYTES := 176
 ## The runtime's per-emitter particle budget; a larger Godot `amount` is clamped
@@ -538,7 +543,13 @@ static func _export_node_recursive(source_node: Node, parent_export_node: Node,
 		return
 
 	var t_node := _prof_start()
+	var first_new := parent_export_node.get_child_count()
 	_export_single_node(source_node, parent_export_node, lights, grid, base_material_cache, settings, texture_plan)
+	# Runtime mesh effects (PBRetroFx) ride the source NODE; the export tree is
+	# flat and rebuilt, so every mesh this node produced inherits them here.
+	if source_node.has_meta(PBRetroFx.META):
+		for ci in range(first_new, parent_export_node.get_child_count()):
+			parent_export_node.get_child(ci).set_meta(PBRetroFx.META, source_node.get_meta(PBRetroFx.META))
 	_prof_add(_export_stage_name(source_node), t_node)
 
 
@@ -1371,14 +1382,31 @@ static func _export_plain_mesh(mi: MeshInstance3D, parent: Node, lights: Array[L
 			for i in range(pos.size()):
 				norm[i] = Vector3.UP
 			arrays[Mesh.ARRAY_NORMAL] = norm
-		if settings.bake_lighting:
+		# poi_vertex_color: "unlit" keeps the mesh's authored colours as the
+		# final vertex colour (a sky dome's gradient, a glow card); "multiply"
+		# multiplies them into the bake (painted wet sand, a tinted rock).
+		# Unset = the bake replaces them, which is right for asset-pack props
+		# whose vertex colours are often junk.
+		var vc_mode := str(mi.get_meta("poi_vertex_color", ""))
+		var authored: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+		if vc_mode == "unlit":
+			if authored.size() != pos.size():
+				authored = PackedColorArray()
+				authored.resize(pos.size())
+				authored.fill(Color.WHITE)
+			arrays[Mesh.ARRAY_COLOR] = authored
+		elif settings.bake_lighting:
 			var t_prop_bake := _prof_start()
 			var prop_cols := PBLightBaker.bake_vertex_colors(
 				pos, norm, node_xf, lights, grid, true, settings.bake_shadows,
 				settings.bake_ao, settings.ao_samples, settings.ao_distance,
 				settings.ao_intensity, settings.ambient_color)
 			_prof_add("prop light bake", t_prop_bake)
-			arrays[Mesh.ARRAY_COLOR] = _boost_baked_colors(prop_cols, settings.bake_boost)
+			prop_cols = _boost_baked_colors(prop_cols, settings.bake_boost)
+			if vc_mode == "multiply" and authored.size() == prop_cols.size():
+				for ci in range(prop_cols.size()):
+					prop_cols[ci] = prop_cols[ci] * authored[ci]
+			arrays[Mesh.ARRAY_COLOR] = prop_cols
 		var mat: Material = mi.get_active_material(s)
 		var plan_entry := _texture_plan_entry(texture_plan, mat)
 		arrays = _apply_texture_plan_to_uvs(arrays, plan_entry)
@@ -1960,6 +1988,15 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 					tex_id = _register_texture(textures, tex_map, albedo, mat_alpha,
 						false, settings.max_texture_size)
 
+				# Runtime mesh effects (lump "mesh_fx"): every morph target is
+				# built per vertex, in the same order as the base vertices, so
+				# the chunks below can slice all of them with one range.
+				var fx := PBRetroFx.fx_for(mi, mat)
+				var n_targets := PBRetroFx.morph_target_count(fx)
+				var target_verts: Array = []
+				for _t in range(n_targets):
+					target_verts.append([] as Array[Dictionary])
+
 				var tri_verts: Array[Dictionary] = []
 				var idx_list: Array = []
 				if not indices.is_empty():
@@ -1990,11 +2027,27 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 					var a_b: int = int(clampf(c.a, 0.0, 1.0) * 255.0)
 					var c_int: int = r_b | (g_b << 8) | (b_b << 16) | (a_b << 24)
 
-					tri_verts.append({
-						"u": uv.x, "v": uv.y,
-						"color": c_int,
-						"x": wp.x, "y": wp.y, "z": wp.z
-					})
+					if fx.is_empty():
+						tri_verts.append({
+							"u": uv.x, "v": uv.y,
+							"color": c_int,
+							"x": wp.x, "y": wp.y, "z": wp.z
+						})
+					else:
+						var sets := PBRetroFx.eval_targets(fx, verts[idx], uv, c)
+						for ti in range(n_targets):
+							var tp: Vector3 = xf * (sets[ti][0] as Vector3)
+							var tuv: Vector2 = sets[ti][1]
+							var tvd := {
+								"u": tuv.x, "v": tuv.y,
+								"color": PBRetroFx.pack_color(sets[ti][2]),
+								"x": tp.x, "y": tp.y, "z": tp.z
+							}
+							(target_verts[ti] as Array).append(tvd)
+							if ti > 0:
+								bounds_min = bounds_min.min(tp)
+								bounds_max = bounds_max.max(tp)
+						tri_verts.append(target_verts[0].back())
 
 				if not tri_verts.is_empty():
 					# Chunk large meshes into <= 384 vertices to eliminate near-plane clipping bottleneck
@@ -2003,12 +2056,20 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 						var cverts: Array[Dictionary] = []
 						for vi in range(ci, mini(ci + chunk_size, tri_verts.size())):
 							cverts.append(tri_verts[vi])
-						meshes.append({
+						var mentry := {
 							"name": ("%s_%d" % [name_str, ci / chunk_size]).substr(0, 31),
 							"texture_id": tex_id,
 							"uv_scroll": scroll,
 							"vertices": cverts
-						})
+						}
+						if not fx.is_empty():
+							var ctargets: Array = [cverts]
+							for ti in range(1, n_targets):
+								ctargets.append((target_verts[ti] as Array).slice(ci, mini(ci + chunk_size, tri_verts.size())))
+							mentry["fx"] = fx
+							mentry["fx_targets"] = ctargets
+							mentry["fx_alpha"] = mat_alpha
+						meshes.append(mentry)
 	if bounds_min.x == INF:
 		bounds_min = Vector3(-10, 0, -10)
 		bounds_max = Vector3(10, 5, 10)
@@ -2034,6 +2095,30 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 	_collect_emitters_recursive(root, emitter_nodes)
 	if not emitter_nodes.is_empty():
 		metadata_entries.append(_emitters_metadata_entry(emitter_nodes, textures, tex_map, settings.max_texture_size))
+
+	# Runtime mesh effects (lump "mesh_fx"). Flipbook frames are ordinary
+	# texture entries, registered here like an emitter's texture.
+	var fx_records: Array[PackedByteArray] = []
+	for mi_idx in range(meshes.size()):
+		var me: Dictionary = meshes[mi_idx]
+		if not me.has("fx"):
+			continue
+		var fxd: Dictionary = me["fx"]
+		var frame_ids: Array = []
+		var fb: Dictionary = fxd.get("flipbook", {})
+		for ftex in fb.get("frames", []):
+			if ftex is Texture2D:
+				frame_ids.append(_register_texture(textures, tex_map, ftex,
+					int(me.get("fx_alpha", PBM_ALPHA_NONE)), false, settings.max_texture_size))
+		fx_records.append(PBRetroFx.encode_record(mi_idx, fxd, me["fx_targets"], frame_ids))
+	if not fx_records.is_empty():
+		metadata_entries.append(PBRetroFx.mesh_fx_lump(fx_records))
+	var cam_lump := PBRetroFx.camera_path_lump(root)
+	if not cam_lump.is_empty():
+		metadata_entries.append(cam_lump)
+	var env_lump := PBRetroFx.env_lump(root)
+	if not env_lump.is_empty():
+		metadata_entries.append(env_lump)
 
 
 	# Header (64 bytes)
@@ -2069,11 +2154,16 @@ static func _write_pbm_from_tree(root: Node, export_tree: Node, file_path: Strin
 		f.store_32(v_list.size())
 		var m_min := Vector3(INF, INF, INF)
 		var m_max := Vector3(-INF, -INF, -INF)
-		for v in v_list:
-			m_min.x = minf(m_min.x, v["x"]); m_max.x = maxf(m_max.x, v["x"])
-
-			m_min.y = minf(m_min.y, v["y"]); m_max.y = maxf(m_max.y, v["y"])
-			m_min.z = minf(m_min.z, v["z"]); m_max.z = maxf(m_max.z, v["z"])
+		# A morphing mesh's bounds cover every target: the runtime culls by
+		# them, and a swell crest outside the rest pose must not pop out.
+		var bound_lists: Array = [v_list]
+		if m.has("fx_targets"):
+			bound_lists = m["fx_targets"]
+		for bl in bound_lists:
+			for v in bl:
+				m_min.x = minf(m_min.x, v["x"]); m_max.x = maxf(m_max.x, v["x"])
+				m_min.y = minf(m_min.y, v["y"]); m_max.y = maxf(m_max.y, v["y"])
+				m_min.z = minf(m_min.z, v["z"]); m_max.z = maxf(m_max.z, v["z"])
 		f.store_float(m_min.x); f.store_float(m_min.y); f.store_float(m_min.z)
 		f.store_float(m_max.x); f.store_float(m_max.y); f.store_float(m_max.z)
 		# PBM 3.0 animated UV scroll: v1/v2 mesh headers simply ended 8 bytes
@@ -2484,6 +2574,17 @@ static func _emitter_from_node(node: GPUParticles3D) -> Dictionary:
 		flags |= PBM_EMIT_Y_LOCKED
 	if node.one_shot:
 		flags |= PBM_EMIT_PHASE_ALIGN
+	# Burst phase (PHASE_ALIGN emitters): poi_burst_phase in 0..1 of the
+	# lifetime staggers bursts that share a period (spray timed per wave).
+	var burst_phase := -1
+	if node.one_shot and node.has_meta("poi_burst_phase"):
+		burst_phase = clampi(int(roundf(fposmod(float(node.get_meta("poi_burst_phase")), 1.0) * 256.0)) % 256, 0, 255)
+		flags |= PBM_EMIT_BURST_PHASE
+	var spawn_box := Vector3.ZERO
+	if mat != null and mat.emission_shape == ParticleProcessMaterial.EMISSION_SHAPE_BOX:
+		# World-axis half extents (the runtime's spawn box is axis-aligned).
+		spawn_box = (mat.emission_box_extents * xf.basis.get_scale()).abs()
+		flags |= PBM_EMIT_SPAWN_BOX
 
 	var count: int = clampi(node.amount, 1, PBM_EMIT_MAX_PER_EMITTER)
 	var seed_value: int = node.seed if node.use_fixed_seed else absi(hash(str(node.name)) & 0x7FFFFFFF)
@@ -2517,6 +2618,8 @@ static func _emitter_from_node(node: GPUParticles3D) -> Dictionary:
 		"color_end": _pack_rgba(c_end),
 		"count": count,
 		"flags": flags,
+		"spawn_box": spawn_box,
+		"burst_phase": maxi(burst_phase, 0),
 		"atlas_cols": cols,
 		"atlas_rows": rows,
 		"anim_loops": anim_loops,
@@ -2593,8 +2696,12 @@ static func _emitters_metadata_entry(emitter_nodes: Array[GPUParticles3D], textu
 		buf[off + 0x9C] = int(rec["atlas_cols"])
 		buf[off + 0x9D] = int(rec["atlas_rows"])
 		buf[off + 0x9E] = int(rec["anim_loops"])
-		buf[off + 0x9F] = 0
+		buf[off + 0x9F] = int(rec.get("burst_phase", 0))
 		buf.encode_u32(off + 0xA0, int(rec["seed"]))
+		var box: Vector3 = rec.get("spawn_box", Vector3.ZERO)
+		buf.encode_float(off + 0xA4, box.x)
+		buf.encode_float(off + 0xA8, box.y)
+		buf.encode_float(off + 0xAC, box.z)
 		off += PBM_EMITTER_SIZE_BYTES
 
 	return { "tag": "emitters", "type": PBM_META_EMITTER, "data": buf }

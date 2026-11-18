@@ -38,6 +38,11 @@ class SpatialGrid:
 	var inv_cell: float = 0.5
 	var cells: Dictionary = {} # Vector3i -> Array[Tri]
 	var all_triangles: Array[Tri] = []
+	## Triangles too big to register cell by cell (a 90 m sea quad covers
+	## thousands of 2 m cells; the old registration ran an open-air map's
+	## export out of memory). Every ray tests them directly — there are few.
+	var big_triangles: Array[Tri] = []
+	const MAX_CELLS_PER_TRI := 2048
 	var scene_aabb := AABB()
 	var has_aabb: bool = false
 
@@ -65,6 +70,10 @@ class SpatialGrid:
 			scene_aabb = scene_aabb.merge(tri.aabb)
 		var min_c := Vector3i(int(floor(tri.aabb.position.x * inv_cell)), int(floor(tri.aabb.position.y * inv_cell)), int(floor(tri.aabb.position.z * inv_cell)))
 		var max_c := Vector3i(int(floor((tri.aabb.position.x + tri.aabb.size.x) * inv_cell)), int(floor((tri.aabb.position.y + tri.aabb.size.y) * inv_cell)), int(floor((tri.aabb.position.z + tri.aabb.size.z) * inv_cell)))
+		var span := max_c - min_c + Vector3i.ONE
+		if span.x * span.y * span.z > MAX_CELLS_PER_TRI:
+			big_triangles.append(tri)
+			return
 
 		for cz in range(min_c.z, max_c.z + 1):
 			for cy in range(min_c.y, max_c.y + 1):
@@ -73,6 +82,26 @@ class SpatialGrid:
 					if not cells.has(key):
 						cells[key] = [] as Array[Tri]
 					cells[key].append(tri)
+
+	## Distance along the ray to `tri` (INF on a miss or a transparent texel).
+	func _hit_distance(tri: Tri, origin: Vector3, dir_norm: Vector3) -> float:
+		var hit: Dictionary = PBMath.ray_intersects_triangle(origin, dir_norm, tri.v0, tri.v1, tri.v2)
+		if not hit.get("hit", false):
+			return INF
+		var d: float = hit.get("distance", INF)
+		if d <= 0.001:
+			return INF
+		if tri.has_alpha and tri.alpha_image != null:
+			var u: float = hit.get("u", 0.0)
+			var v: float = hit.get("v", 0.0)
+			var hit_uv: Vector2 = (1.0 - (u + v)) * tri.uv0 + u * tri.uv1 + v * tri.uv2
+			var iw: int = tri.alpha_image.get_width()
+			var ih: int = tri.alpha_image.get_height()
+			var px: int = clampi(int(hit_uv.x * float(iw)), 0, iw - 1)
+			var py: int = clampi(int(hit_uv.y * float(ih)), 0, ih - 1)
+			if tri.alpha_image.get_pixel(px, py).a < tri.alpha_scissor:
+				return INF
+		return d
 
 	func cast_ray(origin: Vector3, dir: Vector3, max_dist: float, early_exit: bool = false) -> float:
 		if all_triangles.is_empty():
@@ -110,6 +139,12 @@ class SpatialGrid:
 		var t_max_z := absf((next_bz - origin.z) / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
 		var closest_d := max_dist
 		var seen := {}
+		for tri: Tri in big_triangles:
+			var bd := _hit_distance(tri, origin, dir_norm)
+			if bd < closest_d:
+				if early_exit:
+					return bd
+				closest_d = bd
 
 		while true:
 			if cells.has(cur_cell):
@@ -213,6 +248,12 @@ class SpatialGrid:
 		var t_max_z := absf((next_bz - origin.z) / dir_norm.z) if absf(dir_norm.z) > 0.000001 else INF
 		var transmission := 1.0
 		var seen := {}
+		for tri: Tri in big_triangles:
+			var bd := _hit_distance(tri, origin, dir_norm)
+			if bd > 0.01 and bd < ray_len:
+				if not tri.is_water:
+					return 0.0
+				transmission *= 0.5
 
 		while true:
 			if cells.has(cur_cell):
@@ -475,6 +516,16 @@ static func _collect_triangles_recursive(node: Node, grid: SpatialGrid, image_ca
 		return
 	if node is Node3D and not (node as Node3D).visible:
 		return
+	# Surfaces that are not lit never occlude the bake either: a sky dome, a
+	# sun glow, an unlit sea (poi_vertex_color = "unlit") — or anything with
+	# shadow casting switched off. A sky dome in the grid shadows the whole map.
+	if node is MeshInstance3D:
+		var gi := node as MeshInstance3D
+		if gi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF \
+				or str(gi.get_meta("poi_vertex_color", "")) == "unlit":
+			for child in node.get_children():
+				_collect_triangles_recursive(child, grid, image_cache)
+			return
 
 	# Handle billboards / alpha-scissor foliage meshes (cast silhouette shadows).
 	# The predicate mirrors PBMapExporter._is_billboard: placed sprite PBMeshes

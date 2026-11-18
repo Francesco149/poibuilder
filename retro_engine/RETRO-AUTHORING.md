@@ -184,6 +184,11 @@ So:
 | `poi_emitter = true` | GPUParticles3D | exports as an emitter record |
 | `poi_additive` / `poi_y_locked` / `poi_wobble_amp` / `poi_wobble_freq` / `poi_knee` / `poi_seed` | emitter | fields Godot has no concept for (additive blending, cylinder billboard, wobble, size-curve knee, deterministic seed) |
 | `poi_spawn` / `poi_walkable` / `poi_trigger` / `poi_rigid_body` | any node | scripted-entity descriptors written into the metadata lump |
+| `poi_fx` | mesh node or material | runtime mesh effects (lump `mesh_fx`): GE vertex **morph** (keyframe poses, or harmonic waves/sway exported in convex triplets), mesh **flipbook**, **additive**, **no_fog**, **decal** depth bias. Descriptors and recipes: header of `export/pb_retro_fx.gd`; worked example of every one: `test_scenes/seashore_map_builder.gd` |
+| `poi_camera_pose` = `{"hold", "travel"}` | any Node3D (Marker3D) | the map's camera path: the profiler sweeps it, the PSP app flies it in attract mode (12 s idle, or Select+R) |
+| `poi_env` | scene root | the map's own sky colour, fog, near/far planes (lump `env`) |
+| `poi_vertex_color` = `"unlit"` / `"multiply"` | plain MeshInstance3D | keep the authored vertex colours as-is, or multiply them into the bake (default: the bake replaces them). Unlit meshes never occlude the light bake |
+| `poi_burst_phase` (0..1) | one-shot GPUParticles3D | stagger bursts that share a lifetime (spray timed to each wave); `EMISSION_SHAPE_BOX` exports as a spawn box |
 | `poi_metadata_tag` + `poi_metadata_payload` | any node | arbitrary key/value written to the map's metadata (map name, options, …) |
 
 ### Runtime knobs, no rebuild (`host0:/poi_render.txt`, read at startup)
