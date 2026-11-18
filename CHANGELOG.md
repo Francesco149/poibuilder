@@ -65,6 +65,8 @@ design) cost ~6.4 ms gpu, and morphing ~2.5-4 ms. After a 64x64 sheet with
 fewer particles, no morph on the shallows, one-period palm sway and a smaller
 morphing sea, every view fits with room: worst 10.1 ms (Glitter, 99 fps),
 Overlook 9.3, Surf 7.9. The frustum cull saves 0.85-2.0 ms per view.
+Ground tessellated near the eye afterwards (corner holes from the GE's
+triangle rejection): ~+1.5 ms CPU per view, worst view now 11.7 ms (85 fps).
 Courtyard regression A/B (v0.9.187 vs v0.9.188 engine, same map, same day):
 every view faster (waterfall 8.29 -> 6.74 ms, spawn 6.46 -> 5.44), GPU
 unchanged — the cutout and depth-knob changes cost nothing. Still

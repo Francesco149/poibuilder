@@ -281,6 +281,13 @@ first battery taught (before → after, same views):
   draws, i.e. per-draw CPU cost is what an open map spends next. Fewer, larger
   meshes (merging same-material props) is the next lever.
 
+**After tessellating the ground near the eye** (sand 1.5 m, shallows 2 m,
+surf 1.25 m — the GE rejects a whole triangle when a vertex projects far
+outside its drawing range, which put sky-coloured holes at the screen corner
+with 3-4 m cells): ~+1.5 ms of CPU per view from the extra draws, GPU
+unchanged. Device sweep, frame ms: Glitter 11.69, Overlook 10.63, Surf 9.27,
+Beach 8.38, Palms 8.18, Pier 7.79, Rocks 7.24 — worst view 85 fps.
+
 **Regression check on the courtyard map** (same day, same map file, the
 v0.9.187 engine vs v0.9.188, full battery sweep, frame ms): waterfall 8.29 →
 6.74, ramp 7.12 → 5.51, spawn 6.46 → 5.44, foliage 5.60 → 4.18, corner 5.39 →
