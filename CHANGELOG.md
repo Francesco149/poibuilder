@@ -75,6 +75,34 @@ fits 240 px under the editor theme. The harness's pinned layout now states
 the two-column arrangement explicitly and keeps the bottom panel closed; see
 `.pi/orientation/testing.md` for why the CREATE aims needed it.
 
+### New: edge-first shape placement (GoBuild style, opt-in)
+
+A second way to draw shapes, modelled on GoBuild's interaction (the
+interaction only; no code was taken). Click a start point, then click the end
+of the first edge. The edge can be at **any angle** on the surface and becomes
+the shape's rotation and width. Pull out the depth perpendicular to it and
+click (Shift makes it square), then set the height and click as usual. A
+press-drag-release also draws the edge. With snapping on, the edge's end lands
+on grid points and the depth quantizes. Stairs climb away from the edge, and a
+doorway's opening spans it.
+
+The default is unchanged (drag a base, ProBuilder). Switch in **Editor
+Settings > PoiBuilder > Creation > Placement Style** (a real dropdown,
+registered with `add_property_info`), or with the Placement selector in the
+Shapes tab. Both are the same setting, and the hint text follows it. Trim,
+the stand-off plane and the sprite keep their own flows.
+
+Implementation: `edge_stage` (LINE → DEPTH) sub-stages inside the creator's
+BASE state, so the outline, the hidden preview, the readouts and
+`state >= HEIGHT` comparisons need no change.
+
+Tests: new suite `test_pb_shape_creator_edge.gd` (9 tests, including a cube
+from a ~27° edge filling exactly the drawn rect, the pull side, zero-edge
+clicks, Shift-square, grid snapping, excluded shapes, stairs, walls). GUI
+harness EDGE-CREATE drives the four real clicks: the setting is mirrored in
+the dock, the stages advance, and the created cube's x axis follows the
+clicked edge (x·edge = 1.0000) over the drawn 2.69 m x 1.50 m footprint.
+
 ## v0.9.186 — created shapes duplicate cleanly; scrolling textures move in play mode
 
 Report (a fresh scratch scene on v0.9.185): duplicating a scrolling plane and

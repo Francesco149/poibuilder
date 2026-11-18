@@ -2970,6 +2970,104 @@ func _run() -> void:
 	po_src.queue_free()
 	await _frames(4)
 
+	# ── EDGE-CREATE: GoBuild-style edge-ec_first placement (opt-in) ─────────────
+	# Placement style "Edge First": click ec_a start point, click the end of the
+	# ec_first edge (any angle — it becomes the shape's rotation), pull the depth
+	# and click, then the height and click. Driven with real clicks on an
+	# empty patch of floor, snapping off so the angle is exact.
+	var ec_plugin := _find_plugin(iface.get_base_control().get_parent())
+	if ec_plugin == null:
+		ec_plugin = _find_plugin(iface.get_base_control())
+	if ec_plugin == null:
+		_fail("EDGE-CREATE: plugin not found")
+	else:
+		sel.clear()
+		await _frames(3)
+		ec_plugin.set_placement_style(PBShapeCreator.PlacementStyle.EDGE)
+		var ec_es := iface.get_editor_settings()
+		if int(ec_es.get_setting("poibuilder/creation/placement_style")) == 1 \
+				and ec_plugin.material_dock._opt_placement_style.get_selected_id() == 1:
+			_pass("EDGE-CREATE: the style is an editor setting, mirrored in the Shapes tab")
+		else:
+			_fail("EDGE-CREATE: style not stored in Editor Settings / not mirrored in the dock")
+		var ec_snap: bool = ec_plugin.grid.enabled
+		ec_plugin.grid.enabled = false
+		var ec_gy: float = ec_plugin.grid.origin.y
+		var ec_center := Vector3(30, ec_gy, 30)
+		cam.global_transform = Transform3D(Basis.IDENTITY, ec_center + Vector3(0, 6, 6)) \
+			.looking_at(ec_center, Vector3.UP)
+		await _frames(6)
+		var ec_before := root.get_children()
+		ec_plugin._on_shape_requested(&"cube")
+		await _frames(6)
+		var ec_a := ec_center + Vector3(-1.5, 0, 0.5)
+		var ec_b := ec_center + Vector3(1.0, 0, -0.5)  # ~21.8° off world X
+		var ec_u := (ec_b - ec_a).normalized()
+		var ec_v := Vector3.UP.cross(ec_u).normalized()
+		await _click(_window_pos(vp, host, ec_a))
+		var ok_line: bool = ec_plugin.shape_creator.state == PBShapeCreator.State.BASE \
+			and ec_plugin.shape_creator.edge_stage == PBShapeCreator.EDGE_LINE
+		for ec_i in range(1, 5):
+			_mouse_motion(_window_pos(vp, host, ec_a.lerp(ec_b, float(ec_i) / 4.0)))
+			await _frames(2)
+		await _click(_window_pos(vp, host, ec_b))
+		var ok_depth: bool = ec_plugin.shape_creator.edge_stage == PBShapeCreator.EDGE_DEPTH
+		var ec_d := ec_a + ec_u * 1.0 + ec_v * 1.5
+		_mouse_motion(_window_pos(vp, host, ec_a + ec_v * 0.75))
+		await _frames(3)
+		_mouse_motion(_window_pos(vp, host, ec_d))
+		await _frames(3)
+		await _click(_window_pos(vp, host, ec_d))
+		var ok_height: bool = ec_plugin.shape_creator.state == PBShapeCreator.State.HEIGHT
+		var ec_top := _window_pos(vp, host, ec_center + Vector3(0, 1.2, 0))
+		_mouse_motion(ec_top)
+		await _frames(4)
+		await _click(ec_top)
+		await _frames(10)
+		if ec_plugin.shape_creator.state == PBShapeCreator.State.PARAMS:
+			ec_plugin._on_params_applied()
+			await _frames(6)
+		if ok_line and ok_depth and ok_height:
+			_pass("EDGE-CREATE: clicks walk LINE -> DEPTH -> HEIGHT")
+		else:
+			_fail("EDGE-CREATE: stages line=%s depth=%s height=%s" % [ok_line, ok_depth, ok_height])
+		var ec_new: PBMesh = null
+		for ec_c in root.get_children():
+			if ec_c is PBMesh and not ec_before.has(ec_c):
+				ec_new = ec_c
+		if ec_new == null:
+			_fail("EDGE-CREATE: no shape was created")
+		else:
+			var ec_x_axis := ec_new.global_transform.basis.x.normalized()
+			var ec_edge_len := (ec_b - ec_a).length()
+			if absf(ec_x_axis.dot(ec_u)) > 0.995:
+				_pass("EDGE-CREATE: the shape is rotated to the clicked edge (x·edge = %.4f)" % absf(ec_x_axis.dot(ec_u)))
+			else:
+				_fail("EDGE-CREATE: shape x axis %s does not follow the edge %s" % [ec_x_axis, ec_u])
+			var ec_aabb := AABB()
+			var ec_first := true
+			for ec_p in ec_new.pb_mesh_data.positions:
+				var ec_w: Vector3 = ec_new.global_transform * ec_p
+				var ec_c3 := Vector3((ec_w - ec_a).dot(ec_u), ec_w.y - ec_gy, (ec_w - ec_a).dot(ec_v))
+				if ec_first:
+					ec_aabb = AABB(ec_c3, Vector3.ZERO)
+					ec_first = false
+				else:
+					ec_aabb = ec_aabb.expand(ec_c3)
+			if absf(ec_aabb.position.x) < 0.05 and absf(ec_aabb.end.x - ec_edge_len) < 0.05 \
+					and absf(ec_aabb.position.z) < 0.05 and absf(ec_aabb.end.z - 1.5) < 0.15:
+				_pass("EDGE-CREATE: the shape spans the clicked edge (%.2f m) and the pulled depth (%.2f m)" % [ec_aabb.size.x, ec_aabb.size.z])
+			else:
+				_fail("EDGE-CREATE: footprint in edge space %s, expected [0..%.2f] x [0..1.5]" % [str(ec_aabb), ec_edge_len])
+			ec_new.get_parent().remove_child(ec_new)
+			ec_new.queue_free()
+		ec_plugin.set_placement_style(PBShapeCreator.PlacementStyle.DRAG)
+		ec_plugin.grid.enabled = ec_snap
+		if ec_plugin.shape_creator.is_active():
+			_press_key(KEY_ESCAPE)
+		await _frames(4)
+		sel.clear()
+
 	# ── DOCK-LAYOUT: the Material & UV dock is a native, narrow dock ─────────
 	# User feedback (v0.9.186): "the Material & UV panel is too wide". It was
 	# a 498 px-wide control, and every load moved the Inspector into a second

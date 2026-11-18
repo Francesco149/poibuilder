@@ -24,11 +24,32 @@
 ## The plugin owns the preview PBMesh node; the creator supplies the data
 ## (PBShapeParams.build) and the placement transform that anchors the data's
 ## base face onto the drag plane at the rect center.
+##
+## EDGE-FIRST placement (opt-in, PlacementStyle.EDGE — GoBuild's flow): the
+## BASE state runs in two sub-stages instead of one drag. LINE: the first
+## click anchors, the cursor sweeps an edge at ANY angle in the surface plane,
+## and a click (or releasing a press-drag) locks it — its direction is the
+## shape's width axis (local +X) and its length the width. DEPTH: the cursor
+## grows the rect perpendicular to that edge (signed; the shape's local +Z
+## faces the way it was pulled), a click hands over to HEIGHT as usual. The
+## sub-stages live INSIDE BASE on purpose: every BASE consumer (the outline,
+## the hidden preview mesh, the readouts, `state >= HEIGHT` comparisons)
+## keeps working unchanged. Shapes with their own base semantics (trim, the
+## stand-off plane, the sprite) always use the drag flow.
 @tool
 class_name PBShapeCreator
 extends RefCounted
 
 enum State { INACTIVE, ARMED, BASE, HEIGHT, OFFSET, PARAMS }
+
+## How the base is drawn: one drag (ProBuilder, the default) or an edge then
+## a depth (GoBuild). Editor setting poibuilder/creation/placement_style.
+enum PlacementStyle { DRAG, EDGE }
+
+## Edge-first sub-stages of BASE (EDGE_NONE in the drag flow).
+const EDGE_NONE := 0
+const EDGE_LINE := 1
+const EDGE_DEPTH := 2
 
 ## Sentinel for "ray missed the plane" from ray_plane_intersect.
 const RAY_MISS := Vector3(INF, INF, INF)
@@ -37,6 +58,12 @@ const RAY_MISS := Vector3(INF, INF, INF)
 const MIN_EXTENT := 0.1
 
 var state: State = State.INACTIVE
+
+var placement_style: PlacementStyle = PlacementStyle.DRAG
+## EDGE_LINE / EDGE_DEPTH while an edge-first base is being drawn.
+var edge_stage: int = EDGE_NONE
+## Held Shift in the edge-first DEPTH stage: depth = edge length (square).
+var square_lock: bool = false
 
 ## The factory shape being created.
 var shape_id: StringName = &""
@@ -124,6 +151,15 @@ var vertex_snap_candidates_fn: Callable = Callable()
 
 func is_active() -> bool:
 	return state != State.INACTIVE
+
+## True when the current shape draws its base edge-first (style + shape).
+func uses_edge_flow() -> bool:
+	if placement_style != PlacementStyle.EDGE or shape_id == &"":
+		return false
+	return not (PBShapeParams.commits_on_base_release(shape_id)
+		or PBShapeParams.height_drags_offset(shape_id)
+		or PBShapeParams.world_aligned_in_plane(shape_id)
+		or shape_id == &"sprite")
 
 ## Local-space facing direction for the creation arrow (ZERO = none).
 func facing_direction() -> Vector3:
@@ -290,6 +326,7 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 		facing = PBShapeParams.plane_flow_axis(plane_normal)
 		u_dir = plane_normal.cross(facing).normalized()
 		_u_locked = true
+	edge_stage = EDGE_LINE if uses_edge_flow() else EDGE_NONE
 	_apply_drag_extents()
 
 ## Updates the base rect from a point ON the captured plane. Height-driven
@@ -299,6 +336,12 @@ func begin(surface_point: Vector3, surface_normal: Vector3, view_z: Vector3) -> 
 ## aligned); arbitrary surfaces keep the drag direction in the plane.
 func update_base(point_on_plane: Vector3) -> void:
 	if state != State.BASE:
+		return
+	if edge_stage == EDGE_LINE:
+		_update_edge_line(point_on_plane)
+		return
+	if edge_stage == EDGE_DEPTH:
+		_update_edge_depth(point_on_plane)
 		return
 	var drag := point_on_plane - base_start
 	if not _u_locked and drag.length() > 0.05:
@@ -322,6 +365,67 @@ func update_base(point_on_plane: Vector3) -> void:
 	_update_facing(base_end)
 	_apply_drag_extents()
 
+## Edge-first LINE stage: the edge runs from the anchor to the cursor, at
+## any angle in the surface plane. With snapping on, the cursor end lands on
+## the grid (cardinal surfaces; the normal axis is masked so the end stays in
+## the plane) — an edge between two grid points — and on other surfaces the
+## length quantizes to the step.
+func _update_edge_line(point_on_plane: Vector3) -> void:
+	var end := base_start + _project_on_plane(point_on_plane - base_start, plane_normal)
+	if grid != null and grid.enabled:
+		if PBGrid.is_cardinal(plane_normal):
+			end = grid.snap_point_masked(end, plane_normal)
+		else:
+			var d := end - base_start
+			if d.length() > 0.0001:
+				end = base_start + d.normalized() * grid.snap_val(d.length())
+	var edge := end - base_start
+	var length := edge.length()
+	if length > 0.0001:
+		u_dir = edge / length
+	u_size = length
+	v_size = 0.0
+	rect_center = base_start + edge * 0.5
+	base_end = end
+	# Until the depth is pulled, the arrow shows the edge's left-hand side.
+	facing = plane_normal.cross(u_dir).normalized()
+	_apply_drag_extents()
+
+## Edge-first DEPTH stage: the rect grows perpendicular to the locked edge,
+## signed toward the cursor; the shape's forward (+Z) points that way, so
+## stairs climb away from the edge and a doorway's opening spans it.
+## Shift (square_lock) makes the depth equal to the edge length.
+func _update_edge_depth(point_on_plane: Vector3) -> void:
+	var v_dir := plane_normal.cross(u_dir).normalized()
+	var along_v := (point_on_plane - base_start).dot(v_dir)
+	if grid != null and grid.enabled:
+		along_v = grid.snap_val(along_v)
+	if square_lock:
+		along_v = u_size * (signf(along_v) if along_v != 0.0 else 1.0)
+	v_size = absf(along_v)
+	if along_v != 0.0:
+		facing = v_dir * signf(along_v)
+	rect_center = base_start + u_dir * (u_size * 0.5) + v_dir * (along_v * 0.5)
+	base_end = base_start + u_dir * u_size + v_dir * along_v
+	_apply_drag_extents()
+
+## Edge-first: locks the swept edge (click, or the release of a press-drag)
+## and moves on to the depth. False — and nothing changes — while the edge
+## is still shorter than an intentional draw (the same floor end_base uses),
+## so the release of the anchoring click never locks a zero-length edge.
+func lock_edge() -> bool:
+	if state != State.BASE or edge_stage != EDGE_LINE:
+		return false
+	var min_extent := MIN_EXTENT
+	if grid != null:
+		min_extent = maxf(MIN_EXTENT, grid.step())
+	if u_size < min_extent:
+		return false
+	edge_stage = EDGE_DEPTH
+	_u_locked = true
+	_update_edge_depth(base_start)
+	return true
+
 ## Ends the base drag (LMB release). Returns false (and aborts) when the
 ## drag was too small to be intentional. The DOMINANT extent must reach
 ## the minimum — an accidental click with a sliver of jitter used to pass
@@ -334,6 +438,9 @@ func update_base(point_on_plane: Vector3) -> void:
 func end_base() -> bool:
 	if state != State.BASE:
 		return false
+	if edge_stage == EDGE_LINE:
+		return false  # the edge is not locked yet: nothing to end
+	edge_stage = EDGE_NONE
 	var min_extent := MIN_EXTENT
 	if grid != null:
 		min_extent = maxf(MIN_EXTENT, grid.step())
@@ -447,6 +554,8 @@ func reset() -> void:
 	u_size = 0.0
 	v_size = 0.0
 	_u_locked = false
+	edge_stage = EDGE_NONE
+	square_lock = false
 	facing = Vector3.ZERO
 	lock_direction = false
 	show_height_plane = false

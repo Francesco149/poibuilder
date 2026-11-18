@@ -111,6 +111,7 @@ var _sprite_hint: Label
 # Shape Tool Controls
 var _shape_palette_grid: HFlowContainer
 var _shape_hint: Label
+var _opt_placement_style: OptionButton
 var _shape_card_buttons: Dictionary = {}  # StringName shape_id -> Button
 var _selected_shape_id: StringName = &"cube"
 static var _shape_preview_cache: Dictionary = {}  # StringName shape_id -> ImageTexture
@@ -1020,14 +1021,31 @@ func _build_ui() -> void:
 	shape_scroll.add_child(_shape_palette_grid)
 	_populate_shape_palette()
 
+	# How the base is drawn — the same value as Editor Settings >
+	# PoiBuilder > Creation > Placement Style (the plugin owns the setting).
+	var placement_row := HBoxContainer.new()
+	placement_row.add_child(_make_label("Placement:"))
+	_opt_placement_style = OptionButton.new()
+	_opt_placement_style.name = "PlacementStyleSelector"
+	_opt_placement_style.add_item("Drag Base", PBShapeCreator.PlacementStyle.DRAG)
+	_opt_placement_style.add_item("Edge First", PBShapeCreator.PlacementStyle.EDGE)
+	_opt_placement_style.tooltip_text = "Drag Base (ProBuilder): drag the base rectangle, then move to set the height.\nEdge First (GoBuild): click a start point, click the end of the first edge (any angle — it sets the shape's rotation), pull out the depth and click, then the height and click.\nAlso in Editor Settings > PoiBuilder > Creation."
+	_opt_placement_style.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_opt_placement_style.item_selected.connect(func(idx: int):
+		_refresh_shape_hint()
+		if plugin != null and plugin.has_method("set_placement_style") and not _syncing:
+			plugin.set_placement_style(_opt_placement_style.get_item_id(idx))
+	)
+	placement_row.add_child(_opt_placement_style)
+	_shape_tool_section.add_child(placement_row)
+	if plugin != null and plugin.get("shape_creator") != null:
+		_opt_placement_style.select(_opt_placement_style.get_item_index(int(plugin.shape_creator.placement_style)))
+
 	_shape_hint = Label.new()
-	_shape_hint.text = "Placement (always armed with the selected shape):\n" \
-		+ "• Drag on any surface to draw the shape's base, move to set its height, click to confirm.\n" \
-		+ "• The selected shape stays armed — keep placing, or pick another card to switch.\n" \
-		+ "• Esc cancels the current placement. Select the Material & UV tab to exit shape mode."
 	_shape_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_shape_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_shape_tool_section.add_child(_shape_hint)
+	_refresh_shape_hint()
 
 	# =========================================================================
 	# Section F: Particle Placement Controls (Visible in PARTICLE mode)
@@ -1182,6 +1200,27 @@ func _update_tool_labels() -> void:
 
 ## Every drag-creatable primitive EXCEPT sprite (the Sprite tab owns it) and
 ## ngon (the toolbar's N-Gon draw tool). Order follows PBShapeFactory.
+## Mirrors the placement style (Editor Settings or the plugin) into the
+## Shapes tab selector without writing it back.
+func sync_placement_style(style: int) -> void:
+	if _opt_placement_style == null:
+		return
+	_syncing = true
+	_opt_placement_style.select(_opt_placement_style.get_item_index(style))
+	_syncing = false
+	_refresh_shape_hint()
+
+func _refresh_shape_hint() -> void:
+	if _shape_hint == null:
+		return
+	var edge := _opt_placement_style != null \
+		and _opt_placement_style.get_selected_id() == PBShapeCreator.PlacementStyle.EDGE
+	var how := "• Click a start point, then click the end of the first edge — any angle; it sets the shape's rotation. Pull out the depth and click (Shift: square), then the height and click.\n" if edge \
+		else "• Drag on any surface to draw the shape's base, move to set its height, click to confirm.\n"
+	_shape_hint.text = "Placement (always armed with the selected shape):\n" + how \
+		+ "• The selected shape stays armed — keep placing, or pick another card to switch.\n" \
+		+ "• Esc cancels the current placement. Select the Material & UV tab to exit shape mode."
+
 static func shape_palette_ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 	for id in PBShapeFactory.get_shape_ids():

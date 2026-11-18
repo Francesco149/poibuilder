@@ -197,7 +197,14 @@ origin/elevation is session-only on purpose.
   the normal, click confirms) → PARAMS (overlay modal; Cancel restores). ESC
   before the confirming click creates NOTHING. `shapes/pb_shape_params.gd`
   holds the per-shape parameter defs, defaults, `build()` dispatch, and the
-  drag-extent mapping. TRIM is special: it commits on base release and has
+  drag-extent mapping. EDGE-FIRST placement (opt-in, editor setting
+  `poibuilder/creation/placement_style`, mirrored by the Shapes tab): BASE
+  runs as two sub-stages (`edge_stage` LINE → DEPTH) instead of one drag —
+  click start, click the edge's end at any angle (= the shape's +X / width),
+  pull the depth (forward = the pull side, Shift squares), then HEIGHT as
+  usual. The sub-stages live INSIDE BASE so every BASE consumer keeps
+  working; trim / stand-off plane / sprite always use the drag flow.
+  TRIM is special: it commits on base release and has
   its own placement (`_trim_placement` — the strip stands on the drag's
   start line, the longer rect side is the run; on walls the split is by
   WORLD direction) — do not "simplify" it back into the generic centering.

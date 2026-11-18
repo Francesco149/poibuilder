@@ -109,6 +109,10 @@ func _get_plugin_name() -> String:
 
 const VERSION := "0.9.187"
 
+## How shapes are drawn: 0 = drag a base (ProBuilder, default), 1 = edge
+## first (GoBuild: click an edge at any angle, pull the depth, then height).
+const SETTING_PLACEMENT_STYLE := "poibuilder/creation/placement_style"
+
 func _enter_tree():
 	logger.info("plugin", "PoiBuilder v%s entering tree" % VERSION)
 
@@ -120,6 +124,7 @@ func _enter_tree():
 	var ep_settings: EditorSettings = get_editor_interface().get_editor_settings() if get_editor_interface() != null else null
 	if ep_settings != null and ep_settings.has_setting("poibuilder/editor/animate_scrolling_textures"):
 		animate_scrolling_textures = ep_settings.get_setting("poibuilder/editor/animate_scrolling_textures")
+	_register_creation_settings(ep_settings)
 
 
 	# Wire up subsystems
@@ -314,6 +319,9 @@ func _enter_tree():
 func _exit_tree():
 	if logger:
 		logger.info("plugin", "PoiBuilder plugin exiting tree")
+	var exit_settings: EditorSettings = get_editor_interface().get_editor_settings()
+	if exit_settings != null and exit_settings.settings_changed.is_connected(_on_creation_settings_changed):
+		exit_settings.settings_changed.disconnect(_on_creation_settings_changed)
 
 	# Drop a half-created shape preview (it never entered the undo history).
 	if ngon_drawer.is_active():
@@ -2696,10 +2704,62 @@ func _on_shape_requested(shape_id: StringName) -> void:
 	elif PBShapeParams.height_drags_offset(shape_id):
 		_set_creation_hint("%s — drag out a sheet on any surface, then move to offset it (Ctrl: lock direction, Esc cancels)"
 			% String(shape_id).capitalize())
+	elif shape_creator.uses_edge_flow():
+		_set_creation_hint("%s — click a start point, then the edge's end; pull the depth, then the height (Esc cancels)"
+			% String(shape_id).capitalize())
 	else:
 		_set_creation_hint("%s — drag a base on any surface (Ctrl: lock direction, Esc cancels)" % String(shape_id).capitalize())
 	if logger:
 		logger.info("plugin", "Creating '%s' — drag on a surface to draw the base" % shape_id)
+
+## Edge-first: the edge is locked — the depth stage starts at zero depth.
+func _on_creation_edge_locked() -> void:
+	_set_creation_hint("pull out the depth, click to confirm (Shift: square, Esc cancels)")
+	_refresh_preview()
+
+## The placement-style editor setting (Editor Settings > PoiBuilder >
+## Creation): registered with an enum hint so it shows as a dropdown, and
+## followed live — the Shapes tab's selector writes the same setting.
+func _register_creation_settings(es: EditorSettings) -> void:
+	if es == null:
+		return
+	if not es.has_setting(SETTING_PLACEMENT_STYLE):
+		es.set_setting(SETTING_PLACEMENT_STYLE, PBShapeCreator.PlacementStyle.DRAG)
+	es.set_initial_value(SETTING_PLACEMENT_STYLE, PBShapeCreator.PlacementStyle.DRAG, false)
+	es.add_property_info({
+		"name": SETTING_PLACEMENT_STYLE,
+		"type": TYPE_INT,
+		"hint": PROPERTY_HINT_ENUM,
+		"hint_string": "Drag Base (ProBuilder),Edge First (GoBuild)",
+	})
+	shape_creator.placement_style = int(es.get_setting(SETTING_PLACEMENT_STYLE)) as PBShapeCreator.PlacementStyle
+	if not es.settings_changed.is_connected(_on_creation_settings_changed):
+		es.settings_changed.connect(_on_creation_settings_changed)
+
+func _on_creation_settings_changed() -> void:
+	var es: EditorSettings = get_editor_interface().get_editor_settings()
+	if es == null or not es.has_setting(SETTING_PLACEMENT_STYLE):
+		return
+	var style := int(es.get_setting(SETTING_PLACEMENT_STYLE)) as PBShapeCreator.PlacementStyle
+	if style == shape_creator.placement_style:
+		return
+	# A base half-drawn in the old style cannot continue in the new one.
+	if shape_creator.state == PBShapeCreator.State.BASE:
+		_creation_abort("placement style changed")
+	shape_creator.placement_style = style
+	if material_dock != null:
+		material_dock.sync_placement_style(style)
+	logger.info("plugin", "Shape placement: %s" % ("edge first" if style == PBShapeCreator.PlacementStyle.EDGE else "drag base"))
+
+## Sets the placement style (the Shapes tab selector) through the editor
+## setting, so Editor Settings and the dock never disagree.
+func set_placement_style(style: int) -> void:
+	var es: EditorSettings = get_editor_interface().get_editor_settings()
+	if es != null:
+		es.set_setting(SETTING_PLACEMENT_STYLE, style)
+		_on_creation_settings_changed()
+	else:
+		shape_creator.placement_style = style as PBShapeCreator.PlacementStyle
 
 ## Feeds the overlay's creation row so an armed/dragging session is never
 ## invisible (a sticky armed state used to swallow clicks "silently").
@@ -2710,6 +2770,7 @@ func _set_creation_hint(text: String) -> void:
 func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventWithModifiers:
 		shape_creator.lock_direction = event.ctrl_pressed or Input.is_key_pressed(KEY_CTRL)
+		shape_creator.square_lock = event.shift_pressed
 		if shape_creator.state == PBShapeCreator.State.HEIGHT:
 			var alt_down: bool = event.alt_pressed or Input.is_key_pressed(KEY_ALT)
 			if shape_creator.show_height_plane != alt_down:
@@ -2737,6 +2798,17 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 						# marquee / selection under the creation drag.
 						return AFTER_GUI_INPUT_STOP
 					return AFTER_GUI_INPUT_PASS
+				PBShapeCreator.State.BASE:
+					# Edge-first flow: the clicks after the anchor lock the
+					# edge, then end the depth stage (drag flow: the button
+					# is held through BASE, so no press arrives here).
+					if shape_creator.edge_stage == PBShapeCreator.EDGE_LINE:
+						if shape_creator.lock_edge():
+							_on_creation_edge_locked()
+						return AFTER_GUI_INPUT_STOP
+					if shape_creator.edge_stage == PBShapeCreator.EDGE_DEPTH:
+						_creation_end_base()
+						return AFTER_GUI_INPUT_STOP
 				PBShapeCreator.State.HEIGHT, PBShapeCreator.State.OFFSET:
 					_creation_confirm()
 					return AFTER_GUI_INPUT_STOP
@@ -2749,7 +2821,17 @@ func _creation_input(camera: Camera3D, event: InputEvent) -> int:
 					return AFTER_GUI_INPUT_PASS
 		else:
 			if shape_creator.state == PBShapeCreator.State.BASE:
-				_creation_end_base()
+				match shape_creator.edge_stage:
+					PBShapeCreator.EDGE_LINE:
+						# Releasing a press-DRAG locks the edge; the release
+						# of a plain click (zero-length edge) does nothing
+						# and the next click picks the edge's end.
+						if shape_creator.lock_edge():
+							_on_creation_edge_locked()
+					PBShapeCreator.EDGE_DEPTH:
+						pass  # the release of the click that locked the edge
+					_:
+						_creation_end_base()
 				return AFTER_GUI_INPUT_STOP
 
 	if event is InputEventKey and event.pressed:
@@ -2861,7 +2943,10 @@ func _creation_begin_from_surface(camera: Camera3D, screen_pos: Vector2) -> bool
 	# The pressed face's hover highlight dies with the drag start (the base
 	# outline takes over); hover stays off until the HEIGHT stage.
 	_clear_creation_hover()
-	_set_creation_hint("release the mouse, then move to set the height")
+	if shape_creator.edge_stage == PBShapeCreator.EDGE_LINE:
+		_set_creation_hint("click the end of the first edge (or drag it out) — any angle (Esc cancels)")
+	else:
+		_set_creation_hint("release the mouse, then move to set the height")
 	_make_preview_node()
 	_refresh_preview()
 	return true
