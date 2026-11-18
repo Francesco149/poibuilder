@@ -137,6 +137,20 @@ typedef struct __attribute__((packed)) {
 #define PBM_EMIT_PHASE_ALIGN (1u << 3)  /* All particles share one phase: the emitter
                                          * becomes a burst repeating every lifetime
                                          * instead of a continuous stream. */
+#define PBM_EMIT_SPAWN_BOX   (1u << 4)  /* Spawn inside an axis-aligned BOX whose
+                                         * half extents are reserved[0..2] (world
+                                         * metres) instead of the spawn_radius ball.
+                                         * A wave crest's spray line, a band of sun
+                                         * glitter on the sea: shapes a ball cannot
+                                         * make without a dozen emitters. Loaders
+                                         * that predate the flag see reserved != 0
+                                         * and a point/ball emitter, which degrades
+                                         * to a clump rather than failing. */
+#define PBM_EMIT_BURST_PHASE (1u << 5)  /* With PHASE_ALIGN: the burst fires at
+                                         * t = (1 - reserved0/256) * life (mod life)
+                                         * instead of t = 0, so several bursts that
+                                         * share a lifetime can be staggered — spray
+                                         * timed to each of a set of waves. */
 
 /* Runtime limits. A file may exceed them; a loader clamps and says so, so a map
  * authored for a stronger machine still loads with a reduced budget. */
@@ -184,9 +198,11 @@ typedef struct __attribute__((packed)) {
     uint8_t  atlas_cols;    /* 0x9C  Flipbook grid, >= 1 */
     uint8_t  atlas_rows;    /* 0x9D  >= 1 */
     uint8_t  anim_loops;    /* 0x9E  Animation loops per particle lifetime, >= 1 */
-    uint8_t  reserved0;     /* 0x9F  MUST be 0 */
+    uint8_t  reserved0;     /* 0x9F  0, or with PBM_EMIT_BURST_PHASE the burst's
+                             *       phase in 1/256ths of the lifetime */
     uint32_t seed;          /* 0xA0  Per-emitter random seed */
-    float    reserved[3];   /* 0xA4  MUST be 0 (minor extensions only) */
+    float    reserved[3];   /* 0xA4  0, or the spawn box half extents when
+                             *       flags has PBM_EMIT_SPAWN_BOX */
 } PbmEmitter;
 
 /* Layout guards: these offsets ARE the file format, so a struct edit must not
@@ -197,6 +213,133 @@ typedef char pbm_emitter_lump_guard[(sizeof(PbmEmitterLumpHeader) == PBM_EMITTER
 typedef char pbm_emitter_off_guard[
     (offsetof(PbmEmitter, pos) == 0x18 && offsetof(PbmEmitter, color_start) == 0x88 &&
      offsetof(PbmEmitter, texture_id) == 0x94 && offsetof(PbmEmitter, seed) == 0xA0) ? 1 : -1];
+
+/* ── Mesh effects (standard lump "mesh_fx", type PBM_META_MESH_FX) ─────────
+ * Per-mesh runtime animation that costs the CPU a few register writes per
+ * mesh per frame and nothing per vertex:
+ *
+ *   MORPH     the GE's own vertex morphing. A morphing mesh carries N full
+ *             vertex sets ("targets", N <= 8); the GE fetches all of them and
+ *             blends position, colour and UV with the morph-weight registers
+ *             before transform. Two closed-form weight models:
+ *               KEYFRAME: the targets are poses on a loop of `period` seconds;
+ *                 key_t[i] is pose i's place on the loop (0..1, ascending,
+ *                 key_t[0] = 0). Only the two poses around the current time
+ *                 have non-zero weight.
+ *               HARMONIC: target 0 is the rest pose, every other target i is
+ *                 rest + a displacement D_i whose weight is
+ *                 sin(2*pi*t / key_t[i] + key_phase[i]), and target 0 takes
+ *                 1 - sum(others). Two targets 90 degrees apart with the same
+ *                 period form a quadrature pair, which reproduces a TRAVELLING
+ *                 wave exactly (sin(kx - wt) = sin kx cos wt - cos kx sin wt):
+ *                 Gerstner swell with 3 targets, two swells with 5.
+ *               CYCLIC: the convex form of HARMONIC, and what the exporter
+ *                 writes. Target 0 (the rest pose) has weight 0; targets
+ *                 1..N-1 come in TRIPLETS, triplet j = targets 1+3j..3+3j with
+ *                 period key_t[1+3j] and phase key_phase[1+3j]:
+ *                 w[1+3j+k] = (1 + cos(2*pi*t/P_j + ph_j - 2*pi*k/3)) / (3*J),
+ *                 J = (N-1)/3. Every weight is >= 0 and they sum to 1, so the
+ *                 GE's 24-bit weights blend positions without amplifying error
+ *                 (HARMONIC's rest weight swings to -3..+5 with two swells),
+ *                 and a travelling wave is still exact: a rotating displacement
+ *                 A cos + B sin is the triplet P_k = rest + 2J(A cos phi_k +
+ *                 B sin phi_k), phi_k = 2*pi*k/3. Two periods fit (7 sets).
+ *   FLIPBOOK  the mesh's texture is frame_tex[(int)(t * fps) % num_frames].
+ *   ADDITIVE  drawn in the alpha pass with GU_ADD, SRC_ALPHA * ONE (glints,
+ *             sun glare, light shafts): order-independent like the additive
+ *             emitters.
+ *   NO_FOG    drawn with fog disabled (the sky dome, a sun disc).
+ *
+ * Payload = PbmMeshFxLumpHeader, then `count` records, each a PbmMeshFx
+ * followed by `morph_bytes` of vertex data: targets 1..N-1, each a full
+ * copy of the mesh's PbmVertex array in the mesh's own vertex order (target 0
+ * IS the mesh's vertex array). */
+#define PBM_META_MESH_FX     5
+#define PBM_META_CAMERA_PATH 6
+#define PBM_META_ENV         7
+
+#define PBM_MESHFX_MAGIC   0x3158464Du /* "MFX1" */
+#define PBM_MESHFX_VERSION 1
+#define PBM_MESHFX_SIZE    124         /* sizeof(PbmMeshFx) */
+#define PBM_MESHFX_MAX_TARGETS 8
+#define PBM_MESHFX_MAX_FRAMES  16
+
+#define PBM_MFX_ADDITIVE (1u << 0)
+#define PBM_MFX_NO_FOG   (1u << 1)
+#define PBM_MFX_DECAL    (1u << 2)  /* depth-biased toward the camera by
+                                     * reserved0 depth-buffer units (0 = 48):
+                                     * an overlay lying on another surface (a
+                                     * sun path on the sea, a blob shadow on
+                                     * sand) wins the 16-bit depth test at any
+                                     * distance. The PSP has no polygon offset;
+                                     * the runtime biases the projection's z
+                                     * row by eps*w for the draw. */
+
+#define PBM_MORPH_NONE     0
+#define PBM_MORPH_KEYFRAME 1
+#define PBM_MORPH_HARMONIC 2
+#define PBM_MORPH_CYCLIC   3
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;         /* PBM_MESHFX_MAGIC */
+    uint32_t version;
+    uint32_t count;
+    uint32_t reserved;      /* MUST be 0 */
+} PbmMeshFxLumpHeader;
+
+typedef struct __attribute__((packed)) {
+    uint32_t mesh_index;    /* 0x00  index into the mesh table */
+    uint16_t flags;         /* 0x04  PBM_MFX_* */
+    uint8_t  morph_mode;    /* 0x06  PBM_MORPH_* */
+    uint8_t  num_targets;   /* 0x07  vertex sets including the mesh's own (1 = no morph) */
+    float    period;        /* 0x08  KEYFRAME: loop length (s) */
+    float    phase;         /* 0x0C  KEYFRAME: time offset (s) */
+    float    key_t[8];      /* 0x10  KEYFRAME: pose times 0..1; HARMONIC: period (s) per target */
+    float    key_phase[8];  /* 0x30  HARMONIC: phase (rad) per target */
+    uint8_t  ease;          /* 0x50  KEYFRAME: 0 linear, 1 smoothstep between poses */
+    uint8_t  num_frames;    /* 0x51  flipbook frames (0 = no flipbook) */
+    uint16_t reserved0;     /* 0x52  DECAL depth bias (depth units), else 0 */
+    float    fps;           /* 0x54  flipbook frames per second */
+    int16_t  frame_tex[16]; /* 0x58  flipbook texture ids */
+    uint32_t morph_bytes;   /* 0x78  = (num_targets - 1) * num_vertices * 24 */
+} PbmMeshFx;
+typedef char pbm_meshfx_size_guard[(sizeof(PbmMeshFx) == PBM_MESHFX_SIZE) ? 1 : -1];
+
+/* ── Camera path (standard lump "camera_path") ─────────────────────────────
+ * Named viewpoints the map author placed. The profiler sweeps them (a map
+ * prices its own views instead of the courtyard's), and the app flies through
+ * them in attract mode: hold each pose `hold` seconds, then travel to the next
+ * over `travel` seconds on a Catmull-Rom spline, looping. */
+#define PBM_CAMPATH_MAGIC 0x534D4143u /* "CAMS" */
+#define PBM_CAMPATH_MAX   24
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;       /* 1 */
+    uint32_t count;
+    uint32_t reserved;
+} PbmCameraPathHeader;
+typedef struct __attribute__((packed)) {
+    char  name[16];
+    float pos[3];
+    float yaw, pitch;       /* radians, the app's convention (yaw 0 looks down -Z) */
+    float hold;             /* seconds spent at this pose */
+    float travel;           /* seconds from this pose to the next */
+} PbmCameraPose;            /* 44 bytes */
+
+/* ── Environment (standard lump "env") ─────────────────────────────────────
+ * The map's own sky colour and fog, overriding the time-of-day preset. */
+#define PBM_ENV_MAGIC 0x31564E45u /* "ENV1" */
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t clear_color;   /* 0x00BBGGRR */
+    uint32_t fog_enabled;
+    float    fog_near, fog_far;
+    uint32_t fog_color;     /* 0x00BBGGRR */
+    float    far_plane;     /* projection far plane, metres (0 = default 200) */
+    float    near_plane;    /* metres (0 = the runtime's default); the 16-bit
+                             * depth buffer's precision scales with it */
+    float    reserved[2];
+} PbmEnv;                   /* 40 bytes */
 
 /* Runtime per-particle constants. These are CONSTANT for the whole life of the
  * map, so they are derived once at load (from the emitter's seed and the

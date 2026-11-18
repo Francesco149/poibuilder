@@ -12,14 +12,12 @@ typedef struct {
     int   display_mode;    /* 0 textured+baked, 1 vertex colour only, 2 wireframe */
     int   use_textures;    /* 0 binds no textures (vertex colour only) */
     int   depth_test;
-    int   depth_write;     /* write depth in the opaque pass. Off (the shipped
-                            * default) means depth TESTING only: the buffer is
-                            * cleared and never written, so nothing is ever
-                            * rejected and DRAW ORDER decides occlusion -- which
-                            * is what the exporter's mesh order and the separate
-                            * alpha pass are arranged around, and what keeps the
-                            * coplanar floor layers from z-fighting. On buys
-                            * early-Z rejection at the cost of exposing that. */
+    int   depth_write;     /* 1 [default] = the opaque pass writes depth, so
+                            * opaque surfaces occlude each other and the alpha
+                            * pass is tested against them; 0 = tested only, and
+                            * draw order decides occlusion. (Until v0.9.188 the
+                            * GE call passed this knob with inverted polarity:
+                            * the shipped 0 wrote depth.) */
     int   cull;
     int   clip_planes;     /* GE near/far clip planes vs guardband-only */
     int   alpha_pass;      /* the billboard/foliage alpha+blend pass */
@@ -50,6 +48,13 @@ typedef struct {
     float fog_near;
     float fog_far;
     uint32_t fog_color;
+    int   mesh_cull;       /* 1 [default] = skip meshes whose bounding sphere is
+                            * outside the view frustum (near, far, 4 sides) */
+    int   morph;           /* 1 [default] = GE vertex morphing on morphing meshes
+                            * ("mesh_fx"); 0 = draw their rest pose only, which
+                            * is what the profiler's *_nomorph rows price */
+    float far_plane;       /* projection far plane (m); 200 unless the map's
+                            * "env" lump says otherwise */
 } RenderCfg;
 
 /* tex_filter values. Note sceGuTexFilter(min, mag): the first argument is the
@@ -85,6 +90,11 @@ const PbEnvDef* pb_env_get(int preset_id);
 const PbEnvDef* pb_env_find(const char* name);
 void render_cfg_set_env(RenderCfg* cfg, const char* name);
 void render_cfg_default(RenderCfg* cfg);
+
+/* Applies the map's own "env" lump (sky colour, fog, far plane) on top of the
+ * preset, when the map carries one. Called after the preset is chosen, so a
+ * map with its own sky keeps it under every preset. */
+void render_cfg_apply_map_env(RenderCfg* cfg, const PbmMap* map);
 
 /* Applies overrides from host0:/poi_render.txt (or ms0:) if the file exists.
  * Lets filter/mip settings be re-tested without rebuilding the binary. */

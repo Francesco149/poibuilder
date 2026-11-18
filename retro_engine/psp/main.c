@@ -183,6 +183,57 @@ static int wait_any_button(int ms) {
     }
 }
 
+/* ── Attract mode: fly the map's camera path ("camera_path" lump) ─────────
+ * Each pose holds `hold` seconds, then the camera travels to the next pose
+ * over `travel` seconds on a Catmull-Rom spline through the neighbouring poses
+ * (eased, so it settles into each hold), looping forever. Stateless in the
+ * tour clock, like everything else that animates in this engine. */
+static float tour_wrap_angle(float a) {
+    while (a > 3.14159265f) a -= 6.28318531f;
+    while (a < -3.14159265f) a += 6.28318531f;
+    return a;
+}
+
+static float tour_cr(float p0, float p1, float p2, float p3, float t) {
+    float t2 = t * t, t3 = t2 * t;
+    return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+                   (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+}
+
+static void tour_eval(const PbmMap* map, float t, float* x, float* y, float* z,
+                      float* yaw, float* pitch) {
+    int n = (int)map->num_camera_poses;
+    float cycle = 0.0f;
+    for (int i = 0; i < n; ++i) cycle += map->camera_poses[i].hold + map->camera_poses[i].travel;
+    if (!(cycle > 0.0f)) cycle = 1.0f;
+    t -= floorf(t / cycle) * cycle;
+    int i = 0;
+    float f = 0.0f;
+    for (i = 0; i < n; ++i) {
+        const PbmCameraPose* c = &map->camera_poses[i];
+        if (t < c->hold) { f = 0.0f; break; }
+        t -= c->hold;
+        if (t < c->travel) { f = t / c->travel; break; }
+        t -= c->travel;
+    }
+    if (i >= n) { i = n - 1; f = 1.0f; }
+    f = f * f * (3.0f - 2.0f * f);
+    const PbmCameraPose* p0 = &map->camera_poses[(i + n - 1) % n];
+    const PbmCameraPose* p1 = &map->camera_poses[i];
+    const PbmCameraPose* p2 = &map->camera_poses[(i + 1) % n];
+    const PbmCameraPose* p3 = &map->camera_poses[(i + 2) % n];
+    *x = tour_cr(p0->pos[0], p1->pos[0], p2->pos[0], p3->pos[0], f);
+    *y = tour_cr(p0->pos[1], p1->pos[1], p2->pos[1], p3->pos[1], f);
+    *z = tour_cr(p0->pos[2], p1->pos[2], p2->pos[2], p3->pos[2], f);
+    /* Angles unwrapped around p1 so the spline never spins the long way. */
+    float y1 = p1->yaw;
+    float y0 = y1 + tour_wrap_angle(p0->yaw - y1);
+    float y2 = y1 + tour_wrap_angle(p2->yaw - y1);
+    float y3 = y2 + tour_wrap_angle(p3->yaw - y2);
+    *yaw = tour_cr(y0, y1, y2, y3, f);
+    *pitch = tour_cr(p0->pitch, p1->pitch, p2->pitch, p3->pitch, f);
+}
+
 int main(int argc, char** argv) {
     setup_callbacks();
 
@@ -381,6 +432,7 @@ int main(int argc, char** argv) {
     } else if (map->env_preset[0] != '\0') {
         render_cfg_set_env(&cfg, map->env_preset);
     }
+    if (!preset_arg) render_cfg_apply_map_env(&cfg, map);   /* the map's own sky/fog */
     psp_render_overrides(&cfg);   /* host0:/poi_render.txt, if present */
     RenderStats stats = { 0, 0, 0 };
 
@@ -431,6 +483,12 @@ int main(int argc, char** argv) {
     int hud_compact = 0;      /* Select toggles: frame rate + profiler only */
     uint32_t prev_buttons = 0;
     hud_input[0] = '\0';
+    /* Attract mode (see tour_eval): starts after ATTRACT_IDLE_S without input
+     * on a map that carries a camera path, or at once with Select+R. */
+    #define ATTRACT_IDLE_S 12.0f
+    int tour_active = 0;
+    float tour_time = 0.0f;
+    float idle_time = 0.0f;
 
     printf("[PSP] Entering render loop (benchmark=%d)\n", is_benchmark);
 
@@ -467,7 +525,39 @@ int main(int argc, char** argv) {
             sceKernelDelayThread(300000);
         }
 
-        if (!is_benchmark) {
+        if (!is_benchmark && map->num_camera_poses >= 2) {
+            uint32_t btn = pad.Buttons & ~(uint32_t)PSP_CTRL_HOLD;
+            int stick = abs((int)pad.Lx - 128) > 40 || abs((int)pad.Ly - 128) > 40;
+            /* Select alone only toggles the HUD, which must not end a tour
+             * someone is recording. */
+            int any = ((btn & ~(uint32_t)PSP_CTRL_SELECT) != 0) || (stick && !pad_hold);
+            int toggle = (btn & PSP_CTRL_SELECT) && (btn & PSP_CTRL_RTRIGGER) &&
+                         !((prev_buttons & PSP_CTRL_SELECT) && (prev_buttons & PSP_CTRL_RTRIGGER));
+            if (toggle) {
+                tour_active = !tour_active;
+                idle_time = 0.0f;
+                prev_buttons = pad.Buttons;
+            } else if (any) {
+                if (tour_active) {
+                    tour_active = 0;
+                }
+                idle_time = 0.0f;
+            } else {
+                idle_time += dt;
+                if (!tour_active && idle_time > ATTRACT_IDLE_S) { tour_active = 1; tour_time = 0.0f; }
+            }
+            if (tour_active) {
+                tour_time += dt;
+                tour_eval(map, tour_time, &cam_x, &cam_y, &cam_z, &cam_yaw, &cam_pitch);
+            }
+        }
+        if (!is_benchmark && tour_active) {
+            /* the tour owns the camera this frame; Select still hides the HUD */
+            uint32_t pressed = pad.Buttons & ~prev_buttons;
+            if ((pressed & PSP_CTRL_SELECT) && !(pad.Buttons & PSP_CTRL_RTRIGGER))
+                hud_compact = !hud_compact;
+            prev_buttons = pad.Buttons;
+        } else if (!is_benchmark) {
             if (pad.Buttons & PSP_CTRL_START) {
                 cam_x = home_x; cam_y = home_y; cam_z = home_z;
                 cam_yaw = home_yaw; cam_pitch = 0.05f;

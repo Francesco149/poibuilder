@@ -504,12 +504,46 @@ static void add_scene_test(ProfTest* t, int* n, const char* name, const char* ca
     x->hud = 1;
 }
 
+/* A map that carries its own camera path ("camera_path" lump) is priced at
+ * ITS views, not the courtyard's: one row per pose, plus the ablations that
+ * attribute the frame to the features a modern map leans on (GE morphing,
+ * emitters, the whole alpha pass). The synthetic calibration probes follow
+ * unchanged, so the numbers stay comparable with every older report. */
+#define POSE_ROWS 5
+static char s_pose_names[PBM_CAMPATH_MAX * POSE_ROWS][32];
+
+static int build_map_pose_tests(PbmMap* map, ProfTest* t, ProfCfg* pc, const RenderCfg* base) {
+    int n = 0;
+    static const char* suffix[POSE_ROWS] = { "", "_nomorph", "_noemit", "_noalpha", "_nocull" };
+    for (int row = 0; row < POSE_ROWS; ++row) {
+        for (uint32_t i = 0; i < map->num_camera_poses && n < MAX_TESTS - 24; ++i) {
+            const PbmCameraPose* c = &map->camera_poses[i];
+            char* name = s_pose_names[row * PBM_CAMPATH_MAX + i];
+            snprintf(name, 32, "%s%s", c->name, suffix[row]);
+            ProfTest* x = new_test(t, &n, name, TK_SCENE, pc, base);
+            x->cfg.near_plane = base->near_plane;   /* the map's env may set it */
+            x->cam[0] = c->pos[0]; x->cam[1] = c->pos[1]; x->cam[2] = c->pos[2];
+            x->yaw = c->yaw; x->pitch = c->pitch;
+            x->hud = 1;
+            if (row == 1) x->cfg.morph = 0;
+            if (row == 2) x->cfg.particles = 0;
+            if (row == 3) x->cfg.alpha_pass = 0;
+            if (row == 4) x->cfg.mesh_cull = 0;
+        }
+    }
+    return n;
+}
+
 static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
-    (void)map;
     int n = 0;
     RenderCfg base;
     render_cfg_default(&base);
     base.near_plane = pc->near_plane;
+    render_cfg_apply_map_env(&base, map);
+    if (map->num_camera_poses > 0) {
+        n = build_map_pose_tests(map, t, pc, &base);
+        goto synthetic;
+    }
 
     /* --- the reported views, plus the rest of the map ---------------- */
     add_scene_test(t, &n, "scene_spawn", "spawn", pc, &base);
@@ -704,19 +738,20 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     add_scene_test(t, &n, "fg_nomips", "floorgraz", pc, &base);
     t[n - 1].cfg.use_mips = 0;
 
-    /* Depth WRITES in the opaque pass (off = the shipped behaviour: depth is
-     * tested but never written, so nothing is rejected and draw order decides
-     * occlusion). On should buy early-Z rejection in the alpha pass; the rows
-     * exist to price it and to check it against the coplanar floor layers,
-     * which the current arrangement hides. */
-    add_scene_test(t, &n, "dw_arch_on", "arch", pc, &base);
-    t[n - 1].cfg.depth_write = 1;
-    add_scene_test(t, &n, "dw_wf_on", "waterfall", pc, &base);
-    t[n - 1].cfg.depth_write = 1;
-    add_scene_test(t, &n, "dw_floor_on", "floorgraz", pc, &base);
-    t[n - 1].cfg.depth_write = 1;
-    add_scene_test(t, &n, "dw_spawn_on", "spawn", pc, &base);
-    t[n - 1].cfg.depth_write = 1;
+    /* Depth WRITES in the opaque pass, OFF. The shipped renderer has always
+     * written depth (the GE's sceGuDepthMask polarity is the reverse of GL's:
+     * GU_FALSE = writes ON, and the scene passes passed GU_FALSE). These rows
+     * were labelled *_on while they actually measured writes OFF, which is
+     * why "enabling writes is free" read as a free experiment: it was the
+     * baseline. Kept as the regression guard for the knob. */
+    add_scene_test(t, &n, "dw_arch_off", "arch", pc, &base);
+    t[n - 1].cfg.depth_write = 0;
+    add_scene_test(t, &n, "dw_wf_off", "waterfall", pc, &base);
+    t[n - 1].cfg.depth_write = 0;
+    add_scene_test(t, &n, "dw_floor_off", "floorgraz", pc, &base);
+    t[n - 1].cfg.depth_write = 0;
+    add_scene_test(t, &n, "dw_spawn_off", "spawn", pc, &base);
+    t[n - 1].cfg.depth_write = 0;
 
     /* What the LOD policy is worth. The shipped bias is -1.0 ("trades a little
      * softness back for detail"), which at the waterfall foot samples a level
@@ -762,6 +797,7 @@ static int build_tests(PbmMap* map, ProfTest* t, ProfCfg* pc) {
     t[n - 1].cfg.tex_filter = PBFILT_MIP_LIN; t[n - 1].cfg.tex_lod_bias = 0.0f;
 
     /* --- synthetic probes ------------------------------------------- */
+synthetic:;
     ProfTest* x;
     x = new_test(t, &n, "clear_only", TK_CLEAR, pc, &base);
 
@@ -881,15 +917,24 @@ void psp_prof_suite(PbmMap* map) {
     if (pc.sweep) {
         if (f) fprintf(f, "\n--- camera sweep (baseline cfg) ---\n");
         ProfTest sw;
-        for (int i = 0; i < NUM_CAMS; ++i) {
+        int map_poses = (int)map->num_camera_poses;
+        int sweep_n = map_poses > 0 ? map_poses : NUM_CAMS;
+        for (int i = 0; i < sweep_n; ++i) {
             memset(&sw, 0, sizeof(sw));
             sw.kind = TK_SCENE;
             sw.cfg = tests[0].cfg;
             sw.hud = 1;
             sw.frames = (pc.frames > 24) ? 24 : pc.frames;
-            sw.name = k_cams[i].name;
-            sw.cam[0] = k_cams[i].x; sw.cam[1] = k_cams[i].y; sw.cam[2] = k_cams[i].z;
-            sw.yaw = k_cams[i].yaw; sw.pitch = k_cams[i].pitch;
+            if (map_poses > 0) {
+                const PbmCameraPose* c = &map->camera_poses[i];
+                sw.name = c->name;
+                sw.cam[0] = c->pos[0]; sw.cam[1] = c->pos[1]; sw.cam[2] = c->pos[2];
+                sw.yaw = c->yaw; sw.pitch = c->pitch;
+            } else {
+                sw.name = k_cams[i].name;
+                sw.cam[0] = k_cams[i].x; sw.cam[1] = k_cams[i].y; sw.cam[2] = k_cams[i].z;
+                sw.yaw = k_cams[i].yaw; sw.pitch = k_cams[i].pitch;
+            }
             ProfResult r;
             run_test(map, &sw, &pc, &r);
             if (f)

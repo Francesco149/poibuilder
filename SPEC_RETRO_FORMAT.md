@@ -298,6 +298,10 @@ The Metadata Chunk contains `header.num_metadata` entries. This chunk allows emb
 | `PBM_META_STRING` | `1` | UTF-8 / ASCII null-terminated text string. |
 | `PBM_META_JSON` | `2` | Plain UTF-8 JSON object string for flexible high-level scripting. |
 | `PBM_META_ENTITY` | `3` | Binary structured entity record list (see Section 8). |
+| `PBM_META_EMITTER` | `4` | The standard `emitters` lump (§8). |
+| `PBM_META_MESH_FX` | `5` | The standard `mesh_fx` lump (§12). |
+| `PBM_META_CAMERA_PATH` | `6` | The standard `camera_path` lump (§13). |
+| `PBM_META_ENV` | `7` | The standard `env` lump (§14). |
 
 Following each `PbmMetadataHeader`, exactly `data_size` bytes of binary data are stored. If `data_size` is not a multiple of 4, the writer MUST pad with `0x00` bytes to maintain 4-byte alignment for subsequent headers.
 
@@ -313,6 +317,9 @@ reference exporter on every export and read by the reference demo engine:
 | `map_name` | `PBM_META_STRING` | Human-readable map title (NUL-terminated UTF-8). Defaults to the export file's base name. |
 | `env_preset` | `PBM_META_STRING` | Environment preset name (`dawn` / `day` / `dusk` / `night`), stamped from the editor's Time of Day menu; the demo engine rebuilds its sky/fog/ambient from it. |
 | `emitters` | — | The standard particle-emitter lump, normative in §8. |
+| `mesh_fx` | `PBM_META_MESH_FX` | Per-mesh runtime animation (GE vertex morphing, mesh flipbooks, additive / no-fog meshes), §12. Only when a mesh carries `poi_fx`. |
+| `camera_path` | `PBM_META_CAMERA_PATH` | The author's viewpoints (profiler sweep, attract-mode flythrough), §13. Only when a node carries `poi_camera_pose`. |
+| `env` | `PBM_META_ENV` | The map's own sky colour, fog and clip planes, §14. Only when the root carries `poi_env`. |
 
 ---
 
@@ -413,7 +420,7 @@ vertices". Particles may be large, but not many.
 | `0x9E` | `uint8` | `anim_loops` | Whole animation loops per particle lifetime (≥ 1) |
 | `0x9F` | `uint8` | `reserved0` | MUST be 0 |
 | `0xA0` | `uint32` | `seed` | Per-emitter random seed |
-| `0xA4` | `float[3]` | `reserved` | MUST be 0 (minor extensions only) |
+| `0xA4` | `float[3]` | `reserved` | 0, or the spawn box half extents (world metres) with `PBM_EMIT_SPAWN_BOX` |
 
 #### Flags
 
@@ -423,6 +430,8 @@ vertices". Particles may be large, but not many.
 | `PBM_EMIT_Y_LOCKED` | `2` | Cylinder billboard: the quad's up axis stays world up |
 | `PBM_EMIT_VEL_ALIGN` | `4` | The quad's up axis follows the particle's own velocity (overrides `Y_LOCKED`) |
 | `PBM_EMIT_PHASE_ALIGN` | `8` | Every particle shares phase 0: a burst repeating once per lifetime, instead of a continuous stream |
+| `PBM_EMIT_SPAWN_BOX` | `16` | Spawn uniformly inside the axis-aligned box `±reserved[0..2]` around `pos` instead of the `spawn_radius` ball (channels 9/10/11 of `pbm_rand` give x/y/z). Godot: `EMISSION_SHAPE_BOX`. A spray line along a wave crest, glitter over a band of sea |
+| `PBM_EMIT_BURST_PHASE` | `32` | With `PHASE_ALIGN`: every particle's phase is `reserved0 / 256` (byte `0x9F`) instead of 0, so the burst fires at `t ≡ (1 − reserved0/256) · life`. Staggers bursts that share a period. Godot: node meta `poi_burst_phase` (0..1). Without the flag `reserved0` MUST be 0 |
 
 ### 8.3 Particle derivation (normative)
 
@@ -1100,7 +1109,127 @@ for the additive half.
 
 ---
 
-## 12. Compliance Verification
+## 12. Standard Lump: Mesh Effects (`tag = "mesh_fx"`)
+
+Per-mesh runtime animation that costs the CPU a few register writes per mesh
+per frame and **nothing per vertex**. A compatible addition within v3 (a loader
+that does not know the tag draws the meshes static). Authored with
+`PBRetroFx` (`project/addons/poibuilder/export/pb_retro_fx.gd`): node or
+material metadata `poi_fx`.
+
+### 12.1 What a record can do
+
+| feature | runtime | cost |
+|---|---|---|
+| **MORPH** | the GE's own vertex morphing: the mesh carries N ≤ 8 full vertex sets ("targets"), the GE fetches all of them and blends position, colour and UV with its 8 morph-weight registers before transform (`GU_VERTICES(N)`, `sceGuMorphWeight`) | N× the vertex fetch of that mesh; CPU: one `sinf` per target |
+| **FLIPBOOK** | the mesh samples `frame_tex[(int)(t·fps) mod num_frames]` | one texture bind (the same a material switch costs) |
+| **ADDITIVE** | drawn in the alpha pass with `GU_ADD, SRC_ALPHA·ONE`, no depth write | order-independent, like additive emitters |
+| **NO_FOG** | drawn with fog disabled (a sky dome, a sun disc, an additive glow — fog would add the fog colour) | none |
+| **DECAL** | depth-biased toward the camera by `reserved0` depth-buffer units (0 = 48) for this draw: an overlay lying on another surface (a sun path on the sea, a blob shadow on sand, surf foam on a beach) wins the 16-bit depth test at any distance. The PSP has no polygon offset; the runtime biases the projection's z row by `ε·w` (`ε = 2·units / 65535`) | two matrix uploads |
+
+### 12.2 Morph weight models (normative)
+
+`t` is scene time in seconds.
+
+* **KEYFRAME** — the targets are poses on a loop of `period` seconds.
+  `u = frac((t + phase) / period)`; pose `i` sits at `key_t[i]` (strictly
+  ascending, `key_t[0] = 0`, all `< 1`). With `k` the last pose at or before
+  `u`, `f = (u − key_t[k]) / (key_t[k+1] − key_t[k])` (the segment after the
+  last pose runs to `1.0` and wraps to pose 0), smoothstepped when `ease = 1`;
+  `w[k] = 1 − f`, `w[(k+1) mod N] = f`, every other weight 0.
+* **HARMONIC** — target 0 is the rest pose; every other target `i` is rest + a
+  displacement `D_i`, weighted `w[i] = sin(2π·frac(t / key_t[i]) + key_phase[i])`
+  (`key_t[i]` is that target's period in seconds), and `w[0] = 1 − Σ w[i]`.
+  Weights are signed. Two targets with the same period 90° apart form a
+  quadrature pair and reproduce a **travelling** wave exactly
+  (`cos(kx − ωt) = cos kx·cos ωt + sin kx·sin ωt`): a Gerstner swell is 3
+  targets, two swells 5.
+
+* **CYCLIC** (what the reference exporter writes for harmonic motion) — the
+  convex form of HARMONIC. Target 0 (the rest pose) has weight 0; targets
+  `1…N−1` come in triplets, triplet `j` = targets `1+3j … 3+3j` sharing period
+  `key_t[1+3j]` and phase `key_phase[1+3j]`:
+  `w[1+3j+k] = (1 + cos(2π·frac(t / P_j) + ph_j − 2πk/3)) / (3J)`, `J = (N−1)/3`.
+  Every weight is ≥ 0 and they sum to 1. A rotating displacement
+  `A cos θ + B sin θ` is the triplet `P_k = rest + 2J(A cos φ_k + B sin φ_k)`,
+  `φ_k = 2πk/3` — exact, with two periods in 7 sets. HARMONIC's rest weight
+  swings to −3…+5 with two swells, which the GE's 24-bit weights turn into
+  position error around large world coordinates; CYCLIC never extrapolates.
+
+A runtime that cannot morph MUST still draw the mesh (its own vertex array is
+target 0, a valid static pose).
+
+### 12.3 Layout (normative, little-endian)
+
+Payload = `PbmMeshFxLumpHeader` (16 bytes: `magic = "MFX1"` (0x3158464D),
+`version = 1`, `count`, `reserved = 0`) followed by `count` records, each a
+124-byte `PbmMeshFx` immediately followed by `morph_bytes` of vertex data.
+
+| offset | type | field | meaning |
+|---|---|---|---|
+| `0x00` | `uint32` | `mesh_index` | index in the mesh table; one record per mesh |
+| `0x04` | `uint16` | `flags` | `1` ADDITIVE, `2` NO_FOG, `4` DECAL |
+| `0x06` | `uint8` | `morph_mode` | 0 none, 1 KEYFRAME, 2 HARMONIC, 3 CYCLIC |
+| `0x07` | `uint8` | `num_targets` | vertex sets including the mesh's own (1 = no morph, ≤ 8) |
+| `0x08` | `float` | `period` | KEYFRAME loop (s) |
+| `0x0C` | `float` | `phase` | KEYFRAME time offset (s) |
+| `0x10` | `float[8]` | `key_t` | KEYFRAME pose times / HARMONIC, CYCLIC per-target periods (s) |
+| `0x30` | `float[8]` | `key_phase` | HARMONIC per-target phase (rad) |
+| `0x50` | `uint8` | `ease` | KEYFRAME: 1 = smoothstep between poses |
+| `0x51` | `uint8` | `num_frames` | flipbook frames (0 = none, ≤ 16) |
+| `0x52` | `uint16` | `reserved0` | DECAL depth bias in depth units (0 = 48); 0 without DECAL |
+| `0x54` | `float` | `fps` | flipbook rate |
+| `0x58` | `int16[16]` | `frame_tex` | flipbook texture ids (unused = −1) |
+| `0x78` | `uint32` | `morph_bytes` | `= (num_targets − 1) · num_vertices · 24` |
+
+The morph data is targets `1 … N−1`, each a complete `PbmVertex` array in the
+mesh's own vertex order. The mesh's header bounds MUST cover every target (the
+runtime frustum-culls by them). A loader builds the GE's interleaved layout
+(vertex `j` of target `i` at `j·N + i`) once, at load, and drops a record whose
+`morph_bytes` does not match its mesh (the mesh then renders static).
+
+### 12.4 Authoring (PBRetroFx descriptors)
+
+The exporter builds each target by applying a descriptor to every vertex in
+the node's local space: `scale`/`pivot`, `rotate`, `offset` (+ `offset_vary`),
+`bend` (by height, or radially from a pivot), `gerstner` (one quadrature half,
+with `fade`/`fade2` amplitude ramps and a crest colour `tint`), `y_min`,
+`alpha`/`alpha_add`, `color`, `uv`/`uv_scale`. `PBRetroFx.gerstner_pair()` and
+`PBRetroFx.sway()` build the common recipes. The full list is the header of
+`pb_retro_fx.gd`; the showcase use of every one is
+`project/test_scenes/seashore_map_builder.gd`.
+
+---
+
+## 13. Standard Lump: Camera Path (`tag = "camera_path"`)
+
+`magic = "CAMS"` (0x534D4143), `version = 1`, `count` (≤ 24), `reserved`, then
+`count` × 44-byte poses: `char name[16]`, `float pos[3]`, `float yaw, pitch`
+(radians; yaw 0 looks down −Z, positive pitch looks up), `float hold`,
+`float travel` (seconds). Authored as any `Node3D` with meta
+`poi_camera_pose = {"hold": s, "travel": s}`, in tree order.
+
+The PSP profiler sweeps these poses instead of its built-in courtyard table
+(and adds `_nomorph`, `_noemit`, `_noalpha`, `_nocull` ablations per pose); the
+app flies them in **attract mode** after 12 s without input (or Select+R): each
+pose held `hold` s, then a Catmull-Rom spline through the neighbouring poses
+over `travel` s, looping.
+
+---
+
+## 14. Standard Lump: Environment (`tag = "env"`)
+
+40 bytes: `magic = "ENV1"` (0x31564E45), `uint32 clear_color` (0x00BBGGRR),
+`uint32 fog_enabled`, `float fog_near, fog_far`, `uint32 fog_color`,
+`float far_plane`, `float near_plane` (0 = runtime defaults: 200 m / 0.08 m),
+`float reserved[2]`. Overrides the `env_preset` time-of-day look. The depth
+buffer is 16-bit, so its resolution at distance `d` is ≈ `d² / (near · 65535)`:
+an open map seen across hundreds of metres buys depth precision with a larger
+near plane (the seashore map uses 0.3 m).
+
+---
+
+## 15. Compliance Verification
 
 A compliant PBM exporter and loader MUST pass the following tests:
 1. `magic == 0x334D4250` and `version == 3`.
@@ -1126,4 +1255,7 @@ A compliant PBM exporter and loader MUST pass the following tests:
 10. The `.pbm` writer's byte layout is locked by
     `project/tests/test_pb_pbm_export.gd` (it builds its own fixture scene and
     walks the file: header, texture table, chunked meshes, colliders, metadata,
-    the emitter lump).
+    the emitter lump) and `project/tests/test_pb_retro_fx.gd` (mesh_fx,
+    camera_path, env, the emitter spawn box and burst phase).
+11. Draw a mesh whose `mesh_fx` record is malformed (or unknown) as a static
+    mesh rather than failing the map.

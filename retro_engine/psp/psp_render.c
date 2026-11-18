@@ -98,17 +98,36 @@ void render_cfg_set_env(RenderCfg* cfg, const char* name) {
     cfg->fog_far = env->fog_far;
     cfg->fog_color = env->fog_color;
 }
+void render_cfg_apply_map_env(RenderCfg* cfg, const PbmMap* map) {
+    if (!map || !map->has_env) return;
+    cfg->clear_color = map->env.clear_color & 0x00FFFFFFu;
+    cfg->fog_enabled = map->env.fog_enabled ? 1 : 0;
+    cfg->fog_near = map->env.fog_near;
+    cfg->fog_far = map->env.fog_far;
+    cfg->fog_color = map->env.fog_color & 0x00FFFFFFu;
+    if (map->env.far_plane > 10.0f && map->env.far_plane < 4000.0f)
+        cfg->far_plane = map->env.far_plane;
+    /* The depth buffer is 16-bit: resolution at distance d is ~d^2 / (near *
+     * 65535), so a map that is seen across hundreds of metres buys its depth
+     * precision with a larger near plane. */
+    if (map->env.near_plane > 0.01f && map->env.near_plane < 5.0f)
+        cfg->near_plane = map->env.near_plane;
+}
+
 void render_cfg_default(RenderCfg* c) {
     c->display_mode = 0;
     c->use_textures = 1;
     c->depth_test = 1;
-    c->depth_write = 0;   /* depth-tested, not depth-written: see psp_render.h */
+    c->depth_write = 1;   /* opaque pass writes depth: what has always shipped */
     c->cull = 1;
     c->clip_planes = 1;
     c->alpha_pass = 1;
     c->entity = 1;
     c->uv_scroll = 1;
     c->particles = 3;
+    c->far_plane = 200.0f;
+    c->morph = 1;
+    c->mesh_cull = 1;
 
     /* Filtering and LOD policy: MEASURED on the device, not tuned by taste.
      *
@@ -400,6 +419,9 @@ void psp_render_overrides(RenderCfg* cfg) {
             else if (!strcmp(v, "asym"))    cfg->tex_filter = PBFILT_ASYM;
             else                            cfg->tex_filter = PBFILT_MIP_LIN;
         } else if (!strcmp(k, "uv_scroll")) cfg->uv_scroll = atoi(v);
+        else if (!strcmp(k, "morph")) cfg->morph = atoi(v);
+        else if (!strcmp(k, "mesh_cull")) cfg->mesh_cull = atoi(v);
+        else if (!strcmp(k, "depth_test")) cfg->depth_test = atoi(v);
         else if (!strcmp(k, "particles")) cfg->particles = atoi(v);
         else if (!strcmp(k, "preset")) render_cfg_set_env(cfg, v);
         else if (!strcmp(k, "bias")) cfg->tex_lod_bias = (float)atof(v);
@@ -446,8 +468,33 @@ static inline int mesh_alpha_mode(PbmMap* map, PbmMesh* mesh) {
     return PBM_ALPHA_NONE;
 }
 
+static inline int mesh_is_additive(const PbmMesh* mesh) {
+    return mesh->fx && (mesh->fx->flags & PBM_MFX_ADDITIVE);
+}
+
 static inline int is_transparent_mesh(PbmMap* map, PbmMesh* mesh) {
-    return mesh_alpha_mode(map, mesh) != PBM_ALPHA_NONE;
+    /* An additive mesh rides the alpha pass whatever its texture says: a glow
+     * painted on black is an opaque texture, and drawn opaque it is a black
+     * card. */
+    return mesh_is_additive(mesh) || mesh_alpha_mode(map, mesh) != PBM_ALPHA_NONE;
+}
+
+/* Scene clock of the frame being emitted (psp_render_scene sets it). */
+static float s_scene_time = 0.0f;
+
+/* The texture a mesh samples THIS frame: its own, or the current frame of its
+ * flipbook. Frames share the base texture's alpha handling by construction
+ * (the exporter registers them from one material). */
+static inline int mesh_tex_id(const PbmMesh* mesh) {
+    const PbmMeshFx* fx = mesh->fx;
+    if (fx && fx->num_frames > 0) {
+        float f = s_scene_time * fx->fps;
+        int frame = (int)(f - floorf(f / (float)fx->num_frames) * (float)fx->num_frames);
+        if (frame < 0) frame = 0;
+        if (frame >= fx->num_frames) frame = fx->num_frames - 1;
+        return fx->frame_tex[frame];
+    }
+    return mesh->texture_id;
 }
 
 static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* last_tex_id) {
@@ -467,9 +514,10 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
         }
         return;
     }
-    if (mesh->texture_id >= 0 && mesh->texture_id < (int)map->header.num_textures) {
-        if (mesh->texture_id != *last_tex_id) {
-            PbmTexture* tex = &map->textures[mesh->texture_id];
+    int tid = mesh_tex_id(mesh);
+    if (tid >= 0 && tid < (int)map->header.num_textures) {
+        if (tid != *last_tex_id) {
+            PbmTexture* tex = &map->textures[tid];
             /* Tile atlases are addressed by absolute slot coordinates: a tile
              * samples right up to its slot edge, so the sampler must clamp at
              * the atlas border or it wraps to the opposite side. The tiling base
@@ -497,7 +545,7 @@ static void bind_texture(PbmMap* map, const RenderCfg* cfg, PbmMesh* mesh, int* 
                     sceGuTexImage(0, tex->width, tex->height, tex->width, tex->pixels);
                 }
             }
-            *last_tex_id = mesh->texture_id;
+            *last_tex_id = tid;
         }
     } else {
         sceGuDisable(GU_TEXTURE_2D);
@@ -1378,10 +1426,137 @@ static void set_texture_filter(const RenderCfg* cfg) {
     }
 }
 
+/* ── Mesh effects: GE vertex morphing ──────────────────────────────────────
+ * The weights are closed-form in the scene clock (see PbmMeshFx in pbm.h), so
+ * a morphing mesh costs the CPU one sinf per target and N register writes; the
+ * GE does the blending while it fetches the N interleaved vertex sets. */
+static int s_morph_dirty = 1;
+
+static void mesh_morph_weights(const PbmMeshFx* fx, float t, float* w) {
+    int n = fx->num_targets;
+    for (int i = 0; i < n; ++i) w[i] = 0.0f;
+    if (fx->morph_mode == PBM_MORPH_KEYFRAME) {
+        float u = (t + fx->phase) / fx->period;
+        u -= floorf(u);
+        int k = n - 1;
+        for (int i = 0; i < n - 1; ++i)
+            if (u < fx->key_t[i + 1]) { k = i; break; }
+        float t0 = fx->key_t[k];
+        float t1 = (k + 1 < n) ? fx->key_t[k + 1] : 1.0f;
+        float f = (t1 > t0) ? (u - t0) / (t1 - t0) : 0.0f;
+        if (f < 0.0f) f = 0.0f; else if (f > 1.0f) f = 1.0f;
+        if (fx->ease) f = f * f * (3.0f - 2.0f * f);
+        w[k] = 1.0f - f;
+        w[(k + 1) % n] += f;
+    } else if (fx->morph_mode == PBM_MORPH_CYCLIC) {
+        int groups = (n - 1) / 3;
+        float inv = 1.0f / (3.0f * (float)groups);
+        for (int j = 0; j < groups; ++j) {
+            float ph = t / fx->key_t[1 + 3 * j];
+            ph -= floorf(ph);
+            float th = 6.28318530718f * ph + fx->key_phase[1 + 3 * j];
+            w[1 + 3 * j]     = (1.0f + cosf(th)) * inv;
+            w[1 + 3 * j + 1] = (1.0f + cosf(th - 2.09439510239f)) * inv;
+            w[1 + 3 * j + 2] = (1.0f + cosf(th - 4.18879020479f)) * inv;
+        }
+    } else {
+        float sum = 0.0f;
+        for (int i = 1; i < n; ++i) {
+            /* Wrap the phase before the sine: t grows without bound and a
+             * float loses the fraction after a few hours. */
+            float ph = t / fx->key_t[i];
+            ph -= floorf(ph);
+            w[i] = sinf(6.28318530718f * ph + fx->key_phase[i]);
+            sum += w[i];
+        }
+        w[0] = 1.0f - sum;
+    }
+}
+
+/* Sphere-vs-frustum, the same conservative test the emitters use (near, far
+ * and the four side planes, no matrix work). The scene used to submit every
+ * mesh every frame: harmless in a courtyard where everything is in view, a
+ * pure loss on an open map where half the chunks are behind the camera —
+ * each one still pays its vertex fetch, transform and clip in the GE. */
+static inline int mesh_outside_view(const PbmMesh* m, const EmitView* vw, float near_plane,
+                                    float far_plane) {
+    float rad = m->cull_radius;
+    if (rad < 0.0f) return 0;
+    float dx = m->cull_center[0] - vw->ex, dy = m->cull_center[1] - vw->ey,
+          dz = m->cull_center[2] - vw->ez;
+    float vz = dx * vw->fx + dy * vw->fy + dz * vw->fz;
+    if (vz + rad < near_plane) return 1;
+    if (vz - rad > far_plane) return 1;
+    float reach = vz + rad;
+    if (reach < 0.05f) reach = 0.05f;
+    float vx = dx * vw->rx + dy * vw->ry + dz * vw->rz;
+    if (fabsf(vx) - rad > reach * PBM_EMIT_TAN_HALF * (16.0f / 9.0f)) return 1;
+    float vy = dx * vw->ux + dy * vw->uy + dz * vw->uz;
+    if (fabsf(vy) - rad > reach * PBM_EMIT_TAN_HALF) return 1;
+    return 0;
+}
+
+#define PSP_MESH_VTYPE (GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D)
+
+/* DECAL depth bias: clip.z -= eps * clip.w for this draw, i.e. every column
+ * of the (column-major) projection gets z -= eps * w. With the depth range
+ * mapped 0..65535 over NDC -1..1, eps = 2 * units / 65535. */
+static void push_decal_bias(unsigned int units) {
+    if (units == 0) units = 48;
+    float eps = 2.0f * (float)units / 65535.0f;
+    ScePspFMatrix4 m;
+    sceGumMatrixMode(GU_PROJECTION);
+    sceGumPushMatrix();
+    sceGumStoreMatrix(&m);
+    m.x.z -= eps * m.x.w;
+    m.y.z -= eps * m.y.w;
+    m.z.z -= eps * m.z.w;
+    m.w.z -= eps * m.w.w;
+    sceGumLoadMatrix(&m);
+    sceGumUpdateMatrix();
+    sceGumMatrixMode(GU_MODEL);
+}
+
+static void pop_decal_bias(void) {
+    sceGumMatrixMode(GU_PROJECTION);
+    sceGumPopMatrix();
+    sceGumUpdateMatrix();
+    sceGumMatrixMode(GU_MODEL);
+}
+
+static void draw_mesh_geometry(const RenderCfg* cfg, const PbmMesh* mesh, int prim) {
+    const PbmMeshFx* fx = mesh->fx;
+    int no_fog = fx && (fx->flags & PBM_MFX_NO_FOG) && cfg->fog_enabled;
+    int decal = fx && (fx->flags & PBM_MFX_DECAL);
+    if (decal) push_decal_bias(fx->reserved0);
+    if (no_fog) sceGuDisable(GU_FOG);
+    if (mesh->morph_vertices && cfg->morph) {
+        float w[PBM_MESHFX_MAX_TARGETS];
+        int n = fx->num_targets;
+        mesh_morph_weights(fx, s_scene_time, w);
+        for (int i = 0; i < n; ++i) sceGuMorphWeight(i, w[i]);
+        sceGuDrawArray(prim, PSP_MESH_VTYPE | GU_VERTICES(n),
+                       mesh->num_vertices, 0, mesh->morph_vertices);
+        s_morph_dirty = 1;
+    } else {
+        /* A single-vertex-set draw must not inherit a morph mesh's weight 0. */
+        if (s_morph_dirty) { sceGuMorphWeight(0, 1.0f); s_morph_dirty = 0; }
+        sceGuDrawArray(prim, PSP_MESH_VTYPE, mesh->num_vertices, 0, mesh->vertices);
+    }
+    if (no_fog) sceGuEnable(GU_FOG);
+    if (decal) pop_decal_bias();
+}
+
+static void reset_morph_state(void) {
+    if (s_morph_dirty) { sceGuMorphWeight(0, 1.0f); s_morph_dirty = 0; }
+}
+
 void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
                       float cx, float cy, float cz, float yaw, float pitch,
                       float time_s, RenderStats* stats) {
     if (stats) { stats->draw_calls = 0; stats->vertices = 0; stats->triangles = 0; stats->particles = 0; }
+    s_scene_time = time_s;
+    s_morph_dirty = 1;   /* GE registers survive the previous frame's list */
 
 #ifdef HEADLESS_BENCHMARK
     for (unsigned int i = PSP_DLIST_WORDS; i < PSP_DLIST_AREA_WORDS; ++i)
@@ -1403,11 +1578,13 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     if (cfg->depth_test) {
         sceGuEnable(GU_DEPTH_TEST);
         sceGuDepthFunc(GU_LEQUAL);
-        /* Pass 1 may WRITE depth (cfg->depth_write) so later passes can reject
-         * against it; off is the shipped default -- see the field's comment in
-         * psp_render.h and the depth section of OPTIMIZATION.md. Pass 2 forces
-         * the mask off again below, because blended surfaces never write. */
-        sceGuDepthMask(cfg->depth_write ? GU_TRUE : GU_FALSE);
+        /* Pass 1 writes depth (cfg->depth_write, on by default) so the opaque
+         * surfaces occlude each other and the alpha pass tests against them.
+         * NOTE the GE's polarity: sceGuDepthMask(GU_TRUE) DISABLES writes, the
+         * reverse of glDepthMask. This line used to pass the knob straight
+         * through, so the shipped default (0) wrote depth and depth_write=1
+         * turned writes off — the docs described the opposite. */
+        sceGuDepthMask(cfg->depth_write ? GU_FALSE : GU_TRUE);
     } else {
         sceGuDisable(GU_DEPTH_TEST);
     }
@@ -1416,7 +1593,8 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     /* Matrices */
     sceGumMatrixMode(GU_PROJECTION);
     sceGumLoadIdentity();
-    sceGumPerspective(65.0f, 16.0f / 9.0f, cfg->near_plane, 200.0f);
+    sceGumPerspective(65.0f, 16.0f / 9.0f, cfg->near_plane,
+                      cfg->far_plane > 10.0f ? cfg->far_plane : 200.0f);
 
     sceGumMatrixMode(GU_VIEW);
     sceGumLoadIdentity();
@@ -1432,6 +1610,25 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
     sceGumMatrixMode(GU_MODEL);
     sceGumLoadIdentity();
     sceGumUpdateMatrix();
+
+    /* Camera basis, shared by the mesh cull and the emitters. */
+    EmitView vw;
+    vw.ex = cx; vw.ey = cy; vw.ez = cz;
+    vw.fx = sinf(yaw) * cosf(pitch);
+    vw.fy = sinf(pitch);
+    vw.fz = -cosf(yaw) * cosf(pitch);
+    {
+        /* right = normalize(cross(forward, world_up)) */
+        float rx = -vw.fz, rz = vw.fx;
+        float rl = sqrtf(rx * rx + rz * rz);
+        if (rl < 0.0001f) { rx = 1.0f; rz = 0.0f; rl = 1.0f; }
+        vw.rx = rx / rl; vw.ry = 0.0f; vw.rz = rz / rl;
+        /* up = cross(right, forward) */
+        vw.ux = -vw.rz * vw.fy;
+        vw.uy = vw.rz * vw.fx - vw.rx * vw.fz;
+        vw.uz = vw.rx * vw.fy;
+    }
+    const float cull_far = cfg->far_plane > 10.0f ? cfg->far_plane : 200.0f;
 
     set_texture_filter(cfg);
     sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
@@ -1457,6 +1654,7 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
         if (!mesh->vertices || mesh->num_vertices == 0) continue;
         if (is_transparent_mesh(map, mesh)) continue;
         if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
+        if (cfg->mesh_cull && mesh_outside_view(mesh, &vw, cfg->near_plane, cull_far)) continue;
 #ifdef HEADLESS_BENCHMARK
         if (psp_dlist_skip_mask & 1) continue;
 #endif
@@ -1468,12 +1666,11 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
             if (cfg->cull) sceGuEnable(GU_CULL_FACE); else sceGuDisable(GU_CULL_FACE);
         }
         int prim = (cfg->display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
-        sceGuDrawArray(prim,
-            GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-            mesh->num_vertices, 0, mesh->vertices);
+        draw_mesh_geometry(cfg, mesh, prim);
         verts += mesh->num_vertices;
         calls++;
     }
+    reset_morph_state();
 
     /* ── Scripted entity ── */
     float ent_x = 0.0f, ent_y = 0.0f, ent_z = 0.0f;
@@ -1511,11 +1708,18 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
 #endif
         {
         sceGuEnable(GU_ALPHA_TEST);
-        sceGuDepthMask(GU_FALSE);   /* blended/cutout fragments never write depth */
+        /* Cutout and blended meshes WRITE depth (GU_FALSE = writes on): that is
+         * the behaviour every shipped map was tuned under — a water surface
+         * hides the spray quads behind it. Additive meshes are the exception
+         * (switched per mesh below): a glow must never occlude. */
+        sceGuDepthMask(GU_FALSE);
+        int cur_depth_mask = GU_FALSE;
         int cur_alpha_ref = 0x10;
         sceGuAlphaFunc(GU_GREATER, cur_alpha_ref, 0xFF);
         sceGuEnable(GU_BLEND);
         sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+        int cur_additive = 0;
+        int cur_blend = 1;
         sceGuDisable(GU_CULL_FACE);
 
         for (uint32_t mi = 0; mi < map->header.num_meshes; ++mi) {
@@ -1523,22 +1727,48 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
             if (!mesh->vertices || mesh->num_vertices == 0) continue;
             if (!is_transparent_mesh(map, mesh)) continue;
             if (s_skip_mesh[0] && strstr(mesh->name, s_skip_mesh)) continue;
+            if (cfg->mesh_cull && mesh_outside_view(mesh, &vw, cfg->near_plane, cull_far)) continue;
 
-            int want_ref = (mesh_alpha_mode(map, mesh) == PBM_ALPHA_CUTOUT) ? 0x10 : 0x00;
+            /* A CUTOUT is drawn as a cutout: alpha-tested at half coverage with
+             * blending OFF. It used to blend with a 0x10 threshold, so the
+             * bilinear-filtered edge texels (partial alpha) mixed with whatever
+             * the framebuffer held at that moment and then wrote depth — a
+             * palm card drawn before the jungle card behind it kept a sky-
+             * coloured fringe (the "white halo around the trees"). Without
+             * blending the result no longer depends on draw order. */
+            int is_cutout = mesh_alpha_mode(map, mesh) == PBM_ALPHA_CUTOUT && !mesh_is_additive(mesh);
+            int want_ref = is_cutout ? 0x80 : 0x00;
             if (want_ref != cur_alpha_ref) {
                 sceGuAlphaFunc(GU_GREATER, want_ref, 0xFF);
                 cur_alpha_ref = want_ref;
             }
+            if (is_cutout == cur_blend) {
+                if (is_cutout) sceGuDisable(GU_BLEND); else sceGuEnable(GU_BLEND);
+                cur_blend = !is_cutout;
+            }
             bind_texture(map, cfg, mesh, &last_tex_id);
             apply_mesh_lod(cfg, map, mesh);
             if (cfg->uv_scroll) apply_uv_scroll(map, mesh, time_s, &tex_off_u, &tex_off_v);
+            int want_add = mesh_is_additive(mesh);
+            int want_mask = want_add ? GU_TRUE : GU_FALSE;
+            if (want_mask != cur_depth_mask) {
+                sceGuDepthMask(want_mask);
+                cur_depth_mask = want_mask;
+            }
+            if (want_add != cur_additive) {
+                if (want_add) sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, 0xFFFFFFFF);
+                else          sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+                cur_additive = want_add;
+            }
             int prim = (cfg->display_mode == 2) ? GU_LINE_STRIP : GU_TRIANGLES;
-            sceGuDrawArray(prim,
-                GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D,
-                mesh->num_vertices, 0, mesh->vertices);
+            draw_mesh_geometry(cfg, mesh, prim);
             verts += mesh->num_vertices;
             calls++;
         }
+        if (cur_additive) sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+        if (!cur_blend) sceGuEnable(GU_BLEND);   /* the emitters blend */
+        if (cur_depth_mask != GU_FALSE) sceGuDepthMask(GU_FALSE);
+        reset_morph_state();
 
         /* ── Particle emitters (standard lump "emitters") ──
          * Blended emitters first, additive second: additive blending is
@@ -1547,22 +1777,6 @@ void psp_render_scene(PbmMap* map, const RenderCfg* cfg,
          * translucent surfaces drawn above. */
         if (cfg->particles && map->num_emitters > 0 && cfg->display_mode != 2) {
             if (!s_sin_ready) pbm_sin_init();
-            EmitView vw;
-            vw.ex = cx; vw.ey = cy; vw.ez = cz;
-            vw.fx = sinf(yaw) * cosf(pitch);
-            vw.fy = sinf(pitch);
-            vw.fz = -cosf(yaw) * cosf(pitch);
-            {
-                /* right = normalize(cross(forward, world_up)) */
-                float rx = -vw.fz, rz = vw.fx;
-                float rl = sqrtf(rx * rx + rz * rz);
-                if (rl < 0.0001f) { rx = 1.0f; rz = 0.0f; rl = 1.0f; }
-                vw.rx = rx / rl; vw.ry = 0.0f; vw.rz = rz / rl;
-                /* up = cross(right, forward) */
-                vw.ux = -vw.rz * vw.fy;
-                vw.uy = vw.rz * vw.fx - vw.rx * vw.fz;
-                vw.uz = vw.rx * vw.fy;
-            }
             if (cfg->particles & 1) emitter_pass(map, cfg, &vw, time_s, &verts, &calls, &parts, 0);
             if (cfg->particles & 2) emitter_pass(map, cfg, &vw, time_s, &verts, &calls, &parts, 1);
         }

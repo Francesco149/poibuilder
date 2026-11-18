@@ -37,6 +37,15 @@ typedef struct {
     float uv_scroll_u;
     float uv_scroll_v;
     PbmVertex* vertices;
+    /* Mesh effects ("mesh_fx" lump), NULL for a plain mesh. When the record
+     * morphs, `morph_vertices` holds the GE's interleaved layout: vertex j of
+     * target i at [j * num_targets + i] (target 0 = `vertices`). */
+    const PbmMeshFx* fx;
+    PbmVertex* morph_vertices;
+    /* Bounding sphere for the per-frame frustum cull (from the bounds);
+     * cull_radius < 0 = never culled. */
+    float cull_center[3];
+    float cull_radius;
 } PbmMesh;
 
 typedef struct {
@@ -77,6 +86,16 @@ typedef struct {
     PbmEntityPatrolSphere patrol_sphere;
     int has_patrol_sphere;
     char env_preset[32];
+    /* "mesh_fx" lump: the records (each PbmMesh.fx points into this array). */
+    PbmMeshFx* mesh_fx;
+    uint32_t num_mesh_fx;
+    /* "camera_path" lump: the author's viewpoints (profiler sweep, attract
+     * mode). num_camera_poses == 0 when the map carries none. */
+    PbmCameraPose camera_poses[PBM_CAMPATH_MAX];
+    uint32_t num_camera_poses;
+    /* "env" lump: the map's own sky/fog, valid when has_env. */
+    PbmEnv env;
+    int has_env;
 } PbmMap;
 
 PbmMap* pbm_load(const char* filepath);

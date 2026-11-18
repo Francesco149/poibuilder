@@ -251,8 +251,12 @@ detail_const=1     # [default] those meshes sample ONE level (removes the
 detail_bias=-1     # only used when detail_const=-1
 particles=3        # bitmask: 1 blended, 2 additive, 3 [default] both, 0 off
 uv_scroll=1        # 1 [default] = animate the scrolling meshes
-depth_write=0      # 0 [default] = depth tested but never written (draw order
-                   # decides occlusion); 1 = write depth in the opaque pass
+depth_write=1      # 1 [default] = the opaque pass writes depth (it always
+                   # did: the knob's GE polarity was inverted until v0.9.188);
+                   # 0 = tested only, draw order decides occlusion
+depth_test=1       # 0 = no depth test at all (debug: "is it drawn at all?")
+morph=1            # 0 = draw morphing meshes in their rest pose (mesh_fx)
+mesh_cull=1        # 0 = submit every mesh (no per-mesh frustum cull)
 skip_mesh=Foo      # drop any mesh whose name contains this (isolate a draw)
 preset=day         # dawn | day [default] | dusk | night
 ```

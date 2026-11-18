@@ -206,7 +206,7 @@ void pbm_derive_particles(const PbmEmitter* e, PbmParticle* out, uint32_t n) {
          * has them all in lockstep either. A PHASE_ALIGN emitter skips the
          * spread entirely and becomes a repeating burst. */
         if (e->flags & PBM_EMIT_PHASE_ALIGN) {
-            p->phase = 0.0f;
+            p->phase = (e->flags & PBM_EMIT_BURST_PHASE) ? (float)e->reserved0 / 256.0f : 0.0f;
         } else {
             float ph = (float)k * inv_n + pbm_rand(e->seed, k, 1) * inv_n;
             p->phase = ph - floorf(ph);
@@ -229,7 +229,13 @@ void pbm_derive_particles(const PbmEmitter* e, PbmParticle* out, uint32_t n) {
             p->dir[1] = ay * ct + (t1y * cp + t2y * sp) * st;
             p->dir[2] = az * ct + (t1z * cp + t2z * sp) * st;
         }
-        if (e->spawn_radius > 0.0f) {
+        if (e->flags & PBM_EMIT_SPAWN_BOX) {
+            /* Uniform in the box; channels 9-11 as for the ball, so a map
+             * that switches shapes keeps the rest of its particle field. */
+            p->spawn[0] = (pbm_rand(e->seed, k, 9) * 2.0f - 1.0f) * e->reserved[0];
+            p->spawn[1] = (pbm_rand(e->seed, k, 10) * 2.0f - 1.0f) * e->reserved[1];
+            p->spawn[2] = (pbm_rand(e->seed, k, 11) * 2.0f - 1.0f) * e->reserved[2];
+        } else if (e->spawn_radius > 0.0f) {
             float u = pbm_rand(e->seed, k, 9);
             float v = pbm_rand(e->seed, k, 10);
             float rad = e->spawn_radius * cbrtf(u);   /* cbrt: uniform inside the ball */
@@ -243,6 +249,120 @@ void pbm_derive_particles(const PbmEmitter* e, PbmParticle* out, uint32_t n) {
             p->spawn[0] = p->spawn[1] = p->spawn[2] = 0.0f;
         }
     }
+}
+
+/* ── "mesh_fx" lump ────────────────────────────────────────────────────────
+ * Validates every record against the mesh it names and builds the GE's
+ * interleaved morph layout once, at load. A malformed record is dropped on its
+ * own (the mesh renders static) rather than failing the map. */
+static void pbm_build_mesh_fx(PbmMap* map, const void* data, uint32_t size) {
+    if (size < sizeof(PbmMeshFxLumpHeader)) return;
+    const PbmMeshFxLumpHeader* hdr = (const PbmMeshFxLumpHeader*)data;
+    if (hdr->magic != PBM_MESHFX_MAGIC || hdr->version > PBM_MESHFX_VERSION) {
+        pbm_log("[PBM] WARN: 'mesh_fx' lump magic/version not understood; ignored\n");
+        return;
+    }
+    if (hdr->count == 0 || hdr->count > map->header.num_meshes) return;
+    map->mesh_fx = (PbmMeshFx*)calloc(hdr->count, sizeof(PbmMeshFx));
+    if (!map->mesh_fx) return;
+    const uint8_t* p = (const uint8_t*)data + sizeof(PbmMeshFxLumpHeader);
+    const uint8_t* end = (const uint8_t*)data + size;
+    uint32_t live = 0, morphs = 0, flips = 0, morph_kb = 0;
+    for (uint32_t i = 0; i < hdr->count; ++i) {
+        if (p + PBM_MESHFX_SIZE > end) break;
+        PbmMeshFx* fx = &map->mesh_fx[live];
+        memcpy(fx, p, PBM_MESHFX_SIZE);
+        p += PBM_MESHFX_SIZE;
+        const uint8_t* morph_src = p;
+        if ((uint64_t)fx->morph_bytes > (uint64_t)(end - p)) {
+            pbm_log("[PBM] WARN: mesh_fx record %u overruns the lump; rest ignored\n", (unsigned)i);
+            break;
+        }
+        p += fx->morph_bytes;
+        if (fx->mesh_index >= map->header.num_meshes) continue;
+        PbmMesh* mesh = &map->meshes[fx->mesh_index];
+        if (mesh->fx) continue;   /* one record per mesh */
+
+        /* flipbook: every frame must name a real texture */
+        if (fx->num_frames > PBM_MESHFX_MAX_FRAMES) fx->num_frames = PBM_MESHFX_MAX_FRAMES;
+        for (uint32_t k = 0; k < fx->num_frames; ++k)
+            if (fx->frame_tex[k] < 0 || fx->frame_tex[k] >= (int)map->header.num_textures) {
+                fx->num_frames = 0;
+                break;
+            }
+        if (!(fx->fps > 0.0f) || fx->fps > 120.0f) fx->num_frames = 0;
+        if (fx->num_frames) flips++;
+
+        /* morph: the targets must be whole copies of this mesh */
+        uint32_t n = fx->num_targets;
+        int morph_ok = fx->morph_mode != PBM_MORPH_NONE && n >= 2 && n <= PBM_MESHFX_MAX_TARGETS &&
+            fx->morph_bytes == (n - 1) * mesh->num_vertices * sizeof(PbmVertex);
+        if (morph_ok && fx->morph_mode == PBM_MORPH_KEYFRAME) {
+            if (!(fx->period > 0.01f)) morph_ok = 0;
+            fx->key_t[0] = 0.0f;
+            for (uint32_t k = 1; k < n && morph_ok; ++k)
+                if (!(fx->key_t[k] > fx->key_t[k - 1]) || fx->key_t[k] >= 1.0f) morph_ok = 0;
+        }
+        if (morph_ok && fx->morph_mode == PBM_MORPH_CYCLIC) {
+            if ((n - 1) % 3 != 0) morph_ok = 0;
+            for (uint32_t k = 1; k < n && morph_ok; ++k)
+                if (!(fabsf(fx->key_t[k]) > 0.01f)) morph_ok = 0;
+        }
+        if (morph_ok && fx->morph_mode > PBM_MORPH_CYCLIC) morph_ok = 0;
+        if (morph_ok && fx->morph_mode == PBM_MORPH_HARMONIC) {
+            for (uint32_t k = 1; k < n; ++k)
+                if (!(fabsf(fx->key_t[k]) > 0.01f)) morph_ok = 0;
+        }
+        if (morph_ok) {
+            uint32_t nv = mesh->num_vertices;
+            PbmVertex* mv = (PbmVertex*)memalign(16, (size_t)nv * n * sizeof(PbmVertex));
+            if (mv) {
+                const PbmVertex* tgt = (const PbmVertex*)morph_src;   /* 4-aligned in the lump */
+                for (uint32_t j = 0; j < nv; ++j) {
+                    mv[j * n] = mesh->vertices[j];
+                    for (uint32_t t = 1; t < n; ++t)
+                        memcpy(&mv[j * n + t], &tgt[(size_t)(t - 1) * nv + j], sizeof(PbmVertex));
+                }
+                mesh->morph_vertices = mv;
+                morphs++;
+                morph_kb += (nv * n * sizeof(PbmVertex)) / 1024;
+            }
+        }
+        if (!mesh->morph_vertices) { fx->morph_mode = PBM_MORPH_NONE; fx->num_targets = 1; }
+        fx->morph_bytes = 0;   /* the source bytes are not kept */
+        mesh->fx = fx;
+        live++;
+    }
+    map->num_mesh_fx = live;
+    pbm_log("[PBM] mesh_fx: %u records (%u morphing, %u KB of morph vertices; %u flipbooks)\n",
+            (unsigned)live, (unsigned)morphs, (unsigned)morph_kb, (unsigned)flips);
+}
+
+static void pbm_build_camera_path(PbmMap* map, const void* data, uint32_t size) {
+    if (size < sizeof(PbmCameraPathHeader)) return;
+    const PbmCameraPathHeader* hdr = (const PbmCameraPathHeader*)data;
+    if (hdr->magic != PBM_CAMPATH_MAGIC) return;
+    uint32_t n = hdr->count;
+    if (n > PBM_CAMPATH_MAX) n = PBM_CAMPATH_MAX;
+    if (sizeof(PbmCameraPathHeader) + (uint64_t)n * sizeof(PbmCameraPose) > size) return;
+    memcpy(map->camera_poses, (const uint8_t*)data + sizeof(PbmCameraPathHeader),
+           n * sizeof(PbmCameraPose));
+    for (uint32_t i = 0; i < n; ++i) {
+        PbmCameraPose* c = &map->camera_poses[i];
+        c->name[15] = '\0';
+        if (!(c->hold >= 0.0f)) c->hold = 0.0f;
+        if (!(c->travel > 0.05f)) c->travel = 0.05f;
+    }
+    map->num_camera_poses = n;
+    pbm_log("[PBM] camera_path: %u poses\n", (unsigned)n);
+}
+
+static void pbm_build_env(PbmMap* map, const void* data, uint32_t size) {
+    if (size < sizeof(PbmEnv)) return;
+    const PbmEnv* e = (const PbmEnv*)data;
+    if (e->magic != PBM_ENV_MAGIC) return;
+    memcpy(&map->env, e, sizeof(PbmEnv));
+    map->has_env = 1;
 }
 
 static void pbm_build_emitters(PbmMap* map, const void* data, uint32_t size) {
@@ -307,6 +427,12 @@ static void pbm_build_emitters(PbmMap* map, const void* data, uint32_t size) {
         e->wobble_amp = pbm_clampf(e->wobble_amp, 0.0f, 100.0f);
         e->wobble_freq = pbm_clampf(e->wobble_freq, 0.0f, 64.0f);
         e->spawn_radius = pbm_clampf(e->spawn_radius, 0.0f, 200.0f);
+        if (!(e->flags & PBM_EMIT_BURST_PHASE)) e->reserved0 = 0;
+        if (e->flags & PBM_EMIT_SPAWN_BOX) {
+            for (int a = 0; a < 3; ++a) e->reserved[a] = pbm_clampf(e->reserved[a], 0.0f, 200.0f);
+        } else {
+            e->reserved[0] = e->reserved[1] = e->reserved[2] = 0.0f;
+        }
         e->damping = pbm_clampf(e->damping, 0.0f, 32.0f);
         e->aspect = pbm_clampf(e->aspect, 0.01f, 64.0f);
         e->angle_min = pbm_clampf(e->angle_min, -6.2831853f, 6.2831853f);
@@ -354,7 +480,9 @@ static void pbm_build_emitters(PbmMap* map, const void* data, uint32_t size) {
             float g = sqrtf(e->gravity[0] * e->gravity[0] + e->gravity[1] * e->gravity[1] +
                             e->gravity[2] * e->gravity[2]);
             float big = fmaxf(1.0f, fmaxf(e->size_mid, e->size_end));
-            float reach = e->spawn_radius + e->wobble_amp + e->size_max * 0.5f * big * 1.45f +
+            float box = sqrtf(e->reserved[0] * e->reserved[0] + e->reserved[1] * e->reserved[1] +
+                              e->reserved[2] * e->reserved[2]);
+            float reach = e->spawn_radius + box + e->wobble_amp + e->size_max * 0.5f * big * 1.45f +
                           fabsf(e->speed_max) * e->life_max * 1.05f +
                           0.5f * g * e->life_max * e->life_max * 1.05f;
             map->emitter_cull_radius[live] = reach * 1.1f + 0.05f;
@@ -773,6 +901,16 @@ PbmMap* pbm_load(const char* filepath) {
                     } else if (strcmp(map->metadata[i].tag, "emitters") == 0) {
                         /* Standard lump: particle emitters (see pbm.h). */
                         pbm_build_emitters(map, mdata, mdhdr.data_size);
+                    } else if (strcmp(map->metadata[i].tag, "mesh_fx") == 0) {
+                        pbm_build_mesh_fx(map, mdata, mdhdr.data_size);
+                        /* the morph targets are copied out; drop the raw lump */
+                        free(mdata);
+                        map->metadata[i].data = NULL;
+                        map->metadata[i].data_size = 0;
+                    } else if (strcmp(map->metadata[i].tag, "camera_path") == 0) {
+                        pbm_build_camera_path(map, mdata, mdhdr.data_size);
+                    } else if (strcmp(map->metadata[i].tag, "env") == 0) {
+                        pbm_build_env(map, mdata, mdhdr.data_size);
                     } else if (strcmp(map->metadata[i].tag, "env_preset") == 0) {
                         strncpy(map->env_preset, (const char*)mdata, sizeof(map->env_preset) - 1);
                         map->env_preset[sizeof(map->env_preset) - 1] = '\0';
@@ -791,6 +929,21 @@ PbmMap* pbm_load(const char* filepath) {
                     (unsigned int)i, (unsigned)map->header.num_meshes);
             goto load_failed;
         }
+    }
+
+    /* Per-mesh cull spheres from the header bounds (the exporter's bounds of
+     * a morphing mesh cover every target). */
+    for (uint32_t i = 0; i < map->header.num_meshes; ++i) {
+        PbmMesh* m = &map->meshes[i];
+        float ex = 0.5f * (m->bounds_max[0] - m->bounds_min[0]);
+        float ey = 0.5f * (m->bounds_max[1] - m->bounds_min[1]);
+        float ez = 0.5f * (m->bounds_max[2] - m->bounds_min[2]);
+        m->cull_center[0] = m->bounds_min[0] + ex;
+        m->cull_center[1] = m->bounds_min[1] + ey;
+        m->cull_center[2] = m->bounds_min[2] + ez;
+        float r = sqrtf(ex * ex + ey * ey + ez * ez);
+        /* A NaN/inf bound (a hand-made file) must not cull a mesh away. */
+        m->cull_radius = (r == r && r < 1.0e6f) ? r : -1.0f;
     }
 
     /* Flush all loaded textures, vertices, and colliders from D-Cache to main RAM
@@ -832,6 +985,9 @@ void pbm_free(PbmMap* map) {
             if (map->meshes[i].vertices) {
                 free(map->meshes[i].vertices);
             }
+            if (map->meshes[i].morph_vertices) {
+                free(map->meshes[i].morph_vertices);
+            }
         }
         free(map->meshes);
     }
@@ -852,5 +1008,6 @@ void pbm_free(PbmMap* map) {
         free(map->metadata);
     }
     pbm_emitters_release(map);
+    free(map->mesh_fx);
     free(map);
 }
