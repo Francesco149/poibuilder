@@ -390,6 +390,9 @@ static func _terrain_rows() -> Array:
 		zs.append(z)
 		z += 1.25
 	z = 9.0
+	while z < 24.0:   # 1.5 m among the palms (16.5, the sand/grass seam, is a row)
+		zs.append(z)
+		z += 1.5
 	while z <= 44.0:
 		zs.append(z)
 		z += 2.5
@@ -397,11 +400,16 @@ static func _terrain_rows() -> Array:
 
 
 static func _build_terrain(root: Node3D) -> void:
+	# 1.5 m cells: the GE rejects a whole triangle when a vertex projects far
+	# outside its drawing range, and a 3 m ground cell reaching from beside a
+	# low camera to the corner of the view did exactly that (a sky-coloured
+	# hole at the screen corner, seen on the device). Ground near the eye
+	# must be small.
 	var xs: Array = []
 	var x := -60.0
 	while x <= 60.0:
 		xs.append(x)
-		x += 3.0
+		x += 1.5
 	var zs := _terrain_rows()
 	var grass_from := 16.5   # MUST be one of _terrain_rows(): both meshes share that row
 	for part in ["Sand", "Grass"]:
@@ -557,42 +565,78 @@ static func _build_pier(root: Node3D) -> void:
 			root.add_child(post)
 		zp -= 4.5
 
-	# the rowboat moored off the pier's end: a hull of planks bobbing and
-	# rolling on three harmonic targets — a rigid body moving on GE morphs
+	# the rowboat moored off the pier's end: a CLOSED hull bobbing and
+	# rolling on GE morphs. Both ends taper to a point (width 0), a rim joins
+	# the outer skin to the inner walls, and the inner floor sits ~0.16 m
+	# above the water — nothing hides water inside a hull on this renderer,
+	# so the water must never reach the inside. Shallow draft: the outer skin
+	# dips only ~0.1 m, which the translucent shallows tint.
 	var b := Builder.new()
 	var c := Vector3(PIER_X + 3.2, 0.05, -12.5)
-	var L := 1.7
-	var W := 0.7
-	var D := 0.5
-	var stations := [-1.0, -0.6, 0.0, 0.6, 1.0]
+	var L := 1.8
+	var W := 0.62
+	var stations := [-1.0, -0.82, -0.5, -0.15, 0.2, 0.55, 0.85, 1.0]
 	var prev: Array = []
 	for s: float in stations:
-		var half_w := W * sqrt(maxf(0.0, 1.0 - s * s * 0.92))
+		var hw := W * pow(maxf(0.0, 1.0 - s * s), 0.55)
 		var z := c.z + s * L
-		var keel := c.y - D * (1.0 - s * s * 0.5)
-		var gun := c.y + 0.25 + 0.12 * s * s
+		var gun := c.y + 0.44 + 0.14 * s * s
+		var chine := c.y + 0.02
+		var keel := c.y - 0.1 * (1.0 - s * s)
+		var floor_y := c.y + 0.16
+		var t := float(s) * 0.5 + 0.5
 		var ring := [
-			b.vert(Vector3(c.x - half_w, gun, z), Vector3(-1, 0.2, 0), Vector2(0, s)),
-			b.vert(Vector3(c.x, keel, z), Vector3(0, -1, 0), Vector2(0.5, s)),
-			b.vert(Vector3(c.x + half_w, gun, z), Vector3(1, 0.2, 0), Vector2(1, s)),
-			# inside faces (seen from above): separate verts, normals up
-			b.vert(Vector3(c.x - half_w * 0.9, gun - 0.02, z), Vector3(0.3, 1, 0), Vector2(0, s)),
-			b.vert(Vector3(c.x, keel + 0.1, z), Vector3(0, 1, 0), Vector2(0.5, s)),
-			b.vert(Vector3(c.x + half_w * 0.9, gun - 0.02, z), Vector3(-0.3, 1, 0), Vector2(1, s)),
+			# outer skin: port gunwale, port chine, keel, starboard chine, starboard gunwale
+			b.vert(Vector3(c.x - hw, gun, z), Vector3(-1, 0.25, 0), Vector2(t, 0.0)),
+			b.vert(Vector3(c.x - hw * 0.8, chine, z), Vector3(-0.8, -0.6, 0), Vector2(t, 0.35)),
+			b.vert(Vector3(c.x, keel, z), Vector3(0, -1, 0), Vector2(t, 0.5)),
+			b.vert(Vector3(c.x + hw * 0.8, chine, z), Vector3(0.8, -0.6, 0), Vector2(t, 0.65)),
+			b.vert(Vector3(c.x + hw, gun, z), Vector3(1, 0.25, 0), Vector2(t, 1.0)),
+			# rim (top of the gunwale), outer and inner edge
+			b.vert(Vector3(c.x - hw, gun, z), Vector3(0, 1, 0), Vector2(t, 0.0)),
+			b.vert(Vector3(c.x - hw * 0.86, gun, z), Vector3(0, 1, 0), Vector2(t, 0.06)),
+			b.vert(Vector3(c.x + hw * 0.86, gun, z), Vector3(0, 1, 0), Vector2(t, 0.94)),
+			b.vert(Vector3(c.x + hw, gun, z), Vector3(0, 1, 0), Vector2(t, 1.0)),
+			# inner walls and floor (normals pointing into the boat)
+			b.vert(Vector3(c.x - hw * 0.86, gun, z), Vector3(1, 0.3, 0), Vector2(t, 0.1)),
+			b.vert(Vector3(c.x - hw * 0.62, floor_y, z), Vector3(0.2, 1, 0), Vector2(t, 0.35)),
+			b.vert(Vector3(c.x + hw * 0.62, floor_y, z), Vector3(-0.2, 1, 0), Vector2(t, 0.65)),
+			b.vert(Vector3(c.x + hw * 0.86, gun, z), Vector3(-1, 0.3, 0), Vector2(t, 0.9)),
 		]
 		if not prev.is_empty():
-			b.quad(prev[0], ring[0], ring[1], prev[1])
-			b.quad(prev[1], ring[1], ring[2], prev[2])
-			b.quad(prev[3], ring[3], ring[4], prev[4])
-			b.quad(prev[4], ring[4], ring[5], prev[5])
+			for e in [0, 1, 2, 3]:
+				b.quad(prev[e], ring[e], ring[e + 1], prev[e + 1])
+			b.quad(prev[5], ring[5], ring[6], prev[6])
+			b.quad(prev[7], ring[7], ring[8], prev[8])
+			for e in [9, 10, 11]:
+				b.quad(prev[e], ring[e], ring[e + 1], prev[e + 1])
 		prev = ring
+	# two thwarts (seats): small boxes across the hull
+	for sz: float in [-0.35, 0.35]:
+		var hw := W * pow(1.0 - sz * sz, 0.55) * 0.84
+		var z0 := c.z + sz * L - 0.12
+		var z1 := c.z + sz * L + 0.12
+		var y1 := c.y + 0.36
+		var y0 := c.y + 0.3
+		var top := [b.vert(Vector3(c.x - hw, y1, z0), Vector3.UP, Vector2(0, 0)),
+			b.vert(Vector3(c.x + hw, y1, z0), Vector3.UP, Vector2(1, 0)),
+			b.vert(Vector3(c.x + hw, y1, z1), Vector3.UP, Vector2(1, 0.2)),
+			b.vert(Vector3(c.x - hw, y1, z1), Vector3.UP, Vector2(0, 0.2))]
+		b.quad(top[0], top[1], top[2], top[3])
+		for side: float in [z0, z1]:
+			var n := Vector3(0, 0, -1) if side == z0 else Vector3(0, 0, 1)
+			var f := [b.vert(Vector3(c.x - hw, y0, side), n, Vector2(0, 0.3)),
+				b.vert(Vector3(c.x + hw, y0, side), n, Vector2(1, 0.3)),
+				b.vert(Vector3(c.x + hw, y1, side), n, Vector2(1, 0.25)),
+				b.vert(Vector3(c.x - hw, y1, side), n, Vector2(0, 0.25))]
+			b.quad(f[0], f[1], f[2], f[3])
 	_node(root, "Rowboat", b, _mat("Boat", "planks.png"), "", {
 		"morph": {"mode": "harmonic", "targets": [
-			{"offset": Vector3(0, 0.1, 0), "period": 3.3, "phase": 0.0},
+			{"offset": Vector3(0, 0.06, 0), "period": 3.3, "phase": 0.0},
 			# roll and pitch share a period (the GE fits two periods per mesh)
 			# and differ in phase, so the hull still wobbles off-axis
-			{"rotate": {"axis": Vector3(0, 0, 1), "angle": 0.09, "pivot": c}, "period": 4.6, "phase": 1.0},
-			{"rotate": {"axis": Vector3(1, 0, 0), "angle": 0.05, "pivot": c}, "period": 4.6, "phase": 2.6},
+			{"rotate": {"axis": Vector3(0, 0, 1), "angle": 0.07, "pivot": c}, "period": 4.6, "phase": 1.0},
+			{"rotate": {"axis": Vector3(1, 0, 0), "angle": 0.035, "pivot": c}, "period": 4.6, "phase": 2.6},
 		]},
 	})
 
@@ -811,7 +855,7 @@ static func _build_shallows(root: Node3D) -> void:
 	var x := -100.0
 	while x <= 100.0:
 		xs.append(x)
-		x += 4.0
+		x += 2.0 if absf(x) < 60.0 else 4.0   # small cells where the eye goes
 	var ds := [0.8, 0.0, -0.8, -1.8, -3.0, -4.5, -6.5, -9.0, -12.0]
 	var rows: Array = []
 	for d: float in ds:
@@ -862,7 +906,7 @@ static func _build_surf(root: Node3D) -> void:
 		var x := -50.0
 		while x <= 50.0:
 			xs.append(x)
-			x += 2.5
+			x += 1.25
 		# rows: the bright leading line, the lacy body, the fading tail
 		var rows_d := [0.0, -0.9, -3.0]
 		var rows_a := [1.0, 0.85, 0.0]
