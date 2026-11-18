@@ -3676,6 +3676,7 @@ func _on_ngon_drawer_confirm_height() -> void:
 
 	_clear_creation_hover()
 	_set_creation_hint("")
+	_hide_cursor_extents()
 	var editor_selection := get_editor_interface().get_selection()
 	if editor_selection != null and is_instance_valid(node):
 		editor_selection.clear()
@@ -3686,6 +3687,14 @@ func _on_ngon_drawer_confirm_height() -> void:
 	if logger:
 		logger.info("plugin", "Created custom N-Gon '%s'" % node.name)
 	_update_editing_context()
+
+## The floating readout beside the cursor ("Height: 1.40m"): the n-gon's
+## height stage shows it, and nothing routed through _update_cursor_extents
+## hides it once the drawer is idle — it stayed pinned to the viewport after
+## every n-gon until the next shape creation (v0.9.189).
+func _hide_cursor_extents() -> void:
+	if _cursor_extents_label != null:
+		_cursor_extents_label.visible = false
 
 func _ngon_drawer_abort(reason: String) -> void:
 	var node := ngon_drawer.preview_node
@@ -3698,6 +3707,7 @@ func _ngon_drawer_abort(reason: String) -> void:
 		prev_mesh.update_gizmos()
 	_clear_creation_hover()
 	_set_creation_hint("")
+	_hide_cursor_extents()
 	_update_editing_context()
 	if logger:
 		logger.info("plugin", "N-gon drawing aborted (%s)" % reason)

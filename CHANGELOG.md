@@ -11,6 +11,18 @@ it show all the things the original showcase did, but with a smoother more
 polished execution, plus new ui + features. short version for the readme,
 long version for yt and godot store video".
 
+### Fixed: the n-gon's "Height" readout stayed on screen
+
+The floating readout beside the cursor ("Height: 1.40m") during the N-gon
+tool's height stage was never hidden when the n-gon was confirmed or
+aborted: it stayed pinned to the 3D view until the next shape creation
+(found on camera, where it rode over the next beat's object). Shape creation
+hides it on every exit; the n-gon paths now do too (`_hide_cursor_extents`).
+
+GUI harness NGON-EXTRUDE: the readout is shown in the height stage and must
+be gone after confirm (fails on the old code: "still visible after
+confirm=true").
+
 ### Fixed: a Shift+drag extrude of a big face came up short
 
 Found recording the new film: the doorway's front n-gon, dragged a full metre

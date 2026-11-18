@@ -1393,9 +1393,19 @@ func _run() -> void:
 			_pass("NGON-EXTRUDE: Enter transitioned to HEIGHT state")
 			plugin.ngon_drawer.height = 2.0
 			plugin._refresh_ngon_preview()
+			# The floating "Height: 2.00m" readout, as a height-stage motion shows it.
+			plugin._update_cursor_extents(Vector2(400, 300))
 			await _frames(4)
+			var ng_label_up: bool = plugin._cursor_extents_label.visible
 			plugin._on_ngon_drawer_confirm_height()
 			await _frames(6)
+			# v0.9.189: confirm left the readout pinned to the viewport (shape
+			# creation hides it; the n-gon paths never did).
+			if ng_label_up and not plugin._cursor_extents_label.visible:
+				_pass("NGON-EXTRUDE: the height readout goes away on confirm")
+			else:
+				_fail("NGON-EXTRUDE: height readout shown=%s, still visible after confirm=%s" % [
+					ng_label_up, plugin._cursor_extents_label.visible])
 			var created_ngon := get_tree().get_edited_scene_root().get_node_or_null("Shape_Ngon")
 			if created_ngon != null and created_ngon is PBMesh:
 				_pass("NGON-EXTRUDE: created Shape_Ngon PBMesh node (faces: %d)" % created_ngon.pb_mesh_data.faces.size())
