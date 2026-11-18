@@ -362,23 +362,42 @@ static func _build_sea(root: Node3D) -> void:
 		Rect2(-420, SEA_NEAR_END, 320, -12.0 - SEA_NEAR_END),
 		Rect2(100, SEA_NEAR_END, 320, -12.0 - SEA_NEAR_END),
 	]
+	# GRADED cells: 16 m where the free camera can fly, growing to the
+	# horizon. 70-100 m cells were cheaper, but the GE rejects a whole
+	# triangle once one vertex projects far outside its drawing range, and a
+	# camera over the water pitched down at the sun put a 100 m triangle's
+	# corner far off to the side of a short view depth: a sea-sized hole.
 	for r: Rect2 in rects:
-		var nx := maxi(2, int(r.size.x / 70.0))
-		var nz := maxi(2, int(r.size.y / 70.0))
+		var gx := _graded(r.position.x, r.position.x + r.size.x, -160.0, 160.0, 16.0, 80.0)
+		var gz := _graded(r.position.y, r.position.y + r.size.y, -200.0, 0.0, 16.0, 80.0)
 		var grid: Array = []
-		for iz in range(nz + 1):
+		for pz: float in gz:
 			var row: Array = []
-			for ix in range(nx + 1):
-				var px := r.position.x + r.size.x * ix / nx
-				var pz := r.position.y + r.size.y * iz / nz
+			for px: float in gx:
 				row.append(f.vert(Vector3(px, SEA_Y, pz), Vector3.UP, Vector2(px / 7.0, pz / 7.0),
 					Color(0.8, 0.84, 0.88)))
 			grid.append(row)
-		for iz in range(nz):
-			for ix in range(nx):
+		for iz in range(gz.size() - 1):
+			for ix in range(gx.size() - 1):
 				f.quad(grid[iz][ix], grid[iz][ix + 1], grid[iz + 1][ix + 1], grid[iz + 1][ix])
 	_node(root, "SeaFar", f, _mat("SeaFar", "sea_f0.png", BaseMaterial3D.TRANSPARENCY_DISABLED, true),
 		"unlit", {"flipbook": {"frames": frames, "fps": 7.0}})
+
+
+## Grid lines from a to b: `fine` spacing inside [lo, hi], `coarse` outside,
+## always including both ends.
+static func _graded(a: float, b: float, lo: float, hi: float, fine: float, coarse: float) -> Array:
+	var out: Array = [a]
+	var x := a
+	while x < b - 0.001:
+		var step := fine if (x >= lo - 0.001 and x < hi - 0.001) else coarse
+		var nxt := minf(x + step, b)
+		# do not overshoot into the fine band with a coarse step
+		if x < lo and nxt > lo:
+			nxt = lo
+		x = nxt
+		out.append(x)
+	return out
 
 
 # ── terrain ───────────────────────────────────────────────────────────────
