@@ -88,7 +88,8 @@ def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmp
             region=list(src.crop), zoom=list(clip.zoom) if clip.zoom else None,
             out_frames=frames, fit=fit, fps=proj.fps, duration=frames / proj.fps,
             fade_in=0.0, fade_out=0.0, has_overlay=False,
-            zoom_span=max(src.span_src, 1), resample=src.span_src != src.out_frames)
+            zoom_span=max(src.span_src, 1), resample=src.span_src != src.out_frames,
+            src_rate=capture.ffmpeg_rate(proj.fps, speed))
         out = tdp / "out"
         out.mkdir()
         cmd = ["ffmpeg", "-v", "error", "-y",
@@ -159,12 +160,15 @@ def check_timing(speeds=(1.0, 1.15, 1.3, 0.8), frames: int = 120, first: int = 7
         need = first + capture.src_index(frames, max(speeds)) + 4
         for i in range(need):
             _bits_frame(i).save(tdp / f"{i:06d}.png")
-        for speed in speeds:
-            out = tdp / f"out{speed}"
+        cases = [(sp, None) for sp in speeds] + [(sp, [1.0, 1.03]) for sp in speeds if sp != 1.0]
+        for speed, zoom in cases:
+            out = tdp / f"out{speed}{'z' if zoom else ''}"
             out.mkdir()
-            graph = ffmpeg.clip_filter(region=None, zoom=None, out_frames=frames, fit=fit, fps=60,
-                                       duration=frames / 60.0, fade_in=0.0, fade_out=0.0,
-                                       has_overlay=False, resample=speed != 1.0)
+            graph = ffmpeg.clip_filter(region=[0, 0, 320, 72], zoom=zoom, out_frames=frames, fit=fit,
+                                       fps=60, duration=frames / 60.0, fade_in=0.0, fade_out=0.0,
+                                       has_overlay=False, resample=speed != 1.0,
+                                       zoom_span=capture.src_index(frames, speed),
+                                       src_rate=capture.ffmpeg_rate(60, speed))
             subprocess.run(["ffmpeg", "-v", "error", "-y",
                             "-framerate", capture.ffmpeg_rate(60, speed),
                             "-start_number", str(first), "-i", str(tdp / "%06d.png"),
@@ -176,7 +180,7 @@ def check_timing(speeds=(1.0, 1.15, 1.3, 0.8), frames: int = 120, first: int = 7
                 want = first + capture.src_index(i, speed)
                 if got != want:
                     bad.append((i, got, want))
-            print(f"[timing] speed {speed:<5} {frames - len(bad)}/{frames} frames agree"
+            print(f"[timing] speed {speed:<5}{' +zoom' if zoom else '      '} {frames - len(bad)}/{frames} frames agree"
                   + (f"  FAIL first: {bad[:4]}" if bad else ""))
             failures += 1 if bad else 0
     return failures

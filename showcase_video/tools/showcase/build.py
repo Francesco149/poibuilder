@@ -339,6 +339,7 @@ def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
         grade=clip.grade or None,
         zoom_span=src.span_src,
         resample=src.span_src != src.out_frames,
+        src_rate=capture.ffmpeg_rate(proj.fps, clip.speed),
     )
     cmd = [ffmpeg.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
     cmd += src.input_args

@@ -161,7 +161,7 @@ def fit_filter(fit: Fit) -> list[str]:
     return parts
 
 
-def zoom_filter(zoom: list[float], span: int, size: tuple[int, int], fps: int) -> str:
+def zoom_filter(zoom: list[float], span: int, size: tuple[int, int], fps: int | str) -> str:
     """A slow push-in/pull-out.
 
     WHY NOT THE OBVIOUS crop: ``crop`` evaluates its SIZE expressions (w/h) once,
@@ -217,6 +217,7 @@ def clip_filter(
     grade: dict | None = None,
     zoom_span: int | None = None,
     resample: bool = False,
+    src_rate: str | None = None,
     src_label: str = "0:v",
     ov_label: str = "1:v",
 ) -> str:
@@ -230,7 +231,12 @@ def clip_filter(
         # clip's source span (out_frames * speed), not its output length.
         rw, rh = (region[2], region[3]) if region else (0, 0)
         chain.append(zoom_filter(zoom, max((zoom_span or out_frames) - 1, 1),
-                                 (rw, rh) if rw and rh else (out_frames, out_frames), fps))
+                                 (rw, rh) if rw and rh else (out_frames, out_frames),
+                                 # zoompan RE-STAMPS its output at `fps`: on a
+                                 # sped-up source that must stay the SOURCE rate,
+                                 # or the resample below sees 60 fps already and
+                                 # the clip loses its speed-up.
+                                 src_rate if (resample and src_rate) else fps))
     chain.extend(fit_filter(fit))
     chain.append("setsar=1")
     if resample:
