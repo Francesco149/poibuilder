@@ -1,22 +1,19 @@
-# Showcase v2 — PROTOTYPE timeline (the shipped film is edl.toml; untouched).
+# Showcase v2, SHORT cut (the README video): the payoff of each chapter.
 #
-#   PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg ./showcase_video/render.sh tour
+# GENERATED from one clip spec (both cuts share the takes); every `dur` is
+# the take's real length from the session manifests. Sessions:
+#   project/showcase/sessions/v2_{create,edit,surface,tools,map}.gd
+# Render (all five, pinned layout):
+#   PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg ./showcase_video/render.sh v2_edit   (etc.)
+# Regenerate (after a re-render): python3 showcase_video/tools/gen_edl_v2.py
+# Build:
 #   ./showcase_video/build.sh --edl showcase_video/edl_v2.toml
 #
-# What changed against v1, on purpose:
-#   - ONE continuous build (session "tour"): a courtyard made chapter by
-#     chapter, each starting where the last stopped. Six longer takes instead
-#     of ~65 one-to-three-second clips, so no cut jumps the subject, the light
-#     or the pointer.
-#   - TWO framings only: the 3D view alone for pure geometry, and the 3D view
-#     WITH the Material & UV dock ("viewport_dock") whenever the dock drives
-#     what happens — the click in the dock and its result in one picture.
-#     No toolbar slivers or half-panels cropped at the frame edges.
-#   - One short caption per chapter, bottom-left, no arrows or callouts.
-#   - Clip ids are "t…" so v2 segments never overwrite v1's in bake/segments.
+# One framing for every editor clip: crop [287, 44, 1633, 918] = the PoiBuilder
+# toolbar (when shown), the 3D view and the Material & UV dock, exactly 16:9.
 
 [project]
-name = "poibuilder-showcase-v2"
+name = "out_v2"
 width = 1280
 height = 720
 fps = 60
@@ -26,100 +23,165 @@ master = "poibuilder-showcase-v2.mp4"
 readme = "poibuilder-showcase-v2-960.mp4"
 poster = "poibuilder-showcase-v2-poster.png"
 
+# total 64.0 s
+
 [[clip]]
-id = "t00-title"
+id = "s00-title"
 kind = "card"
 dur = 1.6
+cursor = false
 fade_in = 0.3
 fade_out = 0.3
-cursor = false
 card = { kicker = "Godot 4 editor plugin", title = "PoiBuilder", sub = "Build levels inside the editor" }
 
 [[clip]]
-id = "t10-shapes"
-at = 0.0
-dur = 4.70
-source = "tour:tour/shapes"
-region = "viewport_dock"
-fade_in = 0.25
+id = "s10-door"
+source = "v2_create:v2c/door"
+at = 0.4
+dur = 4.85
+crop = [287, 44, 1633, 918]
+fade_in = 0.2
 captions = [
-  { label = "Create", text = "Pick a shape in the dock, draw it on any surface", at = 0.3 },
+  { label = "Create", text = "Pick a shape in the dock, drag it out", at = 0.15, pos = "bc" },
 ]
 
 [[clip]]
-id = "t20-edge"
-at = 0.0
-dur = 6.38
-source = "tour:tour/edge"
-region = "viewport_dock"
-captions = [
-  { label = "New", text = "Edge-first placement: click an edge at any angle, then depth and height", at = 0.2 },
-]
-
-[[clip]]
-id = "t30-extrude"
-at = 0.0
+id = "s11-edge"
+source = "v2_create:v2c/edge"
+at = 1.0
 dur = 4.58
-source = "tour:tour/extrude"
-region = "viewport"
+crop = [287, 44, 1633, 918]
 captions = [
-  { label = "Edit", text = "Select a face, Shift+drag to extrude", at = 0.2 },
+  { label = "New", text = "Edge-first placement: any angle", at = 0.15, pos = "bc" },
 ]
 
 [[clip]]
-id = "t40-materials"
-at = 0.0
-dur = 5.30
-source = "tour:tour/materials"
-region = "viewport_dock"
+id = "s20-ngon"
+source = "v2_edit:v2e/modes"
+at = 3.03
+dur = 2.38
+crop = [287, 44, 1633, 918]
 captions = [
-  { label = "Materials", text = "Click a card to texture the selection, or drag it onto any face", at = 0.2 },
+  { label = "Select", text = "The doorway's front is one n-gon", at = 0.1, pos = "bc" },
 ]
 
 [[clip]]
-id = "t50-paint"
+id = "s21-portal"
+source = "v2_edit:v2e/portal"
 at = 0.0
-dur = 3.15
-source = "tour:tour/paint"
-region = "viewport_dock"
+dur = 7.71
+crop = [287, 44, 1633, 918]
 captions = [
-  { label = "Paint", text = "Blend texture layers straight from the palette", at = 0.2 },
+  { label = "Extrude", text = "Shift+drag it out, then a cornice and a roof", at = 0.1, pos = "bc" },
 ]
 
 [[clip]]
-id = "t60-finale"
+id = "s22-chimney"
+source = "v2_edit:v2e/chimney"
+at = 1.0
+dur = 4.98
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Inset", text = "Inset and extrude: a hollow chimney", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s23-loopcut"
+source = "v2_edit:v2e/loopcut"
+at = 0.9
+dur = 3.58
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Loop cut", text = "Round all four sides", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s24-bevel"
+source = "v2_edit:v2e/bevel"
+at = 1.0
+dur = 4.18
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Bevel", text = "With a live preview", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s30-drop"
+source = "v2_surface:v2s/drop"
 at = 0.0
-dur = 4.16
-source = "tour:tour/finale"
-region = "viewport"
-cursor = false
+dur = 3.48
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Materials", text = "Drag a card onto any face", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s31-paint"
+source = "v2_surface:v2s/paint"
+at = 1.0
+dur = 3.58
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Paint", text = "Texture layers, brushed on", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s32-fire"
+source = "v2_surface:v2s/particles"
+at = 2.22
+dur = 2.58
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Particles", text = "Emitters in one click", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s40-trimwalls"
+source = "v2_tools:v2t/trimwalls"
+at = 4.33
+dur = 3.38
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Trim Walls", text = "Mitred at every corner", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s41-csg"
+source = "v2_tools:v2t/csg"
+at = 1.0
+dur = 3.38
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "CSG", text = "Booleans with real undo", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "s50-night"
+source = "v2_map:v2m/env"
+at = 0.8
+dur = 3.38
+crop = [287, 44, 1633, 918]
 fade_out = 0.3
-
-# ===========================================================================
-# HARDWARE: the seashore map on a real PSP (v0.9.188), one tripod take of the
-# app's attract-mode flythrough. source/psp-seashore.mp4 links to the graded
-# recording (~/Videos/Recordings/poibuilder-psp-seashore-graded.mp4; the raw
-# iPhone .MOV sits next to it). It arrives tagged HLG/BT.2020 but was graded
-# as seen on an SDR screen: the build relabels every segment BT.709 and the
-# grade below only adds depth to the PSP's screen.
-# ===========================================================================
+captions = [
+  { label = "Time of day", text = "One click re-lights the map", at = 0.1, pos = "bc" },
+]
 
 [[clip]]
-id = "t70-psp-beach"
+id = "s70-psp-beach"
 kind = "video"
 file = "psp-seashore.mp4"
 at = 0.4
 dur = 2.6
 cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
 zoom = [1.0, 1.04]
 fade_in = 0.25
-grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
 captions = [
   { label = "Hardware", text = "Exported to a real Sony PSP: a whole bay at 60 fps", at = 0.2 },
 ]
 
 [[clip]]
-id = "t71-psp-surf"
+id = "s71-psp-surf"
 kind = "video"
 file = "psp-seashore.mp4"
 at = 3.6
@@ -127,65 +189,29 @@ dur = 3.0
 cursor = false
 grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
 captions = [
-  { label = "Water", text = "Rolling swell, breaking surf and spray, animated by the PSP's GPU", at = 0.2 },
+  { label = "Water", text = "Swell, surf and spray, animated by the PSP's GPU", at = 0.2 },
 ]
 
 [[clip]]
-id = "t72-psp-rocks"
+id = "s74-psp-hud"
 kind = "video"
 file = "psp-seashore.mp4"
-at = 15.8
-dur = 2.8
-cursor = false
-grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
-captions = [
-  { label = "Effects", text = "Foam rings and splashes timed to every wave", at = 0.2 },
-]
-
-[[clip]]
-id = "t73-psp-palms"
-kind = "video"
-file = "psp-seashore.mp4"
-at = 24.4
-dur = 2.8
-cursor = false
-grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
-captions = [
-  { label = "Wind", text = "Palms sway, and their shadows sway with them", at = 0.2 },
-]
-
-[[clip]]
-id = "t74-psp-hud"
-kind = "video"
-file = "psp-seashore.mp4"
-# A 1:1 punch-in on the PSP's screen: the app's own HUD (frame rate,
-# triangles, draws) legible over the palms, read off the device.
 at = 46.5
-dur = 2.6
+dur = 2.4
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
 crop = [400, 150, 1100, 619]
 zoom = [1.0, 1.04]
-cursor = false
-grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+fade_out = 0.3
 captions = [
-  { label = "Measured", text = "60 fps on the device, around 12,800 triangles a frame", at = 0.2 },
+  { label = "Measured", text = "60 fps on the device", at = 0.2 },
 ]
 
 [[clip]]
-id = "t75-psp-glitter"
-kind = "video"
-file = "psp-seashore.mp4"
-at = 55.0
-dur = 3.0
-cursor = false
-zoom = [1.0, 1.03]
-fade_out = 0.4
-grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
-
-[[clip]]
-id = "t90-end"
+id = "s90-end"
 kind = "card"
 dur = 2.4
+cursor = false
 fade_in = 0.3
 fade_out = 0.5
-cursor = false
 card = { kicker = "Free and open source", title = "PoiBuilder", sub = "ProBuilder-style level building for Godot 4", bullets = ["Pure GDScript: drop the addon in and enable it", "Modern glTF export, and a retro export that runs on a real PSP", "github.com/Francesco149/poibuilder"] }

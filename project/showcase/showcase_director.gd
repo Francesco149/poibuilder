@@ -245,6 +245,35 @@ func shot(name: String, fn: Callable) -> void:
 			name, shot_frame, float(shot_frame) / float(FPS), dur])
 	shot_name = ""
 
+## Lifts PoiBuilder's floating panel `px` above its default bottom-left spot
+## (what dragging it by its header does), so a 16:9 crop of the editor that
+## ends short of the viewport's bottom edge still holds the whole panel and
+## the parameter modals it opens.
+func lift_panel(px: float) -> void:
+	var ov = plugin.tool_overlay
+	if ov == null:
+		return
+	var parent_ctl := ov.get_parent() as Control
+	if parent_ctl == null:
+		return
+	ov._bottom_left.y = parent_ctl.size.y - 8.0 - px
+	ov._update_position_from_bottom_left()
+	await frames(2)
+
+## True when this is a partial render (PB_SHOWCASE_ONLY) and every shot it
+## asked for has been recorded: a session can stop there instead of running
+## (uncaptured, but still frame by frame) through every later beat.
+func only_done() -> bool:
+	if only.is_empty():
+		return false
+	var got := {}
+	for s in shots:
+		got[s["name"]] = true
+	for n in only:
+		if not got.has(n):
+			return false
+	return true
+
 func _slug(s: String) -> String:
 	var out := ""
 	for i in range(s.length()):
@@ -563,11 +592,46 @@ func env_preset(name: String, settle := 14) -> void:
 		await mouse_up()
 		await frames(settle)
 		landed = _env_is(name)
+		# The row-height estimate can miss on a themed popup: if the menu is
+		# still open, walk its highlight to the item and press Enter, the way
+		# a keyboard user picks it (keys go straight to the open popup).
+		if not landed:
+			if not popup.visible:
+				await click(menu.get_global_rect().get_center(), 10)
+			if popup.visible:
+				for i in range(popup.item_count + 2):
+					if popup.get_focused_item() == idx:
+						break
+					await _popup_key(popup.get_focused_item() < idx)
+				await frames(6)
+				await _popup_enter()
+				await frames(settle)
+				landed = _env_is(name)
+				if landed:
+					_log_line("env preset '%s' picked from the menu by keyboard" % name)
 	if not landed:
 		plugin.call("_on_env_preset_requested", name)
 		await frames(settle)
 		_log_line("env preset '%s' applied via api (menu item missed)" % name)
 	_check(_env_is(name), "environment preset is '%s'" % name)
+
+func _popup_key(down: bool) -> void:
+	for pressed in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_DOWN if down else KEY_UP
+		ev.physical_keycode = ev.keycode
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+		await frames(3)
+
+func _popup_enter() -> void:
+	for pressed in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = KEY_ENTER
+		ev.physical_keycode = KEY_ENTER
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+		await frames(2)
 
 func _env_is(name: String) -> bool:
 	var root := EditorInterface.get_edited_scene_root()
@@ -908,8 +972,20 @@ func click_control(c: Control, settle := 12, hold: Array = []) -> bool:
 	if not c.is_visible_in_tree():
 		_log_line("WARN control '%s' is not visible" % c.name)
 		return false
-	await click(c.get_global_rect().get_center(), settle, hold)
+	await click(control_center(c), settle, hold)
 	return true
+
+## A control's centre in ROOT-window coordinates. A control inside an
+## embedded dialog (the export dialog, any AcceptDialog) reports its rect in
+## the dialog's own viewport: without the dialog's position the click lands
+## elsewhere — the export dialog's "Export" click toggled its Ambient
+## Occlusion checkbox instead.
+func control_center(c: Control) -> Vector2:
+	var pos := c.get_global_rect().get_center()
+	var w := c.get_window()
+	if w != null and w != get_tree().root and w.is_embedded():
+		pos += Vector2(w.position)
+	return pos
 
 ## Clicks control `name` found anywhere under the plugin's material dock.
 func click_dock_control(name: String, settle := 12) -> bool:
@@ -999,6 +1075,21 @@ func arm_shape(shape_id: StringName, settle := 14) -> void:
 		await mouse_up()
 		await frames(settle)
 		clicked = _shape_armed(shape_id)
+		# Same keyboard pick as env_preset when the row estimate misses.
+		if not clicked:
+			if not popup.visible:
+				await click(menu.get_global_rect().get_center(), 10)
+			if popup.visible:
+				for i in range(popup.item_count + 2):
+					if popup.get_focused_item() == idx:
+						break
+					await _popup_key(popup.get_focused_item() < idx)
+				await frames(6)
+				await _popup_enter()
+				await frames(settle)
+				clicked = _shape_armed(shape_id)
+				if clicked:
+					_log_line("shape '%s' picked from the menu by keyboard" % shape_id)
 	if not clicked:
 		plugin.call("_on_shape_requested", shape_id)
 		await frames(settle)
@@ -1142,6 +1233,11 @@ func move_selection(world_motion: Vector3, n: int = 24, shift := false, ease_mod
 		cursor = w2s(pivot0 + world_motion * t)
 		_send_motion()
 		await frames(1)
+	if shift:
+		_log_line("extrude drag: asked %.3f | plugin mouse=%s start=%s ppw=%.1f pivot=%s | director cursor=%s start=%s ppw(pivot0)=%.1f" % [
+			world_motion.length(), str(ed.mouse_screen), str(ed._extrude_mouse_start), ed._extrude_px_per_world,
+			str(ed._extrude_pivot_world), str(cursor), str(w2s(pivot0)),
+			(w2s(pivot0 + world_motion.normalized()) - w2s(pivot0)).length()])
 	ed.commit_subgizmos(mesh, ids, false)
 	if shift:
 		await shift_held(false)

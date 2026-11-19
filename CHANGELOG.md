@@ -11,6 +11,58 @@ it show all the things the original showcase did, but with a smoother more
 polished execution, plus new ui + features. short version for the readme,
 long version for yt and godot store video".
 
+### Showcase v2: two cuts from five continuous sessions
+
+The film is now built from five new sessions, each ONE continuous take
+split into beats (no fresh set per beat: the camera travels from object to
+object on one workbench, or keeps building the same set):
+
+| session | beats |
+|---|---|
+| `v2_create` | dock Shapes tab: cube on the floor, on a wall, on a slope; stairs with the live modal (6 -> 12 steps), re-edit (12 -> 20) through the panel's Edit Shape Properties; arched door; edge-first walls; a dolly along every primitive |
+| `v2_edit` | vertex/edge/face hover on a doorway, its front n-gon picked with one click; the n-gon Shift+dragged out (the arch deepens with it), then the two top quads extruded, scaled into a cornice, extruded and tapered into a roof; inset/extrude/inset/extrude-down chimney; loop cut (orbit over all four sides, Alt+click the loop, slide it); subdivide + pull a quarter; merge; merge across a crease; bevel modal; weld; delete + detach; knife + extrude; n-gon draw; smart selection |
+| `v2_surface` | card click on a face, x2 tiling, filtered card dragged onto a face, UV editor (rotate/flip/box on brick), two paint layers, HELLO WORLD stamps, a billboard tree, a flame emitter, a scrolling waterfall sheet |
+| `v2_tools` | Trim in one drag (round profile), Trim Walls round four walls (mitres), CSG subtract + Ctrl+Z + Ctrl+Shift+Z, Poibuilderize of a GLB crate |
+| `v2_map` | the alpha demo map built into the scene: a flight over it, Env menu dusk -> night, the retro .pbm export |
+
+`showcase_video/tools/gen_edl_v2.py` writes both timelines from one clip
+spec and the takes' real lengths (a re-render cannot break the timing):
+`edl_v2.toml` (README cut: 18 clips, 64.1 s, master 22.0 MB, README
+encode 2.3 MB, `out_v2/`) and `edl_v2_long.toml` (YouTube / Asset Library
+cut: 47 clips, 3:39, master 82.9 MB, `out_v2_long/`; the editor chapters run
+at 1.15x), both ending on the seashore PSP footage. Both builds verified
+frame-exact against their EDLs. Final renders: v2_create 37/37 checks,
+v2_edit 83/83, v2_surface 20/20, v2_tools 23/23, v2_map 10/10 (the export
+runs on camera and writes the .pbm). Fallbacks the logs record: the UV
+Editor opens through the plugin (4.7's bottom bar exposes no clickable tab
+to the pointer), one merged-face pick and the waterfall sheet's face are
+selected through the selection protocol.
+
+`cursor_check` takes `SHOWCASE_EDL=<edl>` and knows the v2 sessions. On both
+v2 cuts it reports 0 failures, except that with its `min + radius` marker
+finder six dock clicks read 2.0-2.7 px (limit 2.0) at the v2 crop's 0.78x
+scale; a scale-independent finder (bounding-box midpoint) puts every v2 clip
+at <= 1.1 px but reads v1's push-in clips at 2.5-3.2 px instead of 2.1-2.4,
+so the finder is left as it was (v1 already shows 6 failures with it). Every editor clip uses one 16:9 crop: toolbar (when
+shown) + 3D view + Material & UV dock, captions bottom-centre (the
+floating panel owns the bottom-left). Each beat asserts what it shows
+(manifest checks), and anything driven through a fallback instead of the
+real UI is logged.
+
+Director fixes: `only_done()` (a partial render stops after its last
+requested shot instead of replaying the rest), `lift_panel()` (the floating
+panel sits inside the 16:9 crop), `control_center()` (clicks on controls in
+embedded dialogs add the dialog's offset: the export dialog's "Export" click
+had toggled its Ambient Occlusion checkbox), the Env and New Shape menus fall
+back to picking the item by keyboard on the open popup (the row-height
+estimate missed on the current theme), and a log line per extrude drag.
+`project/materials/showcase_checker_steel.tres`: a mid-tone default for
+showcase shapes (the soft checker blows out to white under the day light).
+
+Known, not fixed here: Shift+drag on a face of a Poibuilderized GLB prop (the
+market crate, the barrel) reports "Extrude faces: degenerate region normal"
+and degrades to a move; the import beat shows a move.
+
 ### Fixed: the n-gon's "Height" readout stayed on screen
 
 The floating readout beside the cursor ("Height: 1.40m") during the N-gon

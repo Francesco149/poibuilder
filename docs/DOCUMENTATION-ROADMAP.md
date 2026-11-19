@@ -297,7 +297,9 @@ re-rendering the editor).
 - [x] **Poibuilderize**: `more/poibuilderize` + `86-poibuilderize` (medieval GLB when present).
       New clips are APPENDED after the PSP hardware beats (user instruction);
       existing clips are unchanged. Render with `./showcase_video/render.sh more`.
-- [ ] Re-cut the master: keep total ≤ 2.5 min; the new segments slot after
+- [ ] (v0.9.189: superseded by showcase v2 — `edl_v2.toml` README cut and
+      `edl_v2_long.toml` long cut, see CHANGELOG; the README embed swap is
+      the human's.) Re-cut the master: keep total ≤ 2.5 min; the new segments slot after
       the existing creation/editing beats and before the export/retro beats;
       regenerate the poster and review sheet; re-upload the README embed and
       swap the `user-attachments` URL.

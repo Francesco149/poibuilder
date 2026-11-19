@@ -1,0 +1,534 @@
+# Showcase v2, LONG cut (YouTube, Godot Asset Library): every chapter in full.
+#
+# GENERATED from one clip spec (both cuts share the takes); every `dur` is
+# the take's real length from the session manifests. Sessions:
+#   project/showcase/sessions/v2_{create,edit,surface,tools,map}.gd
+# Render (all five, pinned layout):
+#   PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg ./showcase_video/render.sh v2_edit   (etc.)
+# Regenerate (after a re-render): python3 showcase_video/tools/gen_edl_v2.py
+# Build:
+#   ./showcase_video/build.sh --edl showcase_video/edl_v2_long.toml
+#
+# One framing for every editor clip: crop [287, 44, 1633, 918] = the PoiBuilder
+# toolbar (when shown), the 3D view and the Material & UV dock, exactly 16:9.
+
+[project]
+name = "out_v2_long"
+width = 1280
+height = 720
+fps = 60
+readme_width = 960
+out_dir = "out_v2_long"
+master = "poibuilder-showcase-v2-long.mp4"
+readme = "poibuilder-showcase-v2-long-960.mp4"
+poster = "poibuilder-showcase-v2-long-poster.png"
+
+# total 218.6 s
+
+[[clip]]
+id = "l00-title"
+kind = "card"
+dur = 2.0
+cursor = false
+fade_in = 0.3
+fade_out = 0.3
+card = { kicker = "Godot 4 editor plugin", title = "PoiBuilder", sub = "Build levels inside the editor" }
+
+[[clip]]
+id = "l01-tz-gate"
+source = "v2_edit:v2e/portal"
+at = 10.43
+dur = 1.48
+crop = [287, 44, 1633, 918]
+fade_in = 0.2
+
+[[clip]]
+id = "l02-tz-fire"
+source = "v2_surface:v2s/particles"
+at = 3.32
+dur = 1.28
+crop = [287, 44, 1633, 918]
+
+[[clip]]
+id = "l03-tz-trim"
+source = "v2_tools:v2t/trimwalls"
+at = 6.33
+dur = 1.38
+crop = [287, 44, 1633, 918]
+
+[[clip]]
+id = "l04-tz-night"
+source = "v2_map:v2m/env"
+at = 8.35
+dur = 1.58
+crop = [287, 44, 1633, 918]
+fade_out = 0.25
+
+[[clip]]
+id = "l10-cube"
+source = "v2_create:v2c/cube"
+at = 0.0
+dur = 2.98
+crop = [287, 44, 1633, 918]
+fade_in = 0.25
+speed = 1.15
+captions = [
+  { label = "Create", text = "Pick a shape in the dock, drag it out, pull its height", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l11-surfaces"
+source = "v2_create:v2c/surfaces"
+at = 0.0
+dur = 3.43
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Create", text = "The same drag on a wall, or on a slope: it grows along the surface", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "l12-stairs"
+source = "v2_create:v2c/stairs"
+at = 0.0
+dur = 5.14
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Parameters", text = "Stairs with a live preview: the steps update as you type", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l13-reedit"
+source = "v2_create:v2c/reedit"
+at = 0.0
+dur = 4.73
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Parameters", text = "Re-open any placed shape: 12 steps become 20", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l14-door"
+source = "v2_create:v2c/door"
+at = 0.0
+dur = 4.56
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Create", text = "An arched doorway, straight from its parameters", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l15-edge"
+source = "v2_create:v2c/edge"
+at = 0.0
+dur = 8.57
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "New", text = "Edge-first placement: click an edge at any angle, then depth and height", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l16-lineup"
+source = "v2_create:v2c/lineup"
+at = 1.2
+dur = 3.78
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Shapes", text = "Every primitive is generated from parameters", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l20-modes"
+source = "v2_edit:v2e/modes"
+at = 0.0
+dur = 4.7
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Select", text = "Vertex, edge, face. The doorway's front is ONE n-gon, arch and all", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l21-portal"
+source = "v2_edit:v2e/portal"
+at = 0.0
+dur = 9.49
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Extrude", text = "Shift+drag the whole n-gon: the arch deepens with it", at = 0.1, dur = 2.6, pos = "bc" },
+  { label = "Extrude", text = "Extrude, scale, extrude, taper: a cornice and a roof", at = 2.9, pos = "bc" },
+]
+
+[[clip]]
+id = "l22-chimney"
+source = "v2_edit:v2e/chimney"
+at = 0.0
+dur = 7.99
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Inset", text = "Inset, extrude, inset, extrude down: a hollow chimney", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l23-loopcut"
+source = "v2_edit:v2e/loopcut"
+at = 0.0
+dur = 6.63
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Loop cut", text = "One loop round all four sides; Alt+click selects it, a drag slides it", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l24-subdiv"
+source = "v2_edit:v2e/subdiv"
+at = 0.0
+dur = 3.88
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Subdivide", text = "Split a face in four, then pull one quarter out", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l25-merge"
+source = "v2_edit:v2e/merge"
+at = 0.0
+dur = 4.04
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Merge", text = "Two faces become one, and move as one", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l26-crease"
+source = "v2_edit:v2e/crease"
+at = 0.0
+dur = 6.31
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Merge", text = "Even across a crease: one bent n-gon", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l27-bevel"
+source = "v2_edit:v2e/bevel"
+at = 0.0
+dur = 6.78
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Bevel", text = "Live preview: the width, then the segments", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l28-weld"
+source = "v2_edit:v2e/weld"
+at = 0.0
+dur = 4.14
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Weld", text = "Two corners welded into one: the cube becomes a wedge", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l29-cube"
+source = "v2_edit:v2e/cube"
+at = 0.0
+dur = 5.62
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Delete & detach", text = "Open the box, then lift a face off as its own object", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l30-knife"
+source = "v2_edit:v2e/knife"
+at = 0.0
+dur = 5.57
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Knife", text = "Cut any path across a face, then extrude one side", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l31-ngon"
+source = "v2_edit:v2e/ngon"
+at = 0.0
+dur = 5.08
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "N-gon", text = "Draw any polygon, then pull up its height", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l32-smart"
+source = "v2_edit:v2e/smart"
+at = 0.0
+dur = 6.01
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Select", text = "Face loop, grow, shrink, coplanar, invert", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l40-card"
+source = "v2_surface:v2s/card"
+at = 0.0
+dur = 3.15
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Materials", text = "Select a face, click a card", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l41-drop"
+source = "v2_surface:v2s/drop"
+at = 0.0
+dur = 3.02
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Materials", text = "...or filter the palette and drag a card onto any face", at = 0.1, pos = "bc" },
+]
+
+[[clip]]
+id = "l42-uv"
+source = "v2_surface:v2s/uv"
+at = 0.0
+dur = 4.81
+crop = [0, 0, 1920, 1080]
+speed = 1.15
+captions = [
+  { label = "UV editor", text = "Rotate, flip and project UVs; the 3D view follows", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l43-paint"
+source = "v2_surface:v2s/paint"
+at = 0.0
+dur = 4.55
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Paint", text = "Brush texture layers onto any surface", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l44-stamp"
+source = "v2_surface:v2s/stamp"
+at = 0.0
+dur = 2.85
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Stamp", text = "Press decals into the surface", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l45-sprite"
+source = "v2_surface:v2s/sprite"
+at = 0.0
+dur = 2.95
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Sprites", text = "Billboards: click, raise, scale", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l46-particles"
+source = "v2_surface:v2s/particles"
+at = 0.0
+dur = 4.17
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Particles", text = "Click to place an emitter: fire, mist, embers", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l47-scroll"
+source = "v2_surface:v2s/scroll"
+at = 0.0
+dur = 5.28
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Animated", text = "A scroll speed on a face: the water flows live in the editor", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l50-trim"
+source = "v2_tools:v2t/trim"
+at = 0.0
+dur = 8.1
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Trim", text = "A skirting in one drag, with a rounded profile", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l51-trimwalls"
+source = "v2_tools:v2t/trimwalls"
+at = 0.0
+dur = 7.4
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Trim Walls", text = "Click the walls: one run, mitred at every corner", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l52-csg"
+source = "v2_tools:v2t/csg"
+at = 0.0
+dur = 5.89
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "CSG", text = "Subtract, Ctrl+Z, Ctrl+Shift+Z: booleans with real undo", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l53-import"
+source = "v2_tools:v2t/import"
+at = 0.0
+dur = 4.43
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Poibuilderize", text = "Any imported GLB becomes a mesh you can edit", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l60-fly"
+source = "v2_map:v2m/fly"
+at = 0.0
+dur = 9.81
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "A whole map", text = "Splats, decals, a waterfall, emitters, billboards: all live in the editor", at = 0.3, pos = "bc" },
+]
+
+[[clip]]
+id = "l61-env"
+source = "v2_map:v2m/env"
+at = 0.0
+dur = 10.13
+crop = [287, 44, 1633, 918]
+captions = [
+  { label = "Time of day", text = "One click re-lights the whole map", at = 0.4, pos = "bc" },
+]
+
+[[clip]]
+id = "l62-export"
+source = "v2_map:v2m/export"
+at = 0.0
+dur = 5.11
+crop = [287, 44, 1633, 918]
+fade_out = 0.3
+captions = [
+  { label = "Export", text = "...and one click to a retro .pbm map", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l70-psp-beach"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 0.4
+dur = 2.6
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+zoom = [1.0, 1.04]
+fade_in = 0.25
+captions = [
+  { label = "Hardware", text = "Exported to a real Sony PSP: a whole bay at 60 fps", at = 0.2 },
+]
+
+[[clip]]
+id = "l71-psp-surf"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 3.6
+dur = 3.0
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Water", text = "Rolling swell, breaking surf and spray, animated by the PSP's GPU", at = 0.2 },
+]
+
+[[clip]]
+id = "l72-psp-rocks"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 15.8
+dur = 2.8
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Effects", text = "Foam rings and splashes timed to every wave", at = 0.2 },
+]
+
+[[clip]]
+id = "l73-psp-palms"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 24.4
+dur = 2.8
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+captions = [
+  { label = "Wind", text = "Palms sway, and their shadows sway with them", at = 0.2 },
+]
+
+[[clip]]
+id = "l74-psp-hud"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 46.5
+dur = 2.6
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+crop = [400, 150, 1100, 619]
+zoom = [1.0, 1.04]
+captions = [
+  { label = "Measured", text = "60 fps on the device, around 12,800 triangles a frame", at = 0.2 },
+]
+
+[[clip]]
+id = "l75-psp-glitter"
+kind = "video"
+file = "psp-seashore.mp4"
+at = 55.0
+dur = 3.0
+cursor = false
+grade = { contrast = 1.10, saturation = 1.22, gamma = 0.93, brightness = -0.015 }
+zoom = [1.0, 1.03]
+fade_out = 0.4
+
+[[clip]]
+id = "l90-end"
+kind = "card"
+dur = 3.0
+cursor = false
+fade_in = 0.3
+fade_out = 0.5
+card = { kicker = "Free and open source", title = "PoiBuilder", sub = "ProBuilder-style level building for Godot 4", bullets = ["Pure GDScript: drop the addon in and enable it", "Modern glTF export, and a retro export that runs on a real PSP", "github.com/Francesco149/poibuilder"] }

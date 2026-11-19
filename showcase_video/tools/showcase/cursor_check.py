@@ -25,6 +25,7 @@ Run:  python -m showcase.cursor_check [clip_id ...]
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -136,7 +137,8 @@ def check_hotspot() -> tuple[int, int]:
 
 
 def main(argv: list[str]) -> int:
-    proj = edl.load(build.DEFAULT_EDL)
+    # SHOWCASE_EDL picks another timeline (the v2 cuts live beside edl.toml).
+    proj = edl.load(os.environ.get("SHOWCASE_EDL", str(build.DEFAULT_EDL)))
     failures = 0
     tip = check_hotspot()
     # A correct hotspot means the sprite's tip lands ON the requested point.
@@ -148,7 +150,7 @@ def main(argv: list[str]) -> int:
     for clip in proj.clips:
         if argv and clip.id not in argv:
             continue
-        if clip.kind not in ("card", "session") and not str(clip.source or "").startswith(("edit:", "create:", "map:", "paint:", "shapes:", "smoke:")):
+        if clip.kind not in ("card", "session") and not str(clip.source or "").startswith(("edit:", "create:", "map:", "paint:", "shapes:", "smoke:", "v2_")):
             continue
         try:
             src = build.resolve(clip, proj)
