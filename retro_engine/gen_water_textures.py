@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """Generates the seamless water textures the courtyard waterfall demo uses.
 
+  waterfall_sheet.png  128x256  the falling curtain: long vertical streaks with
+                                thin specular runnels and clumps of white water
+                                over a mostly-opaque body (soft alpha, no holes)
+  waterfall_core.png    64x128  the fast inner stream: brighter, foamier, with a
+                                ragged soft edge fading out at both sides
+  water_pool.png       128x128  translucent pool: deep teal body with a
+                                domain-warped two-scale caustic web
+  water_foam.png       128x64   foam lace: bubble-cell outlines gathered into
+                                drifting patches over open (transparent) water
+  water_spray.png       64x64   soft mist puffs for the impact billboard
+
 Everything a scrolling texture needs is a tile that WRAPS: the visible motion
 comes from shifting the texture coordinates, so a seam along the scroll axis
-repeats once per second and reads immediately as a bug. Every drawing routine
-here therefore stamps with wraparound (a blob near an edge is drawn again on
-the opposite side), and the pool ripples are built from integer-frequency
-sinusoids, which are seamless on a torus by construction.
+repeats once per cycle and reads immediately as a bug. Every field below comes
+from `texgen_noise` (FFT-filtered noise, wraparound warps, torus Voronoi), so
+the outputs are seamless in both axes by construction, not by edge blending.
 
-All outputs are power-of-two RGBA8888, which is what the retro exporters and
-the PSP texture uploader want.
+Retro notes: all outputs are power-of-two RGBA8888 with genuinely soft alpha
+(the exporter ships them RGBA8888 and blends them). Feature sizes are kept at
+>= ~2 px so the PSP's mip chain does not turn them to shimmer.
 
 Usage: python3 retro_engine/gen_water_textures.py [--out DIR]
 Writes into project/addons/poibuilder/materials/textures/ by default.
 """
 import argparse
-import math
 import os
 import random
 
@@ -23,238 +33,135 @@ import numpy as np
 
 from PIL import Image, ImageDraw, ImageFilter
 
-TAU = math.pi * 2  # kept explicit: every wobble frequency below is in radians
+from texgen_noise import blur, mix, pnoise, smoothstep, to_u8, voronoi, warp
 
-# Strength of the blue-white tint used by every water surface, so the four
-# textures read as one material family under the baked courtyard lighting.
-DEEP = (48, 92, 122)
-CYAN_BODY = (68, 140, 185)
-MID = (96, 152, 186)
-BRIGHT = (198, 232, 246)
+# One palette for the whole water family so the textures read as one material
+# under the baked courtyard lighting.
+DEEP = (22, 64, 96)
+BODY = (44, 116, 160)
+MID = (92, 166, 200)
+BRIGHT = (186, 230, 246)
 FOAM = (238, 250, 255)
 
 
-def _wrapped_blob(draw, x, y, w, h, fill, width, height):
-    """Stamps a soft-ish rectangle/blob, repeated across every edge so the
-    texture stays seamless in both axes."""
-    for dx in (-width, 0, width):
-        for dy in (-height, 0, height):
-            draw.ellipse([x + dx - w / 2, y + dy - h / 2, x + dx + w / 2, y + dy + h / 2], fill=fill)
+def _rgba(rgb, alpha):
+    return Image.fromarray(np.dstack([to_u8(rgb), to_u8(alpha)]), "RGBA")
 
-
-def _lerp(a, b, t):
-    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 def make_waterfall_sheet(width=128, height=256, seed=7):
-    """Falling water curtain: vertically stretched runnels with glistening specular streaks.
+    """Falling water curtain: streaky body, specular runnels, white-water clumps."""
+    rng = np.random.default_rng(seed)
+    h, w = height, width
+    # Gentle sideways meander so the streaks are not ruler-straight.
+    meander = pnoise(h, w, rng, 48, 40) * 2.0
+    broad = warp(pnoise(h, w, rng, 36, 5.5), meander, 0)    # sheet thickness
+    fine = warp(pnoise(h, w, rng, 16, 2.0), meander, 0)     # streak detail
+    runnel = warp(pnoise(h, w, rng, 80, 6.5), meander, 0)   # specular lines
+    clump = warp(pnoise(h, w, rng, 16, 4.0), meander, 0)    # white water
 
-    Seamless on both X and Y axes via integer-period noise generators.
-    """
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    pix = img.load()
+    t = np.clip(0.55 + 0.20 * broad + 0.12 * fine, 0, 1)
+    rgb = mix(DEEP, BODY, smoothstep(0.05, 0.55, t))
+    rgb = mix(rgb, MID, smoothstep(0.50, 0.95, t))
 
-    for y in range(height):
-        ny = y / float(height)
-        for x in range(width):
-            nx = x / float(width)
-            n1 = _wnoise(seed, nx * 6.0, ny * 4.0, 6, 4)
-            n2 = _wnoise(seed + 31, nx * 12.0, ny * 8.0, 12, 8)
-            n3 = _wnoise(seed + 77, nx * 24.0, ny * 16.0, 24, 16)
-            runnel = n1 * 0.55 + n2 * 0.30 + n3 * 0.15
-            col_mod = math.sin(nx * TAU * 3.0 + n1 * 1.5) * 0.5 + 0.5
-            val = runnel * (0.65 + 0.35 * col_mod)
+    # Bright runnels: the ridge (zero crossing) of a streak field, kept >= 2 px.
+    ridge = 1.0 - np.abs(runnel)
+    hl = smoothstep(0.72, 0.96, ridge) * smoothstep(-0.9, 0.5, broad)
+    hl *= smoothstep(-0.4, 0.8, pnoise(h, w, rng, 18, 6))   # broken into dashes
+    rgb = mix(rgb, BRIGHT, hl * 0.8)
 
-            if val < 0.36:
-                pix[x, y] = (0, 0, 0, 0)
-                continue
+    # White water: long vertical smears where the sheet is thick.
+    foam_f = clump + 0.45 * fine + 0.35 * broad
+    foam = blur(smoothstep(1.0, 1.9, foam_f), 4.0, 0.7)
+    rgb = mix(rgb, FOAM, np.clip(foam * 1.3, 0, 0.9))
 
-            d = (val - 0.36) / 0.64
-            if d < 0.45:
-                t = d / 0.45
-                c = _lerp(DEEP, CYAN_BODY, t)
-                alpha = int(140 + 90 * t)
-            elif d < 0.80:
-                t = (d - 0.45) / 0.35
-                c = _lerp(CYAN_BODY, BRIGHT, t)
-                alpha = int(230 + 20 * t)
-            else:
-                t = (d - 0.80) / 0.20
-                c = _lerp(BRIGHT, FOAM, t)
-                alpha = 255
-
-            pix[x, y] = (c[0], c[1], c[2], alpha)
-
-    return _toroidal_blur(img, 0.35)
+    # Mostly opaque body; thin parts of the sheet go translucent, never holes.
+    alpha = 205 + 36 * broad + 12 * fine + hl * 45 + foam * 90
+    return _rgba(rgb, np.clip(alpha, 125, 255))
 
 
 def make_waterfall_core(width=64, height=128, seed=19):
-    """Fast inner stream: narrower, focused cascade with bright specular highlights.
+    """Fast inner stream: bright, foamy, with a ragged soft edge at both sides."""
+    rng = np.random.default_rng(seed)
+    h, w = height, width
+    meander = pnoise(h, w, rng, 28, 24) * 1.5
+    broad = warp(pnoise(h, w, rng, 22, 3.5), meander, 0)
+    fine = warp(pnoise(h, w, rng, 12, 1.8), meander, 0)
+    runnel = warp(pnoise(h, w, rng, 48, 3.5), meander, 0)
+    clump = warp(pnoise(h, w, rng, 10, 3.0), meander, 0)
 
-    Blended (soft alpha), seamless in X and Y on the torus.
-    """
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    pix = img.load()
+    t = np.clip(0.55 + 0.2 * broad + 0.14 * fine, 0, 1)
+    rgb = mix(BODY, MID, smoothstep(0.15, 0.75, t))
+    rgb = mix(rgb, BRIGHT, smoothstep(0.65, 1.0, t) * 0.8)
+    hl = smoothstep(0.78, 0.96, 1.0 - np.abs(runnel))
+    rgb = mix(rgb, FOAM, hl * 0.75)
+    foam = blur(smoothstep(0.8, 1.7, clump + 0.5 * fine), 3.0, 0.6)
+    rgb = mix(rgb, FOAM, np.clip(foam * 1.3, 0, 0.95))
 
-    for y in range(height):
-        ny = y / float(height)
-        for x in range(width):
-            nx = x / float(width)
-            dist_from_center = abs(nx - 0.5) * 2.0
-            col_envelope = 1.0 - math.pow(dist_from_center, 1.8)
+    # Column envelope: 1 in the middle, 0 at both x edges (so the X wrap is
+    # seamless too), with the edge position wobbling down the stream.
+    xx = (np.arange(w) + 0.5) / w
+    dist = np.abs(xx - 0.5)[None, :] * 2.0               # 0 centre .. 1 edge
+    edge = 0.82 + 0.09 * pnoise(h, w, rng, 12, 6)
+    env = 1.0 - smoothstep(edge - 0.45, edge, dist)
+    alpha = (205 + 30 * broad + hl * 40 + foam * 60) * env
+    return _rgba(rgb, np.clip(alpha, 0, 255))
 
-            n1 = _wnoise(seed, nx * 5.0, ny * 4.0, 5, 4)
-            n2 = _wnoise(seed + 43, nx * 10.0, ny * 8.0, 10, 8)
-            val = (n1 * 0.6 + n2 * 0.4) * col_envelope
-
-            if val < 0.22:
-                pix[x, y] = (0, 0, 0, 0)
-                continue
-
-            norm = (val - 0.22) / 0.78
-            if norm < 0.40:
-                c = _lerp(CYAN_BODY, MID, norm / 0.40)
-                alpha = int(120 + 80 * (norm / 0.40))
-            elif norm < 0.75:
-                c = _lerp(MID, BRIGHT, (norm - 0.40) / 0.35)
-                alpha = int(200 + 40 * ((norm - 0.40) / 0.35))
-            else:
-                c = _lerp(BRIGHT, FOAM, (norm - 0.75) / 0.25)
-                alpha = 250
-
-            pix[x, y] = (c[0], c[1], c[2], alpha)
-
-    return _toroidal_blur(img, 0.35)
 
 def make_water_pool(width=128, height=128, seed=23):
-    """Pool water: organic caustic web network and interference ripples over a translucent body.
+    """Pool water: translucent teal body with a warped two-scale caustic web."""
+    rng = np.random.default_rng(seed)
+    h, w = height, width
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
 
-    Seamless by construction (integer frequencies over the texture period in both axes),
-    and carrying soft alpha so the underlying stone tiles and steps read through the water
-    with caustic light play.
-    """
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    pix = img.load()
-    waves = [
-        (1, 0, 0.6), (0, 2, 0.5), (2, 1, 0.35), (3, -1, 0.3),
-        (1, 3, 0.25), (-2, 2, 0.2), (5, 2, 0.12), (2, -4, 0.1),
-    ]
-    phases = [i * 1.7 for i in range(len(waves))]
-    body = (28, 60, 88)
+    def web(count, width_px, amp, sigma):
+        wx = pnoise(h, w, rng, sigma, sigma) * amp
+        wy = pnoise(h, w, rng, sigma, sigma) * amp
+        f1, f2 = voronoi(h, w, rng, count, xx + wx, yy + wy)
+        return 1.0 - smoothstep(0.0, width_px, f2 - f1)
 
-    for y in range(height):
-        v = y / float(height)
-        for x in range(width):
-            u = x / float(width)
-            s = 0.0
-            for (kx, ky, amp), ph in zip(waves, phases):
-                s += amp * math.sin(TAU * (kx * u + ky * v) + ph)
-            t = 0.5 + 0.5 * math.tanh(s * 0.55)
-            base = _lerp(body, MID, t * 0.8)
+    # Two offset webs: where their lines cross, the caustic knots brighten.
+    web_a = web(10, 4.2, 7.0, 14)
+    web_b = web(18, 2.6, 5.0, 10)
+    caustic = blur(np.clip(web_a + web_b * 0.35, 0, 1.2), 0.8)
 
-            # Integer-frequency high-frequency caustics: (3, 2) and (2, 4)
-            w1 = math.sin(u * TAU * 3.0 + math.cos(v * TAU * 2.0) * 1.5)
-            w2 = math.sin(v * TAU * 4.0 + math.sin(u * TAU * 2.0) * 1.2)
-            w3 = math.sin((u + v) * TAU * 2.0)
-            w4 = math.sin((u - v) * TAU * 3.0 + w1 * 0.8)
-            caustic = (w1 + w2 + w3 + w4) * 0.25
-            c_val = 1.0 - math.pow(abs(caustic), 0.45)
-
-            if c_val > 0.40:
-                c_t = (c_val - 0.40) / 0.60
-                col = _lerp(base, BRIGHT, c_t * 0.95)
-                alpha = int(160 + 95 * c_t)
-            else:
-                col = base
-                alpha = int(120 + 40 * (c_val / 0.40))
-
-            pix[x, y] = (col[0], col[1], col[2], alpha)
-
-    return _toroidal_blur(img, 0.5)
-
-
-def _toroidal_blur(img, radius):
-    """Gaussian blur wrapped around a torus so image boundaries remain 100% seamless."""
-    w, h = img.size
-    pad = int(math.ceil(radius * 3))
-    big = Image.new(img.mode, (w + pad * 2, h + pad * 2))
-    big.paste(img, (pad, pad))
-    big.paste(img.crop((0, h - pad, w, h)), (pad, 0))
-    big.paste(img.crop((0, 0, w, pad)), (pad, h + pad))
-    big.paste(img.crop((w - pad, 0, w, h)), (0, pad))
-    big.paste(img.crop((0, 0, pad, h)), (w + pad, pad))
-    big.paste(img.crop((w - pad, h - pad, w, h)), (0, 0))
-    big.paste(img.crop((0, h - pad, pad, h)), (w + pad, 0))
-    big.paste(img.crop((w - pad, 0, w, pad)), (0, h + pad))
-    big.paste(img.crop((0, 0, pad, pad)), (w + pad, h + pad))
-    blurred = big.filter(ImageFilter.GaussianBlur(radius))
-    return blurred.crop((pad, pad, pad + w, pad + h))
+    depth = pnoise(h, w, rng, 22, 22)
+    rgb = mix(DEEP, BODY, 0.35 + 0.5 * smoothstep(-2.0, 2.0, depth))
+    glow = smoothstep(0.05, 0.9, caustic)
+    rgb = mix(rgb, BRIGHT, glow * 0.92)
+    alpha = 172 + 12 * depth + 58 * glow
+    return _rgba(rgb, np.clip(alpha, 130, 240))
 
 
 def make_water_foam(width=128, height=64, seed=31):
-    """Churn: turbulent foaming billows spreading away from the waterfall impact point.
+    """Foam: round bubbles packed into drifting patches that thin out to lace.
 
-    Rendered with transparent background and soft alpha falloff around churn boundaries,
-    so the foam overlays naturally on top of the pool without forming harsh rectangular seams.
-    Wrapped seamlessly in both X and Y.
-    """
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    pix = img.load()
+    Bubbles are torus-Voronoi cells; foam is the space BETWEEN them. The cut
+    threshold on F1/F2 (0 at a cell centre, 1 on its border) follows a patch
+    noise, so a dense patch is nearly solid white with small holes, its rim is
+    a thin lace of bubble outlines, and open water is left transparent."""
+    rng = np.random.default_rng(seed)
+    h, w = height, width
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    wx = pnoise(h, w, rng, 8, 8) * 1.5
+    wy = pnoise(h, w, rng, 8, 8) * 1.5
+    f1, f2 = voronoi(h, w, rng, 90, xx + wx, yy + wy)
+    ratio = f1 / np.maximum(f2, 1e-6)
+    f1s, f2s = voronoi(h, w, rng, 260, xx - wy, yy + wx)
+    ratio_s = f1s / np.maximum(f2s, 1e-6)
 
-    for y in range(height):
-        ny = y / float(height)
-        for x in range(width):
-            nx = x / float(width)
-            # Integer periods (6, 4), (12, 8), (24, 16) wrap seamlessly in both axes
-            n1 = _wnoise(seed, nx * 6.0, ny * 4.0, 6, 4)
-            n2 = _wnoise(seed + 19, nx * 12.0, ny * 8.0, 12, 8)
-            n3 = _wnoise(seed + 47, nx * 24.0, ny * 16.0, 24, 16)
-            churn = n1 * 0.50 + n2 * 0.35 + n3 * 0.15
+    patch = pnoise(h, w, rng, 7, 10)
+    dense = smoothstep(-1.6, 2.2, patch)                    # 0 open .. 1 packed
+    cut = 0.95 - 0.6 * dense                               # high: thin lace
+    big = smoothstep(cut - 0.06, cut + 0.03, ratio)
+    small = smoothstep(cut - 0.06, cut + 0.04, ratio_s) * smoothstep(0.5, 0.85, dense)
+    cover = np.maximum(big, small * 0.8) * smoothstep(0.03, 0.2, dense)
+    cover = blur(cover, 0.6)
 
-            # Soft alpha foam billows:
-            # Low churn: transparent, revealing the pool ripples below
-            # Mid churn: translucent aquatic cyan billow
-            # High churn: glistening white foam heads
-            if churn < 0.35:
-                alpha = int(max(0, (churn - 0.20) / 0.15 * 50))
-                col = CYAN_BODY
-            elif churn < 0.60:
-                t = (churn - 0.35) / 0.25
-                col = _lerp(CYAN_BODY, MID, t)
-                alpha = int(50 + 130 * t)
-            elif churn < 0.80:
-                t = (churn - 0.60) / 0.20
-                col = _lerp(MID, BRIGHT, t)
-                alpha = int(180 + 55 * t)
-            else:
-                t = (churn - 0.80) / 0.20
-                col = _lerp(BRIGHT, FOAM, t)
-                alpha = int(235 + 20 * t)
+    shade = smoothstep(0.2, 0.9, cover) * (0.75 + 0.25 * dense)
+    rgb = mix(MID, FOAM, shade)
+    alpha = 240 * smoothstep(0.03, 0.75, cover) + 22 * smoothstep(-0.9, 0.2, patch)
+    return _rgba(rgb, np.clip(alpha, 0, 245))
 
-            pix[x, y] = (col[0], col[1], col[2], alpha)
-
-    return _toroidal_blur(img, 0.4)
-
-
-def _h01(seed, ix, iy):
-    s = (seed ^ (int(ix) * 374761393) ^ (int(iy) * 668265263)) & 0xffffffff
-    s = (s ^ (s >> 13)) * 1274126177 & 0xffffffff
-    return (s & 0xffff) / 65535.0
-
-
-def _wnoise(seed, x, y, period_x, period_y):
-    gx = int(math.floor(x))
-    gy = int(math.floor(y))
-    fx = x - float(gx)
-    fy = y - float(gy)
-    def at(ix, iy):
-        return _h01(seed, ix % period_x, iy % period_y)
-    a = at(gx, gy)
-    b = at(gx + 1, gy)
-    c = at(gx, gy + 1)
-    d = at(gx + 1, gy + 1)
-    u = fx * fx * (3.0 - 2.0 * fx)
-    v = fy * fy * (3.0 - 2.0 * fy)
-    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
 
 def make_water_spray(width=64, height=64, seed=41):
     """Alpha-cutout mist for the impact point (drawn as a billboard)."""
@@ -287,21 +194,6 @@ def make_water_spray(width=64, height=64, seed=41):
             pix[x, y] = (r, g, b, int(a * edge))
     return img
 
-def make_tiles_wet_4x4(base_path):
-    """Generates wet stone tiles from tiles_light_4x4 by applying aquatic slate tint and water sheen."""
-    if not os.path.exists(base_path):
-        return None
-    base = Image.open(base_path).convert("RGB")
-    arr = np.array(base, dtype=np.float32)
-    # Darkened aquatic slate tone (0.55, 0.62, 0.70)
-    tint = np.array([0.55, 0.62, 0.70], dtype=np.float32)
-    arr = np.clip(arr * tint, 0, 255).astype(np.uint8)
-    return Image.fromarray(arr)
-
-
-def _clamp(v):
-    return 0 if v < 0 else (255 if v > 255 else int(v))
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -312,7 +204,7 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    light_tiles_path = os.path.join(args.out, "tiles_light_4x4.png")
+    # The floor tiles (tiles_light/tiles_wet) live in gen_tile_textures.py.
     textures = {
         "waterfall_sheet.png": make_waterfall_sheet(),
         "waterfall_core.png": make_waterfall_core(),
@@ -320,9 +212,6 @@ def main():
         "water_foam.png": make_water_foam(),
         "water_spray.png": make_water_spray(),
     }
-    wet_tiles = make_tiles_wet_4x4(light_tiles_path)
-    if wet_tiles is not None:
-        textures["tiles_wet_4x4.png"] = wet_tiles
     for name, img in textures.items():
         path = os.path.join(args.out, name)
         img.convert("RGBA").save(path)
