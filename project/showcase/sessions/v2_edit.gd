@@ -153,9 +153,22 @@ func _click_face(world: Vector3, glide_n := 20, hold: Array = [], expect_near :=
 	if m == null:
 		return
 	var ok := false
+	# The face the plugin's own picker sees under `expect_near` is the truth:
+	# a centroid-distance test called a correct pick of a big merged n-gon a
+	# miss (its centroid lay 0.85 m from the clicked point) and then forced
+	# the nearest-centroid face — a different one — on camera.
+	var under := d.element_id_at(expect_near)
+	if under >= 0 and _selected_faces().has(under):
+		ok = true
 	for fi in _selected_faces():
 		if _face_center(m, int(fi)).distance_to(expect_near) < 0.6:
 			ok = true
+	if not ok and under >= 0:
+		d.fallback("face click missed near %s (got %s) — selecting face %d via the protocol" % [
+			str(expect_near), str(_selected_faces()), under])
+		d.apply_selection_ids(PackedInt32Array([under]))
+		await d.frames(4)
+		return
 	if not ok:
 		var best := -1
 		var best_d := INF

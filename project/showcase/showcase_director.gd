@@ -1115,6 +1115,10 @@ func arm_shape(shape_id: StringName, settle := 14) -> void:
 		var panel := popup.get_theme_stylebox("panel")
 		var top := popup.position.y + (panel.content_margin_top if panel != null else 0.0)
 		var target := Vector2(popup.position.x + popup.size.x * 0.5, top + row_h * (float(idx) + 0.5))
+		# The row by hover, as env_preset does (the estimate misses on this theme).
+		var hit_y := await _popup_row_y(popup, idx, target.x)
+		if hit_y >= 0.0:
+			target.y = hit_y
 		await glide(target, 12)
 		await frames(4)
 		await mouse_down()

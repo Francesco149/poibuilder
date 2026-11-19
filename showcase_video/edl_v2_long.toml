@@ -23,7 +23,7 @@ master = "poibuilder-showcase-v2-long.mp4"
 readme = "poibuilder-showcase-v2-long-960.mp4"
 poster = "poibuilder-showcase-v2-long-poster.png"
 
-# total 212.9 s
+# total 207.9 s
 
 [[clip]]
 id = "l00-title"
@@ -172,7 +172,7 @@ captions = [
 id = "l25-merge"
 source = "v2_edit:v2e/merge"
 at = 0.0
-dur = 4.04
+dur = 3.92
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
@@ -282,7 +282,7 @@ captions = [
 id = "l42-scroll"
 source = "v2_surface:v2s/scroll"
 at = 0.0
-dur = 5.28
+dur = 5.08
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
@@ -348,7 +348,7 @@ captions = [
 id = "l50-trim"
 source = "v2_tools:v2t/trim"
 at = 0.0
-dur = 8.1
+dur = 5.94
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
@@ -370,7 +370,7 @@ captions = [
 id = "l52-csg"
 source = "v2_tools:v2t/csg"
 at = 0.0
-dur = 5.89
+dur = 5.84
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
@@ -402,7 +402,7 @@ captions = [
 id = "l61-env"
 source = "v2_map:v2m/env"
 at = 0.0
-dur = 10.13
+dur = 7.71
 crop = [287, 44, 1633, 918]
 captions = [
   { label = "Time of day", text = "One click re-lights the whole map", at = 0.4, pos = "bc" },

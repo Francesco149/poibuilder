@@ -195,7 +195,11 @@ func _csg() -> void:
 	await d.click_button("object", 8)
 	await d.glide_world_track(_at("csg", Vector3(-1.4, 2.2, 0.3)), 18)
 	await d.click()
-	await d.glide_world_track(_at("csg", Vector3(0.0, 1.5, 0.9)), 18)
+	# The cutter's cap OFF its centre: the cutter stands at the wall's centre,
+	# where the selected wall's transform gizmo sits, and a shift-click there
+	# grabbed the gizmo instead of picking the cutter (the selection came back
+	# empty and the beat fell back to selecting both through the editor).
+	await d.glide_world_track(_at("csg", Vector3(-0.45, 1.05, 0.9)), 18)
 	await d.click(Vector2.INF, 10, ["shift"])
 	var sel := EditorInterface.get_selection().get_selected_nodes()
 	if not (sel.has(wall) and sel.has(cutter)):
