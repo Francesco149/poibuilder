@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import draw
-from .capture import Session
+from .capture import Session, src_index
 from .edl import Caption, Clip
 
 
@@ -33,6 +33,7 @@ class OverlayPlan:
     frames: int                 # output frames
     captions: list[Caption]
     cursor: bool
+    cursor_mode: str
     clicks: list[tuple[int, int, int]]   # (source frame, x, y)
     # Source frames the clip walks through (out_frames * speed); the zoom
     # progress and the cursor mapping are both indexed by SOURCE frame, which
@@ -62,6 +63,7 @@ def plan_overlay(clip: Clip, session: Session | None, shot, crop: tuple[int, int
         frames=frames,
         captions=list(clip.captions),
         cursor=clip.cursor and session is not None,
+        cursor_mode=clip.cursor_mode,
         clicks=clicks,
         frame_style=clip.frame,
         frame_rect=frame_rect,
@@ -100,13 +102,15 @@ def caption_alpha(cap: Caption, t: float, clip_dur: float) -> tuple[float, float
     return a, slide
 
 
-def render_frame(plan: OverlayPlan, index: int, cursors: list[tuple[int, int]]) -> Image.Image:
+def render_frame(plan: OverlayPlan, index: int, cursors: list[tuple[int, int]],
+                 vis: list[float] | None = None) -> Image.Image:
     W, H = plan.out_size
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     fps = 60.0
     t = index / fps
     clip_dur = plan.frames / fps
-    src = plan.first_frame + int(round(index * plan.speed))
+    k = src_index(index, plan.speed)
+    src = plan.first_frame + k
 
     map_pt = point_mapper(plan)
 
@@ -133,22 +137,34 @@ def render_frame(plan: OverlayPlan, index: int, cursors: list[tuple[int, int]]) 
         # stray cursor on the frame's edge.
         if not (rx <= wx < rx + rw and ry <= wy < ry + rh):
             return canvas
-        px, py = map_pt(float(wx), float(wy), index * plan.speed)
+        px, py = map_pt(float(wx), float(wy), float(k))
         if -80 < px < W + 80 and -80 < py < H + 80:
             click = 0.0
             for (cf, _x, _y) in plan.clicks:
                 age = (src - cf) / max(plan.speed, 1e-6)
                 if 0 <= age <= 24:
                     click = max(click, draw.ripple_alpha(age, 24.0))
-            idle = draw.soft_pulse(abs(src - plan.clicks[-1][0]) if plan.clicks else 0.0)
-            draw.draw_cursor(canvas, (px, py), height=max(30, int(H * 0.064)),
-                             glow=0.35 + 0.5 * click, click=click)
+            alpha = 1.0
+            if plan.cursor_mode == "auto" and vis:
+                alpha = vis[k] if k < len(vis) else 0.0
+            if alpha <= 0.004:
+                return canvas
+            if alpha >= 0.996:
+                draw.draw_cursor(canvas, (px, py), height=max(30, int(H * 0.064)),
+                                 glow=0.35 + 0.5 * click, click=click)
+            else:
+                layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                draw.draw_cursor(layer, (px, py), height=max(30, int(H * 0.064)),
+                                 glow=0.35 + 0.5 * click, click=click)
+                layer.putalpha(layer.getchannel("A").point(lambda v: int(v * alpha)))
+                canvas.alpha_composite(layer)
     return canvas
 
 
 def _render_chunk(args: tuple[OverlayPlan, int, int, str, int]) -> int:
     plan, start, count, out_dir, shard = args
     cursors: list[tuple[int, int]] = []
+    vis: list[float] = []
     if plan.session_dir and plan.shot_dir:
         # Opened per worker: a Session is not picklable, and each process
         # memory-maps the cursor track for itself.
@@ -156,10 +172,12 @@ def _render_chunk(args: tuple[OverlayPlan, int, int, str, int]) -> int:
         shot = session.shot_by_dir(plan.shot_dir)
         if shot is not None:
             cursors = session.cursor_range(shot, plan.first_frame, plan.frames, plan.speed)
+            full = session.cursor_visibility(shot)
+            vis = full[plan.first_frame:]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for i in range(start, start + count):
-        img = render_frame(plan, i, cursors)
+        img = render_frame(plan, i, cursors, vis)
         img.save(out / f"{i + 1:06d}.png")
     return count
 

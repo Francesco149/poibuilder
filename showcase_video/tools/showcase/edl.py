@@ -59,6 +59,11 @@ class Clip:
     bg: str = "#0a0d13"
     frame: str = ""                # "" | "rounded" — dress placed content
     cursor: bool = True
+    # "auto": the cursor is drawn only around pointer ACTIVITY (motion, clicks,
+    # held drags) and fades out while it rests — a camera move with the pointer
+    # parked no longer shows a cursor doing nothing. "always" draws it on every
+    # frame (the old behavior); `cursor = false` in the EDL draws none.
+    cursor_mode: str = "auto"
     muted: bool = True
     grade: dict[str, Any] = field(default_factory=dict)
     captions: list[Caption] = field(default_factory=list)
@@ -143,7 +148,8 @@ def _clip(raw: dict[str, Any]) -> Clip:
         into=list(raw["into"]) if "into" in raw else None,
         bg=raw.get("bg", "#0a0d13"),
         frame=raw.get("frame", ""),
-        cursor=bool(raw.get("cursor", True)),
+        cursor=raw.get("cursor", "auto") is not False and raw.get("cursor") != "off",
+        cursor_mode=("always" if raw.get("cursor") in (True, "always") else "auto"),
         grade=dict(raw.get("grade", {})),
         captions=caps,
         notes=raw.get("notes", ""),

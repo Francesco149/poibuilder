@@ -104,14 +104,22 @@ def resolve(clip: edl.Clip, proj: edl.Project, preview_seconds: float = 0.0) -> 
         avail = shot.frames - first
         crop = tuple(clip.crop) if clip.crop else tuple(
             shot.region(clip.region) if clip.region else sess.data["regions"]["window"])
-        need = int(round(out_frames * clip.speed))
+        need = max(int(round(out_frames * clip.speed)),
+                   capture.src_index(out_frames - 1, clip.speed) + 1)
         if need > avail:
             raise BuildError(
                 f"clip '{clip.id}': wants {need} source frames from {clip.source} "
                 f"but only {avail} are available (shot has {shot.frames} frames, "
                 f"at={clip.at}s) — shorten dur or lengthen the shot")
         return Source(
-            input_args=["-framerate", str(fps), "-start_number", str(first),
+            # `speed` is applied HERE, to the frames: read at fps*speed, the
+            # sequence's timestamps compress, and the graph's `fps` resample
+            # takes source frame round(i*speed) for output frame i — the same
+            # index the overlay samples the cursor track at. Before this the
+            # overlay alone ran at `speed` while the footage played at 1.0x,
+            # so on the long cut (1.15x) the drawn cursor drifted ahead of the
+            # action: ~0.75 s by the end of a 5 s clip ("the cursor is early").
+            input_args=["-framerate", capture.ffmpeg_rate(fps, clip.speed), "-start_number", str(first),
                         "-i", str(sess.frames_dir(shot) / "%06d.png")],
             out_frames=out_frames,
             crop=crop,                      # type: ignore[arg-type]
@@ -330,6 +338,7 @@ def bake_clip(clip: edl.Clip, proj: edl.Project, workers: int = 0,
         has_overlay=overlay_dir is not None,
         grade=clip.grade or None,
         zoom_span=src.span_src,
+        resample=src.span_src != src.out_frames,
     )
     cmd = [ffmpeg.ffmpeg(), "-hide_banner", "-loglevel", "error", "-y"]
     cmd += src.input_args

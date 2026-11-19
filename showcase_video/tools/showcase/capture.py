@@ -11,10 +11,50 @@ A session directory (``showcase_video/bake/<session>/``) holds:
 from __future__ import annotations
 
 import json
+import math
 import struct
+from fractions import Fraction
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+
+
+# --- time mapping ----------------------------------------------------------
+# A clip at `speed` reads its frames at fps*speed and the graph resamples them
+# to fps (build.resolve / ffmpeg.clip_filter). ONE rule says which source
+# frame lands on output frame i, and the overlay (cursor, clicks, zoom
+# progress) samples with it, so the drawn cursor and the footage cannot drift.
+# `cursor_check --timing` verifies the rule against ffmpeg itself.
+
+# Cursor auto-hide (Session.cursor_visibility), in source frames at 60 fps.
+CURSOR_LEAD = 14     # appear this long before the pointer starts doing something
+CURSOR_HOLD = 50     # stay this long after it stops (results land, hovers read)
+CURSOR_FADE = 10     # fade in / out over this many frames
+
+
+def speed_ratio(speed: float) -> Fraction:
+    """`speed` as the exact ratio ffmpeg is given (1.15 -> 23/20)."""
+    return Fraction(speed).limit_denominator(1000)
+
+
+def ffmpeg_rate(fps: int, speed: float) -> str:
+    r = fps * speed_ratio(speed)
+    return str(r.numerator) if r.denominator == 1 else f"{r.numerator}/{r.denominator}"
+
+
+def src_index(i: int, speed: float) -> int:
+    """Source frame (from the clip's first) shown on output frame i.
+
+    ffmpeg's `fps=round=near` puts source frame k in output slot round(k/speed)
+    and keeps the LAST frame per slot, so slot i holds the largest k with
+    k/speed < i + 1/2:  k = ceil((i + 1/2) * speed) - 1.  (Not round(i*speed):
+    that disagreed on one frame in eight at 1.15x.)
+    """
+    r = speed_ratio(speed)
+    if r == 1:
+        return i
+    return max(0, math.ceil((Fraction(2 * i + 1, 2)) * r) - 1)
+
 
 
 class CaptureError(Exception):
@@ -129,7 +169,64 @@ class Session:
     def cursor_range(self, shot: Shot, first: int, count: int,
                      speed: float = 1.0) -> list[tuple[int, int]]:
         """Cursor positions sampled at the clip's output rate."""
-        return [self.cursor_at(shot, first + int(round(i * speed))) for i in range(count)]
+        return [self.cursor_at(shot, first + src_index(i, speed)) for i in range(count)]
+
+    def cursor_visibility(self, shot: Shot) -> list[float]:
+        """Per SOURCE frame of the shot, how visible the drawn cursor should be.
+
+        The pointer is a hand: it is there when it is doing something. A frame
+        is ACTIVE when the pointer moved since the last frame, a button went
+        down or up, or a button is held. The cursor shows from LEAD frames
+        before activity until HOLD frames after it, and fades over FADE frames
+        either side. Computed over the whole shot (not the clip's span), so a
+        clip that starts mid-rest still knows activity is coming.
+        """
+        key = ("vis", shot.name)
+        if key in self._cursor:
+            return self._cursor[key]  # type: ignore[return-value]
+        n = shot.frames
+        active = [False] * n
+        prev = None
+        for f in range(n):
+            p = self.cursor_at(shot, f)
+            if prev is not None and (abs(p[0] - prev[0]) + abs(p[1] - prev[1])) >= 1:
+                active[f] = True
+            prev = p
+        down = None
+        for e in self.events(shot):
+            t = e.get("t")
+            f = int(e.get("f", 0))
+            if t == "mousedown":
+                down = f
+            elif t == "mouseup":
+                for g in range((down if down is not None else f), min(f + 1, n)):
+                    active[g] = True
+                down = None
+            if t in ("mousedown", "mouseup") and 0 <= f < n:
+                active[f] = True
+        if down is not None:
+            for g in range(down, n):
+                active[g] = True
+        vis = [0.0] * n
+        # distance (frames) to the previous / next active frame
+        last = -10 ** 9
+        back = [0] * n
+        for f in range(n):
+            if active[f]:
+                last = f
+            back[f] = f - last
+        nxt = 10 ** 9
+        fwd = [0] * n
+        for f in range(n - 1, -1, -1):
+            if active[f]:
+                nxt = f
+            fwd[f] = nxt - f
+        for f in range(n):
+            a_back = 1.0 - (back[f] - CURSOR_HOLD) / CURSOR_FADE
+            a_fwd = 1.0 - (fwd[f] - CURSOR_LEAD) / CURSOR_FADE
+            vis[f] = max(0.0, min(1.0, max(a_back, a_fwd)))
+        self._cursor[key] = vis  # type: ignore[assignment]
+        return vis
 
     def events(self, shot: Shot) -> list[dict]:
         path = self.root / shot.directory / "events.jsonl"

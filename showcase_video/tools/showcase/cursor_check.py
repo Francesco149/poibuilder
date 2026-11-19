@@ -33,7 +33,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import build, draw, edl, ffmpeg, overlay
+from . import build, capture, draw, edl, ffmpeg, overlay
 
 MARK = (255, 0, 255)
 
@@ -49,9 +49,11 @@ def _marker_frame(size: tuple[int, int], at: tuple[int, int], radius: int = 3) -
 def _find_marker(img: Image.Image, radius: int = 3) -> tuple[float, float] | None:
     """Marker position from its bounding box, or None when it was cropped away.
 
-    The box's top-left plus `radius` is used instead of the centroid: a marker
-    near the frame edge gets clipped, and a clipped centroid reads as an offset
-    that has nothing to do with the mapping.
+    The box's CENTRE, not top-left + `radius`: the marker is drawn at source
+    size and the clip SCALES it (1633 -> 1280 px shrinks a 3 px radius to
+    2.35), so the old "top-left + source radius" read a constant ~0.7 px bias
+    per axis that failed clean clips at 2.7 px. A marker touching the frame
+    edge is clipped and rejected below, so the box centre is always whole.
     """
     px = img.convert("RGB").load()
     w, h = img.size
@@ -67,7 +69,7 @@ def _find_marker(img: Image.Image, radius: int = 3) -> tuple[float, float] | Non
         return None
     if min(xs) == 0 or min(ys) == 0 or max(xs) == w - 1 or max(ys) == h - 1:
         return None            # clipped by an edge: unmeasurable
-    return float(min(xs) + radius), float(min(ys) + radius)
+    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
 
 
 def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmpeg.Fit,
@@ -86,10 +88,11 @@ def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmp
             region=list(src.crop), zoom=list(clip.zoom) if clip.zoom else None,
             out_frames=frames, fit=fit, fps=proj.fps, duration=frames / proj.fps,
             fade_in=0.0, fade_out=0.0, has_overlay=False,
-            zoom_span=max(src.span_src, 1))
+            zoom_span=max(src.span_src, 1), resample=src.span_src != src.out_frames)
         out = tdp / "out"
         out.mkdir()
-        cmd = ["ffmpeg", "-v", "error", "-y", "-framerate", str(proj.fps),
+        cmd = ["ffmpeg", "-v", "error", "-y",
+               "-framerate", capture.ffmpeg_rate(proj.fps, speed),
                "-i", str(tdp / "%04d.png"), "-filter_complex", graph,
                "-map", "[vout]", "-frames:v", str(frames), str(out / "%04d.png")]
         subprocess.run(cmd, check=True)
@@ -107,7 +110,7 @@ def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmp
         measured = 0
         for i in range(frames):
             img = Image.open(frames_out[i])
-            want = mapper(float(point[0]), float(point[1]), i * speed)
+            want = mapper(float(point[0]), float(point[1]), float(capture.src_index(i, speed)))
             inside = 0 <= want[0] < img.width and 0 <= want[1] < img.height
             found = _find_marker(img)
             if found is None:
@@ -122,6 +125,61 @@ def check_mapper(clip: edl.Clip, proj: edl.Project, src: build.Source, fit: ffmp
         if measured == 0:
             return (0.0, 0.0, True)      # off-frame for the whole clip
         return worst, span, worst <= 2.0
+
+
+def _bits_frame(i: int) -> Image.Image:
+    """Frame number i as ten black/white bars (survives yuv420 + scaling)."""
+    img = Image.new("RGB", (320, 72), (0, 0, 0))
+    d = ImageDraw.Draw(img)
+    for b in range(10):
+        if (i >> b) & 1:
+            d.rectangle([b * 32, 0, b * 32 + 31, 71], fill=(255, 255, 255))
+    return img
+
+
+def _read_bits(img: Image.Image) -> int:
+    g = img.convert("L")
+    sx, sy = g.width / 320.0, g.height / 72.0
+    return sum(1 << b for b in range(10) if g.getpixel((int((b * 32 + 16) * sx), int(36 * sy))) > 128)
+
+
+def check_timing(speeds=(1.0, 1.15, 1.3, 0.8), frames: int = 120, first: int = 7) -> int:
+    """The footage and the overlay must show the SAME source frame.
+
+    Numbered frames go through the production input rate and filtergraph;
+    every output frame must carry the index `capture.src_index` predicts —
+    the one the overlay draws the cursor from. The long cut shipped with the
+    overlay at 1.15x and the footage at 1.0x (the cursor ran ~0.75 s ahead of
+    the action by the end of a clip) because nothing compared the two clocks.
+    """
+    failures = 0
+    fit = ffmpeg.Fit(320, 72, 320, 72, 0, 0, "cover", "black")
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        need = first + capture.src_index(frames, max(speeds)) + 4
+        for i in range(need):
+            _bits_frame(i).save(tdp / f"{i:06d}.png")
+        for speed in speeds:
+            out = tdp / f"out{speed}"
+            out.mkdir()
+            graph = ffmpeg.clip_filter(region=None, zoom=None, out_frames=frames, fit=fit, fps=60,
+                                       duration=frames / 60.0, fade_in=0.0, fade_out=0.0,
+                                       has_overlay=False, resample=speed != 1.0)
+            subprocess.run(["ffmpeg", "-v", "error", "-y",
+                            "-framerate", capture.ffmpeg_rate(60, speed),
+                            "-start_number", str(first), "-i", str(tdp / "%06d.png"),
+                            "-filter_complex", graph, "-map", "[vout]", "-frames:v", str(frames),
+                            str(out / "%04d.png")], check=True)
+            bad = []
+            for i in range(frames):
+                got = _read_bits(Image.open(out / f"{i + 1:04d}.png"))
+                want = first + capture.src_index(i, speed)
+                if got != want:
+                    bad.append((i, got, want))
+            print(f"[timing] speed {speed:<5} {frames - len(bad)}/{frames} frames agree"
+                  + (f"  FAIL first: {bad[:4]}" if bad else ""))
+            failures += 1 if bad else 0
+    return failures
 
 
 def check_hotspot() -> tuple[int, int]:
@@ -139,7 +197,7 @@ def check_hotspot() -> tuple[int, int]:
 def main(argv: list[str]) -> int:
     # SHOWCASE_EDL picks another timeline (the v2 cuts live beside edl.toml).
     proj = edl.load(os.environ.get("SHOWCASE_EDL", str(build.DEFAULT_EDL)))
-    failures = 0
+    failures = check_timing()
     tip = check_hotspot()
     # A correct hotspot means the sprite's tip lands ON the requested point.
     print(f"[hotspot] drawn tip offset {tip} (want (0, 0))")

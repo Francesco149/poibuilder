@@ -216,6 +216,7 @@ def clip_filter(
     has_overlay: bool,
     grade: dict | None = None,
     zoom_span: int | None = None,
+    resample: bool = False,
     src_label: str = "0:v",
     ov_label: str = "1:v",
 ) -> str:
@@ -232,6 +233,11 @@ def clip_filter(
                                  (rw, rh) if rw and rh else (out_frames, out_frames), fps))
     chain.extend(fit_filter(fit))
     chain.append("setsar=1")
+    if resample:
+        # A sped-up frame source arrives at fps*speed; bring it to the output
+        # rate BEFORE the overlay joins, so overlay frame i meets source frame
+        # round(i*speed) and not whichever one its timestamp happens to follow.
+        chain.append(f"fps={fps}:round=near")
     if grade:
         # Graded BEFORE the overlay: the captions and the cursor are drawn in
         # post and must not inherit the footage's colour cast.
