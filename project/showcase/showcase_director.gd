@@ -318,6 +318,12 @@ func _send_motion(held := false) -> void:
 	ev.global_position = cursor
 	ev.relative = cursor - _last_sent
 	ev.screen_relative = ev.relative
+	# A real pointer has a velocity. PopupMenu IGNORES motion whose velocity is
+	# zero (popup_menu.cpp: `if (m->get_velocity().is_zero_approx() ...)
+	# return;`), so with none set no menu ever saw the pointer hover: every
+	# menu-row click missed and fell back to the keyboard on camera.
+	ev.velocity = ev.relative * float(FPS)
+	ev.screen_velocity = ev.velocity
 	_last_sent = cursor
 	if held or _drag_down:
 		ev.button_mask = MOUSE_BUTTON_MASK_LEFT
@@ -585,24 +591,20 @@ func env_preset(name: String, settle := 14) -> void:
 		var row_h := float(font.get_height(fs) + sep + pad)
 		var panel := popup.get_theme_stylebox("panel")
 		var top := popup.position.y + (panel.content_margin_top if panel != null else 0.0)
-		await glide(Vector2(popup.position.x + popup.size.x * 0.5,
-			top + row_h * (float(idx) + 0.5)), 12)
-		# Hover-seek: the row-height estimate missed on the themed popup (the
-		# click landed between rows, the menu stayed open, and the video showed
-		# a click that did nothing before a keyboard fallback). Like a hand,
-		# nudge the pointer until the popup itself highlights the wanted row,
-		# and only then press.
-		for step in range(30):
-			var hot := popup.get_focused_item()
-			if hot == idx:
-				break
-			var dir := 1.0 if (hot < idx) else -1.0
-			cursor.y += dir * maxf(3.0, row_h * 0.3)
-			_send_motion()
-			await frames(1)
-		if popup.get_focused_item() != idx:
-			fallback("env preset '%s': hover never highlighted row %d (focused %d)" % [
-				name, idx, popup.get_focused_item()])
+		var target := Vector2(popup.position.x + popup.size.x * 0.5,
+			top + row_h * (float(idx) + 0.5))
+		# Find the row by HOVER, off camera: sweep the pointer down the popup
+		# and keep the y where the popup itself reports the wanted item under
+		# it (get_focused_item() is its hover index). The row-height estimate
+		# missed on the themed popup, the click landed between rows, and the
+		# film showed a menu click that did nothing before a keyboard fallback.
+		var hit_y := await _popup_row_y(popup, idx, target.x)
+		if hit_y >= 0.0:
+			target.y = hit_y
+		await glide(target, 12)
+		if hit_y < 0.0:
+			fallback("env preset '%s': hover scan never found row %d (popup at %s size %s embedded=%s)" % [
+				name, idx, str(popup.position), str(popup.size), str(popup.is_embedded())])
 		await mouse_down()
 		await frames(2)
 		await mouse_up()
@@ -630,6 +632,35 @@ func env_preset(name: String, settle := 14) -> void:
 		await frames(settle)
 		fallback("env preset '%s' applied via api (menu item missed)" % name)
 	_check(_env_is(name), "environment preset is '%s'" % name)
+
+## The y (window coords) where `popup` reports item `idx` under the pointer,
+## found by sweeping its height off camera; -1 when no y does. The pointer is
+## put back where it was, so the on-camera glide that follows starts there.
+func _popup_row_y(popup: PopupMenu, idx: int, x: float) -> float:
+	var keep := cursor
+	var was := capturing
+	capturing = false
+	var found := -1.0
+	var y0 := float(popup.position.y)
+	var y1 := y0 + float(popup.size.y)
+	var y := y0 + 2.0
+	var first := -1.0
+	while y < y1:
+		cursor = Vector2(x, y)
+		_send_motion()
+		await get_tree().process_frame
+		if popup.get_focused_item() == idx:
+			if first < 0.0:
+				first = y
+			found = (first + y) * 0.5      # the row's middle, not its edge
+		elif first >= 0.0:
+			break
+		y += 3.0
+	cursor = keep
+	_send_motion()
+	await get_tree().process_frame
+	capturing = was
+	return found
 
 func _popup_key(down: bool) -> void:
 	for pressed in [true, false]:
