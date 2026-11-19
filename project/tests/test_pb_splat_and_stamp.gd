@@ -2101,3 +2101,120 @@ func test_headless_uploads_never_queue() -> void:
 	var tex := mat.get_shader_parameter("layer_%d_mask" % layer) as ImageTexture
 	PBSplat._queue_texture_upload(tex, PBSplat.get_layer_mask_image(mat, layer))
 	assert_false(PBSplat._pending_uploads.has(tex), "headless: updated in place, nothing retained")
+
+# ==============================================================================
+# Stamps at a face boundary (v0.9.190): a decal is a PROJECTION along the
+# stamp's own normal, bounded in depth — a face only receives the part of the
+# stamp that actually lies under the footprint.
+# ==============================================================================
+
+## Mesh data built from quads [a, b, c, d] (triangles a-b-c, c-d-a), with the
+## UVs refreshed so the faces are ready for paint.
+func _quads_mesh(quads: Array) -> PBMeshData:
+	var data := PBMeshData.new()
+	var positions := PackedVector3Array()
+	var faces: Array[PBFace] = []
+	for q in quads:
+		var base := positions.size()
+		for p in q:
+			positions.append(p)
+		faces.append(PBFace.new(PackedInt32Array([base, base + 1, base + 2,
+				base + 2, base + 3, base])))
+	data.positions = positions
+	data.faces = faces
+	var uvs := PackedVector2Array()
+	uvs.resize(positions.size())
+	data.textures0 = uvs
+	data.shared_vertices = PBShapeGenerators._build_shared_vertices(positions)
+	data.invalidate_caches()
+	PBUv.refresh_mesh_uvs(data, true)
+	return data
+
+## A stamp image whose red channel encodes the source ROW (top = 0, bottom =
+## 1), opaque everywhere, so a sample tells which part of the stamp landed.
+func _row_gradient_image(w: int, h: int) -> Image:
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in range(h):
+		var r := float(y) / float(h - 1)
+		for x in range(w):
+			img.set_pixel(x, y, Color(r, 0.5, 0.5, 1.0))
+	return img
+
+## The reported bleed: a stamp near the edge of a wall showed up as a large,
+## smeared copy on a slanted face of the same mesh, well away from the stamp.
+## The face was accepted because its BOUNDING BOX enclosed the stamp and its
+## angle passed the alignment cut, and the content was then placed by
+## projecting the stamp centre ORTHOGONALLY onto that face's plane — wherever
+## the plane happened to be. Here the slanted face's box contains the stamp
+## but its surface is ~2.8 m behind it; it must stay clean.
+func test_stamp_does_not_bleed_onto_a_distant_slanted_face() -> void:
+	var data := _quads_mesh([
+		# Wall: z = 1, facing +Z.
+		[Vector3(-2, 0, 1), Vector3(2, 0, 1), Vector3(2, 2, 1), Vector3(-2, 2, 1)],
+		# Overhang: the plane z = y - 3, facing (0, -0.707, 0.707) — 45 deg
+		# from the wall, so the alignment cut alone lets it through.
+		[Vector3(-2, 0, -3), Vector3(2, 0, -3), Vector3(2, 4, 1), Vector3(-2, 4, 1)],
+	])
+	var wall := data.faces[0]
+	var slant := data.faces[1]
+	assert_almost_eq(PBMath.normal_from_positions(data.positions, wall.get_indexes()).z, 1.0, 0.001,
+			"Fixture: the wall faces +Z")
+	assert_almost_eq(PBMath.normal_from_positions(data.positions, slant.get_indexes()).dot(Vector3.BACK),
+			0.7071, 0.001, "Fixture: the slanted face is 45 deg off the wall")
+
+	var painted := PBSplat.paste_decal(data, Vector3(1.0, 1.0, 1.0), Vector3.BACK, 0.0, 1.0, 1.0,
+			_row_gradient_image(32, 32))
+	assert_eq(painted, 1, "Only the wall lies under the stamp")
+	var slant_mat := data.get_face_material(slant)
+	assert_false(PBSplat.is_splat_material(slant_mat) and PBSplat.has_decal_layer(slant_mat as ShaderMaterial),
+			"A face 2.8 m behind the stamp must not receive a smeared copy of it")
+	var wall_mat := data.get_face_material(wall) as ShaderMaterial
+	assert_gt(_decal_alpha_at(data, wall_mat, wall, Vector3(1.0, 1.0, 1.0)), 0.9,
+			"The wall keeps its stamp")
+
+	# The decal brush walks the same targets: a dab there must not reach the
+	# slanted face either.
+	var touched := PBSplat.paint_decal_dab(data, Vector3(1.0, 1.0, 1.0), Vector3.BACK, 0.0, 0.5,
+			0.5, 1.0, false, null, Color.RED)
+	assert_eq(touched, 1, "A decal-brush dab stays on the wall too")
+
+## The other half of the contract: a stamp straddling the crease between a
+## wall and a 45 deg chamfer WRAPS onto the chamfer, continuously — the row of
+## the stamp just above the crease on the chamfer is the row just below it on
+## the wall. The old placement (stamp centre projected orthogonally onto the
+## chamfer's plane) shifted the chamfer's part by ~0.1 m of content, a visible
+## step in the image at the edge.
+func test_stamp_wraps_a_chamfer_continuously_and_stays_in_its_footprint() -> void:
+	var data := _quads_mesh([
+		[Vector3(-2, 0, 1), Vector3(2, 0, 1), Vector3(2, 2, 1), Vector3(-2, 2, 1)],
+		# Chamfer from the wall's top edge back to (y 3, z 0), facing (0, .707, .707).
+		[Vector3(-2, 2, 1), Vector3(2, 2, 1), Vector3(2, 3, 0), Vector3(-2, 3, 0)],
+	])
+	var wall := data.faces[0]
+	var chamfer := data.faces[1]
+	assert_almost_eq(PBMath.normal_from_positions(data.positions, chamfer.get_indexes()).y,
+			0.7071, 0.001, "Fixture: the chamfer is 45 deg")
+
+	# 1 m stamp centred 0.2 m below the crease: its top 0.3 m reaches past it.
+	var painted := PBSplat.paste_decal(data, Vector3(0.0, 1.8, 1.0), Vector3.BACK, 0.0, 1.0, 1.0,
+			_row_gradient_image(64, 64))
+	assert_eq(painted, 2, "The stamp wraps onto the chamfer")
+	var wall_mat := data.get_face_material(wall) as ShaderMaterial
+	var cham_mat := data.get_face_material(chamfer) as ShaderMaterial
+	assert_true(PBSplat.has_decal_layer(cham_mat), "The chamfer has its part of the stamp")
+
+	var below := _decal_colour_at(data, wall_mat, wall, Vector3(0.0, 1.98, 1.0))
+	var above := _decal_colour_at(data, cham_mat, chamfer, Vector3(0.0, 2.02, 0.98))
+	assert_gt(below.a, 0.9, "Painted just below the crease")
+	assert_gt(above.a, 0.9, "Painted just above the crease")
+	# Projected along the stamp's normal, a point at height y samples the
+	# stamp row (2.3 - y) / 1 m from its top: 0.32 on the wall at y 1.98 and
+	# 0.28 on the chamfer at y 2.02 (old code: ~0.37 on the chamfer).
+	assert_almost_eq(below.r, 0.32, 0.03, "Wall row under the crease")
+	assert_almost_eq(above.r, 0.28, 0.03,
+			"The stamp continues across the crease (wall row %.3f, chamfer row %.3f)" % [below.r, above.r])
+
+	# Past the footprint's top edge (y 2.3 as projected along the stamp's
+	# normal) the chamfer stays clean.
+	var past := _decal_alpha_at(data, cham_mat, chamfer, Vector3(0.0, 2.45, 0.55))
+	assert_true(past <= 0.01, "Nothing beyond the footprint (alpha %.3f)" % past)

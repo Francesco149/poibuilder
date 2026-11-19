@@ -196,6 +196,14 @@ vertex attribute** (`PBMeshData.splat_uvs`, flattened to RG floats by
   0.25) exist because a near-perpendicular face gets a DEGENERATE projection of
   the content (a floor stamp down a wall = horizontal streaks). Do not loosen
   them back toward perpendicular.
+- A decal is a bounded PROJECTOR (v0.9.190): `_decal_targets` keeps a face only
+  if part of it lies inside the footprint box (`_face_in_decal_box`: footprint
+  square x ±half-extent along the stamp normal), and each target carries its
+  own `"center"` — the stamp normal through the centre meeting that face's
+  plane. Bounding-box overlap + an orthogonal projection of the centre onto
+  each face's plane painted a smeared copy on slanted faces metres away (the
+  "stamp at a corner bleeds" report, editor and every export). Writers must use
+  `t["center"]`, not the raw click point.
 - Paint + lightmap coexistence is locked by
   `test_pb_splat_and_stamp.gd::test_paint_coexists_with_authored_uv2_lightmap_unwrap`
   and `test_pb_lightmap_uv2.gd`, and was verified with a REAL editor LightmapGI

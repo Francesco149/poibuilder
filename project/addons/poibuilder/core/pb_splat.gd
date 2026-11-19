@@ -2021,11 +2021,22 @@ static func _decal_basis(normal: Vector3, rotation_deg: float,
 		"up": local_up.normalized() if local_up.length_squared() > 0.000001 else up,
 	}
 
-## Faces of `mesh_data` whose planar rect the oriented footprint can touch,
-## with everything the pixel loops need (owned material, rect, axes).
+## Faces of `mesh_data` the oriented footprint actually covers, with
+## everything the pixel loops need (owned material, rect, axes, and the
+## footprint centre as it lands on THAT face's plane).
 ## `min_alignment` rejects faces the decal's plane is not roughly parallel to:
 ## on those the paste is a degenerate projection of the content (a floor stamp
 ## smeared down a perpendicular wall), not a decal.
+##
+## A decal is a PROJECTOR: a box `2 * half_extent` across in the stamp's plane
+## and `2 * half_extent` deep along its normal. A face receives paint only when
+## part of it lies inside that box (`_face_in_decal_box`), and its content is
+## placed where the stamp's NORMAL through the centre meets the face's plane
+## (`"center"`), so a stamp wrapping a crease continues across it. Bounding
+## boxes alone were the "stamp at a corner bleeds" bug (v0.9.190): a slanted
+## face whose box enclosed the stamp — its surface metres away — passed, and
+## the centre was projected orthogonally onto its plane, painting a smeared
+## copy wherever that plane happened to be.
 static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_right: Vector3,
 		rot_up: Vector3, normal: Vector3, half_extent: float, min_alignment: float) -> Array:
 	var out: Array = []
@@ -2057,7 +2068,8 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		if face_normal.length_squared() < 0.0001:
 			continue
 		face_normal = face_normal.normalized()
-		if face_normal.dot(normal) < min_alignment:
+		var alignment := face_normal.dot(normal)
+		if alignment < min_alignment:
 			continue
 
 		var face_box := AABB()
@@ -2073,6 +2085,14 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 				face_box = face_box.expand(p)
 		if first or not face_box.grow(0.0005).intersects(stamp_box):
 			continue
+		if not _face_in_decal_box(mesh_data, face, center_local, rot_right, rot_up, normal,
+				half_extent):
+			continue
+		# The footprint centre carried along the stamp's normal onto this
+		# face's plane (alignment >= min_alignment > 0, so the ray hits it).
+		var plane_point: Vector3 = mesh_data.positions[distinct[0]]
+		var face_center := center_local \
+				+ normal * (face_normal.dot(plane_point - center_local) / alignment)
 
 		# A stamp may span faces: the ones that must not take paint (a
 		# billboard's alpha-scissor quad) are skipped here, not converted.
@@ -2091,6 +2111,7 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 		out.append({
 			"face": face,
 			"mat": mat,
+			"center": face_center,
 			"u_axis": bounds["u"],
 			"v_axis": bounds["v"],
 			"min_u": bounds["min_u"],
@@ -2098,6 +2119,66 @@ static func _decal_targets(mesh_data: PBMeshData, center_local: Vector3, rot_rig
 			"range_u": bounds["range_u"],
 			"range_v": bounds["range_v"],
 		})
+	return out
+
+## Whether any part of `face` lies inside the decal's projector box: within
+## `half_extent` of `center` along `right` and `up` (the footprint's
+## circumscribed square — the writers clip to the real extents) and within
+## `half_extent` of the stamp's plane along `normal`. Each triangle is clipped
+## to the square in stamp coordinates; depth is affine over a triangle, so its
+## range over the clipped part is the range over the clipped polygon's
+## vertices.
+static func _face_in_decal_box(mesh_data: PBMeshData, face: PBFace, center: Vector3,
+		right: Vector3, up: Vector3, normal: Vector3, half_extent: float) -> bool:
+	var idx := face.get_indexes()
+	var pos_count := mesh_data.positions.size()
+	for i in range(0, idx.size() - 2, 3):
+		var poly: Array[Vector3] = []
+		for k in range(3):
+			var vi := idx[i + k]
+			if vi < 0 or vi >= pos_count:
+				poly.clear()
+				break
+			var d: Vector3 = mesh_data.positions[vi] - center
+			poly.append(Vector3(d.dot(right), d.dot(up), d.dot(normal)))
+		if poly.is_empty():
+			continue
+		# Sutherland-Hodgman against |x| <= h and |y| <= h.
+		for axis in range(2):
+			for sgn in [1.0, -1.0]:
+				poly = _clip_poly_half_plane(poly, axis, sgn, half_extent)
+				if poly.is_empty():
+					break
+			if poly.is_empty():
+				break
+		if poly.is_empty():
+			continue
+		var zmin := INF
+		var zmax := -INF
+		for p in poly:
+			zmin = minf(zmin, p.z)
+			zmax = maxf(zmax, p.z)
+		if zmax >= -half_extent and zmin <= half_extent:
+			return true
+	return false
+
+## One Sutherland-Hodgman step: keeps the part of `poly` where
+## `sgn * p[axis] <= limit` (+ a hair, so a face touching the box edge-on
+## still counts — the AABB prefilter grows by the same amount).
+static func _clip_poly_half_plane(poly: Array[Vector3], axis: int, sgn: float,
+		limit: float) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	var n := poly.size()
+	var lim := limit + 0.0005
+	for i in range(n):
+		var a: Vector3 = poly[i]
+		var b: Vector3 = poly[(i + 1) % n]
+		var da := sgn * a[axis] - lim
+		var db := sgn * b[axis] - lim
+		if da <= 0.0:
+			out.append(a)
+		if (da <= 0.0) != (db <= 0.0):
+			out.append(a.lerp(b, da / (da - db)))
 	return out
 
 ## The stamp sprite for an AXIS-ALIGNED paste: the source cropped to the
@@ -2406,8 +2487,10 @@ static func _commit_decal_target(mat: ShaderMaterial, img: Image) -> void:
 static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vector3,
 		rot_right: Vector3, rot_up: Vector3, ext: Vector2, opacity_b: int,
 		texels_per_m: float) -> bool:
-	# The decal centre projected into THIS face's plane: once a stamp wraps a
-	# corner, every face samples it through its own axes.
+	# The decal centre carried along the stamp's normal into THIS face's plane
+	# (see _decal_targets): once a stamp wraps a corner, every face samples it
+	# through its own axes, and the content stays continuous across the crease.
+	center_local = t.get("center", center_local)
 	var u_face: Vector3 = t["u_axis"]
 	var v_face: Vector3 = t["v_axis"]
 	var min_u: float = t["min_u"]
@@ -2541,6 +2624,7 @@ static func _paste_decal_into(t: Dictionary, src: Dictionary, center_local: Vect
 static func _brush_decal_into(t: Dictionary, src: Dictionary, center_local: Vector3,
 		rot_right: Vector3, rot_up: Vector3, ext: Vector2, radius: float,
 		lut: PackedByteArray, opacity_b: int, erase: bool, texels_per_m: float) -> bool:
+	center_local = t.get("center", center_local)
 	var u_face: Vector3 = t["u_axis"]
 	var v_face: Vector3 = t["v_axis"]
 	var min_u: float = t["min_u"]
