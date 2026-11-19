@@ -116,10 +116,8 @@ def write(path, head, clips):
 SPEED["long"] = 1.15
 L = []
 L.append(card("l00-title", 2.0, TITLE, fade_in=0.3, fade_out=0.3))
-L.append(clip("l01-tz-gate", speed=1.0, src="v2_edit:v2e/portal", at=-1.7, dur=1.5, fade_in=0.2))
-L.append(clip("l02-tz-fire", speed=1.0, src="v2_surface:v2s/particles", at=-1.5, dur=1.3))
-L.append(clip("l03-tz-trim", speed=1.0, src="v2_tools:v2t/trimwalls", at=-2.2, dur=1.4))
-L.append(clip("l04-tz-night", speed=1.0, src="v2_map:v2m/env", at=-1.8, dur=1.6, fade_out=0.25))
+# No teaser montage: the owner cut it ("skip the short clips at the beginning
+# and jump into the functionality showcase") — the title goes straight to Create.
 # CREATE
 L.append(clip("l10-cube", "v2_create:v2c/cube", fade_in=0.25,
               caps=[("Create", "Pick a shape in the dock, drag it out, pull its height", 0.2)]))
@@ -168,18 +166,18 @@ L.append(clip("l40-card", "v2_surface:v2s/card",
               caps=[("Materials", "Select a face, click a card", 0.2)]))
 L.append(clip("l41-drop", "v2_surface:v2s/drop",
               caps=[("Materials", "...or filter the palette and drag a card onto any face", 0.1)]))
-L.append(clip("l42-uv", "v2_surface:v2s/uv", crop=[0, 0, 1920, 1080],
-              caps=[("UV editor", "Rotate, flip and project UVs; the 3D view follows", 0.2)]))
-L.append(clip("l43-paint", "v2_surface:v2s/paint",
-              caps=[("Paint", "Brush texture layers onto any surface", 0.2)]))
-L.append(clip("l44-stamp", "v2_surface:v2s/stamp",
-              caps=[("Stamp", "Press decals into the surface", 0.2)]))
-L.append(clip("l45-sprite", "v2_surface:v2s/sprite",
-              caps=[("Sprites", "Billboards: click, raise, scale", 0.2)]))
-L.append(clip("l46-particles", "v2_surface:v2s/particles",
-              caps=[("Particles", "Click to place an emitter: fire, mist, embers", 0.2)]))
-L.append(clip("l47-scroll", "v2_surface:v2s/scroll",
+L.append(clip("l42-scroll", "v2_surface:v2s/scroll",
               caps=[("Animated", "A scroll speed on a face: the water flows live in the editor", 0.2)]))
+L.append(clip("l43-uv", "v2_surface:v2s/uv", crop=[0, 0, 1920, 1080],
+              caps=[("UV editor", "Rotate, flip and project UVs; the 3D view follows", 0.2)]))
+L.append(clip("l44-paint", "v2_surface:v2s/paint",
+              caps=[("Paint", "Brush texture layers onto any surface", 0.2)]))
+L.append(clip("l45-stamp", "v2_surface:v2s/stamp",
+              caps=[("Stamp", "Press decals into the surface", 0.2)]))
+L.append(clip("l46-sprite", "v2_surface:v2s/sprite",
+              caps=[("Sprites", "Billboards: click, raise, scale", 0.2)]))
+L.append(clip("l47-particles", "v2_surface:v2s/particles",
+              caps=[("Particles", "Click to place an emitter: fire, mist, embers", 0.2)]))
 # TOOLS
 L.append(clip("l50-trim", "v2_tools:v2t/trim",
               caps=[("Trim", "A skirting in one drag, with a rounded profile", 0.2)]))

@@ -23,7 +23,7 @@ master = "poibuilder-showcase-v2-long.mp4"
 readme = "poibuilder-showcase-v2-long-960.mp4"
 poster = "poibuilder-showcase-v2-long-poster.png"
 
-# total 218.6 s
+# total 212.9 s
 
 [[clip]]
 id = "l00-title"
@@ -33,36 +33,6 @@ cursor = false
 fade_in = 0.3
 fade_out = 0.3
 card = { kicker = "Godot 4 editor plugin", title = "PoiBuilder", sub = "Build levels inside the editor" }
-
-[[clip]]
-id = "l01-tz-gate"
-source = "v2_edit:v2e/portal"
-at = 10.43
-dur = 1.48
-crop = [287, 44, 1633, 918]
-fade_in = 0.2
-
-[[clip]]
-id = "l02-tz-fire"
-source = "v2_surface:v2s/particles"
-at = 3.32
-dur = 1.28
-crop = [287, 44, 1633, 918]
-
-[[clip]]
-id = "l03-tz-trim"
-source = "v2_tools:v2t/trimwalls"
-at = 6.33
-dur = 1.38
-crop = [287, 44, 1633, 918]
-
-[[clip]]
-id = "l04-tz-night"
-source = "v2_map:v2m/env"
-at = 8.35
-dur = 1.58
-crop = [287, 44, 1633, 918]
-fade_out = 0.25
 
 [[clip]]
 id = "l10-cube"
@@ -309,7 +279,18 @@ captions = [
 ]
 
 [[clip]]
-id = "l42-uv"
+id = "l42-scroll"
+source = "v2_surface:v2s/scroll"
+at = 0.0
+dur = 5.28
+crop = [287, 44, 1633, 918]
+speed = 1.15
+captions = [
+  { label = "Animated", text = "A scroll speed on a face: the water flows live in the editor", at = 0.2, pos = "bc" },
+]
+
+[[clip]]
+id = "l43-uv"
 source = "v2_surface:v2s/uv"
 at = 0.0
 dur = 4.81
@@ -320,7 +301,7 @@ captions = [
 ]
 
 [[clip]]
-id = "l43-paint"
+id = "l44-paint"
 source = "v2_surface:v2s/paint"
 at = 0.0
 dur = 4.55
@@ -331,7 +312,7 @@ captions = [
 ]
 
 [[clip]]
-id = "l44-stamp"
+id = "l45-stamp"
 source = "v2_surface:v2s/stamp"
 at = 0.0
 dur = 2.85
@@ -342,7 +323,7 @@ captions = [
 ]
 
 [[clip]]
-id = "l45-sprite"
+id = "l46-sprite"
 source = "v2_surface:v2s/sprite"
 at = 0.0
 dur = 2.95
@@ -353,7 +334,7 @@ captions = [
 ]
 
 [[clip]]
-id = "l46-particles"
+id = "l47-particles"
 source = "v2_surface:v2s/particles"
 at = 0.0
 dur = 4.17
@@ -361,17 +342,6 @@ crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
   { label = "Particles", text = "Click to place an emitter: fire, mist, embers", at = 0.2, pos = "bc" },
-]
-
-[[clip]]
-id = "l47-scroll"
-source = "v2_surface:v2s/scroll"
-at = 0.0
-dur = 5.28
-crop = [287, 44, 1633, 918]
-speed = 1.15
-captions = [
-  { label = "Animated", text = "A scroll speed on a face: the water flows live in the editor", at = 0.2, pos = "bc" },
 ]
 
 [[clip]]
