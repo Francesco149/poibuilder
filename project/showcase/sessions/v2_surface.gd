@@ -58,6 +58,12 @@ func run(dr: ShowcaseDirector) -> void:
 	sheet = ShowcaseUtil.mesh(root, "FallSheet", PBShapeGenerators.create_plane(2.0, 3.2),
 		Vector3(-2.2, 2.0, -3.55), water)
 	sheet.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	# One texture height per 2 m of fall: the curtain is a 1:2 tile, and at the
+	# default 1 m per tile its long streaks squashed into blobs with the brick
+	# showing between them.
+	for fc in sheet.pb_mesh_data.faces:
+		fc.uv_scale = Vector2(1.0, 0.5)
+	sheet.rebuild()
 	await d.grid_show(false)
 	dock.set_thumbnail_size(64)
 	dock.set_dock_mode(PBMaterialDock.DockMode.MATERIAL)

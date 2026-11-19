@@ -3,6 +3,107 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.190 — showcase v2 polish: nicer stock textures, a stamp fix, a sturdier film generator
+
+Request: "a few tweaks for the v2 showcase: the water texture at the beginning
+isnt scrolling ... make a nicer procedural stock water texture, id probably
+maybe make all the stock textures nicer ... those 2 short clips at the
+beginning have a cursor in the way ... z-fighting with the corner of the wall
+... skip the short clips at the beginning ... the mouse cursor is early by like
+half a sec vs the action ... stamps ... at the edge of a corner they bleed in a
+weird way (shows in the psp export too) ... a cursor when nothing is happening
+... a good time to make a more robust showcase generator tool".
+
+### Fixed: a stamp placed at a corner bled a smeared copy onto slanted faces
+
+`PBSplat._decal_targets` chose receiving faces by bounding-box overlap and
+placed the content by projecting the stamp centre orthogonally onto each
+face's plane, so a slanted face whose box enclosed the stamp (its surface
+metres away) got a stretched copy — in the editor and, since it is painted
+pixels, in the .glb and .pbm too. A decal is now a bounded projector: a face
+is painted only where it lies inside the footprint box (footprint +- half its
+size along the normal), and the content is placed where the stamp's normal
+meets the face, so wrapping a chamfer stays continuous; the ~70 deg cutoff
+still clips a square corner. Tests:
+`test_stamp_does_not_bleed_onto_a_distant_slanted_face`,
+`test_stamp_wraps_a_chamfer_continuously_and_stays_in_its_footprint` (both
+fail on the old code). Stamps already bled into a scene stay (they are
+pixels): erase them with the decal brush. Exporters unchanged.
+
+### Stock textures redone procedurally
+
+`waterfall_sheet` (a streaky falling curtain: bright runnels, white water,
+soft alpha, no "camo" holes), `waterfall_core`, `water_pool` (wavy caustic
+web), `water_foam` (bubble lace), `tiles_light_4x4` (per-tile tone, lit
+bevels, mottling) and `tiles_wet_4x4` (glossy mid-toned slate, damp patches,
+wet glints). Same names, sizes, modes and 4x4 layout, so existing maps keep
+loading; seamless in both axes; checked through a simulation of the PSP path
+(5-bit, half/quarter mips). Generators: `retro_engine/gen_water_textures.py`
+(rewritten), `retro_engine/gen_tile_textures.py` (new), shared wrap-safe noise
+in `retro_engine/texgen_noise.py`. Brick, checker and the sprites are as they
+were.
+
+### Showcase generator: the cursor follows the footage, and hides when idle
+
+- **The cursor ran early** on the long cut: its editor chapters play at
+  1.15x, but only the overlay honoured `speed` — the cursor track was sampled
+  at 1.15x while the frames played at 1.0x, ~0.75 s ahead by the end of a 5 s
+  clip. Frame sources are now read at fps*speed and resampled to fps before
+  the overlay joins; `capture.src_index` is the one rule for which source
+  frame lands on output frame i (ffmpeg `fps=near` keeps the last frame per
+  slot: `ceil((i+1/2)*speed)-1`, not `round(i*speed)`). A push-in on a
+  sped-up clip keeps its speed (zoompan re-stamped the rate to 60 fps).
+- `cursor_check` gains a **timing check**: numbered frames through the real
+  input rate + filtergraph at 0.8/1.0/1.15/1.3x, with and without a push-in;
+  every output frame must carry the index the overlay draws from. Its marker
+  finder now measures the bbox centre (top-left + source radius read a
+  ~0.7 px bias per axis on scaled clips): the v2 cuts pass at 0 failures; the
+  superseded v1 film's zoompan push-ins read 2.5-3.3 px (zoompan quantizes
+  its pan to whole source pixels — sub-pixel jitter, not a mapping error).
+- **Cursor auto-hide**: `cursor` defaults to "auto" — drawn from 14 frames
+  before pointer activity (motion, presses, held drags) to 50 after, 10-frame
+  fades, computed over the whole take. A pointer parked while the camera pans
+  no longer sits on screen. `cursor = true` keeps the old always-on cursor.
+- **Missed gestures are recorded and linted**: `ShowcaseDirector.fallback()`
+  marks every place a beat produced its result another way after an
+  on-camera gesture missed (menu row -> keyboard, button -> plugin API,
+  click -> selection protocol) as a `fallback` event at its frame;
+  `build.sh --lint` lists clips whose span shows one (a click that does
+  nothing) or a failed check, `--strict` refuses to build while any remain.
+- What the lint found on its first run, fixed:
+  - synthetic pointer motion had **no velocity**, and PopupMenu ignores
+    motion whose velocity is zero (`popup_menu.cpp`, `gui_input`): no menu
+    ever saw a hover, so every Env / New Shape row click missed and fell back
+    to the keyboard on camera. `_send_motion` sets velocity; the director
+    finds a menu row by sweeping the popup off camera and reading its hover
+    index instead of estimating row heights;
+  - v2_tools CSG: the shift-click on the cutter landed on the selected
+    wall's transform-gizmo centre (the cutter stands at the wall's centre)
+    and picked nothing; it clicks the cap off-centre now;
+  - v2_edit: a correct pick of the merged n-gon was called a miss (centroid
+    0.85 m from the click) and the nearest-centroid face was forced instead;
+    the check now asks the plugin's picker what is under the point.
+  Known and left: the UV Editor opens through the plugin (Godot 4.7's bottom
+  bar exposes no tab the pointer can click; the panel opens on the click).
+
+### Showcase content
+
+- The long cut opens straight on Create: the four teaser clips are gone.
+- v2_surface records the scroll beat third, so the waterfall sheet flows
+  behind every later surface beat (it stood still until the chapter's end).
+- v2_surface: the waterfall sheet maps one texture height per 2 m (at the
+  default 1 m per tile the 1:2 curtain squashed into blobs, brick between).
+- v2_tools: the Trim Walls walls butt instead of overlapping (Wall1 ran into
+  Wall2's corner column: coplanar faces z-fought as the camera swung round;
+  Wall2 stopped short of Wall3's back: a notch).
+
+Final renders: v2_create 37/37 checks, v2_edit 83/83, v2_surface 20/20,
+v2_tools 23/23, v2_map 10/10. Builds verified against their EDLs: README cut
+18 clips, 64.1 s (master 22.1 MB, README encode 2.3 MB, `out_v2/`, lint 0);
+long cut 43 clips, 3:28 (master 88.0 MB, `out_v2_long/`, lint 1: the UV
+Editor tab above). `./run_tests.sh`: 1304/1304, 86/86 suites, peak 685 MB.
+No PSP measurement this round (no renderer or exporter change).
+
 ## v0.9.189 — showcase v2 grows into a full film; an extrude that follows the gizmo
 
 Request: "showcase v2 still needs more work. it doesn't showcase complex

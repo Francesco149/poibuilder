@@ -119,8 +119,12 @@ does **not** work — no compositor behind it, so the window is invisible.
   caption or re-time a cut without re-rendering the editor.
   `tools/showcase/cursor_check.py` verifies the drawn cursor through each
   clip's REAL filtergraph (shared construction with the renderer's mapper so
-  they cannot drift); segment stamps hash the pipeline's sources so a tool
-  fix re-bakes the clips it affects.
+  they cannot drift) and its timing check proves footage and cursor show the
+  same source frame at every `speed`; segment stamps hash the pipeline's
+  sources so a tool fix re-bakes the clips it affects. The drawn cursor
+  auto-hides when the pointer is idle (EDL `cursor = true` forces it on).
+  `build.sh --lint` lists clips that show a missed gesture (director
+  `fallback()` events) or a failed check: run it after every re-render.
 - `poibuilder-manifest.json` — feature/tool inventory consumed by tooling.
 
 ## Reference Repos
@@ -133,12 +137,12 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.189** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.190** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, the
   v0.9.187 UI round: native EditorDock, edge-first placement, and the v0.9.188
   seashore showpiece + open-map PSP runtime: GE vertex morphing, mesh
   flipbooks, additive/decal meshes, camera path + attract mode, frustum cull).
-- All headless tests passing (`./run_tests.sh`; 1302 tests, 24.0k+ assertions
+- All headless tests passing (`./run_tests.sh`; 1304 tests, 24.0k+ assertions
   across 86 suites, peak static memory ~0.7 GB of the 1.5 GB gate) plus the
   real-editor GUI harness (`./run_gui_tests.sh`, failures=0).
 - Compatibility: maps made on the public release (`nightly` = v0.9.167) must
