@@ -7,12 +7,13 @@
 ##
 ##   v2s/card       a wall face selected, a card click textures it; x2 tiling
 ##   v2s/drop       a filtered card DRAGGED from the dock onto the pillar
+##   v2s/scroll     a waterfall sheet given a scroll speed: it flows live
+##                  (third, so it flows behind every later beat)
 ##   v2s/uv         the UV Editor tab: rotate, flip, box-project the face
 ##   v2s/paint      Texture Paint: two texture layers brushed onto the floor
 ##   v2s/stamp      Stamp: decals pressed into the floor
 ##   v2s/sprite     Sprite: a billboard tree placed, raised, scaled
 ##   v2s/particles  Particles: a flame emitter on the pillar
-##   v2s/scroll     a waterfall sheet given a scroll speed: it flows live
 ##
 ## Render: PB_SHOWCASE_LAYOUT=showcase_video/layouts/tour.cfg \
 ##         ./showcase_video/render.sh v2_surface
@@ -71,9 +72,12 @@ func run(dr: ShowcaseDirector) -> void:
 	d.cam_at_polar(f["center"], 28.0, 26.0, f["dist"], f["aim"])
 	await d.frames(20)
 
-	for s in [["v2s/card", _card_click], ["v2s/drop", _drop], ["v2s/uv", _uv],
-			["v2s/paint", _paint], ["v2s/stamp", _stamp], ["v2s/sprite", _sprite],
-			["v2s/particles", _particles], ["v2s/scroll", _scroll]]:
+	# The scroll beat comes THIRD: the waterfall sheet is in frame for the
+	# whole chapter, and a still "waterfall" behind every later beat read as
+	# a bug. Once it flows, it flows behind the UV, paint and placement beats.
+	for s in [["v2s/card", _card_click], ["v2s/drop", _drop], ["v2s/scroll", _scroll],
+			["v2s/uv", _uv], ["v2s/paint", _paint], ["v2s/stamp", _stamp],
+			["v2s/sprite", _sprite], ["v2s/particles", _particles]]:
 		if d.only_done():
 			break
 		await d.shot(s[0], s[1])
@@ -230,7 +234,7 @@ func _uv() -> void:
 		await d.glide(tab_at, 22)
 		await d.click(Vector2.INF, 20)
 	if not uv.is_visible_in_tree():
-		d._log_line("bottom-bar click did not open the UV Editor — opening it through the plugin")
+		d.fallback("bottom-bar click did not open the UV Editor — opening it through the plugin")
 		d.plugin.focus_uv_editor()
 		await d.frames(12)
 	d.check(uv.is_visible_in_tree(), "the UV editor is open")
@@ -351,7 +355,7 @@ func _scroll() -> void:
 	# The sheet is a single alpha-blended quad standing 5 cm off the wall; if
 	# the pick went through it to the wall, select the sheet's face directly.
 	if d.active_mesh() != sheet or d.plugin.editor.selection.selected_faces.is_empty():
-		d._log_line("sheet click picked %s — selecting the sheet's face via the protocol" % [
+		d.fallback("sheet click picked %s — selecting the sheet's face via the protocol" % [
 			String(d.active_mesh().name) if d.active_mesh() != null else "<none>"])
 		await _select_node(sheet)
 		d.apply_selection_ids(PackedInt32Array([0]))

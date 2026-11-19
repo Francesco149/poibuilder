@@ -164,7 +164,7 @@ func _click_face(world: Vector3, glide_n := 20, hold: Array = [], expect_near :=
 			if dist < best_d:
 				best_d = dist
 				best = fi
-		d._log_line("face click missed near %s (got %s) — selecting face %d via the protocol" % [
+		d.fallback("face click missed near %s (got %s) — selecting face %d via the protocol" % [
 			str(expect_near), str(_selected_faces()), best])
 		d.apply_selection_ids(PackedInt32Array([best]))
 		await d.frames(4)
@@ -188,7 +188,7 @@ func _add_face(world: Vector3, glide_n := 18) -> void:
 	var ids := PackedInt32Array(before)
 	if best >= 0 and not ids.has(best):
 		ids.append(best)
-	d._log_line("shift-click near %s did not add a face — adding %d via the protocol" % [str(world), best])
+	d.fallback("shift-click near %s did not add a face — adding %d via the protocol" % [str(world), best])
 	d.apply_selection_ids(ids)
 	await d.frames(4)
 
@@ -206,7 +206,7 @@ func _only_face(world: Vector3) -> void:
 		if dist < best_d:
 			best_d = dist
 			best = fi
-	d._log_line("click kept a %d-face selection — picking face %d via the protocol" % [_selected_faces().size(), best])
+	d.fallback("click kept a %d-face selection — picking face %d via the protocol" % [_selected_faces().size(), best])
 	d.apply_selection_ids(PackedInt32Array([best]))
 	await d.frames(4)
 
@@ -449,7 +449,7 @@ func _bevel() -> void:
 	if not d.plugin.tool_overlay.params_open:
 		d.plugin.call("_on_operation_requested", "bevel_edges")
 		await d.frames(10)
-		d._log_line("bevel modal opened via the plugin (button click missed)")
+		d.fallback("bevel modal opened via the plugin (button click missed)")
 	d.check(d.plugin.tool_overlay.params_open, "the bevel modal is open")
 	await d.overlay_param("distance", 0.2, 14)
 	await d.overlay_param("distance", 0.4, 18)

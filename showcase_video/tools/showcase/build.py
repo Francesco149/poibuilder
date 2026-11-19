@@ -480,6 +480,38 @@ def verify(master: Path, proj: edl.Project) -> bool:
 # cli
 # ---------------------------------------------------------------------------
 
+def lint(proj: edl.Project) -> list[str]:
+    """What a clip would put on screen that the take itself flagged.
+
+    - a FALLBACK inside the clip's span: the director's on-camera gesture
+      missed and the result came another way, so the clip shows a click that
+      does nothing (ShowcaseDirector.fallback writes these);
+    - a failed CHECK inside the span: the beat did not do what it claims.
+    Both are read from the take, so a re-render that fixes them clears them.
+    """
+    out: list[str] = []
+    for c in proj.clips:
+        if c.kind != "frames" or not c.source:
+            continue
+        try:
+            src = resolve(c, proj)
+        except Exception as e:                       # noqa: BLE001
+            out.append(f"{c.id}: cannot resolve ({e})")
+            continue
+        if src.session is None or src.shot is None:
+            continue
+        lo, hi = src.first_frame, src.first_frame + src.span_src
+        for e in src.session.events(src.shot):
+            f = int(e.get("f", 0))
+            if e.get("t") == "fallback" and lo <= f < hi:
+                t = (f - lo) / max(c.speed, 1e-6) / proj.fps
+                out.append(f"{c.id} @{t:.2f}s: fallback — {e.get('msg', '')}")
+        for chk in src.session.data.get("checks", []):
+            if chk.get("shot") == src.shot.name and not chk.get("ok", True):
+                out.append(f"{c.id}: failed check in its take — {chk.get('msg', '')}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="showcase build")
     ap.add_argument("--edl", default=str(DEFAULT_EDL))
@@ -493,9 +525,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="bake the selected clips and stop (no master)")
     ap.add_argument("--verify", action="store_true", help="only verify the existing master")
     ap.add_argument("--workers", type=int, default=0)
+    ap.add_argument("--lint", action="store_true",
+                    help="only report clips showing a missed gesture / failed check")
+    ap.add_argument("--strict", action="store_true",
+                    help="refuse to build while --lint reports anything")
     args = ap.parse_args(argv)
 
     proj = edl.load(args.edl)
+    problems = lint(proj)
+    for msg in problems:
+        print(f"[lint] {msg}")
+    if args.lint:
+        print(f"[lint] {len(problems)} problem(s)")
+        return 1 if problems else 0
+    if problems and args.strict:
+        print("[lint] --strict: fix the takes (or the cut) first")
+        return 1
     out_dir = REPO / "showcase_video" / proj.out_dir
     master = out_dir / proj.master
 

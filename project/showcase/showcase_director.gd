@@ -442,7 +442,7 @@ func ensure_selection() -> bool:
 	var id := element_id_at_screen(cursor)
 	if id < 0:
 		return false
-	_log_line("no mirrored selection at op time — picked element %d under the pointer" % id)
+	fallback("no mirrored selection at op time — picked element %d under the pointer" % id)
 	await apply_selection_ids(PackedInt32Array([id]))
 	return selection_ids().size() > 0
 
@@ -518,7 +518,7 @@ func select_points(points: Array, settle := 8) -> int:
 			want.append(id)
 	var have := selection_ids()
 	if have.size() != want.size() or want.size() != points.size():
-		_log_line("selection mismatch: wanted %d (%s), plugin has %d (%s) — repairing"
+		fallback("selection mismatch: wanted %d (%s), plugin has %d (%s) — repairing"
 			% [want.size(), str(want), have.size(), str(have)])
 		await apply_selection_ids(want)
 		_check(selection_ids().size() == points.size(),
@@ -536,7 +536,7 @@ func op_verify(op_name: String, probe: Callable, settle := 16) -> void:
 	await click_button(op_name, settle)
 	await frames(6)
 	if probe.call() == before:
-		_log_line("op %s: button click had no effect — restoring the selection and calling the plugin" % op_name)
+		fallback("op %s: button click had no effect — restoring the selection and calling the plugin" % op_name)
 		if ids.size() > 0:
 			apply_selection_ids(ids, false)
 		plugin.call("_on_operation_requested", op_name)
@@ -558,7 +558,7 @@ func open_export_dialog() -> bool:
 	await click_button("export", 16)
 	await frames(8)
 	if not (dlg as Window).visible:
-		_log_line("export dialog did not open from the toolbar button — calling the plugin")
+		fallback("export dialog did not open from the toolbar button — calling the plugin")
 		plugin.call("_on_export_requested")
 		await frames(8)
 	_check((dlg as Window).visible, "export dialog is on screen")
@@ -587,6 +587,22 @@ func env_preset(name: String, settle := 14) -> void:
 		var top := popup.position.y + (panel.content_margin_top if panel != null else 0.0)
 		await glide(Vector2(popup.position.x + popup.size.x * 0.5,
 			top + row_h * (float(idx) + 0.5)), 12)
+		# Hover-seek: the row-height estimate missed on the themed popup (the
+		# click landed between rows, the menu stayed open, and the video showed
+		# a click that did nothing before a keyboard fallback). Like a hand,
+		# nudge the pointer until the popup itself highlights the wanted row,
+		# and only then press.
+		for step in range(30):
+			var hot := popup.get_focused_item()
+			if hot == idx:
+				break
+			var dir := 1.0 if (hot < idx) else -1.0
+			cursor.y += dir * maxf(3.0, row_h * 0.3)
+			_send_motion()
+			await frames(1)
+		if popup.get_focused_item() != idx:
+			fallback("env preset '%s': hover never highlighted row %d (focused %d)" % [
+				name, idx, popup.get_focused_item()])
 		await mouse_down()
 		await frames(2)
 		await mouse_up()
@@ -608,11 +624,11 @@ func env_preset(name: String, settle := 14) -> void:
 				await frames(settle)
 				landed = _env_is(name)
 				if landed:
-					_log_line("env preset '%s' picked from the menu by keyboard" % name)
+					fallback("env preset '%s' picked from the menu by keyboard" % name)
 	if not landed:
 		plugin.call("_on_env_preset_requested", name)
 		await frames(settle)
-		_log_line("env preset '%s' applied via api (menu item missed)" % name)
+		fallback("env preset '%s' applied via api (menu item missed)" % name)
 	_check(_env_is(name), "environment preset is '%s'" % name)
 
 func _popup_key(down: bool) -> void:
@@ -1089,11 +1105,11 @@ func arm_shape(shape_id: StringName, settle := 14) -> void:
 				await frames(settle)
 				clicked = _shape_armed(shape_id)
 				if clicked:
-					_log_line("shape '%s' picked from the menu by keyboard" % shape_id)
+					fallback("shape '%s' picked from the menu by keyboard" % shape_id)
 	if not clicked:
 		plugin.call("_on_shape_requested", shape_id)
 		await frames(settle)
-		_log_line("shape '%s' armed via api (menu item missed)" % shape_id)
+		fallback("shape '%s' armed via api (menu item missed)" % shape_id)
 	else:
 		_log_line("shape '%s' armed via menu" % shape_id)
 	_check(_shape_armed(shape_id), "shape '%s' armed" % shape_id)
@@ -1135,7 +1151,7 @@ func op(op_name: String, settle := 16) -> void:
 	await click_button(op_name, settle)
 	await frames(6)
 	if _topology_signature() == before:
-		_log_line("op %s: button click had no effect — restoring the selection and calling the plugin" % op_name)
+		fallback("op %s: button click had no effect — restoring the selection and calling the plugin" % op_name)
 		# Written and consumed in the SAME frame: the plugin re-mirrors the
 		# engine's gizmo selection on every redraw, so a restored selection that
 		# waits even one frame is wiped before the operation reads it.
@@ -1401,6 +1417,16 @@ func _event(kind: String, data: Dictionary = {}) -> void:
 	data["f"] = shot_frame
 	data["t"] = kind
 	_events_file.store_line(JSON.stringify(data))
+
+## Records that a beat had to FALL BACK: an on-camera gesture (a click, a
+## menu pick, a key) missed and the result was produced another way (the
+## plugin's API, the keyboard, the selection protocol). The film then shows a
+## gesture that did nothing — the "click that does nothing" reports. Logged,
+## written to the take's events.jsonl at its frame, and the build warns about
+## every clip whose span contains one, so the miss is fixed, not shipped.
+func fallback(msg: String) -> void:
+	_log_line("FALLBACK " + msg)
+	_event("fallback", {"msg": msg})
 
 ## Records an assertion about what a beat was supposed to accomplish. The
 ## video build fails loudly on any failed check — a showcase that silently

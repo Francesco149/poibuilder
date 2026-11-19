@@ -73,8 +73,13 @@ func _box(name: String, size: Vector3, center: Vector3, color: String, rot_y := 
 func _build() -> void:
 	st["trim_wall"] = _box("TrimWall", Vector3(6.0, 3.0, 0.4), _at("trim", Vector3(0.0, 1.5, -2.2)), "slate")
 	var w: Array = []
-	w.append(_box("Wall1", Vector3(2.0, 3.0, 0.4), _at("trimwalls", Vector3(-2.0, 1.5, -0.2)), "slate"))
-	w.append(_box("Wall2", Vector3(0.4, 3.0, 2.0), _at("trimwalls", Vector3(-1.2, 1.5, -1.0)), "slate"))
+	# The walls BUTT, they do not overlap: Wall1 stops where Wall2's corner
+	# column starts, and Wall2 runs the full depth to Wall3's back face. The
+	# first cut overlapped Wall1 into the column (coplanar end and front faces
+	# z-fought as the camera swung round) and left Wall2 short of Wall3's back,
+	# a notch at that outer corner.
+	w.append(_box("Wall1", Vector3(1.6, 3.0, 0.4), _at("trimwalls", Vector3(-2.2, 1.5, -0.2)), "slate"))
+	w.append(_box("Wall2", Vector3(0.4, 3.0, 2.4), _at("trimwalls", Vector3(-1.2, 1.5, -1.2)), "slate"))
 	w.append(_box("Wall3", Vector3(2.0, 3.0, 0.4), _at("trimwalls", Vector3(0.0, 1.5, -2.2)), "slate"))
 	w.append(_box("Wall4", Vector3(2.0, 3.0, 0.4), _at("trimwalls", Vector3(1.707, 1.5, -1.434)), "slate", -45.0))
 	st["walls"] = w
@@ -194,7 +199,7 @@ func _csg() -> void:
 	await d.click(Vector2.INF, 10, ["shift"])
 	var sel := EditorInterface.get_selection().get_selected_nodes()
 	if not (sel.has(wall) and sel.has(cutter)):
-		d._log_line("object clicks selected %s — selecting wall + cutter through the editor" % str(sel))
+		d.fallback("object clicks selected %s — selecting wall + cutter through the editor" % str(sel))
 		await _select_nodes([wall, cutter])
 	d.check(EditorInterface.get_selection().get_selected_nodes().size() == 2, "wall and cutter selected")
 	var before := wall.pb_mesh_data.faces.size()
@@ -202,7 +207,7 @@ func _csg() -> void:
 	if wall.pb_mesh_data.faces.size() == before and cutter.is_inside_tree() and cutter.visible:
 		d.plugin.call("_on_operation_requested", "csg_subtract")
 		await d.frames(14)
-		d._log_line("CSG subtract driven through the plugin (button click missed)")
+		d.fallback("CSG subtract driven through the plugin (button click missed)")
 	var cut := wall.pb_mesh_data.faces.size()
 	d.check(cut != before, "subtract cut the wall (%d -> %d faces)" % [before, cut])
 	await d.frames(40)
@@ -213,7 +218,7 @@ func _csg() -> void:
 		var h := ur.get_history_undo_redo(ur.get_object_history_id(wall))
 		if h != null and h.has_undo():
 			h.undo()
-		d._log_line("undo driven through the history (Ctrl+Z missed)")
+		d.fallback("undo driven through the history (Ctrl+Z missed)")
 	d.check(wall.pb_mesh_data.faces.size() == before, "Ctrl+Z restored the wall (%d faces)" % wall.pb_mesh_data.faces.size())
 	await d.frames(40)
 	await d.key(KEY_Z, {"ctrl": true, "shift": true})
@@ -223,7 +228,7 @@ func _csg() -> void:
 		var h2 := ur2.get_history_undo_redo(ur2.get_object_history_id(wall))
 		if h2 != null and h2.has_redo():
 			h2.redo()
-		d._log_line("redo driven through the history (Ctrl+Shift+Z missed)")
+		d.fallback("redo driven through the history (Ctrl+Shift+Z missed)")
 	d.check(wall.pb_mesh_data.faces.size() == cut, "redo cut it again (%d faces)" % wall.pb_mesh_data.faces.size())
 	await d.frames(20)
 	await d.cam_swing(f["center"], 24.0, -24.0, 14.0, 10.0, f["dist"] * 0.92, 70, 1, f["aim"])
@@ -243,7 +248,7 @@ func _import() -> void:
 		d.plugin.call("_perform_poibuilderize")
 		await d.frames(12)
 		made = _newest_pb(known)
-		d._log_line("poibuilderize driven through the plugin (button click missed)")
+		d.fallback("poibuilderize driven through the plugin (button click missed)")
 	d.check(made != null, "Poibuilderize produced a PBMesh")
 	if made == null:
 		return
@@ -255,7 +260,7 @@ func _import() -> void:
 	await d.glide_world_track(pt, 18)
 	await d.click()
 	if d.subgizmo_ids().is_empty():
-		d._log_line("prop face click missed")
+		d.fallback("prop face click missed")
 	d.check(not d.subgizmo_ids().is_empty(), "a face of the imported prop is selected")
 	await d.frames(12)
 	var faces0: int = made.pb_mesh_data.faces.size()

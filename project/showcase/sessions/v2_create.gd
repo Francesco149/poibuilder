@@ -213,7 +213,7 @@ func _reedit() -> void:
 	await d.glide_world_track(pick, 18)
 	await d.click()
 	if EditorInterface.get_selection().get_selected_nodes().find(stairs) < 0:
-		d._log_line("stairs click did not select them — selecting through the editor")
+		d.fallback("stairs click did not select them — selecting through the editor")
 		await d.off(func():
 			EditorInterface.get_selection().clear()
 			EditorInterface.get_selection().add_node(stairs))
@@ -334,7 +334,7 @@ func _pick_option(ob: OptionButton, item_id: int) -> void:
 	if ob.selected != idx:
 		ob.select(idx)
 		ob.item_selected.emit(idx)
-		d._log_line("option '%s' set via api (popup pick missed)" % ob.name)
+		d.fallback("option '%s' set via api (popup pick missed)" % ob.name)
 	if popup.visible:
 		popup.hide()
 	await d.frames(4)
