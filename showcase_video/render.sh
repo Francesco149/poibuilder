@@ -24,6 +24,7 @@ if [ -n "$ONLY" ]; then shift || true; fi
 
 OUT="${PB_SHOWCASE_OUT:-$REPO/showcase_video/bake/$SESSION}"
 SCREEN="${PB_SHOWCASE_SCREEN:-1920x1080x24}"
+GODOT="${PB_SHOWCASE_GODOT:-godot-mono}"
 HOME_DIR="${PB_SHOWCASE_HOME:-$REPO/showcase_video/bake/.home}"
 
 if [ "${PB_SHOWCASE_FRESH_HOME:-0}" = "1" ]; then
@@ -62,26 +63,52 @@ LOG="$OUT/render.log"
 # without this it starts the Project Manager and never loads the scene.
 cd "$REPO/project"
 
+# A fresh checkout (the GPU box) has never imported its assets: without this
+# the plugin's preloaded icons fail to resolve and the plugin never loads.
+if [ ! -d "$REPO/project/.godot/imported" ]; then
+    HOME="$HOME_DIR" timeout 600 "$GODOT" --headless --editor --import \
+        > "$OUT/import.log" 2>&1 || true
+fi
 # A NEW class_name script (e.g. a new session or a shared helper) is only
 # registered by an editor filesystem scan, and a session loaded before that
 # scan fails to resolve the type. One cheap editor boot keeps the class cache
 # warm — the same lesson run_tests.sh encodes.
 if [ "${PB_SHOWCASE_SKIP_CACHE_WARM:-0}" != "1" ]; then
-    HOME="$HOME_DIR" timeout 300 godot-mono --headless --editor --quit-after 90 \
+    HOME="$HOME_DIR" timeout 300 "$GODOT" --headless --editor --quit-after 90 \
         > "$OUT/cache_warm.log" 2>&1 || true
 fi
 
 TIMEOUT="${PB_SHOWCASE_TIMEOUT:-2400}"
-set -x
-timeout "$TIMEOUT" env HOME="$HOME_DIR" \
-LIBGL_ALWAYS_SOFTWARE=1 \
-PB_SHOWCASE_SESSION="$SESSION" \
-PB_SHOWCASE_OUT="$OUT" \
-PB_SHOWCASE_ONLY="$ONLY" \
-    xvfb-run -a -s "-screen 0 $SCREEN" \
-    godot-mono --editor --rendering-driver opengl3 \
-    --resolution "${SCREEN%x*}" \
-    res://showcase/showcase_recorder.tscn 2>&1 | tee "$LOG"
+# PB_SHOWCASE_WAYLAND=<socket>: draw on a real GPU through a running (headless)
+# Wayland compositor instead of software GL under Xvfb — what
+# render_remote.sh does on the GPU box. Same editor, same frames.
+# No vsync (Godot's flag + Mesa's vblank_mode): a vsynced eglSwapBuffers waits
+# for the compositor's frame callback, which headless Weston sometimes never
+# sends — the editor hung inside its first filesystem scan, 100% CPU, forever.
+if [ -n "${PB_SHOWCASE_WAYLAND:-}" ]; then
+    set -x
+    timeout "$TIMEOUT" env HOME="$HOME_DIR" \
+    WAYLAND_DISPLAY="$PB_SHOWCASE_WAYLAND" \
+    vblank_mode=0 \
+    PB_SHOWCASE_SESSION="$SESSION" \
+    PB_SHOWCASE_OUT="$OUT" \
+    PB_SHOWCASE_ONLY="$ONLY" \
+        "$GODOT" --editor --display-driver wayland --rendering-driver opengl3 --fixed-fps 60 \
+        --disable-vsync \
+        --resolution "${SCREEN%x*}" \
+        res://showcase/showcase_recorder.tscn 2>&1 | tee "$LOG"
+else
+    set -x
+    timeout "$TIMEOUT" env HOME="$HOME_DIR" \
+    LIBGL_ALWAYS_SOFTWARE=1 \
+    PB_SHOWCASE_SESSION="$SESSION" \
+    PB_SHOWCASE_OUT="$OUT" \
+    PB_SHOWCASE_ONLY="$ONLY" \
+        xvfb-run -a -s "-screen 0 $SCREEN" \
+        "$GODOT" --editor --rendering-driver opengl3 --fixed-fps 60 \
+        --resolution "${SCREEN%x*}" \
+        res://showcase/showcase_recorder.tscn 2>&1 | tee "$LOG"
+fi
 set +x
 
 if grep -q "FAIL" "$LOG"; then

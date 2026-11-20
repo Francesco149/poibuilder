@@ -52,6 +52,10 @@ var checks: Array[Dictionary] = []
 var _drag_down := false
 var _mods := {"shift": false, "alt": false, "ctrl": false}
 var _t0 := 0
+## Frames whose PNG encode is still running on the worker pool.
+const SAVE_IN_FLIGHT := 24
+var _save_tasks: Array[int] = []
+var _prof := [0, 0, 0]          # usec: wait-for-draw, readback, encode (per 300 frames)
 
 var _shot_dir := ""
 var _shot_frames_dir := ""
@@ -137,6 +141,7 @@ func _boot() -> void:
 	_finish(0)
 
 func _finish(code: int) -> void:
+	_drain_saves()
 	_write_manifest()
 	if _shot_cursor != null:
 		_shot_cursor.close()
@@ -194,17 +199,38 @@ func frames(n: int = 1) -> void:
 		if capturing:
 			await _grab()
 
+## Block until every queued frame is on disk (end of a shot / the session).
+func _drain_saves() -> void:
+	for id in _save_tasks:
+		WorkerThreadPool.wait_for_task_completion(id)
+	_save_tasks.clear()
+
 func _grab() -> void:
+	var t0 := Time.get_ticks_usec()
 	await RenderingServer.frame_post_draw
+	var t1 := Time.get_ticks_usec()
 	var img: Image = win.get_texture().get_image()
-	img.save_png("%s/%06d.png" % [_shot_frames_dir, shot_frame])
+	var t2 := Time.get_ticks_usec()
+	# PNG encoding a 1080p frame costs ~230 ms of CPU — 4-5x the software-GL
+	# draw itself. Encode on the worker pool so the editor only pays for the
+	# draw + readback; the in-flight cap bounds memory (8 MB per frame).
+	var path := "%s/%06d.png" % [_shot_frames_dir, shot_frame]
+	_save_tasks.append(WorkerThreadPool.add_task(func(): img.save_png(path)))
+	while _save_tasks.size() > SAVE_IN_FLIGHT:
+		WorkerThreadPool.wait_for_task_completion(_save_tasks.pop_front())
+	var t3 := Time.get_ticks_usec()
+	_prof[0] += t1 - t0
+	_prof[1] += t2 - t1
+	_prof[2] += t3 - t2
 	_shot_cursor.store_32(int(cursor.x))
 	_shot_cursor.store_32(int(cursor.y))
 	shot_frame += 1
 	frame += 1
 	if frame % 300 == 0:
-		_log_line("captured %d frames (%.1fs elapsed, shot %s)" % [
-			frame, float(Time.get_ticks_msec() - _t0) / 1000.0, shot_name])
+		_log_line("captured %d frames (%.1fs elapsed, shot %s) per-frame ms: draw %.1f readback %.1f save-queue %.1f" % [
+			frame, float(Time.get_ticks_msec() - _t0) / 1000.0, shot_name,
+			_prof[0] / 300000.0, _prof[1] / 300000.0, _prof[2] / 300000.0])
+		_prof = [0, 0, 0]
 
 ## A recorded beat. `fn` is a Callable; the shot gets its own directory
 ## (frames, cursor, events) so re-rendering one beat never disturbs the others,
@@ -228,6 +254,7 @@ func shot(name: String, fn: Callable) -> void:
 		_event("shot_begin", {"name": name})
 	await fn.call()
 	capturing = false
+	_drain_saves()
 	var dur := float(Time.get_ticks_msec() - t0) / 1000.0
 	if want:
 		if _shot_cursor != null:
@@ -1019,8 +1046,67 @@ func click_control(c: Control, settle := 12, hold: Array = []) -> bool:
 	if not c.is_visible_in_tree():
 		_log_line("WARN control '%s' is not visible" % c.name)
 		return false
+	if not Rect2(Vector2.ZERO, Vector2(win.size)).has_point(control_center(c)):
+		# Off-window (scrolled out of its dock): bring it in, never click air.
+		if not await reveal(c):
+			_check(false, "control '%s' on screen to click" % c.name)
+			return false
 	await click(control_center(c), settle, hold)
 	return true
+
+## Scrolls `c` into view the way a user would: mouse-wheel steps over its
+## ScrollContainer until the whole control is inside the visible area. A dock
+## longer than the window keeps its lower controls BELOW the screen — a click
+## "on" one lands off-window and silently does nothing (the scroll beat's
+## Apply button sat at y=1177 of a 1080 window for a whole showcase round).
+## Returns whether the control ended up fully visible.
+func reveal(c: Control, max_steps := 40) -> bool:
+	if c == null:
+		return false
+	var sc: ScrollContainer = null
+	var n: Node = c.get_parent()
+	while n != null:
+		if n is ScrollContainer:
+			sc = n as ScrollContainer
+			break
+		n = n.get_parent()
+	var win_rect := Rect2(Vector2.ZERO, Vector2(win.size))
+	if sc == null:
+		return win_rect.encloses(c.get_global_rect())
+	var view := sc.get_global_rect().intersection(win_rect)
+	# Vertical extent only: a dock's controls sit flush with its sides.
+	var shown := func(r: Rect2) -> bool:
+		return r.position.y >= view.position.y and r.end.y <= view.end.y
+	if not shown.call(c.get_global_rect()):
+		# Over the scrollbar's column: a wheel over a SpinBox or a slider in
+		# the dock changes THAT value instead of scrolling the dock.
+		var bar := sc.get_v_scroll_bar()
+		var x := bar.get_global_rect().get_center().x if bar != null and bar.visible else view.end.x - 6.0
+		await glide(Vector2(x, view.get_center().y), 14)
+	for i in range(max_steps):
+		var r := c.get_global_rect()
+		if shown.call(r):
+			break
+		var down := r.end.y > view.end.y
+		for pressed in [true, false]:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_WHEEL_DOWN if down else MOUSE_BUTTON_WHEEL_UP
+			ev.pressed = pressed
+			ev.factor = 1.0
+			ev.position = cursor
+			ev.global_position = cursor
+			Input.parse_input_event(ev)
+		_event("wheel", {"x": int(cursor.x), "y": int(cursor.y), "down": down})
+		await frames(3)
+	if not shown.call(c.get_global_rect()):
+		fallback("wheel did not bring '%s' %s into view %s (scroll %d) — ensure_control_visible" % [
+			c.name, str(c.get_global_rect()), str(view), sc.scroll_vertical])
+		sc.ensure_control_visible(c)
+		await frames(4)
+	var ok: bool = shown.call(c.get_global_rect())
+	if not ok:
+		_log_line("reveal: '%s' %s still outside %s" % [c.name, str(c.get_global_rect()), str(view)])
+	return ok
 
 ## A control's centre in ROOT-window coordinates. A control inside an
 ## embedded dialog (the export dialog, any AcceptDialog) reports its rect in
