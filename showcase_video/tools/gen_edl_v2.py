@@ -21,7 +21,7 @@ def q(s):
 
 SPEED = {"long": 1.0}
 
-def clip(cid, src, at=0.0, dur=None, tail=0.0, caps=(), crop=CROP, speed=None, **kw):
+def clip(cid, src, at=0.0, dur=None, tail=0.0, caps=(), crop=CROP, speed=None, cap_pos="bc", **kw):
     """at < 0 counts from the end; dur None = to the end of the take minus
     `tail`. `dur` is OUTPUT time: at speed s the clip walks dur*s of source."""
     n = shot_len(src)
@@ -43,7 +43,7 @@ def clip(cid, src, at=0.0, dur=None, tail=0.0, caps=(), crop=CROP, speed=None, *
             cdur = f', dur = {c[3]}' if len(c) > 3 else ''
             # Bottom-centre: bottom-left is where PoiBuilder's floating panel
             # (selection readout, parameter modals) lives.
-            out.append(f'  {{ label = {q(label)}, text = {q(text)}, at = {cat}{cdur}, pos = "bc" }},')
+            out.append(f'  {{ label = {q(label)}, text = {q(text)}, at = {cat}{cdur}, pos = {q(cap_pos)} }},')
         out.append(']')
     return "\n".join(out), dur
 
@@ -135,7 +135,8 @@ L.append(clip("l16-lineup", "v2_create:v2c/lineup", at=1.2, tail=0.6,
               caps=[("Shapes", "Every primitive is generated from parameters", 0.2)]))
 # EDIT
 L.append(clip("l20-modes", "v2_edit:v2e/modes",
-              caps=[("Select", "Vertex, edge, face. The doorway's front is ONE n-gon, arch and all", 0.2)]))
+              caps=[("Select", "Vertex, edge, face: grab any element and move it", 0.2, 4.6),
+                    ("Select", "The doorway's front is ONE n-gon, arch and all", 5.0)]))
 L.append(clip("l21-portal", "v2_edit:v2e/portal", tail=1.2,
               caps=[("Extrude", "Shift+drag the whole n-gon: the arch deepens with it", 0.1, 2.6),
                     ("Extrude", "Extrude, scale, extrude, taper: a cornice and a roof", 2.9)]))
@@ -168,7 +169,10 @@ L.append(clip("l41-drop", "v2_surface:v2s/drop",
               caps=[("Materials", "...or filter the palette and drag a card onto any face", 0.1)]))
 L.append(clip("l42-scroll", "v2_surface:v2s/scroll",
               caps=[("Animated", "A scroll speed on a face: the water flows live in the editor", 0.2)]))
-L.append(clip("l43-uv", "v2_surface:v2s/uv", crop=[0, 0, 1920, 1080],
+# The UV beat drags the bottom panel up to mid-screen: crop the 3D view's
+# lower part + the whole UV editor + the dock, caption top-left (over the 3D
+# view's sky, not over the UV canvas the beat is about).
+L.append(clip("l43-uv", "v2_surface:v2s/uv", crop=[287, 162, 1633, 918], cap_pos="tl",
               caps=[("UV editor", "Rotate, flip and project UVs; the 3D view follows", 0.2)]))
 L.append(clip("l44-paint", "v2_surface:v2s/paint",
               caps=[("Paint", "Brush texture layers onto any surface", 0.2)]))
@@ -211,7 +215,10 @@ S = []
 S.append(card("s00-title", 1.6, TITLE, fade_in=0.3, fade_out=0.3))
 S.append(clip("s10-door", "v2_create:v2c/door", at=0.4, fade_in=0.2,
               caps=[("Create", "Pick a shape in the dock, drag it out", 0.15)]))
-S.append(clip("s11-edge", "v2_create:v2c/edge", at=1.0, dur=4.6,
+# From the settled camera (3.8 s) through BOTH walls to the held result:
+# the old 1.0 + 4.6 s spent its time in the dock and cut mid-way through the
+# first wall (the owner: "cuts to the next beat too early").
+S.append(clip("s11-edge", "v2_create:v2c/edge", at=3.8, dur=5.4,
               caps=[("New", "Edge-first placement: any angle", 0.15)]))
 S.append(clip("s20-ngon", "v2_edit:v2e/modes", at=-2.4,
               caps=[("Select", "The doorway's front is one n-gon", 0.1)]))

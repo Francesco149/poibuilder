@@ -23,7 +23,7 @@ master = "poibuilder-showcase-v2.mp4"
 readme = "poibuilder-showcase-v2-960.mp4"
 poster = "poibuilder-showcase-v2-poster.png"
 
-# total 64.0 s
+# total 64.8 s
 
 [[clip]]
 id = "s00-title"
@@ -48,8 +48,8 @@ captions = [
 [[clip]]
 id = "s11-edge"
 source = "v2_create:v2c/edge"
-at = 1.0
-dur = 4.58
+at = 3.8
+dur = 5.38
 crop = [287, 44, 1633, 918]
 captions = [
   { label = "New", text = "Edge-first placement: any angle", at = 0.15, pos = "bc" },
@@ -58,7 +58,7 @@ captions = [
 [[clip]]
 id = "s20-ngon"
 source = "v2_edit:v2e/modes"
-at = 3.03
+at = 5.97
 dur = 2.38
 crop = [287, 44, 1633, 918]
 captions = [

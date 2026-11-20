@@ -30,6 +30,10 @@ var pillar: PBMesh
 var sheet: PBMesh
 
 const TEX := "res://addons/poibuilder/materials/textures/"
+## Where the UV beat drags the bottom panel's top edge (window y). The clip
+## crops [287, 162, 1633, 918]: the 3D view's lower part, the whole UV editor
+## and the Material & UV dock.
+const UV_PANEL_TOP := 520.0
 const SET_BOX := AABB(Vector3(-3.6, 0.0, -4.0), Vector3(7.2, 3.4, 7.6))
 
 func run(dr: ShowcaseDirector) -> void:
@@ -127,6 +131,45 @@ func _wears(node: PBMesh, needle: String) -> bool:
 			return true
 	return false
 
+## Drags the split above `panel` (the editor's bottom dock) so its top sits
+## at `top_y`; sets the split directly (logged) if the drag did not take.
+func _raise_bottom_panel(panel: Control, top_y: float) -> void:
+	var split: SplitContainer = null
+	var child: Control = panel
+	var n: Node = panel.get_parent()
+	while n != null:
+		if n is SplitContainer and (n as SplitContainer).vertical:
+			split = n as SplitContainer
+			break
+		if n is Control:
+			child = n as Control
+		n = n.get_parent()
+	if split == null:
+		d.fallback("no vertical split above the UV editor")
+		return
+	var top := child.get_global_rect().position.y
+	var x := child.get_global_rect().get_center().x
+	# The grabber is the gap between the split's children, just above `child`.
+	var grab := Vector2(x, top - maxf(2.0, split.get_theme_constant("separation") * 0.5))
+	await d.glide(grab, 16)
+	await d.drag(grab, Vector2(x, top_y), 30)
+	await d.frames(6)
+	if absf(child.get_global_rect().position.y - top_y) > 40.0:
+		d.fallback("dragging the bottom panel's edge left it at y=%d — setting the split" %
+			int(child.get_global_rect().position.y))
+		split.split_offset -= int(child.get_global_rect().position.y - top_y)
+		await d.frames(6)
+
+func _field_key(k: Key, ctrl := false) -> void:
+	for pressed in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = k
+		ev.physical_keycode = k
+		ev.ctrl_pressed = ctrl
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
+		await d.frames(2)
+
 func _type(text: String) -> void:
 	for ch in text:
 		for pressed in [true, false]:
@@ -166,6 +209,18 @@ func _bottom_tab(title: String) -> Vector2:
 			stack2.append(c)
 	d._log_line("no '%s' on the bottom bar; candidates: %s" % [title, ", ".join(seen)])
 	return Vector2.INF
+
+## uv1_offset of every material the sheet actually renders with.
+func _sheet_offsets() -> Array:
+	var out: Array = []
+	var m: Mesh = sheet.mesh
+	if m == null:
+		return out
+	for i in range(m.get_surface_count()):
+		var mat := sheet.get_active_material(i)
+		if mat is StandardMaterial3D:
+			out.append((mat as StandardMaterial3D).uv1_offset)
+	return out
 
 func _card_names() -> String:
 	var out: Array = []
@@ -244,6 +299,11 @@ func _uv() -> void:
 		d.plugin.focus_uv_editor()
 		await d.frames(12)
 	d.check(uv.is_visible_in_tree(), "the UV editor is open")
+	# The bottom panel opens ~250 px tall: three toolbar rows leave the UV
+	# canvas a 150 px strip, unreadable in the cut (and under its caption).
+	# Drag the panel's top edge up to mid-screen, like a user making room.
+	await _raise_bottom_panel(uv, UV_PANEL_TOP)
+	d.check(uv.get_global_rect().position.y <= UV_PANEL_TOP + 60.0, "the UV editor fills the lower half")
 	if uv.canvas != null:
 		uv.canvas.frame_unit_square()
 	await d.frames(10)
@@ -369,14 +429,53 @@ func _scroll() -> void:
 	d.check(d.active_mesh() == sheet and not d.plugin.editor.selection.selected_faces.is_empty(), "the sheet's face selected")
 	var sv: Range = dock._spin_scroll_v
 	if sv != null:
+		# The scroll row is below the fold of the dock: wheel it into view
+		# (Apply sits under the field, so bring that in and both are shown).
+		d.check(await d.reveal(dock._btn_scroll_apply), "the scroll row is on screen")
+		# Typed, like a user: a value set from code while the field has focus
+		# is overwritten by the field's stale text ("0") the moment focus
+		# moves to Apply — the sheet got speed (0, 0) and never moved.
 		await d.glide(_win_pos(sv), 18)
 		await d.click(Vector2.INF, 6)
-		sv.value = -0.75
-		await d.frames(10)
-	await d.click_control(dock._btn_scroll_apply, 16)
+		# Straight to the focused field: d.key() hands focus to the viewport
+		# first (right for shortcuts, wrong here — Ctrl+A selected all faces).
+		await _field_key(KEY_A, true)
+		await _type("-0.75")
+		await _field_key(KEY_ENTER)
+		await d.frames(6)
+		if not is_equal_approx(sv.value, -0.75):
+			d.fallback("typing the scroll speed left %s — setting it on the field" % str(sv.value))
+			sv.value = -0.75
+			await d.frames(4)
+		d.check(is_equal_approx(sv.value, -0.75), "scroll V reads -0.75")
+	var ap: Button = dock._btn_scroll_apply
+	d._log_line("apply: mesh=%s faces=%s disabled=%s visible=%s rect=%s" % [
+		String(d.active_mesh().name) if d.active_mesh() != null else "<none>",
+		str(d.plugin.editor.selection.selected_faces), str(ap.disabled),
+		str(ap.is_visible_in_tree()), str(ap.get_global_rect())])
+	await d.click_control(ap, 16)
 	d.check(d.plugin.animate_scrolling_textures, "the viewport animates scrolling textures")
+	# The flag alone proved nothing (the owner saw a sheet that never moved):
+	# the material the sheet RENDERS with must change offset frame to frame.
+	var o0 := _sheet_offsets()
+	await d.frames(12)
+	var o1 := _sheet_offsets()
+	d._log_line("sheet offsets %s -> %s (scroll %s)" % [str(o0), str(o1),
+		str(PBUv.get_scroll_speed(sheet.pb_mesh_data.get_face_material(sheet.pb_mesh_data.faces[0])))])
+	d.check(o0 != o1, "the sheet's rendered texture is moving")
 	await d.off(func():
 		EditorInterface.get_selection().clear()
 		d.plugin.editor.active_mesh = null)
+	# Hold the camera still while it flows: under a moving camera the scroll
+	# reads as parallax, not as animation (the owner saw "it never starts").
+	await d.frames(84)
 	var f := d.framing(SET_BOX, 0.95, 20.0, 18.0)
-	await d.cam_swing(f["center"], 20.0, 40.0, 18.0, 24.0, f["dist"], 150, 1, f["aim"])
+	await d.cam_swing(f["center"], 20.0, 40.0, 18.0, 24.0, f["dist"], 120, 1, f["aim"])
+	# Off camera, after the last captured frame: the dock goes back to its
+	# top (the reveal scrolled it down), so the next beats open on the palette.
+	await d.off(func():
+		var n: Node = dock._btn_scroll_apply
+		while n != null and not (n is ScrollContainer):
+			n = n.get_parent()
+		if n != null:
+			(n as ScrollContainer).scroll_vertical = 0)

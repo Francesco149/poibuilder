@@ -23,7 +23,7 @@ master = "poibuilder-showcase-v2-long.mp4"
 readme = "poibuilder-showcase-v2-long-960.mp4"
 poster = "poibuilder-showcase-v2-long-poster.png"
 
-# total 207.9 s
+# total 213.1 s
 
 [[clip]]
 id = "l00-title"
@@ -116,11 +116,12 @@ captions = [
 id = "l20-modes"
 source = "v2_edit:v2e/modes"
 at = 0.0
-dur = 4.7
+dur = 7.26
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
-  { label = "Select", text = "Vertex, edge, face. The doorway's front is ONE n-gon, arch and all", at = 0.2, pos = "bc" },
+  { label = "Select", text = "Vertex, edge, face: grab any element and move it", at = 0.2, dur = 4.6, pos = "bc" },
+  { label = "Select", text = "The doorway's front is ONE n-gon, arch and all", at = 5.0, pos = "bc" },
 ]
 
 [[clip]]
@@ -282,7 +283,7 @@ captions = [
 id = "l42-scroll"
 source = "v2_surface:v2s/scroll"
 at = 0.0
-dur = 5.08
+dur = 6.84
 crop = [287, 44, 1633, 918]
 speed = 1.15
 captions = [
@@ -293,11 +294,11 @@ captions = [
 id = "l43-uv"
 source = "v2_surface:v2s/uv"
 at = 0.0
-dur = 4.81
-crop = [0, 0, 1920, 1080]
+dur = 5.68
+crop = [287, 162, 1633, 918]
 speed = 1.15
 captions = [
-  { label = "UV editor", text = "Rotate, flip and project UVs; the 3D view follows", at = 0.2, pos = "bc" },
+  { label = "UV editor", text = "Rotate, flip and project UVs; the 3D view follows", at = 0.2, pos = "tl" },
 ]
 
 [[clip]]

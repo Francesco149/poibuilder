@@ -246,16 +246,45 @@ func _extreme_face(node: PBMesh, dir: Vector3, min_corners := 3) -> int:
 func _modes() -> void:
 	var door: PBMesh = st["door"]
 	var f := d.framing_node(door, 0.4, 24.0, 16.0)
+	# Each mode GRABS its element and pulls it out, then puts it back: a
+	# hover alone did not tell vertex from edge mode (the owner: "make it
+	# more obvious by moving the element and moving it back").
+	var rest := door.pb_mesh_data.positions.duplicate()
 	await d.click_button("vertex", 8)
-	await d.glide_world_track(_at("door", Vector3(-1.5, 3.2, 0.5)), 22)
-	await d.frames(10)
-	await d.glide_world_track(_at("door", Vector3(-1.0, 0.0, 0.5)), 26)
+	var corner := _at("door", Vector3(-1.5, 3.2, 0.5))
+	await d.glide_world_track(corner, 22)
+	var nv := await d.select_points([corner])
+	d.check(nv == 1, "one corner selected (%d)" % nv)
+	await d.frames(8)
+	await d.glide(d.drag_cursor_for(Vector3.ZERO), 10)
+	await d.move_selection(Vector3(0.0, 0.8, 0.0), 30)
+	await d.frames(16)
+	await _move_back(door, rest)
 	await d.frames(8)
 	await d.click_button("edge", 8)
-	await d.glide_world_track(_at("door", Vector3(-0.9, 2.0, 0.5)), 20)
+	var top_edge := _at("door", Vector3(0.0, 3.2, 0.5))
+	await d.glide_world_track(top_edge, 22)
+	var ne := await d.select_points([top_edge])
+	d.check(ne == 1, "the top edge selected (%d)" % ne)
 	await d.frames(8)
-	await d.glide_world_track(_at("door", Vector3(0.0, 3.2, 0.5)), 24)
+	await d.glide(d.drag_cursor_for(Vector3.ZERO), 10)
+	# Up, not toward the camera: from this near-frontal view a push along z
+	# barely read. One corner popping up vs the whole top rising IS the
+	# vertex/edge difference.
+	await d.move_selection(Vector3(0.0, 0.8, 0.0), 30)
+	await d.frames(16)
+	await _move_back(door, rest)
 	await d.frames(8)
+	var off := 0.0
+	for i in range(rest.size()):
+		off = maxf(off, (door.pb_mesh_data.positions[i] as Vector3).distance_to(rest[i]))
+	var back := off < 0.002
+	d.check(back, "the corner and the edge went back where they were (max off %.4f m)" % off)
+	if not back:
+		d.fallback("door not restored after the mode demo — restoring its positions")
+		door.pb_mesh_data.positions = rest
+		door.rebuild()
+		await d.frames(4)
 	await d.click_button("face", 8)
 	# The lintel: one hover lights the WHOLE front, arch perimeter included.
 	await d.glide_world_track(_at("door", Vector3(-0.5, 2.85, 0.5)), 22)
@@ -266,6 +295,25 @@ func _modes() -> void:
 		"one click selected the front n-gon (%d corners)" % (_corners(door, int(_selected_faces()[0])) if not _selected_faces().is_empty() else 0))
 	await d.frames(20)
 	await d.cam_swing(f["center"], 24.0, 32.0, 16.0, 17.0, f["dist"], 30, 1, f["aim"])
+
+## Puts the element back: Ctrl+Z. A return DRAG lands off by 0.1-0.2 m (the
+## drag follows the projected pointer; correction nudges diverged), and every
+## later beat builds on this door — undo is exact, and it is what a user does.
+func _move_back(mesh: PBMesh, rest: PackedVector3Array) -> void:
+	await d.key(KEY_Z, {"ctrl": true})
+	await d.frames(10)
+	d._log_line("modes: residue %.4f m" % _moved(mesh, rest).length())
+
+## World displacement of the vertex that moved furthest from `rest` (the
+## drag lands where the gizmo protocol and the snap put it, not exactly where
+## it was asked to: return by what HAPPENED, or the door comes back 0.12 m off).
+func _moved(mesh: PBMesh, rest: PackedVector3Array) -> Vector3:
+	var best := Vector3.ZERO
+	for i in range(rest.size()):
+		var dv: Vector3 = mesh.pb_mesh_data.positions[i] - rest[i]
+		if dv.length() > best.length():
+			best = dv
+	return mesh.global_transform.basis * best
 
 ## Extrudes that build: the selected n-gon pulled out (the arch deepens
 ## with it), then the two top quads that leaves: extrude, scale out (a
