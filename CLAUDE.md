@@ -125,6 +125,10 @@ does **not** work — no compositor behind it, so the window is invisible.
   auto-hides when the pointer is idle (EDL `cursor = true` forces it on).
   `build.sh --lint` lists clips that show a missed gesture (director
   `fallback()` events) or a failed check: run it after every re-render.
+  **Before editing the showcase read `.pi/orientation/showcase.md`**:
+  render on the GPU box (`showcase_video/render_remote.sh`, ~10x faster),
+  review with `python -m showcase.strip` strips (motion row, red cut frame),
+  not the one-frame review sheet.
 - `poibuilder-manifest.json` — feature/tool inventory consumed by tooling.
 
 ## Reference Repos
@@ -137,7 +141,7 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.190** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.191** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, the
   v0.9.187 UI round: native EditorDock, edge-first placement, and the v0.9.188
   seashore showpiece + open-map PSP runtime: GE vertex morphing, mesh

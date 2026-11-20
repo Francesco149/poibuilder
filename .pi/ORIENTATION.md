@@ -20,6 +20,7 @@ broke it. Do not be the next one.
 | the retro pipeline, PSP, exporters | `orientation/retro.md` |
 | painting, splat masks, the bake resolution | `orientation/paint.md` |
 | the tile-based paint idea (proposing a rewrite) | `orientation/paint-tiling-scope.md` |
+| the showcase video (sessions, renders, the cut) | `orientation/showcase.md` |
 | anything, before you invent a workaround | `orientation/footguns.md` |
 
 ## Project Layout

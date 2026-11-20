@@ -3,6 +3,59 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.191 — showcase: renders on the GPU box (~13x faster), four beats fixed, review strips
+
+Request: "the uv editor showcase is completely blocked by the text plate ...
+the uv scroll showcase shows it setting it but it never starts scrolling.
+edge-first placement abruptly cuts to next beat too early in the short ver,
+the vertex, edge showcase should make it more obvious by moving the element
+and moving it back. ... speed up the render times ... offload it to a gpu box
+like lame ... look for severe bottlenecks in how you drive godot ... see if
+filmcraft helps you keep track of video editing more efficiently than contact
+sheets".
+
+### Render speed: ~85 min -> ~6.5 min for the five v2 sessions
+
+- The bottleneck was the PNG encode: ~230 ms of single-threaded CPU per
+  1080p frame against ~50 ms of llvmpipe draw. `_grab` now encodes on the
+  WorkerThreadPool (bounded in-flight queue): 4x faster locally.
+- `showcase_video/render_remote.sh` renders on `lame`: headless Weston (kiosk
+  shell, GL renderer) on the idle RX 570 + Godot's Wayland driver; draw drops
+  to ~4 ms. Same window/viewport/layout as a local render; pulls back only the
+  re-recorded shots. Measured: v2_create 64 s (was ~13 min), v2_edit 112 s
+  (was ~22 min).
+- `--fixed-fps 60` on every render: editor `_process(delta)` and shader TIME
+  ran on wall time, so every animated effect played at a speed set by the
+  render machine.
+- Remote gotchas fixed on the way: Godot needs its own `DRI_PRIME` (it picked
+  the LLM server's 7800 XT); vsync off (a vsynced swap waited forever for a
+  headless-Weston frame callback inside the first filesystem scan); ssh
+  argument quoting.
+
+### Beats
+
+- **Scroll never started** (reported last round too): the dock's Apply
+  button sat at y=1177 of a 1080 window, scrolled out of the dock, so the
+  click hit nothing and the face kept speed (0, 0). New `d.reveal()` wheels a
+  control into view over the dock's scrollbar; `click_control` refuses
+  off-window targets; the speed is typed into the field; a check now measures
+  the sheet's rendered `uv1_offset` moving (the old check only read a flag).
+  The camera holds still 1.4 s after Apply so the flow reads.
+- **UV editor**: the beat drags the bottom panel up to mid-screen; the clip
+  crops the 3D view + the whole UV editor + the dock, caption top-left.
+- **Edge-first (short cut)**: 3.8 s -> 9.2 s of the take (both walls and the
+  held result) instead of 1.0 -> 5.6 s, which cut mid-way through the first wall.
+- **Modes**: vertex mode lifts a corner, edge mode lifts the top edge, each
+  put back with Ctrl+Z (a return drag lands 0.1-0.2 m off; checked exact).
+
+### Review tooling
+
+- `python -m showcase.strip` (shot / seg / edl): timestamped frames with the
+  cut frame outlined and an optional motion row. `.pi/orientation/showcase.md`
+  is the new working method.
+- FilmCraft 0.20.1 evaluated: scene detection found 5 of ~18 cuts on this
+  footage and the timeline duplicates the EDL; not adopted.
+
 ## v0.9.190 — showcase v2 polish: nicer stock textures, a stamp fix, a sturdier film generator
 
 Request: "a few tweaks for the v2 showcase: the water texture at the beginning
