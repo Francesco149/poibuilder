@@ -13,8 +13,8 @@ hero: true
 <a class="card" href="export.html"><strong>Retro export</strong><span>Tile-baked .pbm with vertex light, running on a Sony PSP.</span></a>
 </div>
 
-:::video clips/poibuilder-showcase-960.mp4
-The full showcase film: the courtyard built start to finish in the editor, then the same map running on a real PSP.
+:::video clips/poibuilder-showcase-v2-960.mp4
+The showcase film: shapes, edits, surfaces, tools and a whole map built in the editor, then the seashore map running on a real PSP.
 :::
 
 > **Alpha.** PoiBuilder is in its first alpha release. Grab the newest build

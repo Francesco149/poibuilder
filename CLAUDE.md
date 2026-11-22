@@ -141,7 +141,7 @@ does **not** work — no compositor behind it, so the window is invisible.
 
 ## Current Status
 
-- Current version: **v0.9.191** (core phases 0–7, feature-gap sessions 1–9,
+- Current version: **v0.9.192** (core phases 0–7, feature-gap sessions 1–9,
   plus the Trim Walls click-walls tool, the v0.9.182 scaling audit, the
   v0.9.187 UI round: native EditorDock, edge-first placement, and the v0.9.188
   seashore showpiece + open-map PSP runtime: GE vertex morphing, mesh

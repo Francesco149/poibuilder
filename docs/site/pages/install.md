@@ -97,7 +97,7 @@ is the bleeding edge — nightly-quality, untested between commits.
   toggle). They never hide. Buttons disable outside a PoiBuilder context —
   the [[btn:export]] and [[btn:docs]] buttons are always available.
 - A floating overlay in the viewport (selection readout, params modal). Pin it with [[btn:panel::Panel]]; recover it with [[btn:recover::Reset Panel]] if it leaves the screen.
-- A **Material & UV** dock on the right.
+- A **Material & UV** dock, below the Inspector in a fresh layout (movable, floatable, or in the bottom panel — see [Interface](interface.html#docks)).
 - A **UV Editor** bottom panel, opened from the toolbar [[btn:uv::UV]] button.
 - An **Export** dialog.
 

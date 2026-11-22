@@ -106,6 +106,49 @@ from `/mnt/ephemeral/assets` on first run). `--play` boots straight into FPS;
 6. **Pass**: probe reports 0 issues; poibuilderize keeps texture + normal map;
    bake frees UV2; LightmapGI works.
 
+## G. Since the v0.9.186 release — `./scratch.sh` (+ `./run_seashore.sh`)
+
+One check per user-facing change in v0.9.187–v0.9.192. The overlay title must
+read `PoiBuilder v0.9.192` (or newer).
+
+1. **Dock** (v0.9.187): on a fresh layout the Material & UV dock sits below
+   the Inspector and the Inspector/Node/Groups docks did NOT move. Drag the
+   dock narrow (~200 px): the mode row turns to icons with tooltips (Material,
+   Paint, Stamp, Sprite, Shapes, Particles). Move it to the bottom panel
+   (palette and tools side by side), float it, put it back. Type in the
+   palette **Filter**; drag the card-size slider and Ctrl+wheel over the
+   palette; drag the palette/tools split. Restart the editor: dock position,
+   card size and split persist.
+2. **Scene drop** (v0.9.187): drag a `.tscn` (and a `.glb`) from the
+   FileSystem dock into the 3D view: it is instanced where dropped. Dragging a
+   material onto a PBMesh face still assigns it to that face.
+3. **Edge-first placement** (v0.9.187): dock → Shapes → **Placement: Edge
+   First** (Editor Settings → PoiBuilder → Creation → Placement Style follows).
+   Cube: click start, click edge end at an angle, pull depth (Shift = square),
+   click, set height, click: the cube is rotated along the edge. Try stairs and
+   a door. Esc mid-way creates nothing. Switch back to Drag Base.
+4. **N-gon height readout** (v0.9.189): N-Gon tool, Enter to the height stage:
+   "Height" readout shows; confirm or Esc: it disappears.
+5. **Extrude follows the gizmo** (v0.9.189): a door's front n-gon,
+   Shift+drag 1 m along its normal with the camera close: the cap lands 1 m
+   out (not ~0.6 m).
+6. **Stamp at a corner** (v0.9.190): stamp on a floor next to a slanted face
+   (a ramp/prism): no smeared copy on the slanted face; a stamp over a
+   chamfer wraps it continuously. Export PBM: same result on the device.
+7. **Stock textures** (v0.9.190): waterfall sheet/core, water pool/foam, light
+   and wet tiles look new (streaky curtain, caustics, mottled tiles), tile
+   seamlessly, and an older map using them still loads.
+8. **Placement hint text** (v0.9.192): with a placement mode armed, the
+   viewport banner and the dock hint say to click the **Material** mode to exit.
+9. **Seashore / open-map PSP runtime** (v0.9.188): `./run_seashore.sh --psp`:
+   sea swells and surf, palms sway, no vanishing sea tile; leave the pad
+   alone 12 s (or Select+R): attract mode flies the camera path; any button
+   takes over; Select alone only toggles the HUD.
+10. **Docs** (v0.9.192): toolbar **Docs** opens the bundled site; Shapes has
+    the edge-first section, Interface/Materials describe the new dock,
+    Export has "Runtime effects", and the screenshots show the new dock and
+    textures.
+
 ---
 
 ## Fast regression matrix

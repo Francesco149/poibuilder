@@ -39,14 +39,16 @@ The brush writes weights, not new geometry.
 
 A stamp is a PNG painted **into the surface**, not a node hovering over it, and it is a **single click** — no dragging, no stroke: pick a tile pattern or a magic circle and click it onto a wall or a floor. Click to paste (no dragging): it lands in the face's **decal layer** at 256 texels/m — the decal layer keeps its own uniform density (the splat MASKS are clamped to 128..256 px and the export bake resolves them at export time) — and it keeps its own colors and alpha 1:1. The layer is cropped to the area you actually paint and grows as you spread out, so a stamp is as crisp on a 32 m courtyard floor as on a 2 m panel; the source image is resampled to the footprint (interpolated up, filtered down) rather than dropped to the nearest texel.
 
-Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, continue onto the neighbouring wall, cover a whole staircase side. It paints only faces its plane is roughly parallel to, so a stamp never smears sideways down a perpendicular wall; stamp and brush sizes are metres on screen, whatever the mesh's own scale.
+Because it is pixels, a stamp can **span several faces**: overhang a floor tile's edge, continue onto the neighbouring wall, cover a whole staircase side. A stamp projects like a bounded box: it paints a face only where that face lies inside the stamp's footprint (its size across, half its size in front and behind), and only faces within about 70° of its own plane. So it wraps a chamfer or a bevel continuously, stops at a square corner, and never smears a stretched copy onto a slanted face metres away. Stamp and brush sizes are metres on screen, whatever the mesh's own scale.
+
+> [note] Before v0.9.190 a stamp placed near a corner could also paint a smeared copy onto a slanted face whose bounds enclosed it (in the editor and in exports). Stamps already placed that way stay, because they are pixels. Rub the copy out with the decal brush's **Erase**.
 
 The decal layer is paintable on its own, and it is the same layer stamps land in:
 
 - **Brush → Color** paints a flat colour with the editor's colour picker (the ring wears the colour).
 - **Brush → Palette image** dabs the selected texture as pixels — how you touch up or extend a decal by hand.
 - **Erase** rubs either back out, including parts of a stamp.
-- Radius, softness and opacity behave as they do for splatting; the Stamp tab's *Open Decal Brush* button jumps straight to these controls.
+- Radius, softness and opacity behave as they do for splatting; the Stamp mode's *Open Decal Brush* button jumps straight to these controls.
 
 > [note] The **Brush** row belongs to the decal layer: **Paint into → Splat layers** always paints the selected palette texture into a layer's mask, so the row is disabled (and says so) while that target is chosen. **Palette image** is the default source.
 
@@ -57,7 +59,7 @@ The decal layer is paintable on its own, and it is the same layer stamps land in
 Retro export **bakes** stamps into unique tiles; unpainted tiles reuse the base texture. Modern `.glb` export either bakes the whole stack into per-face textures or ships it as data — see [Splatting in a modern .glb](modern-glb-splat.html).
 
 :::shot paint-stamp.png
-A stamp painted across two faces, then partly erased.
+Stamp mode: two HELLO WORLD stamps clicked onto a painted floor, the scale and rotation controls in the dock.
 :::
 
 ## Sprite placer

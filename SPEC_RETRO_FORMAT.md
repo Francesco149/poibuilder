@@ -4,8 +4,9 @@
 **Author: PoiBuilder Project**  
 **Date: 2026-09-10**
 
-> **What v3 added on top of that:** the standard lumps in §8 — payload layouts
-> the specification defines, carried by the extensible metadata table (§7). They
+> **What v3 added on top of that:** the standard lumps — particle emitters (§8),
+> mesh effects (§12), the camera path (§13) and the environment (§14): payload
+> layouts the specification defines, carried by the extensible metadata table (§7). They
 > need no version change: a loader that does not know a lump's tag skips it.
 >
 > **What v3 changed (breaking):** the mesh header grew from 64 to 72 bytes by
@@ -1044,9 +1045,12 @@ A 480x272 screen is 130 560 fragments = ~0.27 ms of untextured fill, measured at
    bottleneck; two orders of magnitude of fill is.
 3. **Spatial chunking** (exporters emit ≤ 384-vertex chunks) exists so that
    a mesh's bounds are *local*: one draw call per neighbourhood, bounded
-   per-mesh cost, and tight AABBs for any consumer that wants them. It is
-   **not** a culling mechanism — the reference runtime draws every chunk every
-   frame, and measured that culling was never the win.
+   per-mesh cost, and tight bounds to cull by. On a compact map (the
+   courtyard) culling was never the win: the camera sees most of it. On an
+   open map it is. Since v0.9.188 the reference runtime frustum-culls each
+   mesh by its bounding sphere (about 10 flops per mesh), which saves
+   0.85-2.0 ms per view of the seashore map and nothing at a view that sees
+   the whole bay (runtime knob `mesh_cull=0` turns it off).
 4. **Near plane**: keep it tight (`0.05`-`0.10` m; the reference uses 0.08).
    A 0.5 m near plane puts the floor within arm's reach inside the clip volume
    and forces the hardware clipper to split large treads and floor quads.
@@ -1056,18 +1060,25 @@ A 480x272 screen is 130 560 fragments = ~0.27 ms of untextured fill, measured at
    `sceGuOffset(2048 - 240, 2048 - 136)`) for the virtual coordinate space, but
    do not expect either to be the reason a frame is fast or slow.
 
-### 11.4 Depth: tested, not written
+### 11.4 Depth: tested and written
 
-The reference runtime tests depth (`GU_LEQUAL`) but **never writes it** —
-`GU_DEPTH_MASK` stays off in every pass. That makes draw order the visibility
-order, which is exactly what the exporters arrange: opaque meshes are emitted so
-the surviving surface is drawn last, and transparent surfaces are emitted in
-blend order (a scrolling sheet is emitted before the core it must blend onto).
-Writing depth is measured **free** on this content (0.114 vs 0.114 ms; 2.749 vs
-2.735; 0.688 vs 0.683) and buys real occlusion, but it exposes z-fighting
-between the coplanar floor layers (base material quad and baked tile quads at
-the same height) that the current arrangement hides — so consumers choosing to
-write depth should verify those layers. The reference knob is `depth_write=1`.
+The reference runtime tests depth (`GU_LEQUAL`) and writes it. The opaque pass
+writes so opaque surfaces occlude each other and the alpha pass tests against
+them. The alpha pass writes too (a water surface hides the spray quads behind
+it), except for additive meshes (§12), which never write: a glow must never
+occlude. The exporters still emit opaque meshes so the surviving surface is
+drawn last, and transparent surfaces in blend order (a scrolling sheet is
+emitted before the core it must blend onto). Turning the opaque pass's writes
+off measures free on this content (0.114 vs 0.114 ms; 2.749 vs 2.735; 0.688 vs
+0.683), so depth writes are a correctness choice, not a speed one. The
+reference knob is `depth_write` (`1`, the default: writes on; `0`: the opaque
+pass does not write).
+
+> Corrected in v0.9.188. Earlier revisions said the runtime never writes depth.
+> The GE's `sceGuDepthMask(GU_TRUE)` *disables* writes (the reverse of
+> `glDepthMask`), and the reference runtime passed the knob straight through,
+> so depth was always written and `depth_write=1` turned writes off. The
+> timings above were taken with that reversed knob; they measure writes off.
 
 ### 11.5 Particles
 

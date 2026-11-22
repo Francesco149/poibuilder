@@ -107,7 +107,7 @@ var _last_scroll_scan_msec: int = -10000
 func _get_plugin_name() -> String:
 	return "PoiBuilder"
 
-const VERSION := "0.9.191"
+const VERSION := "0.9.192"
 
 ## How shapes are drawn: 0 = drag a base (ProBuilder, default), 1 = edge
 ## first (GoBuild: click an edge at any angle, pull the depth, then height).
@@ -3812,7 +3812,7 @@ func _update_mode_banner() -> void:
 		PBMaterialDock.DockMode.PAINT, PBMaterialDock.DockMode.STAMP, \
 		PBMaterialDock.DockMode.SPRITE, PBMaterialDock.DockMode.SHAPE, \
 		PBMaterialDock.DockMode.PARTICLE:
-			mode_banner.set_hint("Select Material & UV tab to exit placement mode")
+			mode_banner.set_hint("Click the dock's Material mode to exit placement mode")
 		_:
 			mode_banner.set_hint("")
 

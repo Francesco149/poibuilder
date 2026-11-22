@@ -5,12 +5,12 @@ lead: Per-face materials, auto-UV that does not stretch on resize, and a dock th
 
 ## The dock
 
-Toolbar [[btn:materials::Material]] focuses the Material & UV dock. It is six modes on one segmented row:
+Toolbar [[btn:materials::Material]] focuses the Material & UV dock. It is a normal Godot dock (below the Inspector in a fresh layout; move it, float it, or put it in the bottom panel, see [Interface](interface.html#docks)). Six modes sit on one row of icon buttons at the top. Hover an icon for its name; a wide dock shows the names too:
 
 | Mode | What it does |
 |---|---|
-| **Material & UV** | The palette below — per-face assignment, drag-and-drop, UV speed. |
-| **Texture Paint** | The splat brush — see [Paint & stamps](paint.html). |
+| **Material** | The palette below — per-face assignment, drag-and-drop, UV speed. |
+| **Paint** | The splat brush — see [Paint & stamps](paint.html). |
 | **Stamp** | Decal stamps in one click. |
 | **Sprite** | Always-armed billboard placement. |
 | **Shapes** | Always-armed primitive placement: pick a shape, drag it on any surface. |
@@ -19,6 +19,12 @@ Toolbar [[btn:materials::Material]] focuses the Material & UV dock. It is six mo
 The palette itself:
 
 - Swatch grid of project materials.
+- **Filter** box: type part of a name to show only the matching cards.
+- **Card size** slider beside it, or [[kbd:Ctrl]]+mouse wheel over the
+  palette (32–160 px, like the FileSystem dock). The Shapes palette uses the
+  same size.
+- A draggable split between the palette and the tools below it; the tools
+  scroll on their own. Card size and split are saved per project.
 - Click a face (face or texture mode), click a swatch — that face takes the material.
 - Drag a texture from the FileSystem dock onto a face.
 - **+ Add** pulls a material or texture from anywhere in the project; the
@@ -42,7 +48,7 @@ If a ramp still looks stretched, that is a projection job: [UV editor](uv.html).
 
 ## Particle emitters
 
-The dock's **Particles** tab places stateless particle emitters: pick a particle texture (flame, smoke, glow presets arm themselves), click a surface, drag to lift and tune, click to commit — the click-by-click lives in the [modern walkthrough](walkthrough-modern.html#7-particle-emitters). Fine-tune any placed emitter by selecting it and opening **⚙ Edit Emitter Properties** on the overlay (count, size, speed, spread, additive blending, flipbook grid).
+The dock's **Particles** mode places stateless particle emitters: pick a particle texture (flame, smoke, glow presets arm themselves), click a surface, drag to lift and tune, click to commit — the click-by-click lives in the [modern walkthrough](walkthrough-modern.html#7-particle-emitters). Fine-tune any placed emitter by selecting it and opening **⚙ Edit Emitter Properties** on the overlay (count, size, speed, spread, additive blending, flipbook grid).
 
 What "stateless" means, and why it is the headline: an emitter is authored as an ordinary `GPUParticles3D` for the editor, but its playback is a **closed form** — particle *i* at time *t* is a pure function of `(t, i, seed)`. There is no simulation to tick and no per-particle state to keep:
 

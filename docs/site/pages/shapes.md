@@ -1,6 +1,6 @@
 ---
 title: Shapes
-lead: Press on any surface, drag a base, set the height. Fifteen primitives share that language. Trim is the exception — it commits on release.
+lead: Press on any surface, drag a base, set the height — or click out an edge first, at any angle. Fifteen primitives share that language. Trim is the exception — it commits on release.
 ---
 
 ## The drag
@@ -23,6 +23,23 @@ The same drag on a wall: the box grows along the wall's normal, not "up in the w
 
 :::video clips/create-floor.mp4
 Floor, then wall, then a slope — one gesture, three planes.
+:::
+
+## Edge-first placement (optional)
+
+A second way to draw, for walls and anything that should not sit on the world axes:
+
+1. Click a start point on a face or on the grid.
+2. Click the end of the first edge. The edge can point **any way** on the surface: it becomes the shape's rotation and width. (A press-drag-release draws the edge too.)
+3. Pull out the depth, at right angles to the edge, and click. Hold [[kbd:Shift]] for a square base.
+4. Set the height and click, as in the drag flow. [[kbd:Esc]] at any stage creates nothing.
+
+With grid snapping on, the edge's end lands on grid points and the depth steps by the grid. Stairs climb away from the edge; a door's opening spans it. Trim, the plane, and the sprite keep their own flows.
+
+The default stays the drag above. Switch with the **Placement** dropdown in the dock's Shapes mode (*Drag Base* / *Edge First*), or in **Editor Settings → PoiBuilder → Creation → Placement Style**. They are the same setting, and the overlay hint follows it.
+
+:::shot create-edge-first.png
+Edge-first: the second wall's edge is drawn at an angle and its depth is being pulled out. The dock's Shapes mode shows *Placement: Edge First*.
 :::
 
 ## Params modal

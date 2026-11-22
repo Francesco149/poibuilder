@@ -57,6 +57,7 @@ It is a proof of concept and a performance sanity check, not an engine you ship:
 The reference build runs on real hardware over USB:
 
 - `./run_psp.sh` builds the PSP eboot (when missing) and runs the map on the device via PSPLink.
+- A map that carries a camera path (two or more `poi_camera_pose` markers, see [runtime effects](export.html#runtime-effects-morphs-flipbooks-camera-path)) flies itself in **attract mode**: after 12 s without input, or at once with **Select + R** (press it again to stop). Any other button or the stick takes the camera back. **Select** alone still hides the HUD and does not end the flight.
 - [`HARDWARE-TESTING.md`](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/psp/HARDWARE-TESTING.md) documents the measurement loop; [`OPTIMIZATION.md`](https://github.com/Francesco149/poibuilder/blob/master/retro_engine/psp/OPTIMIZATION.md) carries the measured cost of every engine decision.
 
 :::shot psp-court.png

@@ -72,11 +72,19 @@ Params modal rules (do not mix these up):
 
 ## Docks
 
-- **Material & UV** — six modes on one dock: **Material & UV** (palette,
-  per-face assignment), **Texture Paint** (the splat brush), **Stamp**
+- **Material & UV** — six modes on one dock: **Material** (palette,
+  per-face assignment, UV tiling, scroll), **Paint** (the splat brush), **Stamp**
   (decals), **Sprite** (billboard placement), **Shapes** (always-armed
-  primitive placement), and **Particles** (click-to-place emitters). See
-  [Materials](materials.html) and [Paint & stamps](paint.html).
+  primitive placement), and **Particles** (click-to-place emitters). The
+  modes are a row of icon buttons at the top of the dock; when the dock is
+  wide enough they also show their names, and hovering one shows its name.
+  See [Materials](materials.html) and [Paint & stamps](paint.html).
+
+  It is a regular Godot dock. A fresh editor layout puts it **below the
+  Inspector**. Drag its tab to any other dock slot, float it as a window, or
+  move it to the **bottom panel**, where the palette and the tools sit side by
+  side. Godot remembers where you put it. It fits a narrow column (about
+  200 px), and the plugin never moves your other docks.
 - **UV Editor** — bottom panel, can pop out to a window. See [UV editor](uv.html).
 
 ## Status

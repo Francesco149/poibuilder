@@ -178,7 +178,7 @@ OPS_CATALOG: dict[str, dict] = {
     "materials": {
         "label": "Material & UV", "icon": "icon_materials.svg", "row": 2, "group": "docks",
         "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
-        "desc": "Focuses the Material & UV dock: palette, splat painting, stamps, sprites, particles."
+        "desc": "Focuses the Material & UV dock: palette, splat painting, stamps, sprites, shape placement, particles."
     },
     "uv": {
         "label": "UV", "icon": "icon_uv_unwrap.svg", "row": 2, "group": "docks",
@@ -193,7 +193,7 @@ OPS_CATALOG: dict[str, dict] = {
     "recover": {
         "label": "Reset Panel", "icon": "icon_panel_reset.svg", "row": 2, "group": "docks",
         "row_name": "Row 2 · Docks", "key": "—", "req": "Nothing",
-        "desc": "Recovers the overlay panel and dock to the bottom-left corner if they were dragged away."
+        "desc": "Recovers the floating overlay panel: docks it back to the bottom-left corner, pins it on and expands it (for when it was dragged off-screen or collapsed)."
     },
     "settings": {
         "label": "Settings", "icon": "icon_settings.svg", "row": 2, "group": "docks",

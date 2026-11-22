@@ -31,7 +31,7 @@ Give it a material first (you will splat it in the next step): **Material** dock
 
 Texture splatting blends up to 8 albedos on one face, brushed like paint.
 
-1. **Material** dock → **Texture Paint** tab. The face you selected is the target; the dock shows its base texture as layer 0.
+1. **Material** dock → **Paint** mode (the dock's mode row; hover an icon for its name). The face you selected is the target; the dock shows its base texture as layer 0.
 2. Add a layer: pick a second texture (a brick pattern), make sure **Paint into** is set to **Splat layers**, then brush it into the mask. Paint a path from where the doorway will be, out to a circular plaza.
 3. Brush radius, softness and opacity live in the same panel; every dab is undoable.
 
@@ -55,9 +55,9 @@ Door facing, mitre-free corners: the door is a parameterized wall, the stairs la
 
 A stamp is a PNG painted INTO the surface (a single click, no drag), and it spans faces freely — see [Paint & stamps](paint.html).
 
-1. **Stamp** tab → pick an image → click the courtyard floor. Cross the brick path's edge on purpose: the decal lands in its own layer, on top of any splat.
+1. **Stamp** mode → pick an image → click the courtyard floor. Cross the brick path's edge on purpose: the decal lands in its own layer, on top of any splat.
 2. A second stamp on the wall beside the door (posters, tapestries), and optionally a flower patch worn into the ground by the pool.
-3. **Erase** in the same tab rubs decal pixels back out.
+3. **Open Decal Brush** (in Stamp mode) → **Erase** rubs decal pixels back out.
 
 ## 5. The waterfall
 
@@ -80,7 +80,7 @@ The layered falls: lip and apron, veil + sheet + trickles + core on four speeds,
 
 ## 7. Particle emitters
 
-1. **Material** dock → **Particles** tab. Pick a particle texture — presets arm themselves per texture (flame, smoke, glow).
+1. **Material** dock → **Particles** mode. Pick a particle texture — presets arm themselves per texture (flame, smoke, glow).
 2. Click a surface: the emitter appears live. Drag up/down to lift it off the surface, move left/right to tune the particle count, wheel scales the quads, click to commit. Always re-armed, Esc cancels.
 3. To fine-tune one later: select it (object mode is fine) → **⚙ Edit Emitter Properties** on the overlay panel — count, size, speed, spread, additive blending, flipbook grid.
 

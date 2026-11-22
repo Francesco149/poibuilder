@@ -93,6 +93,30 @@ The same courtyard on a Sony PSP — not an emulator.
 Measured on the device for the showcase map: 60 fps, 1618 tris, 20 draws. That row is that map, that camera, that build — not a promise about yours.
 :::
 
+## Runtime effects: morphs, flipbooks, camera path
+
+Besides scrolling textures and particle emitters, a `.pbm` can carry three more
+kinds of animation data. The runtime evaluates them in closed form, with no
+simulation and no per-vertex CPU work. They are written by the `.pbm` export
+only; the GLB exports ignore them. There is no toolbar UI for them yet. You set
+them as node or material **metadata** (from a script, or the Inspector's
+*Metadata* section), and the scene keeps them when saved.
+
+| Metadata | Set on | Lump | What it does |
+|---|---|---|---|
+| `poi_fx` | a PBMesh / MeshInstance3D, or a material | `mesh_fx` ([§12](pbm-format.html#12-standard-lump-mesh-effects-tag-mesh-fx)) | **Morph**: up to 8 vertex sets blended by the PSP's GE hardware (keyframed poses, or travelling waves and sway). Also **flipbook** (on a material), **additive**, **no_fog**, and **decal**, a depth-biased overlay that wins against the surface it lies on. |
+| `poi_camera_pose` = `{"hold": s, "travel": s}` | any Node3D (a Marker3D) | `camera_path` (§13) | The map's viewpoints, in tree order. The PSP app flies them in **attract mode**, and the profiler prices each one. |
+| `poi_env` | the scene root | `env` (§14) | The map's own sky colour, fog and near/far planes: `{"clear", "fog", "fog_near", "fog_far", "fog_color", "near", "far"}`. |
+| `poi_vertex_color` = `"unlit"` / `"multiply"` | a plain MeshInstance3D | — | Keeps the authored vertex colours as they are, or multiplies them into the light bake (the default replaces them). Unlit meshes never block the bake's light. |
+| `poi_burst_phase` (0..1) | a one-shot GPUParticles3D | `emitters` (§8) | Staggers bursts that share a lifetime (spray timed to each wave). `EMISSION_SHAPE_BOX` exports as a spawn box. |
+
+The `PBRetroFx` helper (`addons/poibuilder/export/pb_retro_fx.gd`) documents
+every `poi_fx` key in its header and builds the common cases for you:
+`PBRetroFx.gerstner_pair()` makes a travelling wave and `PBRetroFx.sway()`
+makes a palm sway. The seashore map (`./run_seashore.sh`, built by
+`project/test_scenes/seashore_map_builder.gd`) uses every one of these records.
+A loader that does not know a lump skips it and draws the meshes static.
+
 ## The retro demo engine is a proof of concept
 
 The PSP engine in this repository (`retro_engine/psp/`) exists to answer two

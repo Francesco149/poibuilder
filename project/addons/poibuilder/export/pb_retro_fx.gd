@@ -3,7 +3,7 @@
 ## "camera_path") and the map's own sky/fog (lump "env").
 ##
 ## Everything here is DATA a level carries; the PSP evaluates it in closed form
-## (SPEC_RETRO_FORMAT.md §10-§12, pbm.h). Authoring is metadata, so a scene
+## (SPEC_RETRO_FORMAT.md §12-§14, pbm.h). Authoring is metadata, so a scene
 ## saved with it keeps it:
 ##
 ##   node.set_meta("poi_fx", {...})       any MeshInstance3D / PBMesh: morph,

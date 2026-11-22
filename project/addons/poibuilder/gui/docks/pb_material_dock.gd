@@ -991,7 +991,7 @@ func _build_ui() -> void:
 		+ "• Click a surface — places the selected sprite.\n" \
 		+ "• Drag horizontally (or wheel) — opens the texture carousel; release confirms.\n" \
 		+ "• Move the mouse up/down to raise, then click — then left/right to scale, click to finish.\n" \
-		+ "• Esc cancels the current placement. Select the Material & UV tab to exit sprite mode."
+		+ "• Esc cancels the current placement. Click the Material mode button to exit sprite mode."
 	_sprite_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_sprite_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sprite_tool_section.add_child(_sprite_hint)
@@ -1077,7 +1077,7 @@ func _build_ui() -> void:
 		+ "• Mouse left/right adjusts the particle count; wheel adjusts the particle size; click commits.\n" \
 		+ "• Fine tuning (speed, spread, additive, flipbook…): select the emitter and use Edit Emitter Properties in the overlay.\n" \
 		+ "• Flipbook (Sheet Columns/Rows) is for sprite sheets — a grid over a single-frame image samples it in slices.\n" \
-		+ "• Esc cancels the current placement. Select the Material & UV tab to exit particle mode."
+		+ "• Esc cancels the current placement. Click the Material mode button to exit particle mode."
 	_particle_hint.add_theme_color_override("font_color", Color(0.65, 0.75, 0.85))
 	_particle_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_particle_tool_section.add_child(_particle_hint)
@@ -1219,7 +1219,7 @@ func _refresh_shape_hint() -> void:
 		else "• Drag on any surface to draw the shape's base, move to set its height, click to confirm.\n"
 	_shape_hint.text = "Placement (always armed with the selected shape):\n" + how \
 		+ "• The selected shape stays armed — keep placing, or pick another card to switch.\n" \
-		+ "• Esc cancels the current placement. Select the Material & UV tab to exit shape mode."
+		+ "• Esc cancels the current placement. Click the Material mode button to exit shape mode."
 
 static func shape_palette_ids() -> Array[StringName]:
 	var out: Array[StringName] = []

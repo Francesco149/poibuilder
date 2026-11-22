@@ -19,6 +19,14 @@ ASSETS = ROOT / "assets"
 BAKE = REPO / "showcase_video" / "bake"
 SOURCE_VIDEO = REPO / "showcase_video" / "source" / "psp-day.mp4"
 MASTER_VIDEO = REPO / "showcase_video" / "out" / "poibuilder-showcase.mp4"
+# Showcase v2 (v0.9.189+): the landing-page film is the long cut's 960 encode.
+FILM_V2 = REPO / "showcase_video" / "out_v2_long" / "poibuilder-showcase-v2-long-960.mp4"
+
+# v2 sessions hide the PoiBuilder toolbar and keep the narrow Material & UV
+# dock on the right: this crop is the 3D view + the whole dock (v0.9.187 UI).
+V2_VIEW_DOCK_CROP = (287, 44, 1633, 996)
+# The v2 3D view alone, 16:9 (x 287..1633 is the view; the dock starts at 1637).
+V2_VIEW_CROP = (287, 80, 1346, 757)
 
 # Standard 16:9 crop framing 3D viewport + top toolbar:
 # (x=287, y=80, w=1266, h=712)
@@ -73,15 +81,17 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
     "edit-knife": ("edit", "edit_knife", 310, (287, 80, 1266, 712)),
     "edit-ngon": ("edit", "edit_ngon", 220, (287, 80, 1266, 712)),
     
-    # Paint: wide crop showing 3D viewport AND the Material & UV dock on the right
-    "paint-splat": ("paint", "paint_splat", 160, (287, 44, 1620, 740)),
-    "paint-stamp": ("paint", "paint_stamp", 140, (287, 44, 1620, 740)),
-    # UV scroll: the sheet mid-slide on the wall panel (mid-swing, wide)
-    "paint-scroll": ("paint", "paint_scroll", 60, (287, 80, 1266, 712)),
+    # Paint (v2 frames, the v0.9.187 dock): 3D view AND the Material & UV dock
+    "paint-splat": ("v2_surface", "v2s_paint", 280, V2_VIEW_DOCK_CROP),
+    "paint-stamp": ("v2_surface", "v2s_stamp", 197, V2_VIEW_DOCK_CROP),
+    # UV scroll: the v0.9.190 waterfall sheet + the dock's Scrolling Texture fields
+    "paint-scroll": ("v2_surface", "v2s_scroll", 265, V2_VIEW_DOCK_CROP),
+    # Edge-first placement: second wall's depth pull, dock reads "Edge First"
+    "create-edge-first": ("v2_create", "v2c_edge", 426, V2_VIEW_DOCK_CROP),
     
     # Map
     "hero-courtyard": ("map", "map_night", 180, (287, 44, 1266, 712)),
-    "map-waterfall": ("map", "map_waterfall", 500, (287, 80, 1266, 712)),
+    "map-waterfall": ("v2_surface", "v2s_scroll", 330, V2_VIEW_CROP),
     # Export: shows the Export dialog modal open over the map
     "map-export": ("map", "map_export", 160, (287, 44, 1266, 712)),
 }
@@ -90,9 +100,13 @@ DOC_SHOTS: dict[str, tuple[str, str, int, tuple[int, int, int, int]]] = {
 CLIPS = {
     "create-floor.mp4": (9.10, 7.80),
     "edit-extrude.mp4": (34.20, 2.60),
-    "paint-splat.mp4": (72.80, 1.85),
-    "paint-scroll.mp4": (77.25, 2.00),
-    "map-waterfall.mp4": (102.05, 3.60),
+}
+
+# Loops encoded straight from raw v2 frames (no caption, no drawn cursor):
+# name -> (session, shot, first frame, frame count, crop box). 60 fps.
+FRAME_CLIPS = {
+    "paint-splat.mp4": ("v2_surface", "v2s_paint", 140, 140, V2_VIEW_CROP),
+    "paint-scroll.mp4": ("v2_surface", "v2s_scroll", 272, 80, V2_VIEW_CROP),  # deselected, camera still, sheet moving
 }
 
 
@@ -164,6 +178,24 @@ def main() -> int:
                 "-movflags", "+faststart", str(out),
             ]
             subprocess.run(cmd)
+
+    if ff:
+        for name, (sess, shot, first, count, (x, y, w, h)) in FRAME_CLIPS.items():
+            frames_dir = BAKE / sess / "shots" / shot / "frames"
+            if not (frames_dir / f"{first:06d}.png").is_file():
+                print(f"skip {name}: no frames in {frames_dir}")
+                continue
+            cmd = [
+                ff, "-hide_banner", "-loglevel", "error", "-y",
+                "-framerate", "60", "-start_number", str(first),
+                "-i", str(frames_dir / "%06d.png"), "-frames:v", str(count),
+                "-vf", f"crop={w}:{h}:{x}:{y},scale=1280:720",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", str(ASSETS / "clips" / name),
+            ]
+            subprocess.run(cmd)
+    if FILM_V2.is_file():
+        shutil.copyfile(FILM_V2, ASSETS / "clips" / "poibuilder-showcase-v2-960.mp4")
 
     print(f"extracted {extracted} high-res documentation stills -> {ASSETS}")
     return 0

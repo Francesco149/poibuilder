@@ -3,6 +3,67 @@
 Historical record of development phases, sign-off rounds, and version notes (v0.7.0 through v0.9.105).
 Active project instructions and conventions live in [CLAUDE.md](CLAUDE.md).
 
+## v0.9.192 — docs match the release: new dock, edge-first, runtime effects, fresh screenshots
+Request: "double check that the docs match all the changes we've made since
+last release, including screenshots and the helper things to find stuff on the
+toolbar/panel. then I will retest everything manually and give the go for a
+new release".
+Audit of everything user-facing since the v0.9.186 release (`f67418c`). Nothing
+under `docs/site/` had changed in that span.
+### Pages
+- **Interface / Materials / Install / FAQ**: the Material & UV dock as it is
+  since v0.9.187: a native dock below the Inspector, movable, floatable, bottom
+  panel; icon mode row named **Material, Paint, Stamp, Sprite, Shapes,
+  Particles** (the docs still said "Material & UV" / "Texture Paint" tabs);
+  palette filter, card size (slider, Ctrl+wheel), palette/tools split. New FAQ:
+  where the dock went, and why an old layout keeps the Inspector in a second
+  column. Walkthrough steps say "mode", not "tab".
+- **Shapes**: new "Edge-first placement (optional)" section (clicks, Shift
+  square, snapping, excluded shapes, the dock dropdown + Editor Settings path)
+  and a screenshot.
+- **Paint**: the stamp's bounded projection (v0.9.190) and a note that stamps
+  that bled before it stay as pixels (erase with the decal brush).
+- **Export / Retro walkthrough**: "Runtime effects" — `poi_fx` (morph,
+  flipbook, additive, no_fog, decal), `poi_camera_pose`, `poi_env`,
+  `poi_vertex_color`, `poi_burst_phase`, the `PBRetroFx` helpers, the seashore
+  map; PSP attract mode (two or more poses; 12 s idle or Select+R; Select alone
+  only toggles the HUD).
+- **PBM format**: re-synced from `SPEC_RETRO_FORMAT.md` (it lacked §12-§14 and
+  the new emitter flags/metadata types).
+### Spec corrections (SPEC_RETRO_FORMAT.md and the page)
+- §11.4 said the reference runtime tests depth but never writes it. Since the
+  v0.9.188 polarity fix the truth is the opposite: both passes write depth
+  (additive meshes and emitters excepted) and `depth_write=1` is the default.
+  Rewritten, with the reversed-knob history; the old z-fighting caveat (never
+  observed, ruled out in HARDWARE-TESTING.md) dropped.
+- §11.3 said the runtime never culls; it frustum-culls per mesh since v0.9.188
+  (0.85-2.0 ms per seashore view, knob `mesh_cull=0`).
+- Intro: the standard lumps are §8 and §12-§14.
+### Screenshots and clips
+- Re-extracted from the showcase v2 frames (`extract_media.py` now has v2
+  entries + `FRAME_CLIPS`, loops encoded from raw frames without caption or
+  cursor): `paint-splat`, `paint-stamp`, `paint-scroll` (new dock + textures),
+  `map-waterfall`, new `create-edge-first`; clips `paint-splat.mp4`,
+  `paint-scroll.mp4` (camera still, sheet moving). Unused `map-waterfall.mp4`
+  removed.
+- `demo-*` (8 shots) re-rendered with `alpha_demo_shots.gd` on the real GPU:
+  the v0.9.190 stock textures (curtain, pool, tiles).
+- Landing video: the v2 long cut (`poibuilder-showcase-v2-960.mp4`, 3:28,
+  8.4 MB) replaces the v1 film (3:00, 10 MB).
+- Not refreshed: the ~35 v1-era editor stills (ops, select, shapes, CSG...).
+  Their content is current; the v1 crop shows a ~150 px sliver of the old
+  dock's left edge at the right border.
+### Toolbar locators
+`GROUP_BUTTON_LISTS` / `OPS_CATALOG` re-checked against `pb_toolbar.gd`
+(`_update_row_layout`) and `pb_actions.gd`: every group, order and default key
+matches. Fixed: Reset Panel's text (it recovers the overlay only — "dock" was
+the verb) and the Material & UV entry now lists shape placement.
+### Plugin strings
+The viewport banner and the Sprite/Shapes/Particles hints said "Select the
+Material & UV tab to exit"; that button is labelled **Material** since
+v0.9.187. They now say so. `pb_retro_fx.gd` header: spec §12-§14, not §10-§12.
+### Smoke tests
+`SMOKE-TESTS.md` §G: one check per user-facing change since v0.9.186.
 ## v0.9.191 — showcase: renders on the GPU box (~13x faster), four beats fixed, review strips
 
 Request: "the uv editor showcase is completely blocked by the text plate ...

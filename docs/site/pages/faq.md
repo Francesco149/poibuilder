@@ -27,6 +27,12 @@ It comes back. CSG undo restores the cutter node. If it renders but does not pic
 
 [[btn:panel::Panel]] toggle pins it. [[btn:recover::Reset Panel]] docks it to the bottom-left. It auto-hides when nothing is selected and it is not pinned.
 
+## Where is the Material & UV dock? / My Inspector moved to a second column
+
+The dock is a normal Godot dock: below the Inspector in a fresh layout, and wherever you last dragged, floated or bottom-paneled it after that. Toolbar [[btn:materials::Material]] brings it to the front. It can be as narrow as about 200 px, and Ctrl+wheel over the palette shrinks the cards.
+
+Versions before v0.9.187 moved the Inspector, Node and Groups docks into a second right-hand column on every load. Current versions never move your docks, but a layout the old version already changed stays as Godot saved it. Drag the Inspector back where you want it, once.
+
 ## Textures stretch
 
 Auto-UV keeps 1 m repeat on axis-aligned faces. Ramps and merged creases need the [UV editor](uv.html) (planar / box projection).
