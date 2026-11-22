@@ -78,7 +78,9 @@ func _run() -> void:
 	plain.owner = root
 
 	# What the RELEASE reads back — the current version must read the same.
-	var expect := {"release": "0.9.167", "commit": "de492fe", "meshes": {}}
+	# Labels come from make_release_fixture.sh (defaults: the v0.9.167 nightly).
+	var expect := {"release": OS.get_environment("PB_FIXTURE_RELEASE") if OS.has_environment("PB_FIXTURE_RELEASE") else "0.9.167",
+			"commit": OS.get_environment("PB_FIXTURE_COMMIT") if OS.has_environment("PB_FIXTURE_COMMIT") else "de492fe", "meshes": {}}
 	for pb in [cube, plain]:
 		var md: PBMeshData = pb.pb_mesh_data
 		var faces: Array = []

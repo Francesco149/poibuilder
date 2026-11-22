@@ -22,7 +22,8 @@ cp "$REPO_ROOT/tools/release_fixture/make_release_fixture.gd" "$WT/project/"
 GUARD="$REPO_ROOT/tools/godot_guard.sh"
 # Import pass (class cache), then the builder.
 "$GUARD" exec bash -c "cd /work/$WT_REL/project && timeout 300 godot-mono --headless --editor --quit-after 200" >/dev/null 2>&1 || true
-"$GUARD" exec bash -c "cd /work/$WT_REL/project && timeout 300 godot-mono --headless --script res://make_release_fixture.gd" 2>&1 | grep -E "RELEASE_FIXTURE|SCRIPT ERROR" || true
+REL="${NAME#release_}"; REL="${REL//_/.}"; REL="${REL#v}"
+"$GUARD" exec bash -c "cd /work/$WT_REL/project && PB_FIXTURE_RELEASE=$REL PB_FIXTURE_COMMIT=$COMMIT timeout 300 godot-mono --headless --script res://make_release_fixture.gd" 2>&1 | grep -E "RELEASE_FIXTURE|SCRIPT ERROR" || true
 mkdir -p "$OUT"
 cp "$WT/project/release_fixture.scn" "$WT/project/release_fixture.json" "$OUT/"
 ls -la "$OUT"

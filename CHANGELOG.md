@@ -64,6 +64,22 @@ Material & UV tab to exit"; that button is labelled **Material** since
 v0.9.187. They now say so. `pb_retro_fx.gd` header: spec §12-§14, not §10-§12.
 ### Smoke tests
 `SMOKE-TESTS.md` §G: one check per user-facing change since v0.9.186.
+### Release compatibility: v0.9.186 maps
+Request: "double check that it doesn't break a map made with the previous
+release when updating and push the new release".
+- New fixture `tests/fixtures/release_v0_9_186/`, written by v0.9.186's own
+  code (`make_release_fixture.sh f67418c release_v0_9_186`; the builder now
+  takes the release/commit labels instead of hardcoding v0.9.167's).
+  `test_pb_release_compat.gd` runs every check against both releases
+  (parameterized; 56 -> 112 asserts). v0.9.186 already saved masks
+  compressed, so for it a save must convert nothing.
+- The full alpha demo map built by v0.9.186 (worktree at `f67418c`, minus the
+  3 barrels whose asset pack is not mounted in the container) and read back by
+  the release and by this tree with one probe script: identical JSON — 20
+  PBMeshes, 105 faces, 486 positions, 276 rendered triangles, mask and decal
+  pixel hashes, 9 scrolling faces, 5 emitters, no missing materials. The same
+  scene opened in the real editor with the plugin: no script errors.
+- Release notes: `docs/release-notes/v0.9.192.md`.
 ## v0.9.191 — showcase: renders on the GPU box (~13x faster), four beats fixed, review strips
 
 Request: "the uv editor showcase is completely blocked by the text plate ...

@@ -1,21 +1,32 @@
 ## test_pb_release_compat.gd — maps made on the PUBLIC RELEASE keep working.
 ##
-## The next release must load maps saved by the current public one (the
-## `nightly` release, v0.9.167 = de492fe, which the Asset Library mirrors).
-## tests/fixtures/release_v0_9_167 holds a scene that release WROTE with its
+## The next release must load maps saved by every public one: the Asset
+## Library's v0.9.167 (de492fe) and the GitHub release v0.9.186 (f67418c).
+## tests/fixtures/release_v0_9_* each hold a scene that release WROTE with its
 ## own code, and the values that release read back from it; this suite loads
-## it with the current code and requires the same answers — then renders,
-## paints, saves (in the new compressed form) and undoes on top of it.
+## each with the current code and requires the same answers — then renders,
+## paints, saves (in the compressed form) and undoes on top of it.
 extends GutTest
 
-const FIXTURE_DIR := "res://tests/fixtures/release_v0_9_167"
+## dir -> true when that release wrote masks in the old plain form (before
+## v0.9.182's PBMaskTexture), which a save must convert.
+const FIXTURES := {
+	"res://tests/fixtures/release_v0_9_167": true,
+	"res://tests/fixtures/release_v0_9_186": false,
+}
+var _expects: Dictionary = {}
+var params := FIXTURES.keys()
+var FIXTURE_DIR := ""
 var _expect: Dictionary = {}
 
 func before_all() -> void:
-	var text := FileAccess.get_file_as_string(FIXTURE_DIR.path_join("release_fixture.json"))
-	var parsed = JSON.parse_string(text)
-	if parsed is Dictionary:
-		_expect = parsed
+	for dir in FIXTURES:
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(String(dir).path_join("release_fixture.json")))
+		_expects[dir] = parsed if parsed is Dictionary else {}
+
+func _use(dir: String) -> void:
+	FIXTURE_DIR = dir
+	_expect = _expects.get(dir, {})
 
 func _load_fixture() -> Node:
 	var path := FIXTURE_DIR.path_join("release_fixture.scn")
@@ -43,7 +54,8 @@ func _nonzero(img: Image, channel_alpha: bool) -> int:
 				n += 1
 	return n
 
-func test_every_mesh_and_face_comes_back() -> void:
+func test_every_mesh_and_face_comes_back(dir = use_parameters(params)) -> void:
+	_use(dir)
 	var root := _load_fixture()
 	if root == null:
 		return
@@ -62,7 +74,8 @@ func test_every_mesh_and_face_comes_back() -> void:
 					"%s face %d paint state" % [mesh_name, int(fw["index"])])
 			assert_eq(Array(f.splat_bounds), fw["splat_bounds"], "%s face %d mask rect" % [mesh_name, int(fw["index"])])
 
-func test_masks_and_decals_read_back_exactly_what_the_release_wrote() -> void:
+func test_masks_and_decals_read_back_exactly_what_the_release_wrote(dir = use_parameters(params)) -> void:
+	_use(dir)
 	var root := _load_fixture()
 	if root == null:
 		return
@@ -91,7 +104,8 @@ func test_masks_and_decals_read_back_exactly_what_the_release_wrote() -> void:
 				checked += 1
 	assert_gt(checked, 2, "fixture: masks and a decal were checked")
 
-func test_the_release_scene_renders_every_face() -> void:
+func test_the_release_scene_renders_every_face(dir = use_parameters(params)) -> void:
+	_use(dir)
 	var root := _load_fixture()
 	if root == null:
 		return
@@ -103,7 +117,8 @@ func test_the_release_scene_renders_every_face() -> void:
 				tris += (m.surface_get_arrays(s)[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
 		assert_eq(tris, pb.pb_mesh_data.index_count() / 3, "%s renders every triangle" % mesh_name)
 
-func test_the_release_scene_paints_saves_and_undoes() -> void:
+func test_the_release_scene_paints_saves_and_undoes(dir = use_parameters(params)) -> void:
+	_use(dir)
 	var root := _load_fixture()
 	if root == null:
 		return
@@ -123,12 +138,16 @@ func test_the_release_scene_paints_saves_and_undoes() -> void:
 	var painted_hash := hash(PBSplat.get_layer_mask_image(sm, slot).get_data())
 	assert_ne(painted_hash, release_hash, "the dab changed it")
 	# Save: the old plain textures move to the compressed form first.
-	assert_gt(PBSplat.adopt_mesh_compressed_storage(md), 0, "release masks convert before a save")
+	var converted := PBSplat.adopt_mesh_compressed_storage(md)
+	if FIXTURES[FIXTURE_DIR]:
+		assert_gt(converted, 0, "release masks convert before a save")
+	else:
+		assert_eq(converted, 0, "release masks are already in the compressed form")
 	DirAccess.make_dir_recursive_absolute("user://pb_release_compat")
 	var packed := PackedScene.new()
 	assert_eq(packed.pack(root), OK)
-	assert_eq(ResourceSaver.save(packed, "user://pb_release_compat/resaved.tscn"), OK)
-	var again := (ResourceLoader.load("user://pb_release_compat/resaved.tscn", "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_eq(ResourceSaver.save(packed, "user://pb_release_compat/resaved_%s.tscn" % FIXTURE_DIR.get_file()), OK)
+	var again := (ResourceLoader.load("user://pb_release_compat/resaved_%s.tscn" % FIXTURE_DIR.get_file(), "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
 	add_child_autofree(again)
 	var md2 := _mesh(again, "PaintedCube").pb_mesh_data
 	var sm2 := md2.get_face_material(md2.faces[int(fw["index"])]) as ShaderMaterial
